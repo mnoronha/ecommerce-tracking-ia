@@ -42,4 +42,20 @@ app.include_router(pixel.router)
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health", tags=["meta"])
 async def health_check():
-    return {"status": "ok", "version": settings.APP_VERSION}
+    from .database import get_supabase
+    db_status = "ok"
+    db_error = None
+    try:
+        sb = get_supabase()
+        sb.table("clients").select("id").limit(1).execute()
+    except Exception as e:
+        db_status = "error"
+        db_error = str(e)[:200]
+    return {
+        "status": "ok",
+        "version": settings.APP_VERSION,
+        "db": db_status,
+        "db_error": db_error,
+        "supabase_url": settings.SUPABASE_URL[:40] + "..." if settings.SUPABASE_URL else "NOT SET",
+        "service_key_set": bool(settings.SUPABASE_SERVICE_KEY),
+    }
