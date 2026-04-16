@@ -260,7 +260,7 @@ export default function DashboardPage() {
               <YAxis tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={v => `R$${v}`} />
               <Tooltip
                 contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
-                formatter={(v: number) => [fmt(v), 'Receita']}
+                formatter={(v) => [fmt(Number(v)), 'Receita']}
               />
               <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="url(#colorRevenue)" strokeWidth={2} />
             </AreaChart>
@@ -282,7 +282,7 @@ export default function DashboardPage() {
                   <YAxis type="category" dataKey="source" tick={{ fill: '#94a3b8', fontSize: 12 }} width={60} />
                   <Tooltip
                     contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
-                    formatter={(v: number) => [fmt(v), 'Receita']}
+                    formatter={(v) => [fmt(Number(v)), 'Receita']}
                   />
                   <Bar dataKey="revenue" fill="#6366f1" radius={[0, 4, 4, 0]} />
                 </BarChart>
