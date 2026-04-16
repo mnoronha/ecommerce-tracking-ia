@@ -60,16 +60,32 @@ def send_purchase(
 
     customer = event.customer
 
-    # Build user_data with hashed PII
+    # Build user_data with hashed PII + browser identifiers
     user_data: dict = {}
     if customer:
         if customer.email:
             user_data["em"] = [_sha256(customer.email)]
         if customer.phone:
-            # Strip non-digits, then hash
             phone_clean = "".join(c for c in (customer.phone or "") if c.isdigit())
             if phone_clean:
                 user_data["ph"] = [_sha256(phone_clean)]
+        if customer.address:
+            addr = customer.address
+            if addr.country:
+                user_data["country"] = [_sha256(addr.country.lower())]
+            if addr.city:
+                user_data["ct"] = [_sha256(addr.city.lower())]
+            if addr.state:
+                user_data["st"] = [_sha256(addr.state.lower())]
+            if addr.zip_code:
+                user_data["zp"] = [_sha256(addr.zip_code.replace(" ", ""))]
+
+    # Browser-side identifiers — dramatically improve match rate (60-80%+ vs ~30%)
+    meta = event.metadata or {}
+    if meta.get("fbp"):
+        user_data["fbp"] = meta["fbp"]   # not hashed — sent as-is
+    if meta.get("fbc"):
+        user_data["fbc"] = meta["fbc"]   # not hashed — sent as-is
 
     # Build the event payload
     capi_event: dict = {

@@ -52,8 +52,12 @@ def send_purchase(
         logger.debug("ga4: skipped — no order data in event")
         return False
 
-    # GA4 requires a client_id; use a synthetic one if not provided
-    effective_client_id = ga_client_id or f"server.{str(order.id).replace('-', '')[:16]}"
+    # GA4 requires a client_id; prefer the real browser _ga value for session linkage
+    effective_client_id = (
+        ga_client_id
+        or (event.metadata or {}).get("ga_client_id")
+        or f"server.{str(order.id).replace('-', '')[:16]}"
+    )
 
     # Build items array from line_items metadata if available
     items = []

@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v2.0
+  Ecommerce Tracking IA — Shopify Snippet  v3.0
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -10,10 +10,15 @@
 
   Eventos rastreados:
   - pageview          (todas as páginas)
-  - product_viewed    (página de produto)
+  - product_viewed    (página de produto — com produto, preço, categoria)
   - add_to_cart       (botão adicionar ao carrinho)
   - checkout_started  (botão finalizar compra)
-  - checkout_completed (página de confirmação)
+  - checkout_completed (página de confirmação — com order_id para deduplicação CAPI)
+
+  Identifiers capturados para Meta CAPI / GA4:
+  - _fbp  (Meta Pixel browser ID — melhora match rate para 60-80%+)
+  - _fbc  (Meta click ID — setado quando visita vem de anúncio Meta)
+  - _ga   (GA4 client ID — vincula evento server-side à sessão GA4)
   =====================================================================
 {% endcomment %}
 
@@ -26,28 +31,28 @@
   var API_URL   = 'https://ecommerce-tracking-ia-production.up.railway.app';
 
   // ── Constantes ──────────────────────────────────────────────────────────────
-  var COOKIE_VISITOR   = '_etv';
-  var COOKIE_ATTR      = '_eta';
-  var STORAGE_SESSION  = '_ets';
+  var COOKIE_VISITOR  = '_etv';
+  var COOKIE_ATTR     = '_eta';
+  var STORAGE_SESSION = '_ets';
 
   // ── Cookies ──────────────────────────────────────────────────────────────────
   function setCookie(name, value, days) {
     var expires = '';
     if (days) {
-      var d = new Date();
-      d.setTime(d.getTime() + days * 864e5);
-      expires = '; expires=' + d.toUTCString();
+      var exp = new Date();
+      exp.setTime(exp.getTime() + days * 864e5);
+      expires = '; expires=' + exp.toUTCString();
     }
     var domain = '';
     try {
       var parts = location.hostname.split('.');
       if (parts.length >= 2) domain = '; domain=.' + parts.slice(-2).join('.');
     } catch (e) {}
-    document.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
+    d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
   }
 
   function getCookie(name) {
-    var match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    var match = d.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
     return match ? decodeURIComponent(match[1]) : null;
   }
 
@@ -59,7 +64,7 @@
     });
   }
 
-  // ── IDs ──────────────────────────────────────────────────────────────────────
+  // ── Visitor / Session IDs ─────────────────────────────────────────────────────
   function getVisitorId() {
     var vid = getCookie(COOKIE_VISITOR);
     if (!vid) { vid = uuid(); setCookie(COOKIE_VISITOR, vid, 365); }
@@ -91,6 +96,34 @@
     return null;
   }
 
+  // ── Meta CAPI identifiers ────────────────────────────────────────────────────
+  // _fbp: set by Meta Pixel browser JS — highest quality match signal
+  // _fbc: set from fbclid URL param when visitor clicks a Meta ad
+  function getMetaIds() {
+    var fbp = getCookie('_fbp') || null;
+    var fbc = getCookie('_fbc') || null;
+    // If no _fbc cookie but fbclid is in current URL, create fbc value
+    if (!fbc) {
+      var fbclid = (location.search.match(/[?&]fbclid=([^&#]*)/) || [])[1];
+      if (fbclid) {
+        fbc = 'fb.1.' + Date.now() + '.' + fbclid;
+        setCookie('_fbc', fbc, 90);
+      }
+    }
+    return { fbp: fbp, fbc: fbc };
+  }
+
+  // ── GA4 client ID ────────────────────────────────────────────────────────────
+  // Extracts the numeric part from the _ga cookie (e.g. "GA1.2.123456789.1234567890" → "123456789.1234567890")
+  function getGaClientId() {
+    var ga = getCookie('_ga');
+    if (ga) {
+      var parts = ga.split('.');
+      if (parts.length >= 4) return parts[2] + '.' + parts[3];
+    }
+    return null;
+  }
+
   // ── Transport ────────────────────────────────────────────────────────────────
   function send(payload) {
     var url = API_URL + '/pixel/events';
@@ -116,25 +149,29 @@
 
   // ── Track ────────────────────────────────────────────────────────────────────
   function track(eventType, extra) {
+    var meta = getMetaIds();
     send({
-      client_id:  CLIENT_ID,
-      event_type: eventType,
-      visitor_id: getVisitorId(),
-      session_id: getSessionId(),
-      page_url:   location.href,
-      referrer:   document.referrer || null,
-      utm:        getAttribution(),
-      timestamp:  new Date().toISOString(),
-      metadata:   extra || {}
+      client_id:    CLIENT_ID,
+      event_type:   eventType,
+      visitor_id:   getVisitorId(),
+      session_id:   getSessionId(),
+      page_url:     location.href,
+      referrer:     d.referrer || null,
+      utm:          getAttribution(),
+      timestamp:    new Date().toISOString(),
+      fbp:          meta.fbp,
+      fbc:          meta.fbc,
+      ga_client_id: getGaClientId(),
+      metadata:     extra || {}
     });
   }
 
-  // ── Expõe API pública ────────────────────────────────────────────────────────
+  // ── API pública ──────────────────────────────────────────────────────────────
   w.ET = { track: track, getVisitorId: getVisitorId, getSessionId: getSessionId };
 
   // ── Pageview automático ──────────────────────────────────────────────────────
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { track('pageview'); });
+  if (d.readyState === 'loading') {
+    d.addEventListener('DOMContentLoaded', function() { track('pageview'); });
   } else {
     track('pageview');
   }
@@ -152,12 +189,22 @@
   });
   {% endif %}
 
-  document.addEventListener('click', function(e) {
-    if (e.target.closest('[name="add"],[data-add-to-cart],.add-to-cart,#AddToCart')) {
-      track('add_to_cart', { page_url: location.href });
+  d.addEventListener('click', function(e) {
+    var tgt = e.target;
+    if (tgt.closest('[name="add"],[data-add-to-cart],.add-to-cart,#AddToCart,button[type="submit"].product-form__submit')) {
+      {% if template.name == 'product' %}
+      track('add_to_cart', {
+        product_id:    '{{ product.id }}',
+        product_name:  {{ product.title | json }},
+        product_price: {{ product.selected_or_first_available_variant.price | divided_by: 100.0 }},
+        variant_id:    '{{ product.selected_or_first_available_variant.id }}'
+      });
+      {% else %}
+      track('add_to_cart', {});
+      {% endif %}
     }
     {% if template.name == 'cart' %}
-    if (e.target.closest('[name="checkout"],.cart__checkout,#CartSubmit,[data-cart-checkout]')) {
+    if (tgt.closest('[name="checkout"],.cart__checkout,#CartSubmit,[data-cart-checkout]')) {
       track('checkout_started', {
         cart_total: {{ cart.total_price | divided_by: 100.0 }},
         item_count: {{ cart.item_count }}
@@ -167,10 +214,12 @@
   });
 
   {% if template.name == 'customers/order' %}
+  // checkout_completed — order_id used for CAPI deduplication with server-side webhook
   track('checkout_completed', {
     order_id:    '{{ order.order_number }}',
     order_total: {{ order.total_price | divided_by: 100.0 }},
-    currency:    '{{ order.currency }}'
+    currency:    '{{ order.currency }}',
+    item_count:  {{ order.line_items.size }}
   });
   {% endif %}
 

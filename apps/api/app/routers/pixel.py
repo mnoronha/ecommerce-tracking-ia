@@ -22,13 +22,22 @@ _TRANSPARENT_GIF = (
 )
 
 _PIXEL_EVENT_MAP: dict = {
-    "pageview": EventType.PAGE_VIEWED,
-    "page_viewed": EventType.PAGE_VIEWED,
-    "product_viewed": EventType.PRODUCT_VIEWED,
-    "checkout_started": EventType.CHECKOUT_STARTED,
-    "checkout_completed": EventType.CHECKOUT_COMPLETED,
-    "cart_updated": EventType.CART_UPDATED,
-    "cart_created": EventType.CART_CREATED,
+    # pageview
+    "pageview":             EventType.PAGE_VIEWED,
+    "page_viewed":          EventType.PAGE_VIEWED,
+    # product
+    "product_viewed":       EventType.PRODUCT_VIEWED,
+    "view_product":         EventType.PRODUCT_VIEWED,
+    # cart — FIX: add_to_cart was missing → was falling through to CUSTOM
+    "add_to_cart":          EventType.CART_CREATED,
+    "cart_created":         EventType.CART_CREATED,
+    "cart_updated":         EventType.CART_UPDATED,
+    # checkout
+    "checkout_started":     EventType.CHECKOUT_STARTED,
+    "begin_checkout":       EventType.CHECKOUT_STARTED,
+    # purchase
+    "checkout_completed":   EventType.CHECKOUT_COMPLETED,
+    "purchase":             EventType.CHECKOUT_COMPLETED,
 }
 
 
@@ -52,6 +61,10 @@ class PixelEventRequest(BaseModel):
     utm: Optional[UTMData] = None
     metadata: Optional[dict] = None
     timestamp: Optional[datetime] = None
+    # ── Advertising identifiers (critical for CAPI match rate) ──────────────
+    fbp: Optional[str] = None           # Meta Pixel browser ID (_fbp cookie)
+    fbc: Optional[str] = None           # Meta click ID (_fbc cookie / fbclid param)
+    ga_client_id: Optional[str] = None  # GA4 client ID (_ga cookie)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -77,6 +90,10 @@ def _build_normalized(
             **(data.metadata or {}),
             "user_agent": user_agent,
             "ip": ip,
+            # Advertising identifiers — stored for CAPI passthrough
+            "fbp":          data.fbp,
+            "fbc":          data.fbc,
+            "ga_client_id": data.ga_client_id,
         },
     )
 
