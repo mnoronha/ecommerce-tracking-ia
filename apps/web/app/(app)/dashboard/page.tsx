@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
-import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle } from 'lucide-react'
+import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
@@ -61,6 +61,17 @@ interface Attribution {
   total: number
 }
 
+interface Insight {
+  id: string
+  type: string
+  severity: string
+  title: string
+  content: string
+  data: { recommendation?: string }
+  is_read: boolean
+  created_at: string
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) =>
@@ -71,6 +82,8 @@ const fmtDate = (iso: string) =>
 
 const pct = (n: number, total: number) =>
   total > 0 ? ((n / total) * 100).toFixed(0) + '%' : '—'
+
+const API_URL = 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -119,6 +132,89 @@ function FunnelBar({ steps }: { steps: FunnelStep[] }) {
   )
 }
 
+const INSIGHT_ICON: Record<string, React.ElementType> = {
+  weekly_report:    BarChart2,
+  recommendation:   Lightbulb,
+  anomaly:          AlertTriangle,
+  pattern:          Sparkles,
+}
+
+const SEVERITY_STYLE: Record<string, string> = {
+  info:     'border-indigo-500/30 bg-indigo-500/5',
+  warning:  'border-yellow-500/30 bg-yellow-500/5',
+  critical: 'border-red-500/30 bg-red-500/5',
+}
+
+const SEVERITY_ICON_COLOR: Record<string, string> = {
+  info:     'text-indigo-400',
+  warning:  'text-yellow-400',
+  critical: 'text-red-400',
+}
+
+function InsightCard({ insight, onRead }: { insight: Insight; onRead: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const Icon = INSIGHT_ICON[insight.type] || Lightbulb
+
+  return (
+    <div
+      className={`rounded-xl border p-4 transition-all ${SEVERITY_STYLE[insight.severity] || SEVERITY_STYLE.info} ${insight.is_read ? 'opacity-60' : ''}`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`mt-0.5 shrink-0 ${SEVERITY_ICON_COLOR[insight.severity]}`}>
+          <Icon size={16} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <p className={`text-sm font-semibold ${insight.is_read ? 'text-slate-400' : 'text-white'}`}>
+              {insight.title}
+            </p>
+            {!insight.is_read && (
+              <span className="shrink-0 w-2 h-2 rounded-full bg-indigo-400 mt-1" />
+            )}
+          </div>
+
+          {expanded ? (
+            <>
+              <p className="text-xs text-slate-400 mt-2 leading-relaxed whitespace-pre-wrap">
+                {insight.content}
+              </p>
+              {insight.data?.recommendation && (
+                <div className="mt-3 bg-[#0f1117] rounded-lg p-3 border border-[#2a2f3e]">
+                  <p className="text-xs font-medium text-emerald-400 mb-1">Ação recomendada</p>
+                  <p className="text-xs text-slate-300">{insight.data.recommendation}</p>
+                </div>
+              )}
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  onClick={() => setExpanded(false)}
+                  className="text-xs text-slate-500 hover:text-slate-300"
+                >
+                  Fechar
+                </button>
+                {!insight.is_read && (
+                  <button
+                    onClick={() => onRead(insight.id)}
+                    className="text-xs text-indigo-400 hover:text-indigo-300"
+                  >
+                    Marcar como lido
+                  </button>
+                )}
+              </div>
+            </>
+          ) : (
+            <button
+              onClick={() => { setExpanded(true); if (!insight.is_read) onRead(insight.id) }}
+              className="text-xs text-slate-500 hover:text-slate-300 mt-1"
+            >
+              Ver análise completa →
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -128,10 +224,13 @@ export default function DashboardPage() {
   const [funnelSteps, setFunnelSteps] = useState<FunnelStep[]>([])
   const [campaigns, setCampaigns]     = useState<CampaignRow[]>([])
   const [products, setProducts]       = useState<ProductRow[]>([])
-  const [attribution, setAttribution] = useState<Attribution | null>(null)
-  const [loading, setLoading]         = useState(true)
-  const [lastUpdate, setLastUpdate]   = useState<Date>(new Date())
-  const [dateRange, setDateRange]     = useState<DateRange>('30d')
+  const [attribution, setAttribution]   = useState<Attribution | null>(null)
+  const [insights, setInsights]         = useState<Insight[]>([])
+  const [insightsLoading, setInsLoading] = useState(false)
+  const [generating, setGenerating]     = useState(false)
+  const [loading, setLoading]           = useState(true)
+  const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
+  const [dateRange, setDateRange]       = useState<DateRange>('30d')
 
   const CLIENT_PIXEL_ID = 'lk-sneakers'
 
@@ -287,7 +386,36 @@ export default function DashboardPage() {
     setLoading(false)
   }, [])
 
+  const loadInsights = useCallback(async () => {
+    setInsLoading(true)
+    const { data } = await supabase
+      .from('ai_insights')
+      .select('id, type, severity, title, content, data, is_read, created_at')
+      .order('created_at', { ascending: false })
+      .limit(10)
+    setInsights((data as Insight[]) || [])
+    setInsLoading(false)
+  }, [])
+
+  const generateInsights = useCallback(async () => {
+    setGenerating(true)
+    try {
+      await fetch(`${API_URL}/insights/lk-sneakers/generate`, { method: 'POST' })
+      // Poll for new insights (generation takes ~5-10s)
+      await new Promise(r => setTimeout(r, 8000))
+      await loadInsights()
+    } finally {
+      setGenerating(false)
+    }
+  }, [loadInsights])
+
+  const markRead = useCallback(async (insightId: string) => {
+    setInsights(prev => prev.map(i => i.id === insightId ? { ...i, is_read: true } : i))
+    await fetch(`${API_URL}/insights/lk-sneakers/${insightId}/read`, { method: 'PATCH' })
+  }, [])
+
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
+  useEffect(() => { loadInsights() }, [loadInsights])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -499,6 +627,51 @@ export default function DashboardPage() {
           </div>
 
         </div>
+
+        {/* AI Insights */}
+        <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+          <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles size={15} className="text-indigo-400" />
+              <h2 className="text-sm font-semibold text-slate-300">Insights IA</h2>
+              {insights.filter(i => !i.is_read).length > 0 && (
+                <span className="bg-indigo-600 text-white text-xs px-1.5 py-0.5 rounded-full font-medium">
+                  {insights.filter(i => !i.is_read).length} novo{insights.filter(i => !i.is_read).length > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={generateInsights}
+              disabled={generating}
+              className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
+            >
+              {generating
+                ? <><Loader2 size={12} className="animate-spin" /> Analisando…</>
+                : <><Sparkles size={12} /> Gerar análise</>
+              }
+            </button>
+          </div>
+          <div className="p-5">
+            {insightsLoading ? (
+              <div className="flex items-center gap-2 text-slate-500 text-sm">
+                <Loader2 size={14} className="animate-spin" /> Carregando insights…
+              </div>
+            ) : insights.length === 0 ? (
+              <div className="text-center py-8">
+                <Sparkles size={32} className="text-slate-600 mx-auto mb-3" />
+                <p className="text-slate-400 text-sm font-medium">Nenhum insight gerado ainda</p>
+                <p className="text-slate-600 text-xs mt-1">Clique em "Gerar análise" para o Claude analisar seus dados</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {insights.map(insight => (
+                  <InsightCard key={insight.id} insight={insight} onRead={markRead} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
     </div>
   )

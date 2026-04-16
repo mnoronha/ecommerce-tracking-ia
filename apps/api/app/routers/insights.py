@@ -1,0 +1,77 @@
+"""
+Insights router — gera e serve análises de IA para o dashboard.
+"""
+
+import logging
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
+
+from ..database import get_supabase
+from ..services import ai_analyst
+from ..services.writer import resolve_client_uuid
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/insights", tags=["insights"])
+
+
+@router.post("/{pixel_id}/generate")
+async def generate_insights(pixel_id: str, background_tasks: BackgroundTasks):
+    """
+    Dispara geração de insights via Claude para o cliente.
+    Retorna imediatamente com status 'queued'; processamento roda em background.
+    """
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+
+    background_tasks.add_task(_run_analysis, pixel_id, client_uuid)
+    return {"status": "queued", "pixel_id": pixel_id, "client_id": client_uuid}
+
+
+def _run_analysis(pixel_id: str, client_uuid: str) -> None:
+    try:
+        result = ai_analyst.generate_insights(client_uuid)
+        logger.info("Insights gerados para %s: %d insights", pixel_id, result["insights_generated"])
+    except Exception as exc:
+        logger.error("Falha ao gerar insights para %s: %s", pixel_id, exc)
+
+
+@router.get("/{pixel_id}")
+async def get_insights(pixel_id: str, limit: int = 10):
+    """
+    Retorna os insights mais recentes do cliente (para o dashboard).
+    """
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+
+    try:
+        result = (
+            get_supabase()
+            .table("ai_insights")
+            .select("id, type, severity, title, content, data, is_read, created_at")
+            .eq("client_id", client_uuid)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return {"insights": result.data or [], "client_id": client_uuid}
+    except Exception as exc:
+        logger.error("Erro ao buscar insights: %s", exc)
+        raise HTTPException(status_code=500, detail="Erro ao buscar insights")
+
+
+@router.patch("/{pixel_id}/{insight_id}/read")
+async def mark_as_read(pixel_id: str, insight_id: str):
+    """Marca um insight como lido."""
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+    try:
+        get_supabase().table("ai_insights").update({"is_read": True}).eq(
+            "id", insight_id
+        ).eq("client_id", client_uuid).execute()
+        return {"status": "ok"}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))

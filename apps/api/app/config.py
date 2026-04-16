@@ -20,8 +20,11 @@ class Settings(BaseSettings):
     # Fallback secret used when no per-client secret is found in the database.
     DEFAULT_WEBHOOK_SECRET: str = ""
 
+    # ── Anthropic ────────────────────────────────────────────────────────
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
+
     # ── CORS ─────────────────────────────────────────────────────────────
-    # Comma-separated list of allowed origins, e.g. "https://mystore.com,https://admin.mystore.com"
     CORS_ORIGINS: str = "*"
 
 
