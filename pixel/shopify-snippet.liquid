@@ -1,97 +1,178 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet
+  Ecommerce Tracking IA — Shopify Snippet  v2.0
   Arquivo: snippets/et-tracker.liquid
 
-  Instalação:
-  1. Copie este arquivo para: themes/[seu-tema]/snippets/et-tracker.liquid
-  2. No layout/theme.liquid, adicione antes de </body>:
+  INSTALAÇÃO:
+  1. Copie este arquivo para: snippets/et-tracker.liquid
+  2. Em layout/theme.liquid, adicione ANTES de </body>:
        {% render 'et-tracker' %}
 
-  Eventos rastreados automaticamente:
-  - pageview        (todas as páginas)
-  - product_viewed  (página de produto)
-  - add_to_cart     (botão "Adicionar ao Carrinho")
-  - checkout_started (início do checkout)
-  - purchase        (página de confirmação - /thank_you)
+  Eventos rastreados:
+  - pageview          (todas as páginas)
+  - product_viewed    (página de produto)
+  - add_to_cart       (botão adicionar ao carrinho)
+  - checkout_started  (botão finalizar compra)
+  - checkout_completed (página de confirmação)
   =====================================================================
 {% endcomment %}
 
-{% assign et_api_url = "https://ecommerce-tracking-ia-production.up.railway.app" %}
-{% assign et_client_id = "lk-sneakers" %}
-
 <script>
-window.__ETConfig = {
-  clientId: "{{ et_client_id }}",
-  apiUrl:   "{{ et_api_url }}"
-};
-</script>
-<script src="{{ et_api_url }}/static/tracker.js" async></script>
+(function (w, d) {
+  'use strict';
 
-<script>
-(function() {
-  // Aguarda o tracker carregar
-  function whenReady(fn) {
-    if (window.ET) { fn(); return; }
-    var t = setInterval(function() {
-      if (window.ET) { clearInterval(t); fn(); }
-    }, 50);
-    setTimeout(function() { clearInterval(t); }, 3000);
+  // ── Configuração ────────────────────────────────────────────────────────────
+  var CLIENT_ID = 'lk-sneakers';
+  var API_URL   = 'https://ecommerce-tracking-ia-production.up.railway.app';
+
+  // ── Constantes ──────────────────────────────────────────────────────────────
+  var COOKIE_VISITOR   = '_etv';
+  var COOKIE_ATTR      = '_eta';
+  var STORAGE_SESSION  = '_ets';
+
+  // ── Cookies ──────────────────────────────────────────────────────────────────
+  function setCookie(name, value, days) {
+    var expires = '';
+    if (days) {
+      var d = new Date();
+      d.setTime(d.getTime() + days * 864e5);
+      expires = '; expires=' + d.toUTCString();
+    }
+    var domain = '';
+    try {
+      var parts = location.hostname.split('.');
+      if (parts.length >= 2) domain = '; domain=.' + parts.slice(-2).join('.');
+    } catch (e) {}
+    document.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
   }
 
-  // ── Produto visualizado ──────────────────────────────────────────────────
-  {% if template.name == 'product' %}
-  whenReady(function() {
-    ET.track('product_viewed', {
-      product_id:       "{{ product.id }}",
-      product_name:     {{ product.title | json }},
-      product_sku:      "{{ product.selected_or_first_available_variant.sku }}",
-      product_price:    {{ product.price | money_without_currency | remove: ',' }},
-      product_category: {{ product.type | json }},
-      variant_id:       "{{ product.selected_or_first_available_variant.id }}"
+  function getCookie(name) {
+    var match = document.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  // ── UUID ─────────────────────────────────────────────────────────────────────
+  function uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = (Math.random() * 16) | 0;
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
     });
+  }
+
+  // ── IDs ──────────────────────────────────────────────────────────────────────
+  function getVisitorId() {
+    var vid = getCookie(COOKIE_VISITOR);
+    if (!vid) { vid = uuid(); setCookie(COOKIE_VISITOR, vid, 365); }
+    return vid;
+  }
+
+  function getSessionId() {
+    try {
+      var sid = sessionStorage.getItem(STORAGE_SESSION);
+      if (!sid) { sid = uuid(); sessionStorage.setItem(STORAGE_SESSION, sid); }
+      return sid;
+    } catch(e) { return uuid(); }
+  }
+
+  // ── UTM attribution ──────────────────────────────────────────────────────────
+  function getAttribution() {
+    var result = {};
+    var search = location.search;
+    ['source','medium','campaign','term','content'].forEach(function(k) {
+      var m = search.match(new RegExp('[?&]utm_' + k + '=([^&#]*)'));
+      if (m) result[k] = decodeURIComponent(m[1].replace(/\+/g, ' '));
+    });
+    if (Object.keys(result).length) {
+      setCookie(COOKIE_ATTR, JSON.stringify(result), 30);
+      return result;
+    }
+    var stored = getCookie(COOKIE_ATTR);
+    if (stored) { try { return JSON.parse(stored); } catch(e) {} }
+    return null;
+  }
+
+  // ── Transport ────────────────────────────────────────────────────────────────
+  function send(payload) {
+    var url = API_URL + '/pixel/events';
+    var sent = false;
+    if (navigator.sendBeacon) {
+      try {
+        sent = navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], {type:'application/json'}));
+      } catch(e) {}
+    }
+    if (!sent) {
+      try {
+        fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), keepalive:true}).catch(function(){});
+        sent = true;
+      } catch(e) {}
+    }
+    if (!sent) {
+      var qs = 'cid=' + encodeURIComponent(CLIENT_ID) + '&et=' + encodeURIComponent(payload.event_type) +
+               '&vid=' + encodeURIComponent(payload.visitor_id || '') + '&url=' + encodeURIComponent(payload.page_url || '');
+      var img = new Image(1,1);
+      img.src = API_URL + '/pixel/events?' + qs;
+    }
+  }
+
+  // ── Track ────────────────────────────────────────────────────────────────────
+  function track(eventType, extra) {
+    send({
+      client_id:  CLIENT_ID,
+      event_type: eventType,
+      visitor_id: getVisitorId(),
+      session_id: getSessionId(),
+      page_url:   location.href,
+      referrer:   document.referrer || null,
+      utm:        getAttribution(),
+      timestamp:  new Date().toISOString(),
+      metadata:   extra || {}
+    });
+  }
+
+  // ── Expõe API pública ────────────────────────────────────────────────────────
+  w.ET = { track: track, getVisitorId: getVisitorId, getSessionId: getSessionId };
+
+  // ── Pageview automático ──────────────────────────────────────────────────────
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { track('pageview'); });
+  } else {
+    track('pageview');
+  }
+
+  // ── Eventos Shopify ──────────────────────────────────────────────────────────
+
+  {% if template.name == 'product' %}
+  track('product_viewed', {
+    product_id:       '{{ product.id }}',
+    product_name:     {{ product.title | json }},
+    product_sku:      '{{ product.selected_or_first_available_variant.sku }}',
+    product_price:    {{ product.selected_or_first_available_variant.price | divided_by: 100.0 }},
+    product_category: {{ product.type | json }},
+    variant_id:       '{{ product.selected_or_first_available_variant.id }}'
   });
   {% endif %}
 
-  // ── Add to cart ──────────────────────────────────────────────────────────
   document.addEventListener('click', function(e) {
-    var btn = e.target.closest('[name="add"], .add-to-cart, #AddToCart, [data-add-to-cart]');
-    if (!btn) return;
-    whenReady(function() {
-      var form = btn.closest('form[action*="/cart/add"]');
-      var price = form && form.querySelector('[data-product-price]');
-      ET.track('add_to_cart', {
-        product_id:    btn.getAttribute('data-product-id') || '',
-        product_name:  btn.getAttribute('data-product-title') || document.title,
-        product_price: price ? parseFloat(price.textContent.replace(/[^0-9.,]/g, '').replace(',', '.')) : null
-      });
-    });
-  });
-
-  // ── Checkout iniciado ────────────────────────────────────────────────────
-  {% if template.name == 'cart' %}
-  document.addEventListener('click', function(e) {
-    if (!e.target.closest('[name="checkout"], .cart__checkout, #CartSubmit')) return;
-    whenReady(function() {
-      ET.track('checkout_started', {
-        cart_total: {{ cart.total_price | money_without_currency | remove: ',' }},
+    if (e.target.closest('[name="add"],[data-add-to-cart],.add-to-cart,#AddToCart')) {
+      track('add_to_cart', { page_url: location.href });
+    }
+    {% if template.name == 'cart' %}
+    if (e.target.closest('[name="checkout"],.cart__checkout,#CartSubmit,[data-cart-checkout]')) {
+      track('checkout_started', {
+        cart_total: {{ cart.total_price | divided_by: 100.0 }},
         item_count: {{ cart.item_count }}
       });
-    });
+    }
+    {% endif %}
+  });
+
+  {% if template.name == 'customers/order' %}
+  track('checkout_completed', {
+    order_id:    '{{ order.order_number }}',
+    order_total: {{ order.total_price | divided_by: 100.0 }},
+    currency:    '{{ order.currency }}'
   });
   {% endif %}
 
-  // ── Purchase (thank you page) ────────────────────────────────────────────
-  {% if template.name == 'customers/order' or first_time_accessed %}
-  whenReady(function() {
-    ET.track('checkout_completed', {
-      order_id:     "{{ order.order_number }}",
-      order_total:  {{ order.total_price | money_without_currency | remove: ',' }},
-      order_email:  {{ order.email | json }},
-      currency:     "{{ order.currency }}"
-    });
-  });
-  {% endif %}
-
-})();
+}(window, document));
 </script>
