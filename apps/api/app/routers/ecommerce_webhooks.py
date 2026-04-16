@@ -1,16 +1,16 @@
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import writer
+from ..services import ga4, meta_capi, writer
 from ..services.adapters import (
-    ShopifyAdapter,
     NuvemshopAdapter,
-    WooCommerceAdapter,
+    ShopifyAdapter,
     SignatureError,
+    WooCommerceAdapter,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,12 +68,47 @@ def _store_event(event_dict: dict) -> None:
         logger.error("Failed to persist event: %s", exc)
 
 
+def _dispatch_capi(client_pixel_id: str, event: object) -> None:
+    """
+    Look up per-client Meta/GA4 credentials and fire server-side conversion events.
+    Runs in a background task — never blocks the webhook response.
+    """
+    try:
+        creds_result = (
+            get_supabase()
+            .table("clients")
+            .select("meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret")
+            .eq("pixel_id", client_pixel_id)
+            .limit(1)
+            .execute()
+        )
+        if not (creds_result and creds_result.data):
+            return
+        c = creds_result.data[0]
+
+        if c.get("meta_pixel_id") and c.get("meta_access_token"):
+            meta_capi.send_purchase(
+                pixel_id=c["meta_pixel_id"],
+                access_token=c["meta_access_token"],
+                event=event,  # type: ignore[arg-type]
+            )
+
+        if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
+            ga4.send_purchase(
+                measurement_id=c["ga4_measurement_id"],
+                api_secret=c["ga4_api_secret"],
+                event=event,  # type: ignore[arg-type]
+            )
+    except Exception as exc:
+        logger.warning("_dispatch_capi error for %s: %s", client_pixel_id, exc)
+
+
 @router.post(
     "/webhook/{platform}/{client_id}",
     summary="Unified webhook receiver",
     tags=["webhooks"],
 )
-async def receive_webhook(platform: str, client_id: str, request: Request):
+async def receive_webhook(platform: str, client_id: str, request: Request, background_tasks: BackgroundTasks):
     """
     Single entry-point for all e-commerce platform webhooks.
 
@@ -127,5 +162,9 @@ async def receive_webhook(platform: str, client_id: str, request: Request):
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
+
+    # Fire server-side conversions for paid orders (non-blocking)
+    if event.event_type.value in ("order.paid", "checkout.completed"):
+        background_tasks.add_task(_dispatch_capi, client_id, event)
 
     return {"status": "ok", "event_id": event.event_id, "event_type": event.event_type}
