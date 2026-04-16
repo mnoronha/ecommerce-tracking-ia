@@ -1,0 +1,97 @@
+{% comment %}
+  =====================================================================
+  Ecommerce Tracking IA — Shopify Snippet
+  Arquivo: snippets/et-tracker.liquid
+
+  Instalação:
+  1. Copie este arquivo para: themes/[seu-tema]/snippets/et-tracker.liquid
+  2. No layout/theme.liquid, adicione antes de </body>:
+       {% render 'et-tracker' %}
+
+  Eventos rastreados automaticamente:
+  - pageview        (todas as páginas)
+  - product_viewed  (página de produto)
+  - add_to_cart     (botão "Adicionar ao Carrinho")
+  - checkout_started (início do checkout)
+  - purchase        (página de confirmação - /thank_you)
+  =====================================================================
+{% endcomment %}
+
+{% assign et_api_url = "https://ecommerce-tracking-ia-production.up.railway.app" %}
+{% assign et_client_id = "lk-sneakers" %}
+
+<script>
+window.__ETConfig = {
+  clientId: "{{ et_client_id }}",
+  apiUrl:   "{{ et_api_url }}"
+};
+</script>
+<script src="{{ et_api_url }}/static/tracker.js" async></script>
+
+<script>
+(function() {
+  // Aguarda o tracker carregar
+  function whenReady(fn) {
+    if (window.ET) { fn(); return; }
+    var t = setInterval(function() {
+      if (window.ET) { clearInterval(t); fn(); }
+    }, 50);
+    setTimeout(function() { clearInterval(t); }, 3000);
+  }
+
+  // ── Produto visualizado ──────────────────────────────────────────────────
+  {% if template.name == 'product' %}
+  whenReady(function() {
+    ET.track('product_viewed', {
+      product_id:       "{{ product.id }}",
+      product_name:     {{ product.title | json }},
+      product_sku:      "{{ product.selected_or_first_available_variant.sku }}",
+      product_price:    {{ product.price | money_without_currency | remove: ',' }},
+      product_category: {{ product.type | json }},
+      variant_id:       "{{ product.selected_or_first_available_variant.id }}"
+    });
+  });
+  {% endif %}
+
+  // ── Add to cart ──────────────────────────────────────────────────────────
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('[name="add"], .add-to-cart, #AddToCart, [data-add-to-cart]');
+    if (!btn) return;
+    whenReady(function() {
+      var form = btn.closest('form[action*="/cart/add"]');
+      var price = form && form.querySelector('[data-product-price]');
+      ET.track('add_to_cart', {
+        product_id:    btn.getAttribute('data-product-id') || '',
+        product_name:  btn.getAttribute('data-product-title') || document.title,
+        product_price: price ? parseFloat(price.textContent.replace(/[^0-9.,]/g, '').replace(',', '.')) : null
+      });
+    });
+  });
+
+  // ── Checkout iniciado ────────────────────────────────────────────────────
+  {% if template.name == 'cart' %}
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('[name="checkout"], .cart__checkout, #CartSubmit')) return;
+    whenReady(function() {
+      ET.track('checkout_started', {
+        cart_total: {{ cart.total_price | money_without_currency | remove: ',' }},
+        item_count: {{ cart.item_count }}
+      });
+    });
+  });
+  {% endif %}
+
+  // ── Purchase (thank you page) ────────────────────────────────────────────
+  {% if template.name == 'customers/order' or first_time_accessed %}
+  whenReady(function() {
+    ET.track('checkout_completed', {
+      order_id:     "{{ order.order_number }}",
+      order_total:  {{ order.total_price | money_without_currency | remove: ',' }},
+      order_email:  {{ order.email | json }},
+      currency:     "{{ order.currency }}"
+    });
+  });
+  {% endif %}
+
+})();
+</script>

@@ -1,7 +1,9 @@
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .routers import ecommerce_webhooks, pixel
@@ -33,6 +35,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Static files (pixel tracker.js) ──────────────────────────────────────────
+_static_dir = Path(__file__).parent.parent / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(ecommerce_webhooks.router)
