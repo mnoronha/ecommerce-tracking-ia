@@ -17,6 +17,7 @@ interface Visitor {
   first_platform: string | null
   total_pageviews: number
   total_orders: number
+  total_revenue: number | null
   last_seen_at: string | null
   created_at: string
 }
@@ -49,6 +50,10 @@ const EVENT_META: Record<string, { label: string; color: string }> = {
 
 const fmtDt = (iso: string | null) => iso
   ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })
+  : '—'
+
+const fmtBRL = (n: number | null) => n
+  ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
   : '—'
 
 // ── Visitor detail panel ──────────────────────────────────────────────────────
@@ -107,6 +112,12 @@ function VisitorPanel({
             <div className="mt-3 bg-[#0f1117] rounded-lg p-3">
               <p className="text-xs text-slate-500">Campanha</p>
               <p className="text-sm text-white mt-0.5 truncate">{visitor.first_utm_campaign}</p>
+            </div>
+          )}
+          {visitor.total_revenue != null && visitor.total_revenue > 0 && (
+            <div className="mt-3 bg-[#0f1117] rounded-lg p-3 border border-emerald-500/20">
+              <p className="text-xs text-slate-500">LTV — Receita Total</p>
+              <p className="text-base font-bold text-emerald-400 mt-0.5">{fmtBRL(visitor.total_revenue)}</p>
             </div>
           )}
         </div>
@@ -184,7 +195,7 @@ export default function VisitantesPage() {
 
     let q = supabase.from('visitors')
       .select(
-        'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, last_seen_at, created_at',
+        'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, last_seen_at, created_at',
         { count: 'exact' }
       )
       .eq('client_id', clientId)
@@ -243,7 +254,7 @@ export default function VisitantesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#2a2f3e]">
-                {['Visitante', 'Origem', 'Pageviews', 'Pedidos', 'Última visita'].map(h => (
+                {['Visitante', 'Origem', 'Pageviews', 'Pedidos', 'LTV', 'Última visita'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -252,9 +263,9 @@ export default function VisitantesPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="py-12 text-center text-slate-500">Carregando...</td></tr>
+                <tr><td colSpan={6} className="py-12 text-center text-slate-500">Carregando...</td></tr>
               ) : visitors.length === 0 ? (
-                <tr><td colSpan={5} className="py-12 text-center text-slate-500">Nenhum visitante encontrado</td></tr>
+                <tr><td colSpan={6} className="py-12 text-center text-slate-500">Nenhum visitante encontrado</td></tr>
               ) : visitors.map(v => (
                 <tr
                   key={v.id}
@@ -286,6 +297,13 @@ export default function VisitantesPage() {
                       <span className="text-emerald-400 font-semibold">{v.total_orders}</span>
                     ) : (
                       <span className="text-slate-500">0</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {v.total_revenue && v.total_revenue > 0 ? (
+                      <span className="text-emerald-400 font-semibold text-sm">{fmtBRL(v.total_revenue)}</span>
+                    ) : (
+                      <span className="text-slate-600 text-xs">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">

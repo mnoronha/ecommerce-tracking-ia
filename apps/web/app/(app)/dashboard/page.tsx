@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
 import {
@@ -33,7 +33,14 @@ interface Order {
   utm_source: string | null
   utm_medium: string | null
   utm_campaign: string | null
+  is_first_purchase: boolean | null
   created_at: string
+}
+
+interface RetentionData {
+  newOrders: number
+  returningOrders: number
+  total: number
 }
 
 interface FunnelStep { label: string; count: number; pct: number }
@@ -215,6 +222,76 @@ function InsightCard({ insight, onRead }: { insight: Insight; onRead: (id: strin
   )
 }
 
+// ── Sales Heatmap ─────────────────────────────────────────────────────────────
+
+const _DAYS   = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+const _BLOCKS = ['00h', '03h', '06h', '09h', '12h', '15h', '18h', '21h']
+
+function SalesHeatmap({ grid }: { grid: number[][] }) {
+  const maxVal = Math.max(...grid.flat(), 1)
+  if (grid.every(row => row.every(v => v === 0))) {
+    return (
+      <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-5">
+        <h2 className="text-sm font-semibold text-slate-300 mb-1">Horários de Maior Venda</h2>
+        <p className="text-slate-500 text-sm mt-4">Sem dados de pedidos no período</p>
+      </div>
+    )
+  }
+  return (
+    <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+      <div className="px-5 py-4 border-b border-[#2a2f3e]">
+        <h2 className="text-sm font-semibold text-slate-300">Horários de Maior Venda</h2>
+        <p className="text-xs text-slate-500 mt-0.5">Pedidos por dia da semana × bloco de 3 horas — útil para programar anúncios</p>
+      </div>
+      <div className="p-5 overflow-x-auto">
+        <div
+          className="inline-grid gap-1.5"
+          style={{ gridTemplateColumns: `48px repeat(8, minmax(40px, 1fr))` }}
+        >
+          {/* Header */}
+          <div />
+          {_BLOCKS.map(b => (
+            <div key={b} className="text-center text-xs text-slate-500 pb-1">{b}</div>
+          ))}
+          {/* Rows */}
+          {_DAYS.map((day, di) => (
+            <React.Fragment key={day}>
+              <div className="text-xs text-slate-400 flex items-center justify-end pr-2">{day}</div>
+              {Array.from({ length: 8 }, (_, bi) => {
+                const val       = grid[di]?.[bi] || 0
+                const intensity = val / maxVal
+                return (
+                  <div
+                    key={bi}
+                    title={`${day} ${_BLOCKS[bi]}: ${val} pedido${val !== 1 ? 's' : ''}`}
+                    className="rounded flex items-center justify-center text-xs font-medium cursor-default transition-colors"
+                    style={{
+                      height: 36,
+                      backgroundColor: intensity > 0
+                        ? `rgba(99,102,241,${0.12 + intensity * 0.83})`
+                        : '#0f1117',
+                      color: intensity > 0.55 ? '#fff' : intensity > 0.1 ? '#a5b4fc' : 'transparent',
+                    }}
+                  >
+                    {val > 0 ? val : ''}
+                  </div>
+                )
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 mt-4">
+          <span className="text-xs text-slate-500">Menos vendas</span>
+          {[0.12, 0.3, 0.5, 0.7, 0.95].map(i => (
+            <div key={i} className="w-6 h-3 rounded" style={{ backgroundColor: `rgba(99,102,241,${i})` }} />
+          ))}
+          <span className="text-xs text-slate-500">Mais vendas</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -228,6 +305,8 @@ export default function DashboardPage() {
   const [insights, setInsights]         = useState<Insight[]>([])
   const [insightsLoading, setInsLoading] = useState(false)
   const [generating, setGenerating]     = useState(false)
+  const [retention, setRetention]       = useState<RetentionData | null>(null)
+  const [heatmap, setHeatmap]           = useState<number[][]>([])
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
@@ -256,7 +335,7 @@ export default function DashboardPage() {
       { data: productEvents },
     ] = await Promise.all([
       supabase.from('orders')
-        .select('id, email, total_price, financial_status, platform_source, utm_source, utm_medium, utm_campaign, created_at')
+        .select('id, email, total_price, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, created_at')
         .eq('client_id', clientId)
         .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: false }),
@@ -381,6 +460,22 @@ export default function DashboardPage() {
         .sort((a, b) => b.views - a.views)
         .slice(0, 8)
     )
+
+    // ── Retention: novos vs recorrentes ──────────────────────────────────────
+    const newOrders       = allOrders.filter((o: any) => o.is_first_purchase === true).length
+    const returningOrders = allOrders.filter((o: any) => o.is_first_purchase === false).length
+    setRetention({ newOrders, returningOrders, total: allOrders.length })
+
+    // ── Heatmap de vendas — 7 dias × 8 blocos de 3h ──────────────────────────
+    const grid: number[][] = Array.from({ length: 7 }, () => Array(8).fill(0))
+    allOrders.forEach((o: any) => {
+      if (!o.created_at) return
+      const d     = new Date(o.created_at)
+      const day   = d.getDay()                       // 0=Dom…6=Sáb
+      const block = Math.min(Math.floor(d.getHours() / 3), 7)  // 0-7
+      grid[day][block] += 1
+    })
+    setHeatmap(grid)
 
     setLastUpdate(new Date())
     setLoading(false)
@@ -557,6 +652,61 @@ export default function DashboardPage() {
           </div>
         </div>
 
+        {/* Novos vs Recorrentes */}
+        {retention && retention.total > 0 && (
+          <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">Novos vs Recorrentes</h2>
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <div>
+                <p className="text-2xl font-bold text-emerald-400">{retention.newOrders}</p>
+                <p className="text-xs text-slate-500 mt-0.5">Novos clientes</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {retention.total > 0 ? ((retention.newOrders / retention.total) * 100).toFixed(0) : 0}% dos pedidos
+                </p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-indigo-400">{retention.returningOrders}</p>
+                <p className="text-xs text-slate-500 mt-0.5">Recorrentes</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {retention.total > 0 ? ((retention.returningOrders / retention.total) * 100).toFixed(0) : 0}% dos pedidos
+                </p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-slate-200">{retention.total}</p>
+                <p className="text-xs text-slate-500 mt-0.5">Total no período</p>
+                <p className="text-xs text-slate-600 mt-0.5">
+                  {retention.total - retention.newOrders - retention.returningOrders > 0
+                    ? `${retention.total - retention.newOrders - retention.returningOrders} sem dado`
+                    : ''}
+                </p>
+              </div>
+            </div>
+            <div className="h-2.5 bg-[#0f1117] rounded-full overflow-hidden flex">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-700"
+                style={{ width: `${retention.total > 0 ? (retention.newOrders / retention.total) * 100 : 0}%` }}
+              />
+              <div
+                className="h-full bg-indigo-500 transition-all duration-700"
+                style={{ width: `${retention.total > 0 ? (retention.returningOrders / retention.total) * 100 : 0}%` }}
+              />
+            </div>
+            <div className="flex items-center gap-4 mt-2">
+              <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Novos
+              </span>
+              <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />Recorrentes
+              </span>
+              {retention.total - retention.newOrders - retention.returningOrders > 0 && (
+                <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className="w-2 h-2 rounded-full bg-slate-600 inline-block" />Sem dado
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Product Performance + Recent Orders */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
@@ -627,6 +777,9 @@ export default function DashboardPage() {
           </div>
 
         </div>
+
+        {/* Heatmap de vendas */}
+        {heatmap.length > 0 && <SalesHeatmap grid={heatmap} />}
 
         {/* AI Insights */}
         <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
