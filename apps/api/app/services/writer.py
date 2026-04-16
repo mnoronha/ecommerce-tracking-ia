@@ -10,6 +10,7 @@ so a DB write failure never breaks the HTTP response.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from ..database import get_supabase
@@ -68,9 +69,12 @@ def upsert_visitor_by_cookie(
     utm_medium: Optional[str] = None,
     utm_campaign: Optional[str] = None,
     first_platform: str = "pixel",
+    gclid: Optional[str] = None,
+    fbclid: Optional[str] = None,
 ) -> Optional[str]:
     """
     Upsert visitor keyed on (client_id, visitor_id).
+    Also persists gclid/fbclid for Google Ads / Meta attribution.
     Returns the visitor UUID or None on failure.
     """
     if not visitor_cookie_id:
@@ -79,7 +83,7 @@ def upsert_visitor_by_cookie(
         sb = get_supabase()
         existing = (
             sb.table("visitors")
-            .select("id,total_pageviews")
+            .select("id,total_pageviews,gclid,fbclid")
             .eq("client_id", client_uuid)
             .eq("visitor_id", visitor_cookie_id)
             .limit(1)
@@ -87,14 +91,20 @@ def upsert_visitor_by_cookie(
         )
         if existing and existing.data:
             row = existing.data[0]
-            sb.table("visitors").update({
+            update: dict = {
                 "last_seen_at": "now()",
                 "total_pageviews": (row.get("total_pageviews") or 0) + 1,
-            }).eq("id", row["id"]).execute()
+            }
+            # Only set gclid/fbclid if not already stored (first touch wins)
+            if gclid and not row.get("gclid"):
+                update["gclid"] = gclid
+            if fbclid and not row.get("fbclid"):
+                update["fbclid"] = fbclid
+            sb.table("visitors").update(update).eq("id", row["id"]).execute()
             return row["id"]
 
         # New visitor
-        insert_result = sb.table("visitors").insert({
+        insert_row: dict = {
             "client_id": client_uuid,
             "visitor_id": visitor_cookie_id,
             "first_utm_source": utm_source,
@@ -102,7 +112,13 @@ def upsert_visitor_by_cookie(
             "first_utm_campaign": utm_campaign,
             "first_platform": first_platform,
             "total_pageviews": 1,
-        }).execute()
+        }
+        if gclid:
+            insert_row["gclid"] = gclid
+        if fbclid:
+            insert_row["fbclid"] = fbclid
+
+        insert_result = sb.table("visitors").insert(insert_row).execute()
         if insert_result and insert_result.data:
             return insert_result.data[0]["id"]
     except Exception as exc:
@@ -125,11 +141,10 @@ def upsert_visitor_by_email(
         return None
     try:
         sb = get_supabase()
-        # Try to find by email first
         if email:
             existing = (
                 sb.table("visitors")
-                .select("id,total_orders")
+                .select("id,total_orders,total_revenue,ltv")
                 .eq("client_id", client_uuid)
                 .eq("email", email)
                 .limit(1)
@@ -140,7 +155,7 @@ def upsert_visitor_by_email(
                 sb.table("visitors").update({
                     "last_seen_at": "now()",
                     "platform_customer_id": platform_customer_id,
-                    "total_orders": (row.get("total_orders") or 0) + 1,
+                    # total_orders and total_revenue are updated by write_order
                 }).eq("id", row["id"]).execute()
                 return row["id"]
 
@@ -152,7 +167,7 @@ def upsert_visitor_by_email(
             "phone": phone,
             "platform_customer_id": platform_customer_id,
             "first_platform": platform,
-            "total_orders": 1,
+            "total_orders": 0,  # write_order will increment
         }).execute()
         if insert_result and insert_result.data:
             return insert_result.data[0]["id"]
@@ -211,6 +226,8 @@ def write_order(
 ) -> Optional[str]:
     """
     Upsert an order into the orders table.
+    Correctly sets is_first_purchase by checking prior orders for this visitor/email.
+    Updates visitor totals (total_orders, total_revenue, ltv) after writing.
     Returns the order UUID or None.
     """
     order = event.order
@@ -219,23 +236,39 @@ def write_order(
 
     utm = event.utm
     customer = event.customer
+    sb = get_supabase()
+
+    # ── Determine first vs repeat purchase ───────────────────────────────────
+    is_first = True
+    if client_uuid and customer and customer.email:
+        try:
+            prior = (
+                sb.table("orders")
+                .select("id", count="exact", head=True)
+                .eq("client_id", client_uuid)
+                .eq("email", customer.email)
+                .execute()
+            )
+            is_first = (prior.count or 0) == 0
+        except Exception as exc:
+            logger.debug("first_purchase check failed: %s", exc)
 
     row = {
-        "platform_order_id": order.id,
+        "platform_order_id":     order.id,
         "platform_order_number": order.number,
-        "platform_source": event.platform,
-        "platform": event.platform,
-        "email": customer.email if customer else None,
-        "phone": customer.phone if customer else None,
-        "total_price": order.total,
-        "currency": order.currency or "BRL",
-        "financial_status": order.status,
+        "platform_source":       event.platform,
+        "platform":              event.platform,
+        "email":                 customer.email  if customer else None,
+        "phone":                 customer.phone  if customer else None,
+        "total_price":           order.total,
+        "currency":              order.currency or "BRL",
+        "financial_status":      order.status,
         "utm_source":   utm.source   if utm else None,
         "utm_medium":   utm.medium   if utm else None,
         "utm_campaign": utm.campaign if utm else None,
         "utm_content":  utm.content  if utm else None,
-        "is_first_purchase": False,
-        "is_repeat_purchase": False,
+        "is_first_purchase":  is_first,
+        "is_repeat_purchase": not is_first,
         "capi_sent": False,
     }
     if client_uuid:
@@ -244,8 +277,6 @@ def write_order(
         row["visitor_id"] = visitor_uuid
 
     try:
-        sb = get_supabase()
-        # Upsert on (client_id, platform_order_id)
         result = (
             sb.table("orders")
             .upsert(row, on_conflict="client_id,platform_order_id" if client_uuid else None)
@@ -253,11 +284,57 @@ def write_order(
         )
         if result.data:
             order_uuid = result.data[0]["id"]
-            logger.debug("orders upsert OK — %s", order_uuid)
+            logger.debug("orders upsert OK — %s (first=%s)", order_uuid, is_first)
+
+            # ── Update visitor totals ─────────────────────────────────────────
+            if visitor_uuid and order.total:
+                _update_visitor_totals(visitor_uuid, float(order.total))
+
             return order_uuid
     except Exception as exc:
         logger.error("write_order failed: %s", exc)
     return None
+
+
+def _update_visitor_totals(visitor_uuid: str, order_total: float) -> None:
+    """Increment visitor total_orders, total_revenue and ltv after a new order."""
+    try:
+        sb = get_supabase()
+        existing = (
+            sb.table("visitors")
+            .select("total_orders,total_revenue,ltv")
+            .eq("id", visitor_uuid)
+            .limit(1)
+            .execute()
+        )
+        if not (existing and existing.data):
+            return
+        row = existing.data[0]
+        new_orders  = (row.get("total_orders")  or 0) + 1
+        new_revenue = float(row.get("total_revenue") or 0) + order_total
+        sb.table("visitors").update({
+            "total_orders":  new_orders,
+            "total_revenue": round(new_revenue, 2),
+            "ltv":           round(new_revenue, 2),  # ltv = lifetime revenue
+        }).eq("id", visitor_uuid).execute()
+        logger.debug("visitor totals updated — %s orders=%d ltv=%.2f",
+                     visitor_uuid, new_orders, new_revenue)
+    except Exception as exc:
+        logger.warning("_update_visitor_totals failed: %s", exc)
+
+
+# ── Mark CAPI sent ─────────────────────────────────────────────────────────────
+
+def mark_capi_sent(order_uuid: str) -> None:
+    """Mark an order as successfully sent to Meta CAPI."""
+    try:
+        get_supabase().table("orders").update({
+            "capi_sent":    True,
+            "capi_sent_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", order_uuid).execute()
+        logger.debug("capi_sent=true for order %s", order_uuid)
+    except Exception as exc:
+        logger.warning("mark_capi_sent failed: %s", exc)
 
 
 # ── webhook_deliveries ────────────────────────────────────────────────────────

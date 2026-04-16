@@ -1,8 +1,14 @@
 """
-Meta Conversions API (CAPI) — server-side purchase event sender.
+Meta Conversions API (CAPI) — server-side event sender.
 
-Sends server-side Purchase events to Meta, complementing the browser pixel.
-This improves attribution reliability and bypasses ad blockers / iOS restrictions.
+Sends server-side events to Meta, complementing the browser pixel.
+Improves attribution reliability and bypasses ad blockers / iOS restrictions.
+
+Events sent:
+  Purchase        — on order.paid webhook (highest priority)
+  AddToCart       — on pixel add_to_cart event
+  ViewContent     — on pixel product_viewed event
+  InitiateCheckout — on pixel begin_checkout event
 
 Docs: https://developers.facebook.com/docs/marketing-api/conversions-api
 """
@@ -30,38 +36,15 @@ def _sha256(value: Optional[str]) -> Optional[str]:
     return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
 
 
-# ── Sender ────────────────────────────────────────────────────────────────────
+# ── user_data builder ─────────────────────────────────────────────────────────
 
-def send_purchase(
-    pixel_id: str,
-    access_token: str,
-    event: NormalizedEvent,
-    test_event_code: Optional[str] = None,
-) -> bool:
+def _build_user_data(event: NormalizedEvent) -> dict:
     """
-    Send a Purchase event to Meta CAPI.
-
-    Args:
-        pixel_id:        Meta Pixel ID (from Business Manager).
-        access_token:    System User access token with ads_management permission.
-        event:           Normalized order event (must have event.order set).
-        test_event_code: Optional test code to verify in Events Manager.
-
-    Returns True on success, False on any error (never raises).
+    Build user_data dict with all available PII (hashed) and browser identifiers.
+    More signals = higher match rate. Target: >80% with fbp + email.
     """
-    if not pixel_id or not access_token:
-        logger.debug("meta_capi: skipped — no pixel_id or access_token")
-        return False
-
-    order = event.order
-    if not order:
-        logger.debug("meta_capi: skipped — no order data in event")
-        return False
-
-    customer = event.customer
-
-    # Build user_data with hashed PII + browser identifiers
     user_data: dict = {}
+    customer = event.customer
     if customer:
         if customer.email:
             user_data["em"] = [_sha256(customer.email)]
@@ -80,34 +63,29 @@ def send_purchase(
             if addr.zip_code:
                 user_data["zp"] = [_sha256(addr.zip_code.replace(" ", ""))]
 
-    # Browser-side identifiers — dramatically improve match rate (60-80%+ vs ~30%)
+    # Browser identifiers — not hashed per Meta spec
     meta = event.metadata or {}
     if meta.get("fbp"):
-        user_data["fbp"] = meta["fbp"]   # not hashed — sent as-is
+        user_data["fbp"] = meta["fbp"]
     if meta.get("fbc"):
-        user_data["fbc"] = meta["fbc"]   # not hashed — sent as-is
+        user_data["fbc"] = meta["fbc"]
 
-    # Build the event payload
-    capi_event: dict = {
-        "event_name":    "Purchase",
-        "event_time":    int(time.time()),
-        "action_source": "website",
-        "event_id":      event.event_id,   # deduplication key vs. browser pixel
-        "user_data":     user_data,
-        "custom_data": {
-            "currency": (order.currency or "BRL").upper(),
-            "value":    float(order.total or 0),
-            "order_id": str(order.id),
-        },
-    }
+    return user_data
 
+
+def _send(
+    pixel_id: str,
+    access_token: str,
+    capi_events: list[dict],
+    test_event_code: Optional[str] = None,
+) -> bool:
+    """Low-level sender. Returns True on success."""
     payload: dict = {
-        "data":         [capi_event],
+        "data":         capi_events,
         "access_token": access_token,
     }
     if test_event_code:
         payload["test_event_code"] = test_event_code
-
     try:
         resp = httpx.post(
             _CAPI_URL.format(pixel_id=pixel_id),
@@ -116,23 +94,129 @@ def send_purchase(
         )
         if resp.status_code == 200:
             result = resp.json()
-            logger.info(
-                "meta_capi Purchase sent — order=%s events_received=%s",
-                order.id,
-                result.get("events_received"),
-            )
+            logger.info("meta_capi sent %d event(s) — events_received=%s",
+                        len(capi_events), result.get("events_received"))
             return True
-        else:
-            logger.warning(
-                "meta_capi error %s for order=%s: %s",
-                resp.status_code,
-                order.id,
-                resp.text[:300],
-            )
-            return False
+        logger.warning("meta_capi HTTP %s: %s", resp.status_code, resp.text[:300])
+        return False
     except httpx.TimeoutException:
-        logger.warning("meta_capi timeout for order=%s", order.id)
+        logger.warning("meta_capi timeout")
         return False
     except Exception as exc:
-        logger.error("meta_capi exception for order=%s: %s", order.id, exc)
+        logger.error("meta_capi exception: %s", exc)
         return False
+
+
+# ── Public senders ────────────────────────────────────────────────────────────
+
+def send_purchase(
+    pixel_id: str,
+    access_token: str,
+    event: NormalizedEvent,
+    test_event_code: Optional[str] = None,
+) -> bool:
+    """Send Purchase event. Returns True on success."""
+    if not pixel_id or not access_token:
+        return False
+    order = event.order
+    if not order:
+        return False
+
+    capi_event = {
+        "event_name":    "Purchase",
+        "event_time":    int(time.time()),
+        "action_source": "website",
+        "event_id":      event.event_id,  # deduplication key vs. browser pixel
+        "user_data":     _build_user_data(event),
+        "custom_data": {
+            "currency": (order.currency or "BRL").upper(),
+            "value":    float(order.total or 0),
+            "order_id": str(order.id),
+            # content_ids and contents improve ML signal for Meta Advantage+
+            "content_ids":  [str(item.product_id) for item in (order.items or []) if item.product_id],
+            "contents": [
+                {
+                    "id":         str(item.product_id),
+                    "quantity":   item.quantity or 1,
+                    "item_price": float(item.price or 0),
+                    "title":      item.name or "",
+                }
+                for item in (order.items or []) if item.product_id
+            ],
+            "num_items": sum(item.quantity or 1 for item in (order.items or [])),
+        },
+    }
+    return _send(pixel_id, access_token, [capi_event], test_event_code)
+
+
+def send_pixel_event(
+    pixel_id: str,
+    access_token: str,
+    event: NormalizedEvent,
+) -> bool:
+    """
+    Send ViewContent, AddToCart, or InitiateCheckout from pixel events.
+    Maps NormalizedEvent.event_type → Meta standard event name.
+    Returns True on success.
+    """
+    if not pixel_id or not access_token:
+        return False
+
+    event_map = {
+        "product.viewed":    "ViewContent",
+        "cart.created":      "AddToCart",
+        "cart.updated":      "AddToCart",
+        "checkout.started":  "InitiateCheckout",
+    }
+    meta_event_name = event_map.get(event.event_type.value)
+    if not meta_event_name:
+        return False
+
+    meta = event.metadata or {}
+    custom_data: dict = {}
+
+    if meta_event_name == "ViewContent":
+        custom_data = {
+            "content_type": "product",
+            "content_ids":  [str(meta["product_id"])] if meta.get("product_id") else [],
+            "contents": [{
+                "id":         str(meta.get("product_id", "")),
+                "quantity":   1,
+                "item_price": float(meta.get("product_price", 0)),
+                "title":      meta.get("product_name", ""),
+            }] if meta.get("product_id") else [],
+            "value":    float(meta.get("product_price", 0)),
+            "currency": "BRL",
+        }
+    elif meta_event_name == "AddToCart":
+        custom_data = {
+            "content_type": "product",
+            "content_ids":  [str(meta["product_id"])] if meta.get("product_id") else [],
+            "contents": [{
+                "id":         str(meta.get("product_id", "")),
+                "quantity":   1,
+                "item_price": float(meta.get("product_price", 0)),
+                "title":      meta.get("product_name", ""),
+            }] if meta.get("product_id") else [],
+            "value":    float(meta.get("product_price", 0)),
+            "currency": "BRL",
+        }
+    elif meta_event_name == "InitiateCheckout":
+        custom_data = {
+            "value":      float(meta.get("cart_total", 0)),
+            "currency":   "BRL",
+            "num_items":  int(meta.get("item_count", 0)),
+        }
+
+    capi_event = {
+        "event_name":    meta_event_name,
+        "event_time":    int(time.time()),
+        "action_source": "website",
+        "event_id":      event.event_id,
+        "user_data":     _build_user_data(event),
+        "custom_data":   custom_data,
+    }
+    if event.page_url:
+        capi_event["event_source_url"] = event.page_url
+
+    return _send(pixel_id, access_token, [capi_event])

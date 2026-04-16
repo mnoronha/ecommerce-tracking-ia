@@ -3,68 +3,73 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Request, Response
 from pydantic import BaseModel
 
+from ..config import settings
 from ..database import get_supabase
-from ..services import writer
+from ..services import meta_capi, writer
 from ..models.events import EventType, NormalizedEvent, UTMParams
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# ── 1x1 transparent GIF bytes ─────────────────────────────────────────────────
+# ── 1x1 transparent GIF ───────────────────────────────────────────────────────
 _TRANSPARENT_GIF = (
     b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff"
     b"\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,"
     b"\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;"
 )
 
+# Events that trigger CAPI server-side (complement browser pixel)
+_CAPI_PIXEL_EVENTS = {
+    EventType.PRODUCT_VIEWED,
+    EventType.CART_CREATED,
+    EventType.CART_UPDATED,
+    EventType.CHECKOUT_STARTED,
+}
+
 _PIXEL_EVENT_MAP: dict = {
-    # pageview
-    "pageview":             EventType.PAGE_VIEWED,
-    "page_viewed":          EventType.PAGE_VIEWED,
-    # product
-    "product_viewed":       EventType.PRODUCT_VIEWED,
-    "view_product":         EventType.PRODUCT_VIEWED,
-    # cart — FIX: add_to_cart was missing → was falling through to CUSTOM
-    "add_to_cart":          EventType.CART_CREATED,
-    "cart_created":         EventType.CART_CREATED,
-    "cart_updated":         EventType.CART_UPDATED,
-    # checkout
-    "checkout_started":     EventType.CHECKOUT_STARTED,
-    "begin_checkout":       EventType.CHECKOUT_STARTED,
-    # purchase
-    "checkout_completed":   EventType.CHECKOUT_COMPLETED,
-    "purchase":             EventType.CHECKOUT_COMPLETED,
+    "pageview":           EventType.PAGE_VIEWED,
+    "page_viewed":        EventType.PAGE_VIEWED,
+    "product_viewed":     EventType.PRODUCT_VIEWED,
+    "view_product":       EventType.PRODUCT_VIEWED,
+    "add_to_cart":        EventType.CART_CREATED,
+    "cart_created":       EventType.CART_CREATED,
+    "cart_updated":       EventType.CART_UPDATED,
+    "checkout_started":   EventType.CHECKOUT_STARTED,
+    "begin_checkout":     EventType.CHECKOUT_STARTED,
+    "checkout_completed": EventType.CHECKOUT_COMPLETED,
+    "purchase":           EventType.CHECKOUT_COMPLETED,
 }
 
 
 # ── Request schema ─────────────────────────────────────────────────────────────
 
 class UTMData(BaseModel):
-    source: Optional[str] = None
-    medium: Optional[str] = None
+    source:   Optional[str] = None
+    medium:   Optional[str] = None
     campaign: Optional[str] = None
-    term: Optional[str] = None
-    content: Optional[str] = None
+    term:     Optional[str] = None
+    content:  Optional[str] = None
 
 
 class PixelEventRequest(BaseModel):
-    client_id: str
-    event_type: str = "pageview"
-    visitor_id: Optional[str] = None
-    session_id: Optional[str] = None
-    page_url: Optional[str] = None
-    referrer: Optional[str] = None
-    utm: Optional[UTMData] = None
-    metadata: Optional[dict] = None
-    timestamp: Optional[datetime] = None
-    # ── Advertising identifiers (critical for CAPI match rate) ──────────────
-    fbp: Optional[str] = None           # Meta Pixel browser ID (_fbp cookie)
-    fbc: Optional[str] = None           # Meta click ID (_fbc cookie / fbclid param)
+    client_id:    str
+    event_type:   str = "pageview"
+    visitor_id:   Optional[str] = None
+    session_id:   Optional[str] = None
+    page_url:     Optional[str] = None
+    referrer:     Optional[str] = None
+    utm:          Optional[UTMData] = None
+    metadata:     Optional[dict] = None
+    timestamp:    Optional[datetime] = None
+    # ── Advertising identifiers ──────────────────────────────────────────────
+    fbp:          Optional[str] = None  # Meta browser ID (_fbp cookie)
+    fbc:          Optional[str] = None  # Meta click ID (_fbc cookie / fbclid)
     ga_client_id: Optional[str] = None  # GA4 client ID (_ga cookie)
+    gclid:        Optional[str] = None  # Google click ID (gclid URL param)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -88,18 +93,17 @@ def _build_normalized(
         utm=UTMParams(**(data.utm.model_dump() if data.utm else {})),
         metadata={
             **(data.metadata or {}),
-            "user_agent": user_agent,
-            "ip": ip,
-            # Advertising identifiers — stored for CAPI passthrough
+            "user_agent":   user_agent,
+            "ip":           ip,
             "fbp":          data.fbp,
             "fbc":          data.fbc,
             "ga_client_id": data.ga_client_id,
+            "gclid":        data.gclid,
         },
     )
 
 
 def _persist(event: NormalizedEvent) -> None:
-    """Best-effort persist; never raises."""
     event_dict = event.model_dump(mode="json")
     if "order" in event_dict:
         event_dict["order_data"] = event_dict.pop("order")
@@ -109,6 +113,29 @@ def _persist(event: NormalizedEvent) -> None:
         logger.error("Failed to persist pixel event: %s", exc)
 
 
+def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
+    """Send ViewContent / AddToCart / InitiateCheckout to Meta CAPI (background)."""
+    try:
+        creds = (
+            get_supabase().table("clients")
+            .select("meta_pixel_id, meta_access_token")
+            .eq("pixel_id", client_pixel_id)
+            .limit(1)
+            .execute()
+        )
+        if not (creds and creds.data):
+            return
+        c = creds.data[0]
+        if c.get("meta_pixel_id") and c.get("meta_access_token"):
+            meta_capi.send_pixel_event(
+                pixel_id=c["meta_pixel_id"],
+                access_token=c["meta_access_token"],
+                event=event,
+            )
+    except Exception as exc:
+        logger.warning("_dispatch_pixel_capi error: %s", exc)
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @router.post(
@@ -116,29 +143,34 @@ def _persist(event: NormalizedEvent) -> None:
     summary="Receive JS pixel events (Beacon API / fetch)",
     tags=["pixel"],
 )
-async def receive_pixel_event(body: PixelEventRequest, request: Request):
-    """
-    Receives tracking events sent by the pixel JavaScript snippet via
-    the Beacon API (or `fetch` fallback).
-    """
+async def receive_pixel_event(
+    body: PixelEventRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
     event = _build_normalized(
         data=body,
         user_agent=request.headers.get("user-agent"),
         ip=request.client.host if request.client else None,
     )
-    # ── Raw event store (backward-compat) ─────────────────────────────────
+
     _persist(event)
 
-    # ── Structured v2.0 writes ─────────────────────────────────────────────
-    client_uuid = writer.resolve_client_uuid(body.client_id)
+    client_uuid  = writer.resolve_client_uuid(body.client_id)
     visitor_uuid = writer.upsert_visitor_by_cookie(
         client_uuid=client_uuid,
         visitor_cookie_id=body.visitor_id or "",
-        utm_source=body.utm.source if body.utm else None,
-        utm_medium=body.utm.medium if body.utm else None,
+        utm_source=body.utm.source    if body.utm else None,
+        utm_medium=body.utm.medium    if body.utm else None,
         utm_campaign=body.utm.campaign if body.utm else None,
+        gclid=body.gclid,
+        fbclid=body.fbc,
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
+
+    # Fire CAPI for mid-funnel events (ViewContent, AddToCart, InitiateCheckout)
+    if event.event_type in _CAPI_PIXEL_EVENTS:
+        background_tasks.add_task(_dispatch_pixel_capi, body.client_id, event)
 
     return {"status": "ok", "event_id": event.event_id}
 
@@ -157,10 +189,6 @@ async def pixel_image_fallback(
     url: Optional[str] = None,
     ref: Optional[str] = None,
 ):
-    """
-    Fallback for browsers that block the Beacon API.
-    Returns a 1×1 transparent GIF while persisting the event.
-    """
     if cid:
         body = PixelEventRequest(
             client_id=cid,
@@ -181,7 +209,7 @@ async def pixel_image_fallback(
         media_type="image/gif",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
+            "Pragma":        "no-cache",
+            "Expires":       "0",
         },
     )

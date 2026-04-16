@@ -114,7 +114,6 @@
   }
 
   // ── GA4 client ID ────────────────────────────────────────────────────────────
-  // Extracts the numeric part from the _ga cookie (e.g. "GA1.2.123456789.1234567890" → "123456789.1234567890")
   function getGaClientId() {
     var ga = getCookie('_ga');
     if (ga) {
@@ -122,6 +121,17 @@
       if (parts.length >= 4) return parts[2] + '.' + parts[3];
     }
     return null;
+  }
+
+  // ── Google click ID (gclid) ──────────────────────────────────────────────────
+  // Persisted in cookie so it's available on all subsequent pages after the ad click
+  function getGclid() {
+    var gclid = (location.search.match(/[?&]gclid=([^&#]*)/) || [])[1];
+    if (gclid) {
+      setCookie('_gclid', gclid, 90);
+      return gclid;
+    }
+    return getCookie('_gclid') || null;
   }
 
   // ── Transport ────────────────────────────────────────────────────────────────
@@ -162,6 +172,7 @@
       fbp:          meta.fbp,
       fbc:          meta.fbc,
       ga_client_id: getGaClientId(),
+      gclid:        getGclid(),
       metadata:     extra || {}
     });
   }
