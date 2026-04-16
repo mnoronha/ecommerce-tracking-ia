@@ -62,8 +62,22 @@ def _dispatch_purchase_capi(
     Fire Purchase event to Meta CAPI + GA4.
     Marks capi_sent=true on the order after successful Meta send.
     Runs in a background task — never blocks the webhook response.
+    Skips silently if capi_sent is already True (idempotent on retries).
     """
     try:
+        # Guard: skip if already sent (webhook retry / duplicate delivery)
+        if order_uuid:
+            check = (
+                get_supabase().table("orders")
+                .select("capi_sent")
+                .eq("id", order_uuid)
+                .limit(1)
+                .execute()
+            )
+            if check.data and check.data[0].get("capi_sent"):
+                logger.info("capi already sent for order %s — skipping", order_uuid)
+                return
+
         creds_result = (
             get_supabase().table("clients")
             .select("meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret")

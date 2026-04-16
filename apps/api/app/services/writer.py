@@ -323,6 +323,33 @@ def _update_visitor_totals(visitor_uuid: str, order_total: float) -> None:
         logger.warning("_update_visitor_totals failed: %s", exc)
 
 
+# ── Visitor email merge ────────────────────────────────────────────────────────
+
+def set_visitor_email(
+    visitor_uuid: str,
+    email: str,
+    phone: Optional[str] = None,
+) -> None:
+    """
+    Write email (and optionally phone) onto a cookie-based visitor after checkout.
+
+    Called when the browser pixel fires checkout_completed with customer_email.
+    This links the anonymous browsing session to the real customer, so that
+    upsert_visitor_by_email (called later by the webhook) finds the same record
+    instead of creating a duplicate.
+    """
+    if not visitor_uuid or not email:
+        return
+    try:
+        update: dict = {"email": email.strip().lower()}
+        if phone:
+            update["phone"] = phone
+        get_supabase().table("visitors").update(update).eq("id", visitor_uuid).execute()
+        logger.debug("visitor %s → email linked: %s", visitor_uuid, email)
+    except Exception as exc:
+        logger.warning("set_visitor_email failed: %s", exc)
+
+
 # ── Mark CAPI sent ─────────────────────────────────────────────────────────────
 
 def mark_capi_sent(order_uuid: str) -> None:

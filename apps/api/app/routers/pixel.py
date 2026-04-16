@@ -168,6 +168,13 @@ async def receive_pixel_event(
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
 
+    # Link cookie visitor to email when checkout_completed carries customer_email
+    # This ensures the webhook (order.paid) finds the same visitor record
+    if event.event_type == EventType.CHECKOUT_COMPLETED and visitor_uuid:
+        email_from_pixel = (body.metadata or {}).get("customer_email")
+        if email_from_pixel:
+            writer.set_visitor_email(visitor_uuid, email_from_pixel)
+
     # Fire CAPI for mid-funnel events (ViewContent, AddToCart, InitiateCheckout)
     if event.event_type in _CAPI_PIXEL_EVENTS:
         background_tasks.add_task(_dispatch_pixel_capi, body.client_id, event)

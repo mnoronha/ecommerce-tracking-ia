@@ -18,6 +18,16 @@ import logging
 import time
 from typing import Optional
 
+
+def _deterministic_purchase_id(platform: str, order_id: str) -> str:
+    """
+    Gera event_id estável para Purchase CAPI.
+    Mesmo pedido + plataforma → mesmo ID → Meta deduplica automaticamente
+    mesmo que o webhook seja disparado mais de uma vez.
+    """
+    raw = f"purchase_{platform}_{order_id}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
 import httpx
 
 from ..models.events import NormalizedEvent
@@ -122,11 +132,15 @@ def send_purchase(
     if not order:
         return False
 
+    # Deterministic event_id: mesmo order_id sempre gera o mesmo hash.
+    # Isso garante deduplicação mesmo em retries de webhook ou reprocessamento.
+    dedup_id = _deterministic_purchase_id(event.platform or "webhook", str(order.id))
+
     capi_event = {
         "event_name":    "Purchase",
         "event_time":    int(time.time()),
         "action_source": "website",
-        "event_id":      event.event_id,  # deduplication key vs. browser pixel
+        "event_id":      dedup_id,
         "user_data":     _build_user_data(event),
         "custom_data": {
             "currency": (order.currency or "BRL").upper(),

@@ -225,12 +225,13 @@
   });
 
   {% if template.name == 'customers/order' %}
-  // checkout_completed — order_id used for CAPI deduplication with server-side webhook
+  // checkout_completed — customer_email links cookie visitor to email record (dedup com webhook)
   track('checkout_completed', {
-    order_id:    '{{ order.order_number }}',
-    order_total: {{ order.total_price | divided_by: 100.0 }},
-    currency:    '{{ order.currency }}',
-    item_count:  {{ order.line_items.size }}
+    order_id:       '{{ order.order_number }}',
+    order_total:    {{ order.total_price | divided_by: 100.0 }},
+    currency:       '{{ order.currency }}',
+    item_count:     {{ order.line_items.size }},
+    customer_email: {{ customer.email | json }}
   });
   {% endif %}
 
