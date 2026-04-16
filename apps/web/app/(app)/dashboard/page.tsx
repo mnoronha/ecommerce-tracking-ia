@@ -79,6 +79,33 @@ interface Insight {
   created_at: string
 }
 
+interface RoasCampaign {
+  campaign_name: string
+  utm_source:   string | null
+  spend:        number
+  revenue:      number
+  orders:       number
+  roas:         number | null
+  cpa:          number | null
+  impressions:  number
+  clicks:       number
+  ctr:          number | null
+  cpm:          number | null
+}
+
+interface RoasData {
+  has_ads_credentials: boolean
+  days:       number
+  campaigns:  RoasCampaign[]
+  totals: {
+    spend:     number
+    revenue:   number
+    orders:    number
+    roas:      number | null
+    total_cpa: number | null
+  }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) =>
@@ -307,6 +334,8 @@ export default function DashboardPage() {
   const [generating, setGenerating]     = useState(false)
   const [retention, setRetention]       = useState<RetentionData | null>(null)
   const [heatmap, setHeatmap]           = useState<number[][]>([])
+  const [roasData, setRoasData]         = useState<RoasData | null>(null)
+  const [roasLoading, setRoasLoading]   = useState(false)
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
@@ -504,6 +533,16 @@ export default function DashboardPage() {
     }
   }, [loadInsights])
 
+  const loadRoas = useCallback(async (range: DateRange) => {
+    setRoasLoading(true)
+    try {
+      const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
+      const res  = await fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/roas?days=${days}`)
+      if (res.ok) setRoasData(await res.json())
+    } catch (_) {}
+    setRoasLoading(false)
+  }, [])
+
   const markRead = useCallback(async (insightId: string) => {
     setInsights(prev => prev.map(i => i.id === insightId ? { ...i, is_read: true } : i))
     await fetch(`${API_URL}/insights/lk-sneakers/${insightId}/read`, { method: 'PATCH' })
@@ -511,6 +550,7 @@ export default function DashboardPage() {
 
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
+  useEffect(() => { loadRoas(dateRange) }, [dateRange, loadRoas])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -780,6 +820,106 @@ export default function DashboardPage() {
 
         {/* Heatmap de vendas */}
         {heatmap.length > 0 && <SalesHeatmap grid={heatmap} />}
+
+        {/* Meta Ads ROAS */}
+        {roasData && (
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-300">Meta Ads — ROAS por Campanha</h2>
+                {!roasData.has_ads_credentials && (
+                  <p className="text-xs text-yellow-500 mt-0.5">
+                    Configure <code className="bg-yellow-500/10 px-1 rounded">meta_ad_account_id</code> no cliente para ver gasto e ROAS
+                  </p>
+                )}
+              </div>
+              {roasData.totals.roas != null && (
+                <div className="text-right">
+                  <p className="text-2xl font-bold text-indigo-400">{roasData.totals.roas.toFixed(2)}x</p>
+                  <p className="text-xs text-slate-500">ROAS total</p>
+                </div>
+              )}
+            </div>
+
+            {/* Summary strip */}
+            {roasData.has_ads_credentials && roasData.totals.spend > 0 && (
+              <div className="grid grid-cols-4 divide-x divide-[#2a2f3e] border-b border-[#2a2f3e]">
+                {[
+                  { label: 'Gasto',     value: fmt(roasData.totals.spend) },
+                  { label: 'Receita',   value: fmt(roasData.totals.revenue) },
+                  { label: 'ROAS',      value: roasData.totals.roas != null ? `${roasData.totals.roas.toFixed(2)}x` : '—' },
+                  { label: 'CPA',       value: roasData.totals.total_cpa != null ? fmt(roasData.totals.total_cpa) : '—' },
+                ].map(s => (
+                  <div key={s.label} className="px-5 py-3 text-center">
+                    <p className="text-xs text-slate-500">{s.label}</p>
+                    <p className="text-sm font-bold text-white mt-0.5">{s.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="overflow-x-auto">
+              {roasLoading ? (
+                <div className="flex items-center gap-2 p-5 text-slate-500 text-sm">
+                  <Loader2 size={14} className="animate-spin" /> Carregando…
+                </div>
+              ) : roasData.campaigns.length === 0 ? (
+                <p className="p-5 text-slate-500 text-sm">Nenhuma campanha no período</p>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#2a2f3e]">
+                      {['Campanha', 'Pedidos', 'Receita',
+                        ...(roasData.has_ads_credentials ? ['Gasto', 'ROAS', 'CPA', 'Clicks'] : [])
+                      ].map(h => (
+                        <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {roasData.campaigns.map((c, i) => (
+                      <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <p className="text-slate-200 text-xs truncate">{c.campaign_name}</p>
+                          {c.utm_source && (
+                            <span className={`text-xs px-1.5 py-0.5 rounded mt-0.5 inline-block ${
+                              ['facebook','instagram','meta'].includes(c.utm_source)
+                                ? 'bg-blue-500/10 text-blue-400'
+                                : c.utm_source === 'google' ? 'bg-red-500/10 text-red-400'
+                                : 'bg-slate-500/10 text-slate-400'
+                            }`}>{c.utm_source}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-slate-200 font-medium">{c.orders}</td>
+                        <td className="px-4 py-3 text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
+                        {roasData.has_ads_credentials && (
+                          <>
+                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                              {c.spend > 0 ? fmt(c.spend) : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {c.roas != null ? (
+                                <span className={`font-bold ${c.roas >= 3 ? 'text-emerald-400' : c.roas >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                  {c.roas.toFixed(2)}x
+                                </span>
+                              ) : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
+                              {c.cpa != null ? fmt(c.cpa) : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-4 py-3 text-slate-400">
+                              {c.clicks > 0 ? c.clicks.toLocaleString('pt-BR') : <span className="text-slate-600">—</span>}
+                            </td>
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* AI Insights */}
         <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">

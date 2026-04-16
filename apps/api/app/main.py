@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .routers import ecommerce_webhooks, insights, pixel
+from .routers import ecommerce_webhooks, insights, meta_ads, pixel
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -45,6 +45,7 @@ if _static_dir.exists():
 app.include_router(ecommerce_webhooks.router)
 app.include_router(pixel.router)
 app.include_router(insights.router)
+app.include_router(meta_ads.router)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────
