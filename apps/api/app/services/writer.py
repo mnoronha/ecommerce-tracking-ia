@@ -350,6 +350,43 @@ def set_visitor_email(
         logger.warning("set_visitor_email failed: %s", exc)
 
 
+# ── Lead quality score ────────────────────────────────────────────────────────
+
+_LEAD_SCORE_MAP: dict[str, int] = {
+    "product.viewed":     1,
+    "cart.created":       3,
+    "cart.updated":       3,
+    "checkout.started":   5,
+    "checkout.completed": 10,
+    "order.paid":         10,
+}
+
+
+def update_lead_score(visitor_uuid: str, event_type: EventType) -> None:
+    """Increment visitor lead_score based on engagement event."""
+    points = _LEAD_SCORE_MAP.get(event_type.value, 0)
+    if not points or not visitor_uuid:
+        return
+    try:
+        sb = get_supabase()
+        existing = (
+            sb.table("visitors")
+            .select("lead_score")
+            .eq("id", visitor_uuid)
+            .limit(1)
+            .execute()
+        )
+        if not (existing and existing.data):
+            return
+        current = existing.data[0].get("lead_score") or 0
+        sb.table("visitors").update(
+            {"lead_score": current + points}
+        ).eq("id", visitor_uuid).execute()
+        logger.debug("lead_score +%d → %d for visitor %s", points, current + points, visitor_uuid)
+    except Exception as exc:
+        logger.warning("update_lead_score failed: %s", exc)
+
+
 # ── Mark CAPI sent ─────────────────────────────────────────────────────────────
 
 def mark_capi_sent(order_uuid: str) -> None:

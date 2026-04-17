@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from ..config import settings
 from ..database import get_supabase
+from ..limiter import limiter
 from ..services import meta_capi, writer
 from ..models.events import EventType, NormalizedEvent, UTMParams
 
@@ -143,9 +144,10 @@ def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
     summary="Receive JS pixel events (Beacon API / fetch)",
     tags=["pixel"],
 )
+@limiter.limit("100/minute")
 async def receive_pixel_event(
-    body: PixelEventRequest,
     request: Request,
+    body: PixelEventRequest,
     background_tasks: BackgroundTasks,
 ):
     event = _build_normalized(
@@ -167,6 +169,9 @@ async def receive_pixel_event(
         fbclid=body.fbc,
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
+
+    if visitor_uuid:
+        background_tasks.add_task(writer.update_lead_score, visitor_uuid, event.event_type)
 
     # Link cookie visitor to email when checkout_completed carries customer_email
     # This ensures the webhook (order.paid) finds the same visitor record

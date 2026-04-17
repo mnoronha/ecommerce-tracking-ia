@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from ..database import get_supabase
-from ..services import ai_analyst
+from ..services import ai_analyst, alerts
 from ..services.writer import resolve_client_uuid
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,32 @@ async def get_insights(pixel_id: str, limit: int = 10):
     except Exception as exc:
         logger.error("Erro ao buscar insights: %s", exc)
         raise HTTPException(status_code=500, detail="Erro ao buscar insights")
+
+
+@router.post("/{pixel_id}/test-alert")
+async def test_alert(pixel_id: str):
+    """Envia alerta de teste para o Slack webhook configurado no cliente."""
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+    try:
+        row = (
+            get_supabase()
+            .table("clients")
+            .select("slack_webhook_url")
+            .eq("pixel_id", pixel_id)
+            .limit(1)
+            .execute()
+        )
+        webhook_url = (row.data or [{}])[0].get("slack_webhook_url")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="slack_webhook_url não configurado para este cliente")
+
+    ok = alerts.send_test_alert(pixel_id, webhook_url)
+    return {"status": "ok" if ok else "error", "pixel_id": pixel_id}
 
 
 @router.patch("/{pixel_id}/{insight_id}/read")
