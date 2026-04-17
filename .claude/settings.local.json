@@ -60,7 +60,12 @@
       "Bash(curl -s http://localhost:3000 -o /dev/null -w \"HTTP %{http_code}\")",
       "Bash(npx vercel *)",
       "Bash(npx tsc *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(git rm *)"
     ]
   },
   "enableAllProjectMcpServers": true,
