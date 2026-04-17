@@ -253,6 +253,29 @@ def write_order(
         except Exception as exc:
             logger.debug("first_purchase check failed: %s", exc)
 
+    # Inherit UTM from visitor pixel session when webhook carries no UTM
+    effective_utm_source   = utm.source   if utm else None
+    effective_utm_medium   = utm.medium   if utm else None
+    effective_utm_campaign = utm.campaign if utm else None
+    effective_utm_content  = utm.content  if utm else None
+
+    if visitor_uuid and not effective_utm_source:
+        try:
+            vis = (
+                sb.table("visitors")
+                .select("first_utm_source,first_utm_medium,first_utm_campaign,gclid,fbclid")
+                .eq("id", visitor_uuid)
+                .limit(1)
+                .execute()
+            )
+            if vis and vis.data:
+                v = vis.data[0]
+                effective_utm_source   = v.get("first_utm_source")
+                effective_utm_medium   = v.get("first_utm_medium")
+                effective_utm_campaign = v.get("first_utm_campaign")
+        except Exception as exc:
+            logger.debug("utm inheritance from visitor failed: %s", exc)
+
     row = {
         "platform_order_id":     order.id,
         "platform_order_number": order.number,
@@ -263,10 +286,10 @@ def write_order(
         "total_price":           order.total,
         "currency":              order.currency or "BRL",
         "financial_status":      order.status,
-        "utm_source":   utm.source   if utm else None,
-        "utm_medium":   utm.medium   if utm else None,
-        "utm_campaign": utm.campaign if utm else None,
-        "utm_content":  utm.content  if utm else None,
+        "utm_source":   effective_utm_source,
+        "utm_medium":   effective_utm_medium,
+        "utm_campaign": effective_utm_campaign,
+        "utm_content":  effective_utm_content,
         "is_first_purchase":  is_first,
         "is_repeat_purchase": not is_first,
         "capi_sent": False,

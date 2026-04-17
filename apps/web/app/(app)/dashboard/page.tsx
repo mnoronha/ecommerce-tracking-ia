@@ -359,23 +359,29 @@ export default function DashboardPage() {
     const [
       { data: orders },
       { data: ordersPrev },
-      { count: visitorCount },
+      { data: visitorEvents },
       { data: events },
       { data: productEvents },
     ] = await Promise.all([
+      // Bug fix: only paid orders count as revenue
       supabase.from('orders')
         .select('id, email, total_price, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, created_at')
         .eq('client_id', clientId)
+        .eq('financial_status', 'paid')
         .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: false }),
       supabase.from('orders')
         .select('total_price')
         .eq('client_id', clientId)
+        .eq('financial_status', 'paid')
         .gte('created_at', prevStart.toISOString())
         .lt('created_at', startDate.toISOString()),
-      supabase.from('visitors')
-        .select('id', { count: 'exact', head: true })
-        .eq('client_id', clientId),
+      // Bug fix: count unique visitors with events IN the period, not all-time
+      supabase.from('tracking_events')
+        .select('visitor_id')
+        .eq('client_id', clientId)
+        .gte('created_at', startDate.toISOString())
+        .not('visitor_id', 'is', null),
       supabase.from('tracking_events')
         .select('event_type, visitor_id')
         .eq('client_id', clientId)
@@ -391,7 +397,8 @@ export default function DashboardPage() {
     const prevOrders = ordersPrev || []
     const allEvents  = events || []
     const prodEvents = productEvents || []
-    const totalVisitors = visitorCount || 0
+    // Unique visitors with at least one event in the selected period
+    const totalVisitors = new Set((visitorEvents || []).map(e => e.visitor_id)).size
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalRevenue   = allOrders.reduce((s, o) => s + (o.total_price || 0), 0)
@@ -409,7 +416,7 @@ export default function DashboardPage() {
     setRecentOrders(allOrders.slice(0, 6) as Order[])
 
     // ── Revenue chart ─────────────────────────────────────────────────────────
-    const chartDays = range === '7d' ? 7 : range === '30d' ? 14 : 30
+    const chartDays = days  // Bug fix: chart covers full selected period
     const byDay: Record<string, { revenue: number; orders: number }> = {}
     allOrders.forEach(o => {
       const day = fmtDate(o.created_at)
@@ -601,7 +608,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
             <h2 className="text-sm font-semibold text-slate-300 mb-4">
-              Receita — {dateRange === '7d' ? 'últimos 7 dias' : dateRange === '30d' ? 'últimos 14 dias' : 'últimos 30 dias'}
+              Receita — {dateRange === '7d' ? 'últimos 7 dias' : dateRange === '30d' ? 'últimos 30 dias' : 'últimos 90 dias'}
             </h2>
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={revenueData}>
