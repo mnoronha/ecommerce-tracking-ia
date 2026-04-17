@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # ── CORS ─────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "*"
 
+    # ── SMTP (relatório semanal) ──────────────────────────────────────────
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASS: str = ""
+    SMTP_FROM: str = ""  # defaults to SMTP_USER if empty
+
 
 @lru_cache()
 def get_settings() -> Settings:

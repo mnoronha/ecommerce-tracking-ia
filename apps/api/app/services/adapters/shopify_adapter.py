@@ -4,6 +4,7 @@ import base64
 import uuid
 from datetime import datetime
 from typing import Optional, List
+from urllib.parse import parse_qs, urlparse
 
 from .base import BaseAdapter
 from ...models.events import (
@@ -13,6 +14,7 @@ from ...models.events import (
     OrderData,
     OrderItem,
     Address,
+    UTMParams,
 )
 
 
@@ -55,6 +57,25 @@ class ShopifyAdapter(BaseAdapter):
     # ------------------------------------------------------------------ #
     # Parsing helpers                                                      #
     # ------------------------------------------------------------------ #
+
+    def _parse_utm_from_landing(self, landing_site: str) -> Optional[UTMParams]:
+        """Extract UTM params + gclid/fbclid from Shopify's landing_site URL."""
+        if not landing_site:
+            return None
+        try:
+            qs = parse_qs(urlparse(landing_site).query)
+            p = {k: v[0] for k, v in qs.items() if v}
+            if not any(k in p for k in ("utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid")):
+                return None
+            return UTMParams(
+                source=p.get("utm_source"),
+                medium=p.get("utm_medium"),
+                campaign=p.get("utm_campaign"),
+                term=p.get("utm_term"),
+                content=p.get("utm_content"),
+            )
+        except Exception:
+            return None
 
     def _parse_address(self, addr: dict) -> Optional[Address]:
         if not addr:
@@ -146,6 +167,10 @@ class ShopifyAdapter(BaseAdapter):
         except Exception:
             timestamp = datetime.utcnow()
 
+        landing_site = payload.get("landing_site") or payload.get("landing_site_ref", "")
+        qs_raw = parse_qs(urlparse(landing_site).query) if landing_site else {}
+        qs = {k: v[0] for k, v in qs_raw.items() if v}
+
         return NormalizedEvent(
             event_id=str(uuid.uuid4()),
             event_type=event_type,
@@ -154,9 +179,15 @@ class ShopifyAdapter(BaseAdapter):
             timestamp=timestamp,
             customer=self._parse_customer(payload),
             order=self._parse_order(payload),
+            utm=self._parse_utm_from_landing(landing_site),
             raw_payload=payload,
             metadata={
-                "shop_domain": headers.get("x-shopify-shop-domain"),
-                "topic": topic,
+                "shop_domain":   headers.get("x-shopify-shop-domain"),
+                "topic":         topic,
+                "source_name":   payload.get("source_name"),
+                "landing_site":  landing_site,
+                "gclid":         qs.get("gclid"),
+                "fbclid":        qs.get("fbclid"),
+                "referring_site": payload.get("referring_site"),
             },
         )

@@ -350,6 +350,25 @@ def set_visitor_email(
         logger.warning("set_visitor_email failed: %s", exc)
 
 
+# ── fulfillment_status update ─────────────────────────────────────────────────
+
+def update_order_fulfillment(
+    client_uuid: str,
+    platform_order_id: str,
+    fulfillment_status: str,
+) -> None:
+    """Update fulfillment_status on an existing order after orders/fulfilled webhook."""
+    if not client_uuid or not platform_order_id:
+        return
+    try:
+        get_supabase().table("orders").update(
+            {"fulfillment_status": fulfillment_status}
+        ).eq("client_id", client_uuid).eq("platform_order_id", platform_order_id).execute()
+        logger.debug("fulfillment_status=%s for order %s", fulfillment_status, platform_order_id)
+    except Exception as exc:
+        logger.warning("update_order_fulfillment failed: %s", exc)
+
+
 # ── Lead quality score ────────────────────────────────────────────────────────
 
 _LEAD_SCORE_MAP: dict[str, int] = {

@@ -15,6 +15,7 @@ from typing import Optional
 import httpx
 
 from ..database import get_supabase
+from . import email as email_service
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,64 @@ def _send_slack_alert(
         logger.info("slack alert sent for %s (drop=%.1f%%)", pixel_id, drop * 100)
     except Exception as exc:
         logger.warning("_send_slack_alert(%s): %s", pixel_id, exc)
+
+
+# ── Weekly report ─────────────────────────────────────────────────────────────
+
+def send_weekly_reports() -> None:
+    """Entry point called by the scheduler (Mondays 8h). Sends weekly report to all clients."""
+    try:
+        clients = (
+            get_supabase()
+            .table("clients")
+            .select("id, pixel_id, notification_email")
+            .eq("is_active", True)
+            .not_.is_("notification_email", "null")
+            .execute()
+        )
+        if not (clients and clients.data):
+            return
+        for c in clients.data:
+            if c.get("notification_email"):
+                _send_client_weekly_report(c["id"], c["pixel_id"], c["notification_email"])
+    except Exception as exc:
+        logger.error("send_weekly_reports: %s", exc)
+
+
+def _send_client_weekly_report(client_id: str, pixel_id: str, to_email: str) -> None:
+    """Fetch the latest weekly_report insight and send it by email."""
+    try:
+        result = (
+            get_supabase()
+            .table("ai_insights")
+            .select("title, content, created_at")
+            .eq("client_id", client_id)
+            .eq("type", "weekly_report")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not (result and result.data):
+            logger.info("weekly report: no insight found for %s — skipping email", pixel_id)
+            return
+        insight = result.data[0]
+    except Exception as exc:
+        logger.warning("_send_client_weekly_report(%s): query failed — %s", pixel_id, exc)
+        return
+
+    subject = f"Relatório semanal — {pixel_id}"
+    html_body = f"""
+    <html><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <h2 style="color:#1a1a2e">{insight['title']}</h2>
+      <div style="background:#f8f9fa;border-left:4px solid #4361ee;padding:16px;border-radius:4px">
+        <pre style="white-space:pre-wrap;font-family:inherit;margin:0">{insight['content']}</pre>
+      </div>
+      <p style="color:#888;font-size:12px;margin-top:24px">
+        Gerado em {insight['created_at'][:10]} · Ecommerce Tracking IA · {pixel_id}
+      </p>
+    </body></html>
+    """
+    email_service.send_email(to=to_email, subject=subject, html_body=html_body)
 
 
 # ── Manual trigger (for testing) ─────────────────────────────────────────────

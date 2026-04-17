@@ -31,6 +31,14 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _scheduler = BackgroundScheduler()
 _scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
+_scheduler.add_job(
+    alerts.send_weekly_reports,
+    "cron",
+    day_of_week="mon",
+    hour=8,
+    minute=0,
+    id="weekly_reports",
+)
 
 
 @app.on_event("startup")

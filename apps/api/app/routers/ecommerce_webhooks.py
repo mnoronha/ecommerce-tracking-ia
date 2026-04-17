@@ -164,4 +164,9 @@ async def receive_webhook(
     if event.event_type.value in ("order.paid", "checkout.completed") and order_uuid:
         background_tasks.add_task(_dispatch_purchase_capi, client_id, event, order_uuid)
 
+    # Update fulfillment_status when order is fulfilled
+    if event.event_type.value == "order.fulfilled" and client_uuid and event.order:
+        fulfillment_status = (event.raw_payload or {}).get("fulfillment_status") or "fulfilled"
+        writer.update_order_fulfillment(client_uuid, event.order.id, fulfillment_status)
+
     return {"status": "ok", "event_id": event.event_id, "event_type": event.event_type}

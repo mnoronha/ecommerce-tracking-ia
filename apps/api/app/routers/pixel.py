@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from ..config import settings
 from ..database import get_supabase
 from ..limiter import limiter
-from ..services import meta_capi, writer
+from ..services import ga4, meta_capi, writer
 from ..models.events import EventType, NormalizedEvent, UTMParams
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,29 @@ def _persist(event: NormalizedEvent) -> None:
         logger.error("Failed to persist pixel event: %s", exc)
 
 
+def _dispatch_pixel_ga4(client_pixel_id: str, event: NormalizedEvent) -> None:
+    """Send view_item / add_to_cart / begin_checkout to GA4 Measurement Protocol."""
+    try:
+        creds = (
+            get_supabase().table("clients")
+            .select("ga4_measurement_id, ga4_api_secret")
+            .eq("pixel_id", client_pixel_id)
+            .limit(1)
+            .execute()
+        )
+        if not (creds and creds.data):
+            return
+        c = creds.data[0]
+        if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
+            ga4.send_pixel_event(
+                measurement_id=c["ga4_measurement_id"],
+                api_secret=c["ga4_api_secret"],
+                event=event,
+            )
+    except Exception as exc:
+        logger.warning("_dispatch_pixel_ga4 error: %s", exc)
+
+
 def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
     """Send ViewContent / AddToCart / InitiateCheckout to Meta CAPI (background)."""
     try:
@@ -180,9 +203,10 @@ async def receive_pixel_event(
         if email_from_pixel:
             writer.set_visitor_email(visitor_uuid, email_from_pixel)
 
-    # Fire CAPI for mid-funnel events (ViewContent, AddToCart, InitiateCheckout)
+    # Fire CAPI + GA4 for mid-funnel events (ViewContent, AddToCart, InitiateCheckout)
     if event.event_type in _CAPI_PIXEL_EVENTS:
         background_tasks.add_task(_dispatch_pixel_capi, body.client_id, event)
+        background_tasks.add_task(_dispatch_pixel_ga4, body.client_id, event)
 
     return {"status": "ok", "event_id": event.event_id}
 

@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 _GA4_MP_URL = "https://www.google-analytics.com/mp/collect"
 _GA4_DEBUG_URL = "https://www.google-analytics.com/debug/mp/collect"
 
+_GA4_PIXEL_EVENT_MAP: dict[str, str] = {
+    "product.viewed":   "view_item",
+    "cart.created":     "add_to_cart",
+    "cart.updated":     "add_to_cart",
+    "checkout.started": "begin_checkout",
+}
+
 
 # ── Sender ────────────────────────────────────────────────────────────────────
 
@@ -119,4 +126,74 @@ def send_purchase(
         return False
     except Exception as exc:
         logger.error("ga4 exception for order=%s: %s", order.id, exc)
+        return False
+
+
+def send_pixel_event(
+    measurement_id: str,
+    api_secret: str,
+    event: NormalizedEvent,
+    ga_client_id: Optional[str] = None,
+) -> bool:
+    """
+    Send mid-funnel pixel events (view_item, add_to_cart, begin_checkout) to GA4
+    via Measurement Protocol. Complements browser-side gtag for server reliability.
+    """
+    if not measurement_id or not api_secret:
+        return False
+
+    ga4_event_name = _GA4_PIXEL_EVENT_MAP.get(event.event_type.value)
+    if not ga4_event_name:
+        return False
+
+    effective_client_id = (
+        ga_client_id
+        or (event.metadata or {}).get("ga_client_id")
+        or f"server.{event.visitor_id or event.event_id[:16]}"
+    )
+
+    params: dict = {}
+    meta = event.metadata or {}
+
+    if ga4_event_name == "view_item":
+        item = {
+            "item_id":       str(meta.get("product_id", "")),
+            "item_name":     str(meta.get("product_name", "")),
+            "price":         float(meta.get("product_price", 0)),
+            "item_category": str(meta.get("product_category", "")),
+        }
+        params = {"items": [item], "value": float(meta.get("product_price", 0)), "currency": "BRL"}
+
+    elif ga4_event_name == "add_to_cart":
+        item = {
+            "item_id":   str(meta.get("product_id", "")),
+            "item_name": str(meta.get("product_name", "")),
+            "price":     float(meta.get("product_price", 0)),
+            "quantity":  int(meta.get("product_quantity", 1)),
+        }
+        params = {"items": [item], "value": float(meta.get("product_price", 0)), "currency": "BRL"}
+
+    elif ga4_event_name == "begin_checkout":
+        params = {"currency": "BRL"}
+
+    payload = {
+        "client_id":        effective_client_id,
+        "timestamp_micros": int(time.time() * 1_000_000),
+        "events":           [{"name": ga4_event_name, "params": params}],
+    }
+
+    try:
+        resp = httpx.post(
+            _GA4_MP_URL,
+            params={"measurement_id": measurement_id, "api_secret": api_secret},
+            json=payload,
+            timeout=10.0,
+        )
+        if resp.status_code in (200, 204):
+            logger.debug("ga4 %s sent — visitor=%s", ga4_event_name, event.visitor_id)
+            return True
+        logger.warning("ga4 pixel event %s error %s", ga4_event_name, resp.status_code)
+        return False
+    except Exception as exc:
+        logger.warning("ga4 send_pixel_event exception: %s", exc)
         return False
