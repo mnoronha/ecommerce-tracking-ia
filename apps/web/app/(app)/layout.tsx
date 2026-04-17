@@ -2,12 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, ShoppingBag, BarChart2 } from 'lucide-react'
+import { LayoutDashboard, Users, ShoppingBag, BarChart2, Target } from 'lucide-react'
 
 const NAV = [
   { href: '/dashboard',   label: 'Dashboard',   icon: LayoutDashboard },
   { href: '/visitantes',  label: 'Visitantes',  icon: Users },
   { href: '/pedidos',     label: 'Pedidos',      icon: ShoppingBag },
+  { href: '/audiencias',  label: 'Audiências',  icon: Target },
 ]
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {

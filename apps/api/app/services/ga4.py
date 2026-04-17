@@ -95,38 +95,37 @@ def send_purchase(
 
     url = _GA4_DEBUG_URL if debug else _GA4_MP_URL
 
-    try:
-        resp = httpx.post(
-            url,
-            params={"measurement_id": measurement_id, "api_secret": api_secret},
-            json=payload,
-            timeout=10.0,
-        )
-        # GA4 MP returns 204 on success; debug endpoint returns 200 with validation
-        if resp.status_code in (200, 204):
-            if debug:
-                validation = resp.json().get("validationMessages", [])
-                if validation:
-                    logger.warning("ga4 debug validation: %s", validation)
+    params = {"measurement_id": measurement_id, "api_secret": api_secret}
+    max_attempts = 1 if debug else 3
+    delay = 1.0
+
+    for attempt in range(max_attempts):
+        try:
+            resp = httpx.post(url, params=params, json=payload, timeout=10.0)
+            if resp.status_code in (200, 204):
+                if debug:
+                    validation = resp.json().get("validationMessages", [])
+                    if validation:
+                        logger.warning("ga4 debug validation: %s", validation)
+                    else:
+                        logger.info("ga4 debug: payload valid for order=%s", order.id)
                 else:
-                    logger.info("ga4 debug: payload valid for order=%s", order.id)
-            else:
-                logger.info("ga4 purchase sent — order=%s", order.id)
-            return True
-        else:
-            logger.warning(
-                "ga4 error %s for order=%s: %s",
-                resp.status_code,
-                order.id,
-                resp.text[:300],
-            )
+                    logger.info("ga4 purchase sent — order=%s", order.id)
+                return True
+            if 400 <= resp.status_code < 500:
+                logger.warning("ga4 HTTP %s (no retry): %s", resp.status_code, resp.text[:300])
+                return False
+            logger.warning("ga4 HTTP %s attempt %d/%d", resp.status_code, attempt + 1, max_attempts)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            logger.warning("ga4 network error attempt %d/%d: %s", attempt + 1, max_attempts, exc)
+        except Exception as exc:
+            logger.error("ga4 exception for order=%s: %s", order.id, exc)
             return False
-    except httpx.TimeoutException:
-        logger.warning("ga4 timeout for order=%s", order.id)
-        return False
-    except Exception as exc:
-        logger.error("ga4 exception for order=%s: %s", order.id, exc)
-        return False
+        if attempt < max_attempts - 1:
+            time.sleep(delay * (2 ** attempt))
+
+    logger.error("ga4 purchase failed after %d attempts for order=%s", max_attempts, order.id)
+    return False
 
 
 def send_pixel_event(
@@ -182,18 +181,26 @@ def send_pixel_event(
         "events":           [{"name": ga4_event_name, "params": params}],
     }
 
-    try:
-        resp = httpx.post(
-            _GA4_MP_URL,
-            params={"measurement_id": measurement_id, "api_secret": api_secret},
-            json=payload,
-            timeout=10.0,
-        )
-        if resp.status_code in (200, 204):
-            logger.debug("ga4 %s sent — visitor=%s", ga4_event_name, event.visitor_id)
-            return True
-        logger.warning("ga4 pixel event %s error %s", ga4_event_name, resp.status_code)
-        return False
-    except Exception as exc:
-        logger.warning("ga4 send_pixel_event exception: %s", exc)
-        return False
+    delay = 1.0
+    for attempt in range(3):
+        try:
+            resp = httpx.post(
+                _GA4_MP_URL,
+                params={"measurement_id": measurement_id, "api_secret": api_secret},
+                json=payload,
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 204):
+                logger.debug("ga4 %s sent — visitor=%s", ga4_event_name, event.visitor_id)
+                return True
+            if 400 <= resp.status_code < 500:
+                return False
+            logger.warning("ga4 pixel %s HTTP %s attempt %d/3", ga4_event_name, resp.status_code, attempt + 1)
+        except (httpx.TimeoutException, httpx.NetworkError):
+            logger.warning("ga4 pixel %s network error attempt %d/3", ga4_event_name, attempt + 1)
+        except Exception as exc:
+            logger.warning("ga4 send_pixel_event exception: %s", exc)
+            return False
+        if attempt < 2:
+            time.sleep(delay * (2 ** attempt))
+    return False

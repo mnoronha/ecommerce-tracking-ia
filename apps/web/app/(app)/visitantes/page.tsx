@@ -18,6 +18,7 @@ interface Visitor {
   total_pageviews: number
   total_orders: number
   total_revenue: number | null
+  retargeting_score: number | null
   last_seen_at: string | null
   created_at: string
 }
@@ -195,7 +196,7 @@ export default function VisitantesPage() {
 
     let q = supabase.from('visitors')
       .select(
-        'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, last_seen_at, created_at',
+        'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, retargeting_score, last_seen_at, created_at',
         { count: 'exact' }
       )
       .eq('client_id', clientId)
@@ -254,7 +255,7 @@ export default function VisitantesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#2a2f3e]">
-                {['Visitante', 'Origem', 'Pageviews', 'Pedidos', 'LTV', 'Última visita'].map(h => (
+                {['Visitante', 'Origem', 'Pageviews', 'Pedidos', 'LTV', 'Score', 'Última visita'].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">
                     {h}
                   </th>
@@ -263,9 +264,9 @@ export default function VisitantesPage() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={6} className="py-12 text-center text-slate-500">Carregando...</td></tr>
+                <tr><td colSpan={7} className="py-12 text-center text-slate-500">Carregando...</td></tr>
               ) : visitors.length === 0 ? (
-                <tr><td colSpan={6} className="py-12 text-center text-slate-500">Nenhum visitante encontrado</td></tr>
+                <tr><td colSpan={7} className="py-12 text-center text-slate-500">Nenhum visitante encontrado</td></tr>
               ) : visitors.map(v => (
                 <tr
                   key={v.id}
@@ -302,6 +303,19 @@ export default function VisitantesPage() {
                   <td className="px-4 py-3 whitespace-nowrap">
                     {v.total_revenue && v.total_revenue > 0 ? (
                       <span className="text-emerald-400 font-semibold text-sm">{fmtBRL(v.total_revenue)}</span>
+                    ) : (
+                      <span className="text-slate-600 text-xs">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    {(v.retargeting_score || 0) > 0 ? (
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                        (v.retargeting_score || 0) >= 35 ? 'bg-red-500/15 text-red-400' :
+                        (v.retargeting_score || 0) >= 20 ? 'bg-orange-500/15 text-orange-400' :
+                        'bg-yellow-500/15 text-yellow-400'
+                      }`}>
+                        {v.retargeting_score}
+                      </span>
                     ) : (
                       <span className="text-slate-600 text-xs">—</span>
                     )}

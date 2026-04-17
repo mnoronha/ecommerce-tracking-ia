@@ -13,6 +13,7 @@ Tipos de análise:
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -25,6 +26,24 @@ logger = logging.getLogger(__name__)
 
 
 # ── Data collection ────────────────────────────────────────────────────────────
+
+def _sanitize(value: Optional[str], max_len: int = 80) -> str:
+    """Strip control chars and limit length to prevent prompt injection."""
+    if not value:
+        return ""
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(value))
+    return cleaned[:max_len]
+
+
+def _get_client_name(client_uuid: str) -> str:
+    try:
+        row = get_supabase().table("clients").select("pixel_id").eq("id", client_uuid).limit(1).execute()
+        if row and row.data:
+            return row.data[0].get("pixel_id", "loja")
+    except Exception:
+        pass
+    return "loja"
+
 
 def _collect_metrics(client_uuid: str) -> dict:
     """Coleta todas as métricas relevantes do Supabase para análise."""
@@ -101,6 +120,46 @@ def _collect_metrics(client_uuid: str) -> dict:
 
     top_campaigns = sorted(camp_map.items(), key=lambda x: x[1]["revenue"], reverse=True)[:5]
 
+    # ── Cohort retention: % que recomprou em 30d (últimos 3 meses) ───────────
+    cohort_data = []
+    try:
+        for months_ago in range(1, 4):
+            c_start = (now - timedelta(days=30 * months_ago)).isoformat()
+            c_end   = (now - timedelta(days=30 * (months_ago - 1))).isoformat()
+            first_buyers = sb.table("orders").select("email", count="exact", head=False).eq(
+                "client_id", client_uuid).eq("is_first_purchase", True).gte(
+                "created_at", c_start).lt("created_at", c_end).execute()
+            emails = list({o["email"] for o in (first_buyers.data or []) if o.get("email")})
+            returned = 0
+            if emails:
+                for email in emails[:200]:  # cap to avoid huge queries
+                    r = sb.table("orders").select("id", count="exact", head=True).eq(
+                        "client_id", client_uuid).eq("email", email).eq(
+                        "is_first_purchase", False).execute()
+                    if (r.count or 0) > 0:
+                        returned += 1
+            cohort_data.append({
+                "mes": f"M-{months_ago}",
+                "novos_compradores": len(emails),
+                "recompraram_pct": round(returned / len(emails) * 100, 1) if emails else 0,
+            })
+    except Exception as exc:
+        logger.debug("cohort collection failed: %s", exc)
+
+    # ── Budget intelligence: ROAS por canal ──────────────────────────────────
+    budget_intel: list[dict] = []
+    for key, v in list(camp_map.items())[:5]:
+        roas = None
+        # Simple efficiency: revenue per order (sem spend, usamos como proxy)
+        if v["orders"] > 0:
+            roas = round(v["revenue"] / v["orders"], 2)
+        budget_intel.append({
+            "canal": _sanitize(key),
+            "pedidos": v["orders"],
+            "receita": round(v["revenue"], 2),
+            "ticket_medio": roas,
+        })
+
     # Top products (7d)
     prod_map: dict = {}
     for e in ev7:
@@ -148,13 +207,15 @@ def _collect_metrics(client_uuid: str) -> dict:
             "novos_7d": visitors_7.count or 0,
         },
         "top_campanhas_30d": [
-            {"canal": k, "pedidos": v["orders"], "receita": round(v["revenue"], 2)}
+            {"canal": _sanitize(k), "pedidos": v["orders"], "receita": round(v["revenue"], 2)}
             for k, v in top_campaigns
         ],
         "top_produtos_7d": [
-            {"produto": k, "views": v["views"], "carrinho": v["cart"]}
+            {"produto": _sanitize(k), "views": v["views"], "carrinho": v["cart"]}
             for k, v in top_products
         ],
+        "cohort_retencao": cohort_data,
+        "budget_intel_por_canal": budget_intel,
         "qualidade_dados": {
             "pedidos_com_utm_30d": sum(1 for o in o30 if o.get("utm_source")),
             "pedidos_com_email_30d": sum(1 for o in o30 if o.get("email")),
@@ -193,15 +254,20 @@ Regras:
 - Foque em: ROI de campanhas, abandono de carrinho, produtos com alto tráfego mas baixa conversão, sazonalidade"""
 
 
-def _call_claude(metrics: dict) -> list[dict]:
+def _call_claude(metrics: dict, store_name: str = "loja") -> list[dict]:
     """Chama Claude com as métricas e retorna lista de insights parseados."""
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    prompt = f"""Dados da loja LK Sneakers (loja de tênis no Shopify):
+    prompt = f"""Dados da loja {store_name}:
 
 {json.dumps(metrics, ensure_ascii=False, indent=2)}
 
-Gere insights estratégicos e recomendações acionáveis baseados nesses dados."""
+Analise os dados acima e gere insights estratégicos incluindo:
+1. Performance geral e anomalias
+2. Retenção de clientes (use cohort_retencao)
+3. Eficiência de canais (use budget_intel_por_canal) com recomendações de budget
+4. LTV preditivo: baseado na taxa de recompra, projete o LTV esperado de novos clientes
+5. Ações prioritárias para os próximos 7 dias"""
 
     message = client.messages.create(
         model=settings.ANTHROPIC_MODEL,
@@ -213,22 +279,45 @@ Gere insights estratégicos e recomendações acionáveis baseados nesses dados.
     raw = message.content[0].text.strip()
 
     # Remove markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    for fence in ("```json", "```"):
+        if raw.startswith(fence):
+            raw = raw[len(fence):]
+            break
+    if raw.endswith("```"):
+        raw = raw[:-3]
 
-    parsed = json.loads(raw)
-    return parsed.get("insights", [])
+    try:
+        parsed = json.loads(raw.strip())
+        return parsed.get("insights", [])
+    except json.JSONDecodeError as exc:
+        logger.error("Claude returned invalid JSON: %s — raw[:200]=%s", exc, raw[:200])
+        return []
 
 
 # ── Persist ────────────────────────────────────────────────────────────────────
+
+def _was_recently_generated(client_uuid: str, insight_type: str, hours: int = 6) -> bool:
+    """Verifica se um insight do mesmo tipo foi gerado nas últimas N horas."""
+    try:
+        from datetime import timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        result = get_supabase().table("ai_insights").select("id", count="exact", head=True).eq(
+            "client_id", client_uuid).eq("type", insight_type).gte("created_at", cutoff).execute()
+        return (result.count or 0) > 0
+    except Exception:
+        return False
+
 
 def _save_insights(client_uuid: str, insights: list[dict]) -> int:
     """Persiste lista de insights na tabela ai_insights. Retorna contagem salva."""
     sb = get_supabase()
     saved = 0
     for ins in insights:
+        insight_type = ins.get("type", "recommendation")
+        # Deduplicate: skip weekly_report if one was generated in the last 6 hours
+        if insight_type == "weekly_report" and _was_recently_generated(client_uuid, "weekly_report", hours=6):
+            logger.debug("Skipping duplicate weekly_report for %s", client_uuid)
+            continue
         try:
             sb.table("ai_insights").insert({
                 "client_id": client_uuid,
@@ -257,11 +346,12 @@ def generate_insights(client_uuid: str) -> dict:
     if not settings.ANTHROPIC_API_KEY:
         raise ValueError("ANTHROPIC_API_KEY não configurada")
 
-    logger.info("Coletando métricas para client_uuid=%s", client_uuid)
+    store_name = _get_client_name(client_uuid)
+    logger.info("Coletando métricas para %s (%s)", store_name, client_uuid)
     metrics = _collect_metrics(client_uuid)
 
-    logger.info("Chamando Claude %s para análise", settings.ANTHROPIC_MODEL)
-    insights = _call_claude(metrics)
+    logger.info("Chamando Claude %s para análise de %s", settings.ANTHROPIC_MODEL, store_name)
+    insights = _call_claude(metrics, store_name)
 
     saved = _save_insights(client_uuid, insights)
     logger.info("Insights gerados=%d salvos=%d", len(insights), saved)

@@ -79,6 +79,13 @@ interface Insight {
   created_at: string
 }
 
+interface CohortMonth {
+  label:     string   // e.g. "Abr 2025"
+  newBuyers: number
+  returned:  number
+  retPct:    number
+}
+
 interface RoasCampaign {
   campaign_name: string
   utm_source:   string | null
@@ -336,6 +343,7 @@ export default function DashboardPage() {
   const [heatmap, setHeatmap]           = useState<number[][]>([])
   const [roasData, setRoasData]         = useState<RoasData | null>(null)
   const [roasLoading, setRoasLoading]   = useState(false)
+  const [cohortData, setCohortData]     = useState<CohortMonth[]>([])
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
@@ -550,6 +558,55 @@ export default function DashboardPage() {
     setRoasLoading(false)
   }, [])
 
+  const loadCohort = useCallback(async () => {
+    if (!CLIENT_PIXEL_ID) return
+    const { data: clientData } = await supabase
+      .from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+    if (!clientData) return
+
+    // Fetch 90d of orders with is_first_purchase + email
+    const start90 = new Date(); start90.setDate(start90.getDate() - 90)
+    const { data: allOrders90 } = await supabase
+      .from('orders')
+      .select('email, is_first_purchase, created_at')
+      .eq('client_id', clientData.id)
+      .eq('financial_status', 'paid')
+      .gte('created_at', start90.toISOString())
+
+    if (!allOrders90) return
+
+    // Build 3 monthly cohorts
+    const months: CohortMonth[] = []
+    for (let m = 2; m >= 0; m--) {
+      const mStart = new Date(); mStart.setDate(1); mStart.setMonth(mStart.getMonth() - m); mStart.setHours(0,0,0,0)
+      const mEnd   = new Date(mStart); mEnd.setMonth(mEnd.getMonth() + 1)
+      const label  = mStart.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
+
+      const newInMonth = allOrders90.filter(o =>
+        o.is_first_purchase === true &&
+        o.created_at >= mStart.toISOString() && o.created_at < mEnd.toISOString() &&
+        o.email
+      )
+      const newEmails = new Set(newInMonth.map(o => o.email))
+
+      // How many of those emails also appear in non-first-purchase orders after mEnd?
+      const returned = allOrders90.filter(o =>
+        o.is_first_purchase === false &&
+        o.created_at >= mEnd.toISOString() &&
+        o.email && newEmails.has(o.email)
+      )
+      const retEmails = new Set(returned.map(o => o.email))
+
+      months.push({
+        label,
+        newBuyers: newEmails.size,
+        returned:  retEmails.size,
+        retPct:    newEmails.size > 0 ? Math.round((retEmails.size / newEmails.size) * 100) : 0,
+      })
+    }
+    setCohortData(months)
+  }, [])
+
   const markRead = useCallback(async (insightId: string) => {
     setInsights(prev => prev.map(i => i.id === insightId ? { ...i, is_read: true } : i))
     await fetch(`${API_URL}/insights/lk-sneakers/${insightId}/read`, { method: 'PATCH' })
@@ -558,6 +615,7 @@ export default function DashboardPage() {
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
   useEffect(() => { loadRoas(dateRange) }, [dateRange, loadRoas])
+  useEffect(() => { loadCohort() }, [loadCohort])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -924,6 +982,41 @@ export default function DashboardPage() {
                   </tbody>
                 </table>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Cohort Retention */}
+        {cohortData.length > 0 && cohortData.some(c => c.newBuyers > 0) && (
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-5">
+            <div className="mb-4">
+              <h2 className="text-sm font-semibold text-slate-300">Retenção por Coorte Mensal</h2>
+              <p className="text-xs text-slate-500 mt-0.5">% de novos compradores de cada mês que fizeram uma segunda compra</p>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              {cohortData.map(c => (
+                <div key={c.label} className="bg-[#0f1117] rounded-xl p-4">
+                  <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">{c.label}</p>
+                  <div className="flex items-end gap-3 mb-3">
+                    <div>
+                      <p className={`text-2xl font-bold ${c.retPct >= 20 ? 'text-emerald-400' : c.retPct >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>
+                        {c.retPct}%
+                      </p>
+                      <p className="text-xs text-slate-500">retornaram</p>
+                    </div>
+                    <div className="text-right ml-auto">
+                      <p className="text-sm font-medium text-white">{c.newBuyers}</p>
+                      <p className="text-xs text-slate-600">novos</p>
+                    </div>
+                  </div>
+                  <div className="h-1.5 bg-[#1a1f2e] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${c.retPct >= 20 ? 'bg-emerald-500' : c.retPct >= 10 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                      style={{ width: `${Math.min(c.retPct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}

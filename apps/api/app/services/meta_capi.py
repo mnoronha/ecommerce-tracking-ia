@@ -88,33 +88,43 @@ def _send(
     access_token: str,
     capi_events: list[dict],
     test_event_code: Optional[str] = None,
+    max_attempts: int = 3,
 ) -> bool:
-    """Low-level sender. Returns True on success."""
+    """Low-level sender with exponential backoff retry. Returns True on success."""
     payload: dict = {
         "data":         capi_events,
         "access_token": access_token,
     }
     if test_event_code:
         payload["test_event_code"] = test_event_code
-    try:
-        resp = httpx.post(
-            _CAPI_URL.format(pixel_id=pixel_id),
-            json=payload,
-            timeout=10.0,
-        )
-        if resp.status_code == 200:
-            result = resp.json()
-            logger.info("meta_capi sent %d event(s) — events_received=%s",
-                        len(capi_events), result.get("events_received"))
-            return True
-        logger.warning("meta_capi HTTP %s: %s", resp.status_code, resp.text[:300])
-        return False
-    except httpx.TimeoutException:
-        logger.warning("meta_capi timeout")
-        return False
-    except Exception as exc:
-        logger.error("meta_capi exception: %s", exc)
-        return False
+
+    url = _CAPI_URL.format(pixel_id=pixel_id)
+    delay = 1.0
+
+    for attempt in range(max_attempts):
+        try:
+            resp = httpx.post(url, json=payload, timeout=10.0)
+            if resp.status_code == 200:
+                result = resp.json()
+                logger.info("meta_capi sent %d event(s) — events_received=%s",
+                            len(capi_events), result.get("events_received"))
+                return True
+            # 4xx = client error, don't retry
+            if 400 <= resp.status_code < 500:
+                logger.warning("meta_capi HTTP %s (no retry): %s", resp.status_code, resp.text[:400])
+                return False
+            logger.warning("meta_capi HTTP %s attempt %d/%d", resp.status_code, attempt + 1, max_attempts)
+        except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            logger.warning("meta_capi network error attempt %d/%d: %s", attempt + 1, max_attempts, exc)
+        except Exception as exc:
+            logger.error("meta_capi exception: %s", exc)
+            return False
+
+        if attempt < max_attempts - 1:
+            time.sleep(delay * (2 ** attempt))
+
+    logger.error("meta_capi failed after %d attempts", max_attempts)
+    return False
 
 
 # ── Public senders ────────────────────────────────────────────────────────────

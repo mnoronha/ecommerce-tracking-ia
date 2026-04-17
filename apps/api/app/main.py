@@ -10,8 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import ecommerce_webhooks, insights, meta_ads, pixel
-from .services import alerts
+from .routers import audiences, ecommerce_webhooks, insights, meta_ads, pixel
+from .services import alerts, meta_audiences
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -39,6 +39,12 @@ _scheduler.add_job(
     hour=8,
     minute=0,
     id="weekly_reports",
+)
+_scheduler.add_job(
+    meta_audiences.run_audience_sync_all_clients,
+    "interval",
+    hours=6,
+    id="audience_sync",
 )
 
 
@@ -77,6 +83,7 @@ app.include_router(ecommerce_webhooks.router)
 app.include_router(pixel.router)
 app.include_router(insights.router)
 app.include_router(meta_ads.router)
+app.include_router(audiences.router)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

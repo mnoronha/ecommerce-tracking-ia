@@ -163,6 +163,9 @@ async def receive_webhook(
     # Fire Purchase CAPI + GA4 for paid orders (non-blocking, marks capi_sent)
     if event.event_type.value in ("order.paid", "checkout.completed") and order_uuid:
         background_tasks.add_task(_dispatch_purchase_capi, client_id, event, order_uuid)
+        # Visitor converted — reset retargeting score so they leave retargeting audiences
+        if visitor_uuid:
+            background_tasks.add_task(writer.reset_retargeting_score, visitor_uuid)
 
     # Update fulfillment_status when order is fulfilled
     if event.event_type.value == "order.fulfilled" and client_uuid and event.order:

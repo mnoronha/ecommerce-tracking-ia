@@ -12,6 +12,7 @@ so a DB write failure never breaks the HTTP response.
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+import json
 
 from ..database import get_supabase
 from ..models.events import NormalizedEvent, EventType
@@ -100,6 +101,21 @@ def upsert_visitor_by_cookie(
                 update["gclid"] = gclid
             if fbclid and not row.get("fbclid"):
                 update["fbclid"] = fbclid
+            # Append to utm_history for multi-touch attribution
+            if utm_source:
+                history = row.get("utm_history") or []
+                if not isinstance(history, list):
+                    history = []
+                last_source = history[-1].get("source") if history else None
+                last_campaign = history[-1].get("campaign") if history else None
+                if utm_source != last_source or utm_campaign != last_campaign:
+                    history.append({
+                        "ts":       datetime.now(timezone.utc).isoformat(),
+                        "source":   utm_source,
+                        "medium":   utm_medium,
+                        "campaign": utm_campaign,
+                    })
+                    update["utm_history"] = history[-20:]  # keep last 20 touches
             sb.table("visitors").update(update).eq("id", row["id"]).execute()
             return row["id"]
 
@@ -403,30 +419,60 @@ _LEAD_SCORE_MAP: dict[str, int] = {
     "order.paid":         10,
 }
 
+# Retargeting score: intent to buy without completing purchase
+# High score = prime candidate for retargeting campaign
+_RETARGETING_SCORE_MAP: dict[str, int] = {
+    "product.viewed":   5,
+    "cart.created":     20,
+    "cart.updated":     20,
+    "checkout.started": 35,
+}
+
 
 def update_lead_score(visitor_uuid: str, event_type: EventType) -> None:
-    """Increment visitor lead_score based on engagement event."""
-    points = _LEAD_SCORE_MAP.get(event_type.value, 0)
-    if not points or not visitor_uuid:
+    """Increment visitor lead_score and retargeting_score based on engagement event."""
+    lead_pts = _LEAD_SCORE_MAP.get(event_type.value, 0)
+    retarg_pts = _RETARGETING_SCORE_MAP.get(event_type.value, 0)
+    if not (lead_pts or retarg_pts) or not visitor_uuid:
         return
     try:
         sb = get_supabase()
         existing = (
             sb.table("visitors")
-            .select("lead_score")
+            .select("lead_score, retargeting_score")
             .eq("id", visitor_uuid)
             .limit(1)
             .execute()
         )
         if not (existing and existing.data):
             return
-        current = existing.data[0].get("lead_score") or 0
-        sb.table("visitors").update(
-            {"lead_score": current + points}
-        ).eq("id", visitor_uuid).execute()
-        logger.debug("lead_score +%d → %d for visitor %s", points, current + points, visitor_uuid)
+        row = existing.data[0]
+        update: dict = {}
+        if lead_pts:
+            update["lead_score"] = (row.get("lead_score") or 0) + lead_pts
+        if retarg_pts:
+            update["retargeting_score"] = min((row.get("retargeting_score") or 0) + retarg_pts, 100)
+        # Track last cart interaction for audience segmentation
+        if event_type.value in ("cart.created", "cart.updated"):
+            update["last_cart_at"] = datetime.now(timezone.utc).isoformat()
+        sb.table("visitors").update(update).eq("id", visitor_uuid).execute()
+        logger.debug("scores updated for visitor %s: lead+%d retarg+%d",
+                     visitor_uuid, lead_pts, retarg_pts)
     except Exception as exc:
         logger.warning("update_lead_score failed: %s", exc)
+
+
+def reset_retargeting_score(visitor_uuid: str) -> None:
+    """Reset retargeting_score to 0 after purchase — visitor converted."""
+    if not visitor_uuid:
+        return
+    try:
+        get_supabase().table("visitors").update({
+            "retargeting_score": 0,
+            "last_purchase_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", visitor_uuid).execute()
+    except Exception as exc:
+        logger.warning("reset_retargeting_score failed: %s", exc)
 
 
 # ── Mark CAPI sent ─────────────────────────────────────────────────────────────
