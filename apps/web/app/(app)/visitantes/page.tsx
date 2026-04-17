@@ -205,7 +205,24 @@ export default function VisitantesPage() {
 
     if (debSearch) q = (q as any).ilike('email', `%${debSearch}%`)
 
-    q.then(({ data, count }) => {
+    q.then(({ data, count, error }) => {
+      if (error) {
+        // retargeting_score column may not exist yet — retry without it
+        supabase.from('visitors')
+          .select(
+            'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, last_seen_at, created_at',
+            { count: 'exact' }
+          )
+          .eq('client_id', clientId!)
+          .order('last_seen_at', { ascending: false, nullsFirst: false })
+          .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+          .then(({ data: d2, count: c2 }) => {
+            setVisitors((d2 as Visitor[]) || [])
+            setTotal(c2 || 0)
+            setLoading(false)
+          })
+        return
+      }
       setVisitors((data as Visitor[]) || [])
       setTotal(count || 0)
       setLoading(false)
