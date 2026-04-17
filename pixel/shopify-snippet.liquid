@@ -96,13 +96,20 @@
     return null;
   }
 
-  // ── Meta CAPI identifiers ────────────────────────────────────────────────────
-  // _fbp: set by Meta Pixel browser JS — highest quality match signal
+  // ── Meta CAPI identifiers ─────────────────────────────────────────────────────
+  // _fbp: browser identifier for Meta CAPI match quality.
+  //       If Meta Pixel is present it already sets this. If not, we generate
+  //       our own following Meta's format: fb.{subdomain_index}.{ts}.{random}
+  //       This allows CAPI to work at full match quality WITHOUT the Meta Pixel.
   // _fbc: set from fbclid URL param when visitor clicks a Meta ad
   function getMetaIds() {
-    var fbp = getCookie('_fbp') || null;
+    var fbp = getCookie('_fbp');
+    if (!fbp) {
+      // Generate _fbp following Meta's official format
+      fbp = 'fb.1.' + Date.now() + '.' + Math.floor(Math.random() * 1e10);
+      setCookie('_fbp', fbp, 90);
+    }
     var fbc = getCookie('_fbc') || null;
-    // If no _fbc cookie but fbclid is in current URL, create fbc value
     if (!fbc) {
       var fbclid = (location.search.match(/[?&]fbclid=([^&#]*)/) || [])[1];
       if (fbclid) {

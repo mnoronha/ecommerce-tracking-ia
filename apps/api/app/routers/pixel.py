@@ -185,11 +185,13 @@ async def receive_pixel_event(
     visitor_uuid = writer.upsert_visitor_by_cookie(
         client_uuid=client_uuid,
         visitor_cookie_id=body.visitor_id or "",
-        utm_source=body.utm.source    if body.utm else None,
-        utm_medium=body.utm.medium    if body.utm else None,
+        utm_source=body.utm.source     if body.utm else None,
+        utm_medium=body.utm.medium     if body.utm else None,
         utm_campaign=body.utm.campaign if body.utm else None,
         gclid=body.gclid,
         fbclid=body.fbc,
+        fbp=body.fbp,
+        fbc=body.fbc,
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
 

@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     SMTP_PASS: str = ""
     SMTP_FROM: str = ""  # defaults to SMTP_USER if empty
 
+    # ── Google Ads Conversion API ─────────────────────────────────────────
+    # Agency-level credentials — shared across all clients
+    GOOGLE_ADS_DEVELOPER_TOKEN:   str = ""
+    GOOGLE_ADS_OAUTH_CLIENT_ID:   str = ""
+    GOOGLE_ADS_OAUTH_CLIENT_SECRET: str = ""
+    GOOGLE_ADS_REFRESH_TOKEN:     str = ""  # agency MCC refresh token
+    GOOGLE_ADS_MANAGER_ID:        str = ""  # MCC account ID (optional)
+
 
 @lru_cache()
 def get_settings() -> Settings:

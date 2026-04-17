@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import ga4, meta_capi, writer
+from ..services import ga4, google_ads, meta_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
     ShopifyAdapter,
@@ -80,7 +80,11 @@ def _dispatch_purchase_capi(
 
         creds_result = (
             get_supabase().table("clients")
-            .select("meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret")
+            .select(
+                "meta_pixel_id, meta_access_token, "
+                "ga4_measurement_id, ga4_api_secret, "
+                "google_ads_customer_id, google_ads_conversion_action_id"
+            )
             .eq("pixel_id", client_pixel_id)
             .limit(1)
             .execute()
@@ -89,7 +93,45 @@ def _dispatch_purchase_capi(
             return
         c = creds_result.data[0]
 
+        # ── Fetch visitor attribution data (gclid, fbp, fbc) ─────────────
+        gclid: str | None = None
+        fbp:   str | None = None
+        fbc:   str | None = None
+        if order_uuid:
+            try:
+                ord_row = (
+                    get_supabase().table("orders")
+                    .select("visitor_id")
+                    .eq("id", order_uuid)
+                    .limit(1)
+                    .execute()
+                )
+                if ord_row.data and ord_row.data[0].get("visitor_id"):
+                    vis_row = (
+                        get_supabase().table("visitors")
+                        .select("gclid, fbp, fbc")
+                        .eq("id", ord_row.data[0]["visitor_id"])
+                        .limit(1)
+                        .execute()
+                    )
+                    if vis_row.data:
+                        gclid = vis_row.data[0].get("gclid")
+                        fbp   = vis_row.data[0].get("fbp")
+                        fbc   = vis_row.data[0].get("fbc")
+            except Exception as exc:
+                logger.debug("visitor attribution lookup failed: %s", exc)
+
+        # ── Meta CAPI ────────────────────────────────────────────────────
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
+            # Enrich event with visitor's fbp/fbc if available
+            if (fbp or fbc) and hasattr(event, "metadata"):
+                meta = dict(event.metadata or {})
+                if fbp and not meta.get("fbp"):
+                    meta["fbp"] = fbp
+                if fbc and not meta.get("fbc"):
+                    meta["fbc"] = fbc
+                object.__setattr__(event, "metadata", meta)
+
             success = meta_capi.send_purchase(
                 pixel_id=c["meta_pixel_id"],
                 access_token=c["meta_access_token"],
@@ -98,11 +140,29 @@ def _dispatch_purchase_capi(
             if success and order_uuid:
                 writer.mark_capi_sent(order_uuid)
 
+        # ── GA4 Measurement Protocol ──────────────────────────────────────
         if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
             ga4.send_purchase(
                 measurement_id=c["ga4_measurement_id"],
                 api_secret=c["ga4_api_secret"],
                 event=event,  # type: ignore[arg-type]
+            )
+
+        # ── Google Ads Conversion API ─────────────────────────────────────
+        if (
+            gclid
+            and c.get("google_ads_customer_id")
+            and c.get("google_ads_conversion_action_id")
+            and event.order  # type: ignore[union-attr]
+        ):
+            google_ads.send_conversion(
+                customer_id=c["google_ads_customer_id"],
+                conversion_action_id=c["google_ads_conversion_action_id"],
+                gclid=gclid,
+                value=float(event.order.total or 0),  # type: ignore[union-attr]
+                currency=event.order.currency or "BRL",  # type: ignore[union-attr]
+                order_id=str(event.order.id),  # type: ignore[union-attr]
+                manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
             )
     except Exception as exc:
         logger.warning("_dispatch_purchase_capi error for %s: %s", client_pixel_id, exc)
