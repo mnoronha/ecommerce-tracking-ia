@@ -24,7 +24,7 @@ type StatusFilter = 'all' | 'paid' | 'pending'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLIENT_PIXEL_ID = 'lk-sneakers'
+const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
 const PAGE_SIZE = 25
 
 const STATUS_STYLE: Record<string, string> = {

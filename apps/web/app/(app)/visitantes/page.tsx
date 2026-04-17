@@ -33,7 +33,7 @@ interface TrackingEvent {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLIENT_PIXEL_ID = 'lk-sneakers'
+const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
 const PAGE_SIZE = 25
 
 const EVENT_META: Record<string, { label: string; color: string }> = {

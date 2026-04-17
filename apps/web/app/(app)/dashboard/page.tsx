@@ -117,7 +117,7 @@ const fmtDate = (iso: string) =>
 const pct = (n: number, total: number) =>
   total > 0 ? ((n / total) * 100).toFixed(0) + '%' : '—'
 
-const API_URL = 'https://ecommerce-tracking-ia-production.up.railway.app'
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -340,7 +340,7 @@ export default function DashboardPage() {
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
 
-  const CLIENT_PIXEL_ID = 'lk-sneakers'
+  const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
 
   const loadData = useCallback(async (range: DateRange) => {
     setLoading(true)
