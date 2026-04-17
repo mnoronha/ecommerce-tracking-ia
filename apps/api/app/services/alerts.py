@@ -15,7 +15,7 @@ from typing import Optional
 import httpx
 
 from ..database import get_supabase
-from . import email as email_service
+from . import smtp as email_service
 
 logger = logging.getLogger(__name__)
 
