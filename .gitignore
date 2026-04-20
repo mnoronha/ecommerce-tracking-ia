@@ -32,3 +32,6 @@ node_modules/
 # Supabase local
 .branches/
 supabase/.temp/
+
+.vercel
+.env*.local

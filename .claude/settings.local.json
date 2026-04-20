@@ -65,7 +65,12 @@
       "Bash(git commit *)",
       "Bash(git push *)",
       "Bash(python3 -m json.tool)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Read(//c/Users/maico/.local/share/com.vercel.cli/**)",
+      "Read(//c/Users/maico/AppData/Roaming/com.vercel.cli/**)",
+      "Read(//c/Users/maico/**)",
+      "Bash(python3 *)",
+      "Bash(xargs grep *)"
     ]
   },
   "enableAllProjectMcpServers": true,

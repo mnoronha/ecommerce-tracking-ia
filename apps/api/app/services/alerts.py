@@ -159,16 +159,16 @@ def send_weekly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, notification_email")
+            .select("id, pixel_id, alert_email")
             .eq("is_active", True)
-            .not_.is_("notification_email", "null")
+            .not_.is_("alert_email", "null")
             .execute()
         )
         if not (clients and clients.data):
             return
         for c in clients.data:
-            if c.get("notification_email"):
-                _send_client_weekly_report(c["id"], c["pixel_id"], c["notification_email"])
+            if c.get("alert_email"):
+                _send_client_weekly_report(c["id"], c["pixel_id"], c["alert_email"])
     except Exception as exc:
         logger.error("send_weekly_reports: %s", exc)
 

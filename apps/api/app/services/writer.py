@@ -75,6 +75,7 @@ def upsert_visitor_by_cookie(
     fbp: Optional[str] = None,
     fbc: Optional[str] = None,
     cart_token: Optional[str] = None,
+    ga_client_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     Upsert visitor keyed on (client_id, visitor_id).
@@ -87,7 +88,7 @@ def upsert_visitor_by_cookie(
         sb = get_supabase()
         existing = (
             sb.table("visitors")
-            .select("id,total_pageviews,gclid,fbclid,fbp,fbc")
+            .select("id,total_pageviews,gclid,fbclid,fbp,fbc,cart_token,ga_client_id")
             .eq("client_id", client_uuid)
             .eq("visitor_id", visitor_cookie_id)
             .limit(1)
@@ -100,11 +101,12 @@ def upsert_visitor_by_cookie(
                 "total_pageviews": (row.get("total_pageviews") or 0) + 1,
             }
             # First touch wins for attribution identifiers
-            if gclid       and not row.get("gclid"):       update["gclid"]       = gclid
-            if fbclid      and not row.get("fbclid"):      update["fbclid"]      = fbclid
-            if fbp         and not row.get("fbp"):         update["fbp"]         = fbp
-            if fbc         and not row.get("fbc"):         update["fbc"]         = fbc
-            if cart_token  and not row.get("cart_token"):  update["cart_token"]  = cart_token
+            if gclid        and not row.get("gclid"):        update["gclid"]        = gclid
+            if fbclid       and not row.get("fbclid"):       update["fbclid"]       = fbclid
+            if fbp          and not row.get("fbp"):          update["fbp"]          = fbp
+            if fbc          and not row.get("fbc"):          update["fbc"]          = fbc
+            if cart_token   and not row.get("cart_token"):   update["cart_token"]   = cart_token
+            if ga_client_id and not row.get("ga_client_id"): update["ga_client_id"] = ga_client_id
             # Append to utm_history for multi-touch attribution
             if utm_source:
                 history = row.get("utm_history") or []
@@ -133,11 +135,12 @@ def upsert_visitor_by_cookie(
             "first_platform": first_platform,
             "total_pageviews": 1,
         }
-        if gclid:      insert_row["gclid"]      = gclid
-        if fbclid:     insert_row["fbclid"]     = fbclid
-        if fbp:        insert_row["fbp"]        = fbp
-        if fbc:        insert_row["fbc"]        = fbc
-        if cart_token: insert_row["cart_token"] = cart_token
+        if gclid:        insert_row["gclid"]        = gclid
+        if fbclid:       insert_row["fbclid"]       = fbclid
+        if fbp:          insert_row["fbp"]          = fbp
+        if fbc:          insert_row["fbc"]          = fbc
+        if cart_token:   insert_row["cart_token"]   = cart_token
+        if ga_client_id: insert_row["ga_client_id"] = ga_client_id
 
         insert_result = sb.table("visitors").insert(insert_row).execute()
         if insert_result and insert_result.data:

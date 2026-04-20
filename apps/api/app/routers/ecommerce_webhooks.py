@@ -95,9 +95,10 @@ def _dispatch_purchase_capi(
         c = creds_result.data[0]
 
         # ── Fetch visitor attribution data (gclid, fbp, fbc) ─────────────
-        gclid: str | None = None
-        fbp:   str | None = None
-        fbc:   str | None = None
+        gclid:        str | None = None
+        fbp:          str | None = None
+        fbc:          str | None = None
+        ga_client_id: str | None = None
         if order_uuid:
             try:
                 ord_row = (
@@ -110,7 +111,7 @@ def _dispatch_purchase_capi(
                 if ord_row.data and ord_row.data[0].get("visitor_id"):
                     vis_row = (
                         get_supabase().table("visitors")
-                        .select("gclid, fbp, fbc")
+                        .select("gclid, fbp, fbc, ga_client_id")
                         .eq("id", ord_row.data[0]["visitor_id"])
                         .limit(1)
                         .execute()
@@ -119,6 +120,7 @@ def _dispatch_purchase_capi(
                         gclid = vis_row.data[0].get("gclid")
                         fbp   = vis_row.data[0].get("fbp")
                         fbc   = vis_row.data[0].get("fbc")
+                        ga_client_id = vis_row.data[0].get("ga_client_id")
             except Exception as exc:
                 logger.debug("visitor attribution lookup failed: %s", exc)
 
@@ -147,6 +149,7 @@ def _dispatch_purchase_capi(
                 measurement_id=c["ga4_measurement_id"],
                 api_secret=c["ga4_api_secret"],
                 event=event,  # type: ignore[arg-type]
+                ga_client_id=ga_client_id,
             )
 
         # ── Google Ads Conversion API ─────────────────────────────────────
