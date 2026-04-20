@@ -189,5 +189,6 @@ class ShopifyAdapter(BaseAdapter):
                 "gclid":         qs.get("gclid"),
                 "fbclid":        qs.get("fbclid"),
                 "referring_site": payload.get("referring_site"),
+                "cart_token":    payload.get("cart_token"),
             },
         )

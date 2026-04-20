@@ -83,7 +83,8 @@ def _dispatch_purchase_capi(
             .select(
                 "meta_pixel_id, meta_access_token, "
                 "ga4_measurement_id, ga4_api_secret, "
-                "google_ads_customer_id, google_ads_conversion_action_id"
+                "google_ads_customer_id, google_ads_conversion_action_id, "
+                "google_ads_refresh_token"
             )
             .eq("pixel_id", client_pixel_id)
             .limit(1)
@@ -153,6 +154,7 @@ def _dispatch_purchase_capi(
             gclid
             and c.get("google_ads_customer_id")
             and c.get("google_ads_conversion_action_id")
+            and c.get("google_ads_refresh_token")
             and event.order  # type: ignore[union-attr]
         ):
             google_ads.send_conversion(
@@ -162,6 +164,7 @@ def _dispatch_purchase_capi(
                 value=float(event.order.total or 0),  # type: ignore[union-attr]
                 currency=event.order.currency or "BRL",  # type: ignore[union-attr]
                 order_id=str(event.order.id),  # type: ignore[union-attr]
+                refresh_token=c["google_ads_refresh_token"],
                 manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
             )
     except Exception as exc:
@@ -216,6 +219,7 @@ async def receive_webhook(
         phone=event.customer.phone if event.customer else None,
         platform_customer_id=event.customer.id if event.customer else None,
         platform=platform,
+        cart_token=(event.metadata or {}).get("cart_token"),
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)

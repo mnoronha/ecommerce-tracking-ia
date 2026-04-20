@@ -192,6 +192,7 @@ async def receive_pixel_event(
         fbclid=body.fbc,
         fbp=body.fbp,
         fbc=body.fbc,
+        cart_token=(body.metadata or {}).get("cart_token"),
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
 

@@ -21,15 +21,20 @@ logger = logging.getLogger(__name__)
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _ADS_API   = "https://googleads.googleapis.com/v17"
 
-# In-process token cache — avoids refreshing on every conversion
-_token_cache: dict = {"token": None, "expires_at": 0.0}
+# Per-refresh-token cache: {refresh_token_prefix -> {token, expires_at}}
+# Keyed by first 16 chars of refresh_token to avoid storing full secrets in memory keys.
+_token_cache: dict = {}
 
 
 def _get_access_token(client_id: str, client_secret: str, refresh_token: str) -> Optional[str]:
-    """Return a valid OAuth2 access token, refreshing if within 60s of expiry."""
+    """Return a valid OAuth2 access token, refreshing if within 60s of expiry.
+    Cache is per refresh_token so multiple clients don't share the same token.
+    """
     now = time.time()
-    if _token_cache["token"] and _token_cache["expires_at"] > now + 60:
-        return _token_cache["token"]
+    cache_key = refresh_token[:16]
+    cached = _token_cache.get(cache_key, {})
+    if cached.get("token") and cached.get("expires_at", 0) > now + 60:
+        return cached["token"]
 
     try:
         resp = httpx.post(
@@ -44,10 +49,12 @@ def _get_access_token(client_id: str, client_secret: str, refresh_token: str) ->
         )
         if resp.status_code == 200:
             data = resp.json()
-            _token_cache["token"]      = data["access_token"]
-            _token_cache["expires_at"] = now + data.get("expires_in", 3600)
-            logger.debug("google_ads: OAuth2 token refreshed")
-            return _token_cache["token"]
+            _token_cache[cache_key] = {
+                "token":      data["access_token"],
+                "expires_at": now + data.get("expires_in", 3600),
+            }
+            logger.debug("google_ads: OAuth2 token refreshed for key=%s…", cache_key)
+            return _token_cache[cache_key]["token"]
         logger.warning("google_ads token refresh HTTP %s: %s", resp.status_code, resp.text[:200])
     except Exception as exc:
         logger.error("google_ads _get_access_token: %s", exc)
@@ -61,38 +68,31 @@ def send_conversion(
     value:                float,
     currency:             str,
     order_id:             str,
+    refresh_token:        str,
     occurred_at:          Optional[datetime] = None,
     manager_id:           Optional[str] = None,
 ) -> bool:
     """
     Upload a click conversion to Google Ads API.
 
-    Requires global env vars:
-      GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_OAUTH_CLIENT_ID,
-      GOOGLE_ADS_OAUTH_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN
-
-    Per-client config (clients table):
-      google_ads_customer_id, google_ads_conversion_action_id
-      google_ads_refresh_token (optional — falls back to global)
+    SaaS model: OAuth app credentials (developer token, client id/secret) are
+    shared across all clients and stored in Railway env vars. The refresh_token
+    is per-client and stored in clients.google_ads_refresh_token in Supabase —
+    generated when the client authenticates their Google Ads account.
 
     Returns True on success, False on any error (never raises).
     """
-    if not all([customer_id, conversion_action_id, gclid,
+    if not all([customer_id, conversion_action_id, gclid, refresh_token,
                 settings.GOOGLE_ADS_DEVELOPER_TOKEN,
                 settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
                 settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET]):
         logger.debug("google_ads: skipped — missing credentials or gclid")
         return False
 
-    refresh = settings.GOOGLE_ADS_REFRESH_TOKEN
-    if not refresh:
-        logger.debug("google_ads: skipped — no refresh token")
-        return False
-
     access_token = _get_access_token(
         settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
         settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET,
-        refresh,
+        refresh_token,
     )
     if not access_token:
         return False

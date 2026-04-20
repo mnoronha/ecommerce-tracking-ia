@@ -74,6 +74,7 @@ def upsert_visitor_by_cookie(
     fbclid: Optional[str] = None,
     fbp: Optional[str] = None,
     fbc: Optional[str] = None,
+    cart_token: Optional[str] = None,
 ) -> Optional[str]:
     """
     Upsert visitor keyed on (client_id, visitor_id).
@@ -99,10 +100,11 @@ def upsert_visitor_by_cookie(
                 "total_pageviews": (row.get("total_pageviews") or 0) + 1,
             }
             # First touch wins for attribution identifiers
-            if gclid  and not row.get("gclid"):  update["gclid"]  = gclid
-            if fbclid and not row.get("fbclid"): update["fbclid"] = fbclid
-            if fbp    and not row.get("fbp"):    update["fbp"]    = fbp
-            if fbc    and not row.get("fbc"):    update["fbc"]    = fbc
+            if gclid       and not row.get("gclid"):       update["gclid"]       = gclid
+            if fbclid      and not row.get("fbclid"):      update["fbclid"]      = fbclid
+            if fbp         and not row.get("fbp"):         update["fbp"]         = fbp
+            if fbc         and not row.get("fbc"):         update["fbc"]         = fbc
+            if cart_token  and not row.get("cart_token"):  update["cart_token"]  = cart_token
             # Append to utm_history for multi-touch attribution
             if utm_source:
                 history = row.get("utm_history") or []
@@ -131,10 +133,11 @@ def upsert_visitor_by_cookie(
             "first_platform": first_platform,
             "total_pageviews": 1,
         }
-        if gclid:  insert_row["gclid"]  = gclid
-        if fbclid: insert_row["fbclid"] = fbclid
-        if fbp:    insert_row["fbp"]    = fbp
-        if fbc:    insert_row["fbc"]    = fbc
+        if gclid:      insert_row["gclid"]      = gclid
+        if fbclid:     insert_row["fbclid"]     = fbclid
+        if fbp:        insert_row["fbp"]        = fbp
+        if fbc:        insert_row["fbc"]        = fbc
+        if cart_token: insert_row["cart_token"] = cart_token
 
         insert_result = sb.table("visitors").insert(insert_row).execute()
         if insert_result and insert_result.data:
@@ -150,15 +153,26 @@ def upsert_visitor_by_email(
     phone: Optional[str] = None,
     platform_customer_id: Optional[str] = None,
     platform: str = "shopify",
+    cart_token: Optional[str] = None,
 ) -> Optional[str]:
     """
     Find or create a visitor from an order's customer email/phone.
-    Returns the visitor UUID or None.
+
+    Lookup priority:
+      1. Email match — visitor already linked (e.g. previous purchase or
+         checkout_completed pixel event ran before webhook).
+      2. cart_token match — visitor was created by the pixel at checkout_started
+         but never linked to an email (e.g. PIX payment redirected to external
+         gateway before thank-you page loaded). Links email on the spot so
+         future webhooks for this customer find the UTM-enriched record.
+      3. Create new visitor — fallback, no UTM will be inherited.
     """
-    if not email and not platform_customer_id:
+    if not email and not platform_customer_id and not cart_token:
         return None
     try:
         sb = get_supabase()
+
+        # ── 1. Lookup by email ────────────────────────────────────────────
         if email:
             existing = (
                 sb.table("visitors")
@@ -173,11 +187,34 @@ def upsert_visitor_by_email(
                 sb.table("visitors").update({
                     "last_seen_at": "now()",
                     "platform_customer_id": platform_customer_id,
-                    # total_orders and total_revenue are updated by write_order
                 }).eq("id", row["id"]).execute()
                 return row["id"]
 
-        # New visitor from order
+        # ── 2. Lookup by cart_token (PIX / external gateway flow) ─────────
+        if cart_token and client_uuid:
+            by_cart = (
+                sb.table("visitors")
+                .select("id")
+                .eq("client_id", client_uuid)
+                .eq("cart_token", cart_token)
+                .limit(1)
+                .execute()
+            )
+            if by_cart and by_cart.data:
+                visitor_id = by_cart.data[0]["id"]
+                # Link email so next webhook skips the cart_token lookup
+                update: dict = {"last_seen_at": "now()"}
+                if email:
+                    update["email"] = email.strip().lower()
+                if phone:
+                    update["phone"] = phone
+                if platform_customer_id:
+                    update["platform_customer_id"] = platform_customer_id
+                sb.table("visitors").update(update).eq("id", visitor_id).execute()
+                logger.debug("visitor %s found by cart_token, email linked: %s", visitor_id, email)
+                return visitor_id
+
+        # ── 3. Create new visitor from order ──────────────────────────────
         insert_result = sb.table("visitors").insert({
             "client_id": client_uuid,
             "visitor_id": f"order_{platform_customer_id or email}",
@@ -185,7 +222,7 @@ def upsert_visitor_by_email(
             "phone": phone,
             "platform_customer_id": platform_customer_id,
             "first_platform": platform,
-            "total_orders": 0,  # write_order will increment
+            "total_orders": 0,
         }).execute()
         if insert_result and insert_result.data:
             return insert_result.data[0]["id"]

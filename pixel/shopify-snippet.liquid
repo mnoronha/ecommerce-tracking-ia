@@ -224,8 +224,9 @@
     {% if template.name == 'cart' %}
     if (tgt.closest('[name="checkout"],.cart__checkout,#CartSubmit,[data-cart-checkout]')) {
       track('checkout_started', {
-        cart_total: {{ cart.total_price | divided_by: 100.0 }},
-        item_count: {{ cart.item_count }}
+        cart_total:  {{ cart.total_price | divided_by: 100.0 }},
+        item_count:  {{ cart.item_count }},
+        cart_token:  '{{ cart.token }}'
       });
     }
     {% endif %}
