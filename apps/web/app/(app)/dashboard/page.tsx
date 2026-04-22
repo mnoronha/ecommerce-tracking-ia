@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
 import {
@@ -348,7 +349,8 @@ export default function DashboardPage() {
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
 
-  const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+  const params = useParams()
+  const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
 
   const loadData = useCallback(async (range: DateRange) => {
     setLoading(true)
@@ -539,7 +541,7 @@ export default function DashboardPage() {
   const generateInsights = useCallback(async () => {
     setGenerating(true)
     try {
-      await fetch(`${API_URL}/insights/lk-sneakers/generate`, { method: 'POST' })
+      await fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/generate`, { method: 'POST' })
       // Poll for new insights (generation takes ~5-10s)
       await new Promise(r => setTimeout(r, 8000))
       await loadInsights()
@@ -609,7 +611,7 @@ export default function DashboardPage() {
 
   const markRead = useCallback(async (insightId: string) => {
     setInsights(prev => prev.map(i => i.id === insightId ? { ...i, is_read: true } : i))
-    await fetch(`${API_URL}/insights/lk-sneakers/${insightId}/read`, { method: 'PATCH' })
+    await fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/${insightId}/read`, { method: 'PATCH' })
   }, [])
 
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])

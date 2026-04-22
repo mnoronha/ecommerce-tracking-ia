@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { RefreshCw, Users, ShoppingCart, ShoppingBag, Crown, Clock, Loader2, CheckCircle, AlertCircle, XCircle } from 'lucide-react'
 
@@ -19,7 +20,7 @@ interface AudienceStatus {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
-const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+// CLIENT_PIXEL_ID resolved dynamically via useParams inside component
 
 const AUDIENCE_META: Record<string, {
   label:       string
@@ -163,6 +164,9 @@ function AudienceCard({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function AudienciasPage() {
+  const params = useParams()
+  const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+
   const [audiences, setAudiences] = useState<AudienceStatus[]>([])
   const [loading, setLoading]     = useState(true)
   const [syncingAll, setSyncingAll] = useState(false)

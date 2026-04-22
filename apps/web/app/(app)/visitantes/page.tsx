@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Search, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
@@ -34,7 +35,7 @@ interface TrackingEvent {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+// CLIENT_PIXEL_ID resolved dynamically via useParams inside component
 const PAGE_SIZE = 25
 
 const EVENT_META: Record<string, { label: string; color: string }> = {
@@ -164,6 +165,9 @@ function VisitorPanel({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function VisitantesPage() {
+  const params = useParams()
+  const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+
   const [visitors, setVisitors]   = useState<Visitor[]>([])
   const [total, setTotal]         = useState(0)
   const [page, setPage]           = useState(0)

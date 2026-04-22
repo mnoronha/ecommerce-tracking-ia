@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react'
 
@@ -24,7 +25,7 @@ type StatusFilter = 'all' | 'paid' | 'pending'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const CLIENT_PIXEL_ID = process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+// CLIENT_PIXEL_ID resolved dynamically via useParams inside component
 const PAGE_SIZE = 25
 
 const STATUS_STYLE: Record<string, string> = {
@@ -46,6 +47,9 @@ const fmtDt = (iso: string) =>
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PedidosPage() {
+  const params = useParams()
+  const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+
   const [orders, setOrders]         = useState<Order[]>([])
   const [total, setTotal]           = useState(0)
   const [totalRevenue, setTotalRev] = useState(0)

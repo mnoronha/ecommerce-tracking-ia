@@ -70,7 +70,10 @@
       "Read(//c/Users/maico/AppData/Roaming/com.vercel.cli/**)",
       "Read(//c/Users/maico/**)",
       "Bash(python3 *)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "mcp__supabase__execute_sql",
+      "PowerShell(Get-Content *)",
+      "Bash(vercel env *)"
     ]
   },
   "enableAllProjectMcpServers": true,
