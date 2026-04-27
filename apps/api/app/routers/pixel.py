@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from ..config import settings
 from ..database import get_supabase
 from ..limiter import limiter
-from ..services import ga4, meta_capi, writer
+from ..services import ga4, google_ads, meta_capi, writer
 from ..models.events import EventType, NormalizedEvent, UTMParams
 
 logger = logging.getLogger(__name__)
@@ -137,6 +137,41 @@ def _dispatch_pixel_ga4(client_pixel_id: str, event: NormalizedEvent) -> None:
         logger.warning("_dispatch_pixel_ga4 error: %s", exc)
 
 
+def _dispatch_pixel_google_ads(
+    client_pixel_id: str,
+    event: NormalizedEvent,
+    gclid: str,
+    action_column: str,
+) -> None:
+    """Upload AddToCart or Checkout conversion to Google Ads when visitor has a gclid."""
+    try:
+        creds = (
+            get_supabase().table("clients")
+            .select(f"google_ads_customer_id, google_ads_refresh_token, {action_column}")
+            .eq("pixel_id", client_pixel_id)
+            .limit(1)
+            .execute()
+        )
+        if not (creds and creds.data):
+            return
+        c = creds.data[0]
+        action_id = c.get(action_column)
+        if not (c.get("google_ads_customer_id") and action_id and c.get("google_ads_refresh_token")):
+            return
+        google_ads.send_conversion(
+            customer_id=c["google_ads_customer_id"],
+            conversion_action_id=action_id,
+            gclid=gclid,
+            value=float((event.metadata or {}).get("product_price") or 0),
+            currency="BRL",
+            refresh_token=c["google_ads_refresh_token"],
+            order_id=event.event_id,
+            manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+        )
+    except Exception as exc:
+        logger.warning("_dispatch_pixel_google_ads error for %s: %s", client_pixel_id, exc)
+
+
 def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
     """Send ViewContent / AddToCart / InitiateCheckout to Meta CAPI (background)."""
     try:
@@ -212,6 +247,21 @@ async def receive_pixel_event(
     if event.event_type in _CAPI_PIXEL_EVENTS:
         background_tasks.add_task(_dispatch_pixel_capi, body.client_id, event)
         background_tasks.add_task(_dispatch_pixel_ga4, body.client_id, event)
+
+    # Google Ads mid-funnel conversions (AddToCart, Checkout) — only when gclid present
+    if body.gclid:
+        if event.event_type == EventType.CART_CREATED:
+            background_tasks.add_task(
+                _dispatch_pixel_google_ads,
+                body.client_id, event, body.gclid,
+                "google_ads_add_to_cart_action_id",
+            )
+        elif event.event_type == EventType.CHECKOUT_STARTED:
+            background_tasks.add_task(
+                _dispatch_pixel_google_ads,
+                body.client_id, event, body.gclid,
+                "google_ads_checkout_action_id",
+            )
 
     return {"status": "ok", "event_id": event.event_id}
 

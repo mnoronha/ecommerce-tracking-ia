@@ -19,6 +19,9 @@ interface ClientRow {
   ga4_api_secret: string | null
   google_ads_customer_id: string | null
   google_ads_conversion_action_id: string | null
+  google_ads_add_to_cart_action_id: string | null
+  google_ads_checkout_action_id: string | null
+  google_ads_aw_id: string | null
   google_ads_refresh_token: string | null
   alert_email: string | null
   slack_webhook_url: string | null
@@ -75,9 +78,12 @@ export default function ClientSettingsPage() {
         meta_ad_account_id:              form.meta_ad_account_id || null,
         ga4_measurement_id:              form.ga4_measurement_id || null,
         ga4_api_secret:                  form.ga4_api_secret   || null,
-        google_ads_customer_id:          form.google_ads_customer_id || null,
-        google_ads_conversion_action_id: form.google_ads_conversion_action_id || null,
-        google_ads_refresh_token:        form.google_ads_refresh_token || null,
+        google_ads_customer_id:           form.google_ads_customer_id || null,
+        google_ads_conversion_action_id:  form.google_ads_conversion_action_id || null,
+        google_ads_add_to_cart_action_id: form.google_ads_add_to_cart_action_id || null,
+        google_ads_checkout_action_id:    form.google_ads_checkout_action_id || null,
+        google_ads_aw_id:                 form.google_ads_aw_id || null,
+        google_ads_refresh_token:         form.google_ads_refresh_token || null,
         alert_email:                     form.alert_email      || null,
         slack_webhook_url:               form.slack_webhook_url || null,
         is_active:                       form.is_active,
@@ -167,13 +173,25 @@ export default function ClientSettingsPage() {
         </Section>
 
         <Section title="Google Ads">
-          <Field label="Customer ID">
+          <Field label="Customer ID" hint="ex: 162-897-1213">
             <input value={form.google_ads_customer_id || ''} onChange={e => set('google_ads_customer_id', e.target.value)}
               placeholder="162-897-1213" className={INPUT} />
           </Field>
-          <Field label="Conversion Action ID">
+          <Field label="AW-ID (snippet Shopify)" hint="AW-XXXXXXXXXX — para o script de remarketing">
+            <input value={form.google_ads_aw_id || ''} onChange={e => set('google_ads_aw_id', e.target.value)}
+              placeholder="AW-123456789" className={INPUT} />
+          </Field>
+          <Field label="Conversion Action ID — Compra">
             <input value={form.google_ads_conversion_action_id || ''} onChange={e => set('google_ads_conversion_action_id', e.target.value)}
               placeholder="11392887484" className={INPUT} />
+          </Field>
+          <Field label="Conversion Action ID — Add to Cart">
+            <input value={form.google_ads_add_to_cart_action_id || ''} onChange={e => set('google_ads_add_to_cart_action_id', e.target.value)}
+              placeholder="11392887485" className={INPUT} />
+          </Field>
+          <Field label="Conversion Action ID — Checkout Iniciado">
+            <input value={form.google_ads_checkout_action_id || ''} onChange={e => set('google_ads_checkout_action_id', e.target.value)}
+              placeholder="11392887486" className={INPUT} />
           </Field>
           <Field label="Refresh Token (OAuth)" hint="gerado via Google OAuth Playground">
             <input type="password" value={form.google_ads_refresh_token || ''} onChange={e => set('google_ads_refresh_token', e.target.value)}

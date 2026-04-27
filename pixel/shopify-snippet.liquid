@@ -27,8 +27,11 @@
   'use strict';
 
   // ── Configuração ────────────────────────────────────────────────────────────
-  var CLIENT_ID = 'lk-sneakers';
-  var API_URL   = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  var CLIENT_ID         = 'lk-sneakers';
+  var API_URL           = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  // Google Ads AW-ID para remarketing (deixe '' para desativar)
+  // Conversões (Purchase, AddToCart, Checkout) são enviadas server-side — não precisam de gtag
+  var GOOGLE_ADS_AW_ID  = '';
 
   // ── Constantes ──────────────────────────────────────────────────────────────
   var COOKIE_VISITOR  = '_etv';
@@ -182,6 +185,23 @@
       gclid:        getGclid(),
       metadata:     extra || {}
     });
+  }
+
+  // ── Google Ads remarketing snippet (minimal) ─────────────────────────────────
+  // Carrega gtag.js APENAS para alimentar audiences de remarketing (RLSA, Display).
+  // Conversões (Compra, AddToCart, Checkout) são enviadas server-side via Conversion API.
+  if (GOOGLE_ADS_AW_ID) {
+    w.dataLayer = w.dataLayer || [];
+    function gtag() { w.dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', GOOGLE_ADS_AW_ID, {
+      'send_page_view': false,        // pageview via nosso pixel, não duplicar
+      'allow_enhanced_conversions': true
+    });
+    var gtagScript = d.createElement('script');
+    gtagScript.async = true;
+    gtagScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + GOOGLE_ADS_AW_ID;
+    d.head.appendChild(gtagScript);
   }
 
   // ── API pública ──────────────────────────────────────────────────────────────

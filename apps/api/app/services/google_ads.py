@@ -67,8 +67,8 @@ def send_conversion(
     gclid:                str,
     value:                float,
     currency:             str,
-    order_id:             str,
     refresh_token:        str,
+    order_id:             Optional[str] = None,
     occurred_at:          Optional[datetime] = None,
     manager_id:           Optional[str] = None,
 ) -> bool:
@@ -79,6 +79,9 @@ def send_conversion(
     shared across all clients and stored in Railway env vars. The refresh_token
     is per-client and stored in clients.google_ads_refresh_token in Supabase —
     generated when the client authenticates their Google Ads account.
+
+    order_id is optional — pass it for Purchase events (deduplication);
+    omit it for mid-funnel events (AddToCart, Checkout).
 
     Returns True on success, False on any error (never raises).
     """
@@ -97,8 +100,8 @@ def send_conversion(
     if not access_token:
         return False
 
-    clean_cid    = customer_id.replace("-", "").replace(" ", "")
-    conv_time    = (occurred_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S+00:00")
+    clean_cid = customer_id.replace("-", "").replace(" ", "")
+    conv_time = (occurred_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S+00:00")
 
     headers = {
         "Authorization":   f"Bearer {access_token}",
@@ -108,15 +111,18 @@ def send_conversion(
     if manager_id:
         headers["login-customer-id"] = manager_id.replace("-", "")
 
+    conv: dict = {
+        "gclid":              gclid,
+        "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
+        "conversionDateTime": conv_time,
+        "conversionValue":    float(value),
+        "currencyCode":       (currency or "BRL").upper(),
+    }
+    if order_id:
+        conv["orderId"] = str(order_id)
+
     payload = {
-        "conversions": [{
-            "gclid":              gclid,
-            "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
-            "conversionDateTime": conv_time,
-            "conversionValue":    float(value),
-            "currencyCode":       (currency or "BRL").upper(),
-            "orderId":            str(order_id),
-        }],
+        "conversions":   [conv],
         "partialFailure": True,
     }
 
