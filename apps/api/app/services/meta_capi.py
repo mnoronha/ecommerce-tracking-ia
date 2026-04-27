@@ -177,6 +177,7 @@ def send_pixel_event(
     pixel_id: str,
     access_token: str,
     event: NormalizedEvent,
+    test_event_code: Optional[str] = None,
 ) -> bool:
     """
     Send ViewContent, AddToCart, or InitiateCheckout from pixel events.
@@ -243,4 +244,4 @@ def send_pixel_event(
     if event.page_url:
         capi_event["event_source_url"] = event.page_url
 
-    return _send(pixel_id, access_token, [capi_event])
+    return _send(pixel_id, access_token, [capi_event], test_event_code)

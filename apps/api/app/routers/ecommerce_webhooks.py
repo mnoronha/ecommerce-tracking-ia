@@ -139,6 +139,7 @@ def _dispatch_purchase_capi(
                 pixel_id=c["meta_pixel_id"],
                 access_token=c["meta_access_token"],
                 event=event,  # type: ignore[arg-type]
+                test_event_code=settings.META_TEST_EVENT_CODE or None,
             )
             if success and order_uuid:
                 writer.mark_capi_sent(order_uuid)

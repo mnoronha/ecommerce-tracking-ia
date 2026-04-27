@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     SMTP_PASS: str = ""
     SMTP_FROM: str = ""  # defaults to SMTP_USER if empty
 
+    # ── Meta CAPI ────────────────────────────────────────────────────────────
+    # Código de teste do Events Manager — remover após validação
+    META_TEST_EVENT_CODE: str = ""
+
     # ── Google Ads Conversion API ─────────────────────────────────────────
     # Agency-level credentials — shared across all clients
     GOOGLE_ADS_DEVELOPER_TOKEN:   str = ""

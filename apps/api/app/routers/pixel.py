@@ -155,6 +155,7 @@ def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
                 pixel_id=c["meta_pixel_id"],
                 access_token=c["meta_access_token"],
                 event=event,
+                test_event_code=settings.META_TEST_EVENT_CODE or None,
             )
     except Exception as exc:
         logger.warning("_dispatch_pixel_capi error: %s", exc)
