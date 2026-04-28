@@ -4,6 +4,9 @@
 -- criadas manualmente no Supabase ao longo do desenvolvimento e nunca foram
 -- versionadas. Sem isso, qualquer ambiente novo (staging, novo cliente,
 -- recriação) vai quebrar em silêncio.
+--
+-- Totalmente idempotente: pode ser rodada múltiplas vezes e não falha se
+-- tabelas/colunas já existirem (criadas manualmente no painel do Supabase).
 -- =============================================================================
 
 -- ── clients: GA4 credentials per-cliente ──────────────────────────────────────
@@ -11,17 +14,32 @@ ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS ga4_measurement_id TEXT;
 ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS ga4_api_secret     TEXT;
 
 -- ── visitors: scoring + multi-touch attribution ───────────────────────────────
--- retargeting_score: pontuação de intenção de compra (drop ao converter)
--- last_cart_at: timestamp do último add_to_cart/cart_updated
--- last_purchase_at: timestamp da última conversão (usado em audience inactive)
--- utm_history: JSONB com últimos 20 touchpoints para atribuição multi-toque
-ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS retargeting_score INT
-    DEFAULT 0 CHECK (retargeting_score BETWEEN 0 AND 100);
+ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS retargeting_score INT DEFAULT 0;
 ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS last_cart_at      TIMESTAMPTZ;
 ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS last_purchase_at  TIMESTAMPTZ;
 ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS utm_history       JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS last_seen_at      TIMESTAMPTZ DEFAULT now();
 
--- Índices para queries frequentes (audience sync e dashboard)
+-- Adiciona constraint apenas se ainda não existir (idempotente)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT FROM information_schema.constraint_column_usage
+    WHERE table_schema = 'public'
+      AND table_name   = 'visitors'
+      AND column_name  = 'retargeting_score'
+      AND constraint_name LIKE '%retargeting_score%'
+  ) THEN
+    BEGIN
+      ALTER TABLE public.visitors
+        ADD CONSTRAINT visitors_retargeting_score_check
+        CHECK (retargeting_score BETWEEN 0 AND 100);
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+  END IF;
+END;
+$$;
+
 CREATE INDEX IF NOT EXISTS idx_visitors_retargeting
     ON public.visitors (client_id, retargeting_score)
     WHERE retargeting_score > 0;
@@ -31,30 +49,27 @@ CREATE INDEX IF NOT EXISTS idx_visitors_last_purchase
 CREATE INDEX IF NOT EXISTS idx_visitors_last_seen
     ON public.visitors (client_id, last_seen_at DESC);
 
--- ── visitors: last_seen_at (referenciada como first_seen_at/last_seen_at) ────
--- Migration 001 já cria last_seen_at — apenas garantir que existe.
--- (idempotente: ADD COLUMN IF NOT EXISTS)
-ALTER TABLE public.visitors ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT now();
-
 -- ── webhook_deliveries: log de auditoria de webhooks recebidos ───────────────
--- Referenciada em writer.py:writer.write_webhook_delivery() mas nunca criada.
+-- Cria a tabela se não existir; senão garante que TODAS as colunas existam
+-- (a tabela pode ter sido criada manualmente no Supabase com um schema parcial).
 CREATE TABLE IF NOT EXISTS public.webhook_deliveries (
-    id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_id           UUID        REFERENCES public.clients(id) ON DELETE CASCADE,
-    platform            TEXT        NOT NULL,
-    platform_event_id   TEXT,
-    event_topic         TEXT,
-    payload             JSONB,
-    headers             JSONB,
-    signature_valid     BOOLEAN     DEFAULT TRUE,
-    status              TEXT        DEFAULT 'processed'
-        CHECK (status IN ('processed','error','skipped','pending')),
-    error_message       TEXT,
-    response_code       INT,
-    result_order_id     UUID        REFERENCES public.orders(id) ON DELETE SET NULL,
-    result_visitor_id   UUID        REFERENCES public.visitors(id) ON DELETE SET NULL,
-    created_at          TIMESTAMPTZ DEFAULT now()
+    id  UUID PRIMARY KEY DEFAULT gen_random_uuid()
 );
+
+-- Garantir todas as colunas (defensivo — funciona se a tabela já existia)
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS client_id          UUID REFERENCES public.clients(id) ON DELETE CASCADE;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS platform           TEXT;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS platform_event_id  TEXT;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS event_topic        TEXT;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS payload            JSONB;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS headers            JSONB;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS signature_valid    BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS status             TEXT    DEFAULT 'processed';
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS error_message      TEXT;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS response_code      INT;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS result_order_id    UUID REFERENCES public.orders(id)   ON DELETE SET NULL;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS result_visitor_id  UUID REFERENCES public.visitors(id) ON DELETE SET NULL;
+ALTER TABLE public.webhook_deliveries ADD COLUMN IF NOT EXISTS created_at         TIMESTAMPTZ DEFAULT now();
 
 ALTER TABLE public.webhook_deliveries ENABLE ROW LEVEL SECURITY;
 
@@ -81,19 +96,31 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_status
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_event
     ON public.webhook_deliveries (platform_event_id);
 
--- ── clients: Meta token expiry tracking (preparação para item #4) ────────────
--- Long-lived Meta tokens duram ~60 dias. Salvar quando expira para alertar
--- antes da renovação e evitar quebras silenciosas em produção.
+-- ── clients: Meta token expiry tracking ──────────────────────────────────────
 ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS meta_token_expires_at TIMESTAMPTZ;
-ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS meta_token_health     TEXT
-    DEFAULT 'unknown'
-    CHECK (meta_token_health IN ('healthy','expiring_soon','expired','invalid','unknown'));
+ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS meta_token_health     TEXT DEFAULT 'unknown';
+
+-- Adiciona CHECK constraint apenas se ainda não existir
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT FROM information_schema.constraint_column_usage
+    WHERE table_schema = 'public'
+      AND table_name   = 'clients'
+      AND column_name  = 'meta_token_health'
+      AND constraint_name LIKE '%meta_token_health%'
+  ) THEN
+    BEGIN
+      ALTER TABLE public.clients
+        ADD CONSTRAINT clients_meta_token_health_check
+        CHECK (meta_token_health IN ('healthy','expiring_soon','expired','invalid','unknown'));
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+  END IF;
+END;
+$$;
 
 -- ── orders: contador de retentativas CAPI ────────────────────────────────────
--- Quando Meta CAPI falha 3 vezes seguidas no fluxo síncrono do webhook, o
--- pedido fica com capi_sent=false. O job retry_failed_capi pega esses pedidos
--- e re-tenta. Para evitar loops infinitos em pedidos com problema permanente
--- (ex: token revogado), limitamos a 5 retries.
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS capi_retry_count INT DEFAULT 0;
 ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS capi_last_error  TEXT;
 
