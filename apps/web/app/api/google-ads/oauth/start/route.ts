@@ -16,8 +16,10 @@ export async function GET(req: NextRequest) {
   const oauthClientId = process.env.GOOGLE_ADS_OAUTH_CLIENT_ID
   if (!oauthClientId) return NextResponse.json({ error: 'OAuth not configured on server' }, { status: 500 })
 
+  const next = req.nextUrl.searchParams.get('next') === 'onboarding' ? 'onboarding' : 'settings'
+
   const nonce = randomBytes(16).toString('hex')
-  const state = Buffer.from(JSON.stringify({ c: clientId, n: nonce })).toString('base64url')
+  const state = Buffer.from(JSON.stringify({ c: clientId, n: nonce, r: next })).toString('base64url')
   const redirectUri = `${req.nextUrl.origin}/api/google-ads/oauth/callback`
 
   const url = new URL(GOOGLE_AUTH_URL)

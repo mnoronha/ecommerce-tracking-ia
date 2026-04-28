@@ -82,7 +82,7 @@ export default function NewClientPage() {
 
       if (insertError) throw insertError
 
-      router.push(`/clients/${data.pixel_id}/settings?created=1`)
+      router.push(`/clients/${data.pixel_id}/onboarding`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao criar cliente.'
       setError(msg)

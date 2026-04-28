@@ -20,10 +20,12 @@ export async function GET(req: NextRequest) {
   // Decode state and verify CSRF nonce
   let clientId: string
   let nonce: string
+  let returnTo = 'settings'
   try {
     const parsed = JSON.parse(Buffer.from(state, 'base64url').toString())
     clientId = parsed.c
     nonce    = parsed.n
+    returnTo = parsed.r || 'settings'
     if (!clientId || !nonce) throw new Error('incomplete state')
   } catch {
     return NextResponse.redirect(`${origin}/clients?error=google_oauth_invalid`)
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest) {
   if (!tokenRes.ok) {
     const body = await tokenRes.text()
     console.error('google_ads oauth token exchange failed:', body)
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=google_oauth_token`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=google_oauth_token`)
   }
 
   const tokens = await tokenRes.json()
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
   if (!refreshToken) {
     // Google only returns refresh_token on first consent — if missing, revoke and retry
     return NextResponse.redirect(
-      `${origin}/clients/${clientId}/settings?error=google_oauth_no_refresh`
+      `${origin}/clients/${clientId}/${returnTo}?error=google_oauth_no_refresh`
     )
   }
 
@@ -77,11 +79,11 @@ export async function GET(req: NextRequest) {
 
   if (dbError) {
     console.error('google_ads oauth db save failed:', dbError.message)
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=google_oauth_db`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=google_oauth_db`)
   }
 
   const response = NextResponse.redirect(
-    `${origin}/clients/${clientId}/settings?connected=google`
+    `${origin}/clients/${clientId}/${returnTo}?connected=google`
   )
   response.cookies.set('_ga_oauth_nonce', '', { maxAge: 0, path: '/' })
   return response

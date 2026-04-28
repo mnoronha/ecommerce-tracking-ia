@@ -23,8 +23,11 @@ export async function GET(req: NextRequest) {
   const appId = process.env.META_APP_ID
   if (!appId) return NextResponse.json({ error: 'Meta OAuth not configured on server' }, { status: 500 })
 
+  // Optional: where to redirect after callback (default: settings)
+  const next = req.nextUrl.searchParams.get('next') === 'onboarding' ? 'onboarding' : 'settings'
+
   const nonce = randomBytes(16).toString('hex')
-  const state = Buffer.from(JSON.stringify({ c: clientId, n: nonce })).toString('base64url')
+  const state = Buffer.from(JSON.stringify({ c: clientId, n: nonce, r: next })).toString('base64url')
   const redirectUri = `${req.nextUrl.origin}/api/meta/oauth/callback`
 
   const url = new URL(META_AUTH_URL)

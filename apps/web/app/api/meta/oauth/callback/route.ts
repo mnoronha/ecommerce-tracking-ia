@@ -20,10 +20,12 @@ export async function GET(req: NextRequest) {
   // Decode state and verify CSRF nonce
   let clientId: string
   let nonce: string
+  let returnTo = 'settings'
   try {
     const parsed = JSON.parse(Buffer.from(state, 'base64url').toString())
     clientId = parsed.c
     nonce    = parsed.n
+    returnTo = parsed.r || 'settings'
     if (!clientId || !nonce) throw new Error('incomplete state')
   } catch {
     return NextResponse.redirect(`${origin}/clients?error=meta_oauth_invalid`)
@@ -52,13 +54,13 @@ export async function GET(req: NextRequest) {
   if (!shortRes.ok) {
     const body = await shortRes.text()
     console.error('meta oauth short-lived exchange failed:', body)
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=meta_oauth_token`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=meta_oauth_token`)
   }
 
   const shortData = await shortRes.json()
   const shortToken: string | undefined = shortData.access_token
   if (!shortToken) {
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=meta_oauth_no_token`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=meta_oauth_no_token`)
   }
 
   // ── Step 2: Exchange short-lived for long-lived (60 days) ──────────────────
@@ -75,14 +77,14 @@ export async function GET(req: NextRequest) {
   if (!longRes.ok) {
     const body = await longRes.text()
     console.error('meta oauth long-lived exchange failed:', body)
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=meta_oauth_long_token`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=meta_oauth_long_token`)
   }
 
   const longData = await longRes.json()
   const longToken: string | undefined = longData.access_token
   const expiresIn: number = longData.expires_in || (60 * 24 * 60 * 60) // default 60 days
   if (!longToken) {
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=meta_oauth_no_long_token`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=meta_oauth_no_long_token`)
   }
 
   const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString()
@@ -142,11 +144,11 @@ export async function GET(req: NextRequest) {
 
   if (dbError) {
     console.error('meta oauth db save failed:', dbError.message)
-    return NextResponse.redirect(`${origin}/clients/${clientId}/settings?error=meta_oauth_db`)
+    return NextResponse.redirect(`${origin}/clients/${clientId}/${returnTo}?error=meta_oauth_db`)
   }
 
   const response = NextResponse.redirect(
-    `${origin}/clients/${clientId}/settings?connected=meta`
+    `${origin}/clients/${clientId}/${returnTo}?connected=meta`
   )
   response.cookies.set('_meta_oauth_nonce', '', { maxAge: 0, path: '/' })
   return response
