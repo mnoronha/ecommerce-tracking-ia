@@ -10,6 +10,7 @@ class EventType(str, Enum):
     ORDER_PAID = "order.paid"
     ORDER_CANCELLED = "order.cancelled"
     ORDER_FULFILLED = "order.fulfilled"
+    ORDER_REFUNDED = "order.refunded"
     CART_CREATED = "cart.created"
     CART_UPDATED = "cart.updated"
     PRODUCT_VIEWED = "product.viewed"

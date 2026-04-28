@@ -1,12 +1,12 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextRequest, NextResponse } from 'next/server'
 
-const PUBLIC_PATHS = ['/login']
+const PUBLIC_PATHS = ['/login', '/signup', '/auth']
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  if (PUBLIC_PATHS.some(p => pathname.startsWith(p))) {
+  if (PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))) {
     return NextResponse.next()
   }
 
@@ -33,6 +33,11 @@ export async function proxy(request: NextRequest) {
     const loginUrl = new URL('/login', request.url)
     if (pathname !== '/') loginUrl.searchParams.set('from', pathname)
     return NextResponse.redirect(loginUrl)
+  }
+
+  // Authenticated user landing on / → send to clients list
+  if (pathname === '/') {
+    return NextResponse.redirect(new URL('/clients', request.url))
   }
 
   return response

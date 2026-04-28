@@ -59,6 +59,7 @@ class UTMData(BaseModel):
 class PixelEventRequest(BaseModel):
     client_id:    str
     event_type:   str = "pageview"
+    event_id:     Optional[str] = None  # Optional client-provided event_id (used for dedup with CAPI)
     visitor_id:   Optional[str] = None
     session_id:   Optional[str] = None
     page_url:     Optional[str] = None
@@ -82,7 +83,7 @@ def _build_normalized(
 ) -> NormalizedEvent:
     event_type = _PIXEL_EVENT_MAP.get(data.event_type, EventType.CUSTOM)
     return NormalizedEvent(
-        event_id=str(uuid.uuid4()),
+        event_id=data.event_id or str(uuid.uuid4()),
         event_type=event_type,
         platform="pixel",
         client_id=data.client_id,

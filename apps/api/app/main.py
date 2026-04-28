@@ -10,8 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import audiences, ecommerce_webhooks, insights, meta_ads, pixel
-from .services import alerts, meta_audiences
+from .routers import audiences, ecommerce_webhooks, insights, meta_ads, pixel, setup
+from .services import alerts, capi_retry, meta_audiences, meta_token_health
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -45,6 +45,18 @@ _scheduler.add_job(
     "interval",
     hours=6,
     id="audience_sync",
+)
+_scheduler.add_job(
+    meta_token_health.run_token_health_check,
+    "interval",
+    hours=6,
+    id="meta_token_health",
+)
+_scheduler.add_job(
+    capi_retry.retry_failed_capi,
+    "interval",
+    minutes=30,
+    id="capi_retry",
 )
 
 
@@ -84,6 +96,7 @@ app.include_router(pixel.router)
 app.include_router(insights.router)
 app.include_router(meta_ads.router)
 app.include_router(audiences.router)
+app.include_router(setup.router)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

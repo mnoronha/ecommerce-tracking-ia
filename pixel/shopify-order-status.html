@@ -1,0 +1,126 @@
+{% comment %}
+  =====================================================================
+  Ecommerce Tracking IA — Shopify Order Status Page (Thank-You)  v1.0
+  Arquivo: pixel/shopify-order-status.html
+
+  INSTALAÇÃO:
+  1. Shopify Admin → Settings → Checkout
+  2. Role até "Order status page"
+  3. Em "Additional scripts", cole TODO este conteúdo
+  4. Save
+
+  Dispara `checkout_completed` quando o cliente vê a página de confirmação.
+  Captura customer_email + order_id para que o backend vincule o visitor
+  cookie à conta do cliente IMEDIATAMENTE (sem esperar webhook).
+
+  Também envia event_id determinístico para deduplicação CAPI:
+  o webhook Purchase usa o mesmo hash → Meta deduplica automaticamente.
+  =====================================================================
+{% endcomment %}
+
+<script>
+{% if first_time_accessed %}
+(function (w, d) {
+  'use strict';
+
+  var CLIENT_ID = 'lk-sneakers';
+  var API_URL   = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  var PLATFORM  = 'shopify';
+
+  // ── Reuse cookies set by the theme snippet ─────────────────────────────────
+  function getCookie(name) {
+    var match = d.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  function getMetaIds() {
+    return {
+      fbp: getCookie('_fbp'),
+      fbc: getCookie('_fbc'),
+    };
+  }
+
+  function getGaClientId() {
+    var ga = getCookie('_ga');
+    if (ga) {
+      var parts = ga.split('.');
+      if (parts.length >= 4) return parts[2] + '.' + parts[3];
+    }
+    return null;
+  }
+
+  // ── Deterministic event_id matching backend's _deterministic_purchase_id ──
+  // Backend: sha256(f"purchase_{platform}_{order_id}")
+  // Both sides hash the same string → Meta dedups Purchase from CAPI + browser
+  function deterministicEventId(orderId, callback) {
+    if (!w.crypto || !w.crypto.subtle) {
+      // Fallback: use order_id directly (still allows partial dedup)
+      callback('purchase_' + PLATFORM + '_' + orderId);
+      return;
+    }
+    var raw  = 'purchase_' + PLATFORM + '_' + orderId;
+    var data = new TextEncoder().encode(raw);
+    w.crypto.subtle.digest('SHA-256', data).then(function (buf) {
+      var hex = Array.prototype.map.call(new Uint8Array(buf), function (b) {
+        return b.toString(16).padStart(2, '0');
+      }).join('');
+      callback(hex);
+    }).catch(function () {
+      callback('purchase_' + PLATFORM + '_' + orderId);
+    });
+  }
+
+  // ── Transport (same pattern as theme tracker) ─────────────────────────────
+  function send(payload) {
+    var url = API_URL + '/pixel/events';
+    if (navigator.sendBeacon) {
+      try {
+        navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+        return;
+      } catch (e) {}
+    }
+    try {
+      fetch(url, {
+        method:    'POST',
+        headers:   { 'Content-Type': 'application/json' },
+        body:      JSON.stringify(payload),
+        keepalive: true,
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  // ── Fire ──────────────────────────────────────────────────────────────────
+  var orderId       = '{{ checkout.order_id }}';
+  var orderNumber   = '{{ checkout.order_number | default: checkout.order_id }}';
+  var customerEmail = {{ checkout.email | json }};
+  var totalPrice    = {{ checkout.total_price | default: 0 | divided_by: 100.0 }};
+  var currency      = {{ checkout.currency | json }};
+
+  if (!orderId) return;
+
+  deterministicEventId(orderId, function (eventId) {
+    var meta = getMetaIds();
+    send({
+      client_id:    CLIENT_ID,
+      event_type:   'checkout_completed',
+      event_id:     eventId,
+      visitor_id:   getCookie('_etv'),
+      page_url:     location.href,
+      timestamp:    new Date().toISOString(),
+      fbp:          meta.fbp,
+      fbc:          meta.fbc,
+      ga_client_id: getGaClientId(),
+      gclid:        getCookie('_gclid'),
+      metadata: {
+        order_id:       String(orderId),
+        order_number:   String(orderNumber),
+        customer_email: customerEmail,
+        total:          totalPrice,
+        currency:       currency,
+      },
+    });
+  });
+
+}(window, document));
+{% endif %}
+</script>

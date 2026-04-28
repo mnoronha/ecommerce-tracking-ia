@@ -27,6 +27,7 @@ class ShopifyAdapter(BaseAdapter):
         "orders/paid": EventType.ORDER_PAID,
         "orders/cancelled": EventType.ORDER_CANCELLED,
         "orders/fulfilled": EventType.ORDER_FULFILLED,
+        "refunds/create": EventType.ORDER_REFUNDED,
         "carts/create": EventType.CART_CREATED,
         "carts/update": EventType.CART_UPDATED,
         "customers/create": EventType.CUSTOMER_CREATED,
@@ -152,6 +153,33 @@ class ShopifyAdapter(BaseAdapter):
     # Normalize                                                            #
     # ------------------------------------------------------------------ #
 
+    def _parse_refund(self, data: dict) -> Optional[OrderData]:
+        """
+        Refund webhooks have a different structure than orders. The `id` is
+        the refund_id, `order_id` references the original order, and the
+        refund total comes from summing the refund transactions.
+        """
+        order_id = data.get("order_id")
+        if not order_id:
+            return None
+        transactions = data.get("transactions") or []
+        refund_total = 0.0
+        currency = "BRL"
+        for tx in transactions:
+            if tx.get("kind") == "refund" and tx.get("status") == "success":
+                try:
+                    refund_total += float(tx.get("amount", 0))
+                except (ValueError, TypeError):
+                    pass
+                currency = tx.get("currency") or currency
+        return OrderData(
+            id=str(order_id),
+            number=str(order_id),
+            status="refunded",
+            total=refund_total,
+            currency=currency,
+        )
+
     def normalize(
         self, payload: dict, client_id: str, headers: Optional[dict] = None
     ) -> NormalizedEvent:
@@ -159,7 +187,7 @@ class ShopifyAdapter(BaseAdapter):
         topic = headers.get("x-shopify-topic") or headers.get("X-Shopify-Topic", "")
         event_type = self.TOPIC_MAP.get(topic, EventType.CUSTOM)
 
-        created_at = payload.get("created_at") or payload.get("updated_at")
+        created_at = payload.get("created_at") or payload.get("updated_at") or payload.get("processed_at")
         try:
             timestamp = datetime.fromisoformat(
                 str(created_at).replace("Z", "+00:00")
@@ -171,6 +199,12 @@ class ShopifyAdapter(BaseAdapter):
         qs_raw = parse_qs(urlparse(landing_site).query) if landing_site else {}
         qs = {k: v[0] for k, v in qs_raw.items() if v}
 
+        # Refunds have a different shape — use the refund parser
+        if event_type == EventType.ORDER_REFUNDED:
+            order = self._parse_refund(payload)
+        else:
+            order = self._parse_order(payload)
+
         return NormalizedEvent(
             event_id=str(uuid.uuid4()),
             event_type=event_type,
@@ -178,7 +212,7 @@ class ShopifyAdapter(BaseAdapter):
             client_id=client_id,
             timestamp=timestamp,
             customer=self._parse_customer(payload),
-            order=self._parse_order(payload),
+            order=order,
             utm=self._parse_utm_from_landing(landing_site),
             raw_payload=payload,
             metadata={
@@ -190,5 +224,6 @@ class ShopifyAdapter(BaseAdapter):
                 "fbclid":        qs.get("fbclid"),
                 "referring_site": payload.get("referring_site"),
                 "cart_token":    payload.get("cart_token"),
+                "refund_id":     str(payload.get("id")) if event_type == EventType.ORDER_REFUNDED else None,
             },
         )

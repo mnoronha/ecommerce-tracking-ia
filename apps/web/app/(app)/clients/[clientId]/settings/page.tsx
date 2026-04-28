@@ -15,6 +15,8 @@ interface ClientRow {
   meta_pixel_id: string | null
   meta_access_token: string | null
   meta_ad_account_id: string | null
+  meta_token_expires_at: string | null
+  meta_token_health: string | null
   ga4_measurement_id: string | null
   ga4_api_secret: string | null
   google_ads_customer_id: string | null
@@ -35,7 +37,9 @@ export default function ClientSettingsPage() {
   const searchParams = useSearchParams()
   const clientId     = params.clientId as string
   const justCreated       = searchParams.get('created')   === '1'
-  const justConnectedGA   = searchParams.get('connected') === 'google'
+  const connected         = searchParams.get('connected')
+  const justConnectedGA   = connected === 'google'
+  const justConnectedMeta = connected === 'meta'
   const oauthError        = searchParams.get('error')
 
   const [client,  setClient]  = useState<ClientRow | null>(null)
@@ -44,6 +48,8 @@ export default function ClientSettingsPage() {
   const [saving,  setSaving]  = useState(false)
   const [saved,   setSaved]   = useState(false)
   const [error,   setError]   = useState('')
+  const [registeringHooks, setRegisteringHooks] = useState(false)
+  const [hooksResult, setHooksResult] = useState<{ ok: number; fail: number } | null>(null)
 
   const load = useCallback(async () => {
     const supabase = createSupabaseBrowserClient()
@@ -69,6 +75,43 @@ export default function ClientSettingsPage() {
       .update({ google_ads_refresh_token: null })
       .eq('pixel_id', clientId)
     setForm(f => ({ ...f, google_ads_refresh_token: null }))
+  }
+
+  async function handleRegisterHooks() {
+    setRegisteringHooks(true)
+    setHooksResult(null)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+      const res = await fetch(`${apiUrl}/setup/shopify/${clientId}/webhooks`, { method: 'POST' })
+      if (!res.ok) {
+        setHooksResult({ ok: 0, fail: 1 })
+        return
+      }
+      const data = await res.json()
+      setHooksResult({ ok: data.summary?.succeeded || 0, fail: data.summary?.failed || 0 })
+    } catch {
+      setHooksResult({ ok: 0, fail: 1 })
+    } finally {
+      setRegisteringHooks(false)
+    }
+  }
+
+  async function handleDisconnectMeta() {
+    const supabase = createSupabaseBrowserClient()
+    await supabase
+      .from('clients')
+      .update({
+        meta_access_token:     null,
+        meta_token_expires_at: null,
+        meta_token_health:     'unknown',
+      })
+      .eq('pixel_id', clientId)
+    setForm(f => ({
+      ...f,
+      meta_access_token:     null,
+      meta_token_expires_at: null,
+      meta_token_health:     'unknown',
+    }))
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -138,15 +181,37 @@ export default function ClientSettingsPage() {
         </div>
       )}
 
+      {justConnectedMeta && (
+        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm rounded-lg px-4 py-3 mb-5">
+          <CheckCircle size={15} />
+          Meta conectado com sucesso! Token válido por 60 dias.
+        </div>
+      )}
+
       {oauthError && (
         <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-lg px-4 py-3 mb-5">
           <AlertCircle size={15} />
-          {oauthError === 'google_oauth_denied'     && 'Autorização negada pelo usuário.'}
-          {oauthError === 'google_oauth_csrf'       && 'Sessão expirada. Tente conectar novamente.'}
-          {oauthError === 'google_oauth_no_refresh' && 'Token não retornado. Clique em "Conectar" novamente para re-autorizar.'}
-          {oauthError === 'google_oauth_token'      && 'Falha ao trocar código por token. Verifique as credenciais OAuth no servidor.'}
-          {oauthError === 'google_oauth_db'         && 'Token obtido, mas falhou ao salvar no banco. Tente novamente.'}
-          {!['google_oauth_denied','google_oauth_csrf','google_oauth_no_refresh','google_oauth_token','google_oauth_db'].includes(oauthError) && `Erro: ${oauthError}`}
+          {oauthError.startsWith('google_oauth_') && (
+            <>
+              {oauthError === 'google_oauth_denied'     && 'Autorização Google negada pelo usuário.'}
+              {oauthError === 'google_oauth_csrf'       && 'Sessão expirada. Tente conectar novamente.'}
+              {oauthError === 'google_oauth_no_refresh' && 'Token Google não retornado. Clique em "Conectar" novamente para re-autorizar.'}
+              {oauthError === 'google_oauth_token'      && 'Falha ao trocar código Google por token. Verifique as credenciais OAuth no servidor.'}
+              {oauthError === 'google_oauth_db'         && 'Token Google obtido, mas falhou ao salvar no banco. Tente novamente.'}
+            </>
+          )}
+          {oauthError.startsWith('meta_oauth_') && (
+            <>
+              {oauthError === 'meta_oauth_denied'        && 'Autorização Meta negada pelo usuário.'}
+              {oauthError === 'meta_oauth_csrf'          && 'Sessão expirada. Tente conectar novamente.'}
+              {oauthError === 'meta_oauth_token'         && 'Falha ao trocar código Meta por token. Verifique as credenciais do app no servidor.'}
+              {oauthError === 'meta_oauth_no_token'      && 'Token Meta não retornado. Tente novamente.'}
+              {oauthError === 'meta_oauth_long_token'    && 'Falha ao gerar token de longa duração Meta. Tente novamente.'}
+              {oauthError === 'meta_oauth_no_long_token' && 'Token de longa duração Meta não retornado. Tente novamente.'}
+              {oauthError === 'meta_oauth_db'            && 'Token Meta obtido, mas falhou ao salvar no banco. Tente novamente.'}
+            </>
+          )}
+          {!oauthError.startsWith('google_oauth_') && !oauthError.startsWith('meta_oauth_') && `Erro: ${oauthError}`}
         </div>
       )}
 
@@ -165,6 +230,29 @@ export default function ClientSettingsPage() {
                 <input type="password" value={form.shopify_access_token || ''} onChange={e => set('shopify_access_token', e.target.value)}
                   placeholder="shpat_..." className={INPUT} />
               </Field>
+              <Field label="Webhooks" hint="cria automaticamente todos os webhooks necessários na Shopify">
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={handleRegisterHooks}
+                    disabled={registeringHooks || !form.shopify_domain || !form.shopify_access_token}
+                    className="flex items-center justify-center gap-2 w-full bg-[#0f1117] border border-[#2a2f3e] hover:border-indigo-500 disabled:opacity-50 text-slate-300 hover:text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
+                  >
+                    {registeringHooks ? (
+                      <><Loader2 size={14} className="animate-spin" /> Registrando…</>
+                    ) : (
+                      'Registrar webhooks Shopify'
+                    )}
+                  </button>
+                  {hooksResult && (
+                    <p className={`text-xs ${hooksResult.fail === 0 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                      {hooksResult.fail === 0
+                        ? `✓ ${hooksResult.ok} webhooks configurados`
+                        : `${hooksResult.ok} ok · ${hooksResult.fail} falharam — verifique access token e domínio`}
+                    </p>
+                  )}
+                </div>
+              </Field>
             </>
           )}
           <Field label="Status">
@@ -177,15 +265,55 @@ export default function ClientSettingsPage() {
         </Section>
 
         <Section title="Meta (Facebook/Instagram)">
-          <Field label="Pixel ID">
+          <Field label="Autenticação OAuth">
+            {form.meta_access_token ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-3 py-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                    <CheckCircle size={14} />
+                    Conta Meta vinculada
+                    {form.meta_token_expires_at && (
+                      <span className="text-xs text-slate-500 ml-2">
+                        · expira {new Date(form.meta_token_expires_at).toLocaleDateString('pt-BR')}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectMeta}
+                    className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+                  >
+                    Desconectar
+                  </button>
+                </div>
+                {form.meta_token_health === 'expiring_soon' && (
+                  <p className="text-xs text-yellow-400 flex items-center gap-1.5">
+                    <AlertCircle size={12} /> Token expira em breve — clique em &quot;Conectar Meta&quot; para renovar
+                  </p>
+                )}
+                {form.meta_token_health === 'expired' && (
+                  <p className="text-xs text-red-400 flex items-center gap-1.5">
+                    <AlertCircle size={12} /> Token expirado — reconecte para continuar enviando eventos
+                  </p>
+                )}
+              </div>
+            ) : (
+              <a
+                href={`/api/meta/oauth/start?clientId=${clientId}`}
+                className="flex items-center justify-center gap-2 w-full bg-[#0f1117] border border-[#2a2f3e] hover:border-indigo-500 text-slate-300 hover:text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="#1877F2">
+                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                </svg>
+                Conectar Meta
+              </a>
+            )}
+          </Field>
+          <Field label="Pixel ID" hint="auto-detectado após conectar OAuth, ou preencha manualmente">
             <input value={form.meta_pixel_id || ''} onChange={e => set('meta_pixel_id', e.target.value)}
               placeholder="1018779385487104" className={INPUT} />
           </Field>
-          <Field label="Access Token (CAPI)">
-            <input type="password" value={form.meta_access_token || ''} onChange={e => set('meta_access_token', e.target.value)}
-              placeholder="EAAEZBB7cZ..." className={INPUT} />
-          </Field>
-          <Field label="Ad Account ID">
+          <Field label="Ad Account ID" hint="auto-detectado após conectar OAuth">
             <input value={form.meta_ad_account_id || ''} onChange={e => set('meta_ad_account_id', e.target.value)}
               placeholder="act_1234567890" className={INPUT} />
           </Field>

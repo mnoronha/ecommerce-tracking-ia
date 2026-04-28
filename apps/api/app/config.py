@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Código de teste do Events Manager — remover após validação
     META_TEST_EVENT_CODE: str = ""
 
+    # ── Meta OAuth (Facebook Login for Business) ─────────────────────────────
+    # Compartilhado entre todos os clientes — registrado uma vez no Meta App.
+    META_APP_ID:     str = ""
+    META_APP_SECRET: str = ""
+
     # ── Google Ads Conversion API ─────────────────────────────────────────
     # Agency-level credentials — shared across all clients
     GOOGLE_ADS_DEVELOPER_TOKEN:   str = ""

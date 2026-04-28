@@ -128,6 +128,54 @@ def send_purchase(
     return False
 
 
+def send_refund(
+    measurement_id: str,
+    api_secret:     str,
+    order_id:       str,
+    refund_amount:  float,
+    currency:       str,
+    ga_client_id:   Optional[str] = None,
+) -> bool:
+    """
+    Send a `refund` event to GA4 via Measurement Protocol.
+
+    transaction_id must match the original purchase transaction_id for GA4 to
+    correctly subtract the refunded amount from the purchase reports.
+    """
+    if not measurement_id or not api_secret or not order_id:
+        return False
+
+    effective_client_id = ga_client_id or f"server.{str(order_id).replace('-', '')[:16]}"
+
+    payload = {
+        "client_id":        effective_client_id,
+        "timestamp_micros": int(time.time() * 1_000_000),
+        "events": [{
+            "name": "refund",
+            "params": {
+                "transaction_id": str(order_id),
+                "value":          float(refund_amount),
+                "currency":       (currency or "BRL").upper(),
+            },
+        }],
+    }
+
+    try:
+        resp = httpx.post(
+            _GA4_MP_URL,
+            params={"measurement_id": measurement_id, "api_secret": api_secret},
+            json=payload,
+            timeout=10.0,
+        )
+        if resp.status_code in (200, 204):
+            logger.info("ga4 refund sent — order=%s value=%.2f", order_id, refund_amount)
+            return True
+        logger.warning("ga4 refund HTTP %s: %s", resp.status_code, resp.text[:200])
+    except Exception as exc:
+        logger.warning("ga4 send_refund exception: %s", exc)
+    return False
+
+
 def send_pixel_event(
     measurement_id: str,
     api_secret: str,

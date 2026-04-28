@@ -25,7 +25,10 @@ ADAPTERS = {
 
 
 async def _get_client_secret(client_id: str, platform: str) -> str:
-    secret_column = {"woocommerce": "woo_webhook_secret"}.get(platform)
+    secret_column = {
+        "shopify":     "shopify_webhook_secret",
+        "woocommerce": "woo_webhook_secret",
+    }.get(platform)
     if not secret_column:
         return settings.DEFAULT_WEBHOOK_SECRET
     try:
@@ -51,6 +54,76 @@ def _store_event(event_dict: dict) -> None:
         get_supabase().table("events").insert(event_dict).execute()
     except Exception as exc:
         logger.error("Failed to persist event: %s", exc)
+
+
+def _dispatch_refund_capi(
+    client_pixel_id: str,
+    event: object,
+) -> None:
+    """
+    Fire refund event to Meta CAPI (Purchase with negative value) and GA4.
+    Runs in a background task — never blocks the webhook response.
+    """
+    try:
+        order = getattr(event, "order", None)
+        if not order or not order.id:
+            return
+        refund_amount = float(getattr(order, "total", 0) or 0)
+        if refund_amount <= 0:
+            return  # nothing to refund
+        currency = getattr(order, "currency", None) or "BRL"
+        refund_id = (event.metadata or {}).get("refund_id") if hasattr(event, "metadata") else None  # type: ignore[union-attr]
+
+        creds_result = (
+            get_supabase().table("clients")
+            .select("meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret")
+            .eq("pixel_id", client_pixel_id)
+            .limit(1)
+            .execute()
+        )
+        if not (creds_result and creds_result.data):
+            return
+        c = creds_result.data[0]
+
+        # Build user_data from email/phone for Meta match
+        user_data: dict = {}
+        customer = getattr(event, "customer", None)
+        if customer:
+            import hashlib
+            if customer.email:
+                user_data["em"] = [hashlib.sha256(customer.email.strip().lower().encode()).hexdigest()]
+            if customer.phone:
+                phone_clean = "".join(c for c in (customer.phone or "") if c.isdigit())
+                if phone_clean:
+                    user_data["ph"] = [hashlib.sha256(phone_clean.encode()).hexdigest()]
+
+        # Meta CAPI refund
+        if c.get("meta_pixel_id") and c.get("meta_access_token"):
+            meta_capi.send_refund(
+                pixel_id=c["meta_pixel_id"],
+                access_token=c["meta_access_token"],
+                order_id=str(order.id),
+                refund_amount=refund_amount,
+                currency=currency,
+                refund_id=refund_id,
+                user_data=user_data,
+                test_event_code=settings.META_TEST_EVENT_CODE or None,
+            )
+
+        # GA4 refund
+        if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
+            ga4.send_refund(
+                measurement_id=c["ga4_measurement_id"],
+                api_secret=c["ga4_api_secret"],
+                order_id=str(order.id),
+                refund_amount=refund_amount,
+                currency=currency,
+            )
+
+        logger.info("refund dispatched — client=%s order=%s amount=%.2f",
+                    client_pixel_id, order.id, refund_amount)
+    except Exception as exc:
+        logger.warning("_dispatch_refund_capi error for %s: %s", client_pixel_id, exc)
 
 
 def _dispatch_purchase_capi(
@@ -239,5 +312,9 @@ async def receive_webhook(
     if event.event_type.value == "order.fulfilled" and client_uuid and event.order:
         fulfillment_status = (event.raw_payload or {}).get("fulfillment_status") or "fulfilled"
         writer.update_order_fulfillment(client_uuid, event.order.id, fulfillment_status)
+
+    # Refunds — send negative-value Purchase to Meta + refund event to GA4
+    if event.event_type.value == "order.refunded":
+        background_tasks.add_task(_dispatch_refund_capi, client_id, event)
 
     return {"status": "ok", "event_id": event.event_id, "event_type": event.event_type}

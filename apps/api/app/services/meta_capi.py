@@ -173,6 +173,47 @@ def send_purchase(
     return _send(pixel_id, access_token, [capi_event], test_event_code)
 
 
+def send_refund(
+    pixel_id:        str,
+    access_token:    str,
+    order_id:        str,
+    refund_amount:   float,
+    currency:        str,
+    refund_id:       Optional[str] = None,
+    user_data:       Optional[dict] = None,
+    test_event_code: Optional[str] = None,
+) -> bool:
+    """
+    Send a Purchase event with NEGATIVE value to Meta CAPI to record a refund.
+
+    Per Meta best practices, refunds are reported as a Purchase event with a
+    negative `value`. The event_id is derived from the refund_id (or order_id)
+    so it doesn't collide with the original Purchase event.
+
+    Returns True on success.
+    """
+    if not pixel_id or not access_token or not order_id:
+        return False
+
+    raw = f"refund_{order_id}_{refund_id or 'full'}"
+    dedup_id = hashlib.sha256(raw.encode()).hexdigest()
+
+    capi_event = {
+        "event_name":    "Purchase",
+        "event_time":    int(time.time()),
+        "action_source": "website",
+        "event_id":      dedup_id,
+        "user_data":     user_data or {},
+        "custom_data": {
+            "currency": (currency or "BRL").upper(),
+            "value":    -abs(float(refund_amount)),
+            "order_id": str(order_id),
+            "refund":   True,
+        },
+    }
+    return _send(pixel_id, access_token, [capi_event], test_event_code)
+
+
 def send_pixel_event(
     pixel_id: str,
     access_token: str,
