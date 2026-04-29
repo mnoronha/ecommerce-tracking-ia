@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
-import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2 } from 'lucide-react'
+import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -14,6 +14,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/visitantes`,  label: 'Visitantes', icon: Users },
     { href: `/clients/${clientId}/pedidos`,     label: 'Pedidos',    icon: ShoppingBag },
     { href: `/clients/${clientId}/audiencias`,  label: 'Audiências', icon: Target },
+    { href: `/clients/${clientId}/attribution`, label: 'Atribuição', icon: TrendingUp },
     { href: `/clients/${clientId}/settings`,    label: 'Configurações', icon: Settings },
   ]
 

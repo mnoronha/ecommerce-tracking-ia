@@ -1,11 +1,12 @@
 import json
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import ga4, google_ads, meta_capi, writer
+from ..services import attribution_engine, ga4, google_ads, meta_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
     ShopifyAdapter,
@@ -54,6 +55,40 @@ def _store_event(event_dict: dict) -> None:
         get_supabase().table("events").insert(event_dict).execute()
     except Exception as exc:
         logger.error("Failed to persist event: %s", exc)
+
+
+def _attribute_async(order_uuid: str, visitor_uuid: Optional[str]) -> None:  # type: ignore[name-defined]
+    """Background helper: load order + visitor, run multi-model attribution."""
+    if not order_uuid:
+        return
+    try:
+        sb = get_supabase()
+        order_row = (
+            sb.table("orders")
+            .select("id, client_id, visitor_id, total_price, created_at, financial_status")
+            .eq("id", order_uuid)
+            .maybe_single()
+            .execute()
+        )
+        if not (order_row and order_row.data):
+            return
+        order = order_row.data
+
+        visitor = None
+        if visitor_uuid:
+            v_row = (
+                sb.table("visitors")
+                .select("id, gclid, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at")
+                .eq("id", visitor_uuid)
+                .maybe_single()
+                .execute()
+            )
+            if v_row and v_row.data:
+                visitor = v_row.data
+
+        attribution_engine.attribute_order(order, visitor)
+    except Exception as exc:
+        logger.warning("_attribute_async failed for order %s: %s", order_uuid, exc)
 
 
 def _dispatch_refund_capi(
@@ -307,6 +342,8 @@ async def receive_webhook(
         # Visitor converted — reset retargeting score so they leave retargeting audiences
         if visitor_uuid:
             background_tasks.add_task(writer.reset_retargeting_score, visitor_uuid)
+        # Compute unified attribution across all models (last_click, first_click, linear, time_decay, position_based)
+        background_tasks.add_task(_attribute_async, order_uuid, visitor_uuid)
 
     # Update fulfillment_status when order is fulfilled
     if event.event_type.value == "order.fulfilled" and client_uuid and event.order:
