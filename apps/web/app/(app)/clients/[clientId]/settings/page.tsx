@@ -28,6 +28,9 @@ interface ClientRow {
   alert_email: string | null
   slack_webhook_url: string | null
   is_active: boolean
+  tracking_cname: string | null
+  tracking_cname_verified: boolean | null
+  tracking_cname_secret: string | null
 }
 
 const INPUT = 'w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-indigo-500'
@@ -50,6 +53,10 @@ export default function ClientSettingsPage() {
   const [error,   setError]   = useState('')
   const [registeringHooks, setRegisteringHooks] = useState(false)
   const [hooksResult, setHooksResult] = useState<{ ok: number; fail: number } | null>(null)
+  const [cnameInput, setCnameInput] = useState('')
+  const [cnameSecret, setCnameSecret] = useState<string | null>(null)
+  const [cnameVerifying, setCnameVerifying] = useState(false)
+  const [cnameMsg, setCnameMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
     const supabase = createSupabaseBrowserClient()
@@ -75,6 +82,46 @@ export default function ClientSettingsPage() {
       .update({ google_ads_refresh_token: null })
       .eq('pixel_id', clientId)
     setForm(f => ({ ...f, google_ads_refresh_token: null }))
+  }
+
+  async function initCname() {
+    setCnameMsg(null)
+    if (!cnameInput || !/^[a-zA-Z0-9.-]+$/.test(cnameInput)) {
+      setCnameMsg({ ok: false, text: 'Hostname inválido' })
+      return
+    }
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+    const res = await fetch(`${apiUrl}/setup/cname/${clientId}/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cname: cnameInput }),
+    })
+    if (!res.ok) {
+      setCnameMsg({ ok: false, text: 'Falha ao inicializar' })
+      return
+    }
+    const data = await res.json()
+    setCnameSecret(data.secret)
+    setCnameMsg({ ok: true, text: 'CNAME registrado. Configure DNS e clique em Verificar.' })
+    load()
+  }
+
+  async function verifyCname() {
+    setCnameVerifying(true)
+    setCnameMsg(null)
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+      const res = await fetch(`${apiUrl}/setup/cname/${clientId}/verify`, { method: 'POST' })
+      const data = await res.json()
+      if (data.verified) {
+        setCnameMsg({ ok: true, text: '✓ CNAME verificado. Pixel agora usa first-party tracking.' })
+        load()
+      } else {
+        setCnameMsg({ ok: false, text: data.hint || data.error || 'Verificação falhou' })
+      }
+    } finally {
+      setCnameVerifying(false)
+    }
   }
 
   async function handleRegisterHooks() {
@@ -261,6 +308,49 @@ export default function ClientSettingsPage() {
                 className="w-4 h-4 accent-indigo-500" />
               <span className="text-sm text-slate-300">Cliente ativo</span>
             </label>
+          </Field>
+        </Section>
+
+        <Section title="Tracking first-party (CNAME)">
+          <Field label="Subdomínio do cliente" hint="ex: track.lojadocliente.com.br — bypass de ITP/iOS, +30% match rate">
+            {form.tracking_cname_verified ? (
+              <div className="flex items-center justify-between px-3 py-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                  <CheckCircle size={14} />
+                  <span className="font-mono text-xs">{form.tracking_cname}</span>
+                  <span className="text-xs text-slate-500 ml-2">first-party ativo</span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    value={cnameInput || form.tracking_cname || ''}
+                    onChange={e => setCnameInput(e.target.value)}
+                    placeholder="track.lojadocliente.com.br"
+                    className={INPUT}
+                  />
+                  <button
+                    type="button"
+                    onClick={form.tracking_cname ? verifyCname : initCname}
+                    disabled={cnameVerifying}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    {cnameVerifying ? 'Verificando…' : (form.tracking_cname ? 'Verificar' : 'Salvar')}
+                  </button>
+                </div>
+                {form.tracking_cname && !form.tracking_cname_verified && (
+                  <p className="text-xs text-slate-500">
+                    Configure CNAME <code className="bg-[#0f1117] px-1 rounded">{form.tracking_cname} → tracking.pareto.plus</code> e clique em Verificar.
+                  </p>
+                )}
+                {cnameMsg && (
+                  <p className={`text-xs ${cnameMsg.ok ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                    {cnameMsg.text}
+                  </p>
+                )}
+              </div>
+            )}
           </Field>
         </Section>
 

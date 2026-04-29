@@ -10,7 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import audiences, ecommerce_webhooks, insights, meta_ads, pixel, setup
+from .routers import audiences, cname, ecommerce_webhooks, insights, meta_ads, pixel, setup
 from .services import alerts, capi_retry, meta_audiences, meta_token_health
 
 logging.basicConfig(
@@ -97,6 +97,18 @@ app.include_router(insights.router)
 app.include_router(meta_ads.router)
 app.include_router(audiences.router)
 app.include_router(setup.router)
+app.include_router(cname.router)
+
+
+# ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
+@app.get("/_verify/{secret}", include_in_schema=False)
+async def cname_verify_echo(secret: str):
+    """
+    Echoes the secret in plain text. Used to verify that a customer's
+    CNAME (track.cliente.com) is correctly routing to our infrastructure.
+    """
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(secret)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

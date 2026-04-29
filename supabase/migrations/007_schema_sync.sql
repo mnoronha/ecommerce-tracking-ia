@@ -127,6 +127,11 @@ ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS capi_last_error  TEXT;
 -- ── clients: flag de conclusão do onboarding wizard ──────────────────────────
 ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN DEFAULT FALSE;
 
+-- ── clients: CNAME first-party tracking ──────────────────────────────────────
+-- tracking_cname e tracking_cname_verified já existem em 001_initial.sql.
+-- Adicionamos o secret usado para verificação HTTP do domínio.
+ALTER TABLE public.clients ADD COLUMN IF NOT EXISTS tracking_cname_secret TEXT;
+
 -- ── Limpeza: remover coluna órfã de 001_initial.sql ──────────────────────────
 -- google_ads_conversion_action (sem _id) foi substituída por
 -- google_ads_conversion_action_id em 003. Nenhum código usa a versão antiga.
