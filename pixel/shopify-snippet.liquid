@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v3.0
+  Ecommerce Tracking IA — Shopify Snippet  v3.1
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -187,6 +187,42 @@
     });
   }
 
+  // ── Cart attributes sync ────────────────────────────────────────────────────
+  // Inject visitor_id + Meta/Google identifiers as Shopify cart attributes.
+  // Names prefixed with `_` are hidden from merchant UI but flow through to
+  // the order webhook payload as note_attributes — letting the backend match
+  // the order back to the browse session even when the customer is redirected
+  // to an external gateway (PIX, Mercado Pago, etc) and never reaches the
+  // Shopify thank-you page.
+  function syncCartAttributes() {
+    var meta = getMetaIds();
+    var attrs = {
+      '_etv':   getVisitorId(),
+      '_fbp':   meta.fbp || '',
+      '_fbc':   meta.fbc || '',
+      '_gcid':  getGaClientId() || '',
+      '_gclid': getGclid() || ''
+    };
+    // Idempotent: skip if same payload already pushed this session
+    var stamp = JSON.stringify(attrs);
+    try {
+      if (sessionStorage.getItem('_etcattr') === stamp) return;
+    } catch(e) {}
+    try {
+      fetch('/cart/update.js', {
+        method:      'POST',
+        headers:     {'Content-Type': 'application/json'},
+        body:        JSON.stringify({ attributes: attrs }),
+        credentials: 'same-origin',
+        keepalive:   true
+      }).then(function(r) {
+        if (r && r.ok) {
+          try { sessionStorage.setItem('_etcattr', stamp); } catch(e) {}
+        }
+      }).catch(function(){});
+    } catch(e) {}
+  }
+
   // ── Google Ads remarketing snippet (minimal) ─────────────────────────────────
   // Carrega gtag.js APENAS para alimentar audiences de remarketing (RLSA, Display).
   // Conversões (Compra, AddToCart, Checkout) são enviadas server-side via Conversion API.
@@ -208,10 +244,14 @@
   w.ET = { track: track, getVisitorId: getVisitorId, getSessionId: getSessionId };
 
   // ── Pageview automático ──────────────────────────────────────────────────────
-  if (d.readyState === 'loading') {
-    d.addEventListener('DOMContentLoaded', function() { track('pageview'); });
-  } else {
+  function onReady() {
     track('pageview');
+    syncCartAttributes();
+  }
+  if (d.readyState === 'loading') {
+    d.addEventListener('DOMContentLoaded', onReady);
+  } else {
+    onReady();
   }
 
   // ── Eventos Shopify ──────────────────────────────────────────────────────────
@@ -240,6 +280,9 @@
       {% else %}
       track('add_to_cart', {});
       {% endif %}
+      // Re-sync cart attributes — at this point a cart definitely exists,
+      // so /cart/update.js is guaranteed to persist them on the cart record.
+      setTimeout(syncCartAttributes, 300);
     }
     {% if template.name == 'cart' %}
     if (tgt.closest('[name="checkout"],.cart__checkout,#CartSubmit,[data-cart-checkout]')) {

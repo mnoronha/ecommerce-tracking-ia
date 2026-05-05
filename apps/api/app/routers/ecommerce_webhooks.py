@@ -345,14 +345,21 @@ async def receive_webhook(
 
     _store_event(event.model_dump(mode="json"))
 
-    client_uuid  = writer.resolve_client_uuid(client_id)
+    client_uuid = writer.resolve_client_uuid(client_id)
+    meta = event.metadata or {}
     visitor_uuid = writer.upsert_visitor_by_email(
         client_uuid=client_uuid,
         email=event.customer.email if event.customer else None,
         phone=event.customer.phone if event.customer else None,
         platform_customer_id=event.customer.id if event.customer else None,
         platform=platform,
-        cart_token=(event.metadata or {}).get("cart_token"),
+        cart_token=meta.get("cart_token"),
+        # Browse-session identifiers injected as cart note_attributes by the JS pixel
+        visitor_cookie_id=meta.get("visitor_cookie_id"),
+        fbp=meta.get("fbp"),
+        fbc=meta.get("fbc"),
+        gclid=meta.get("gclid"),
+        ga_client_id=meta.get("ga_client_id"),
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)

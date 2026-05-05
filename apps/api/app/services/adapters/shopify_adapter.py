@@ -180,6 +180,33 @@ class ShopifyAdapter(BaseAdapter):
             currency=currency,
         )
 
+    def _parse_note_attributes(self, payload: dict) -> dict:
+        """
+        Extract our injected cart attributes (visitor cookie, fbp, fbc, etc).
+
+        These are pushed by the JS pixel via POST /cart/update.js with names
+        prefixed `_` so Shopify keeps them hidden from the merchant UI but
+        forwards them to the order webhook as note_attributes:
+            [{"name": "_etv", "value": "..."}, {"name": "_fbp", "value": "..."}]
+
+        This is the bridge that lets us match an order back to the browse
+        session even when the customer is sent to an external gateway (PIX)
+        and never reaches the Shopify thank-you page.
+        """
+        attrs = payload.get("note_attributes") or []
+        if not isinstance(attrs, list):
+            return {}
+        out: dict = {}
+        for entry in attrs:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            value = entry.get("value")
+            if not name or value in (None, ""):
+                continue
+            out[name] = value
+        return out
+
     def normalize(
         self, payload: dict, client_id: str, headers: Optional[dict] = None
     ) -> NormalizedEvent:
@@ -205,6 +232,11 @@ class ShopifyAdapter(BaseAdapter):
         else:
             order = self._parse_order(payload)
 
+        # note_attributes carry our injected browse-session identifiers.
+        # Prefer these over landing_site qs since they're tied to the actual
+        # cart, not just the first URL the customer hit.
+        nattr = self._parse_note_attributes(payload)
+
         return NormalizedEvent(
             event_id=str(uuid.uuid4()),
             event_type=event_type,
@@ -216,14 +248,19 @@ class ShopifyAdapter(BaseAdapter):
             utm=self._parse_utm_from_landing(landing_site),
             raw_payload=payload,
             metadata={
-                "shop_domain":   headers.get("x-shopify-shop-domain"),
-                "topic":         topic,
-                "source_name":   payload.get("source_name"),
-                "landing_site":  landing_site,
-                "gclid":         qs.get("gclid"),
-                "fbclid":        qs.get("fbclid"),
-                "referring_site": payload.get("referring_site"),
-                "cart_token":    payload.get("cart_token"),
-                "refund_id":     str(payload.get("id")) if event_type == EventType.ORDER_REFUNDED else None,
+                "shop_domain":       headers.get("x-shopify-shop-domain"),
+                "topic":             topic,
+                "source_name":       payload.get("source_name"),
+                "landing_site":      landing_site,
+                "gclid":             nattr.get("_gclid") or qs.get("gclid"),
+                "fbclid":            qs.get("fbclid"),
+                "referring_site":    payload.get("referring_site"),
+                "cart_token":        payload.get("cart_token"),
+                "refund_id":         str(payload.get("id")) if event_type == EventType.ORDER_REFUNDED else None,
+                # Browse-session attribution from note_attributes
+                "visitor_cookie_id": nattr.get("_etv"),
+                "fbp":               nattr.get("_fbp"),
+                "fbc":               nattr.get("_fbc"),
+                "ga_client_id":      nattr.get("_gcid"),
             },
         )
