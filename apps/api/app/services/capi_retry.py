@@ -148,13 +148,16 @@ def retry_failed_capi() -> None:
                     pass
 
             # ── Update order based on Meta result ─────────────────────────────
+            # Note: we do NOT clear capi_last_error on success — keeping the
+            # sync-path error visible is the only way to diagnose why the sync
+            # path failed in the first place. Once sync is healthy this column
+            # will stay null on healthy orders.
             update: dict = {
                 "capi_retry_count": (order.get("capi_retry_count") or 0) + 1,
             }
             if meta_ok:
                 update["capi_sent"]    = True
                 update["capi_sent_at"] = datetime.now(timezone.utc).isoformat()
-                update["capi_last_error"] = None
             elif meta_err:
                 update["capi_last_error"] = meta_err
 
