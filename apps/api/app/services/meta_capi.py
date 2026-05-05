@@ -89,8 +89,12 @@ def _send(
     capi_events: list[dict],
     test_event_code: Optional[str] = None,
     max_attempts: int = 3,
-) -> bool:
-    """Low-level sender with exponential backoff retry. Returns True on success."""
+) -> tuple[bool, Optional[str]]:
+    """
+    Low-level sender with exponential backoff retry.
+    Returns (success, error_message). error_message is None on success,
+    otherwise a short string suitable for storing in orders.capi_last_error.
+    """
     payload: dict = {
         "data":         capi_events,
         "access_token": access_token,
@@ -100,6 +104,7 @@ def _send(
 
     url = _CAPI_URL.format(pixel_id=pixel_id)
     delay = 1.0
+    last_err: Optional[str] = None
 
     for attempt in range(max_attempts):
         try:
@@ -108,23 +113,28 @@ def _send(
                 result = resp.json()
                 logger.info("meta_capi sent %d event(s) — events_received=%s",
                             len(capi_events), result.get("events_received"))
-                return True
+                return True, None
             # 4xx = client error, don't retry
             if 400 <= resp.status_code < 500:
-                logger.warning("meta_capi HTTP %s (no retry): %s", resp.status_code, resp.text[:400])
-                return False
-            logger.warning("meta_capi HTTP %s attempt %d/%d", resp.status_code, attempt + 1, max_attempts)
+                err = f"HTTP {resp.status_code}: {resp.text[:240]}"
+                logger.warning("meta_capi %s (no retry)", err)
+                return False, err
+            last_err = f"HTTP {resp.status_code}: {resp.text[:160]}"
+            logger.warning("meta_capi %s attempt %d/%d", last_err, attempt + 1, max_attempts)
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.warning("meta_capi network error attempt %d/%d: %s", attempt + 1, max_attempts, exc)
+            last_err = f"{type(exc).__name__}: {str(exc)[:160]}"
+            logger.warning("meta_capi network error attempt %d/%d: %s", attempt + 1, max_attempts, last_err)
         except Exception as exc:
-            logger.error("meta_capi exception: %s", exc)
-            return False
+            err = f"{type(exc).__name__}: {str(exc)[:200]}"
+            logger.error("meta_capi exception: %s", err)
+            return False, err
 
         if attempt < max_attempts - 1:
             time.sleep(delay * (2 ** attempt))
 
-    logger.error("meta_capi failed after %d attempts", max_attempts)
-    return False
+    final = f"failed after {max_attempts} attempts; last={last_err or 'unknown'}"
+    logger.error("meta_capi %s", final)
+    return False, final
 
 
 # ── Public senders ────────────────────────────────────────────────────────────
@@ -134,13 +144,13 @@ def send_purchase(
     access_token: str,
     event: NormalizedEvent,
     test_event_code: Optional[str] = None,
-) -> bool:
-    """Send Purchase event. Returns True on success."""
+) -> tuple[bool, Optional[str]]:
+    """Send Purchase event. Returns (success, error_message)."""
     if not pixel_id or not access_token:
-        return False
+        return False, "missing pixel_id or access_token"
     order = event.order
     if not order:
-        return False
+        return False, "event has no order data"
 
     # Deterministic event_id: mesmo order_id sempre gera o mesmo hash.
     # Isso garante deduplicação mesmo em retries de webhook ou reprocessamento.
@@ -182,7 +192,7 @@ def send_refund(
     refund_id:       Optional[str] = None,
     user_data:       Optional[dict] = None,
     test_event_code: Optional[str] = None,
-) -> bool:
+) -> tuple[bool, Optional[str]]:
     """
     Send a Purchase event with NEGATIVE value to Meta CAPI to record a refund.
 
@@ -190,10 +200,10 @@ def send_refund(
     negative `value`. The event_id is derived from the refund_id (or order_id)
     so it doesn't collide with the original Purchase event.
 
-    Returns True on success.
+    Returns (success, error_message).
     """
     if not pixel_id or not access_token or not order_id:
-        return False
+        return False, "missing pixel_id, access_token or order_id"
 
     raw = f"refund_{order_id}_{refund_id or 'full'}"
     dedup_id = hashlib.sha256(raw.encode()).hexdigest()
@@ -219,14 +229,14 @@ def send_pixel_event(
     access_token: str,
     event: NormalizedEvent,
     test_event_code: Optional[str] = None,
-) -> bool:
+) -> tuple[bool, Optional[str]]:
     """
     Send ViewContent, AddToCart, or InitiateCheckout from pixel events.
     Maps NormalizedEvent.event_type → Meta standard event name.
-    Returns True on success.
+    Returns (success, error_message).
     """
     if not pixel_id or not access_token:
-        return False
+        return False, "missing pixel_id or access_token"
 
     event_map = {
         "product.viewed":    "ViewContent",
@@ -236,7 +246,7 @@ def send_pixel_event(
     }
     meta_event_name = event_map.get(event.event_type.value)
     if not meta_event_name:
-        return False
+        return False, f"unmapped event_type: {event.event_type.value}"
 
     meta = event.metadata or {}
     custom_data: dict = {}

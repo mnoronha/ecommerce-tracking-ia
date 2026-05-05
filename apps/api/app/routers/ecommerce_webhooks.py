@@ -134,7 +134,7 @@ def _dispatch_refund_capi(
 
         # Meta CAPI refund
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
-            meta_capi.send_refund(
+            ok, err = meta_capi.send_refund(
                 pixel_id=c["meta_pixel_id"],
                 access_token=c["meta_access_token"],
                 order_id=str(order.id),
@@ -144,6 +144,8 @@ def _dispatch_refund_capi(
                 user_data=user_data,
                 test_event_code=settings.META_TEST_EVENT_CODE or None,
             )
+            if not ok:
+                logger.warning("refund CAPI failed order=%s err=%s", order.id, err)
 
         # GA4 refund
         if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
@@ -159,6 +161,18 @@ def _dispatch_refund_capi(
                     client_pixel_id, order.id, refund_amount)
     except Exception as exc:
         logger.warning("_dispatch_refund_capi error for %s: %s", client_pixel_id, exc)
+
+
+def _record_capi_error(order_uuid: Optional[str], err: str) -> None:
+    """Persist capi_last_error on the order so we can diagnose sync-path failures."""
+    if not order_uuid or not err:
+        return
+    try:
+        get_supabase().table("orders").update({
+            "capi_last_error": err[:500],
+        }).eq("id", order_uuid).execute()
+    except Exception as exc:
+        logger.debug("failed to persist capi_last_error: %s", exc)
 
 
 def _dispatch_purchase_capi(
@@ -199,6 +213,7 @@ def _dispatch_purchase_capi(
             .execute()
         )
         if not (creds_result and creds_result.data):
+            _record_capi_error(order_uuid, "client credentials row not found")
             return
         c = creds_result.data[0]
 
@@ -243,7 +258,7 @@ def _dispatch_purchase_capi(
                     meta["fbc"] = fbc
                 object.__setattr__(event, "metadata", meta)
 
-            success = meta_capi.send_purchase(
+            success, err = meta_capi.send_purchase(
                 pixel_id=c["meta_pixel_id"],
                 access_token=c["meta_access_token"],
                 event=event,  # type: ignore[arg-type]
@@ -251,6 +266,10 @@ def _dispatch_purchase_capi(
             )
             if success and order_uuid:
                 writer.mark_capi_sent(order_uuid)
+            elif not success:
+                _record_capi_error(order_uuid, err or "send_purchase returned False without error")
+        else:
+            _record_capi_error(order_uuid, "client missing meta_pixel_id or meta_access_token")
 
         # ── GA4 Measurement Protocol ──────────────────────────────────────
         if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
@@ -280,7 +299,9 @@ def _dispatch_purchase_capi(
                 manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
             )
     except Exception as exc:
-        logger.warning("_dispatch_purchase_capi error for %s: %s", client_pixel_id, exc)
+        err = f"{type(exc).__name__}: {str(exc)[:200]}"
+        logger.warning("_dispatch_purchase_capi error for %s: %s", client_pixel_id, err)
+        _record_capi_error(order_uuid, err)
 
 
 @router.post(

@@ -124,14 +124,16 @@ def retry_failed_capi() -> None:
             meta_err = None
             if c.get("meta_pixel_id") and c.get("meta_access_token"):
                 try:
-                    meta_ok = meta_capi.send_purchase(
+                    meta_ok, meta_err = meta_capi.send_purchase(
                         pixel_id=c["meta_pixel_id"],
                         access_token=c["meta_access_token"],
                         event=event,
                         test_event_code=settings.META_TEST_EVENT_CODE or None,
                     )
                 except Exception as exc:
-                    meta_err = str(exc)[:200]
+                    meta_err = f"{type(exc).__name__}: {str(exc)[:200]}"
+            else:
+                meta_err = "client missing meta_pixel_id or meta_access_token"
 
             # ── Try GA4 (best-effort, doesn't gate success) ──────────────────
             if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):

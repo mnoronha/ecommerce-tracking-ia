@@ -187,12 +187,14 @@ def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
             return
         c = creds.data[0]
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
-            meta_capi.send_pixel_event(
+            ok, err = meta_capi.send_pixel_event(
                 pixel_id=c["meta_pixel_id"],
                 access_token=c["meta_access_token"],
                 event=event,
                 test_event_code=settings.META_TEST_EVENT_CODE or None,
             )
+            if not ok:
+                logger.warning("pixel CAPI failed event=%s err=%s", event.event_type.value, err)
     except Exception as exc:
         logger.warning("_dispatch_pixel_capi error: %s", exc)
 
