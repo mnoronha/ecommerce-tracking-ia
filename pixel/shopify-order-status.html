@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Order Status Page (Thank-You)  v1.0
+  Ecommerce Tracking IA — Shopify Order Status Page (Thank-You)  v2.0
   Arquivo: pixel/shopify-order-status.html
 
   INSTALAÇÃO:
@@ -9,12 +9,14 @@
   3. Em "Additional scripts", cole TODO este conteúdo
   4. Save
 
-  Dispara `checkout_completed` quando o cliente vê a página de confirmação.
-  Captura customer_email + order_id para que o backend vincule o visitor
-  cookie à conta do cliente IMEDIATAMENTE (sem esperar webhook).
+  O que dispara:
+  - checkout_completed → nossa API (vincula visitor cookie ao email)
+  - Meta Pixel oficial Purchase (fbq) → Meta browser-side
+  - Mesmo event_id determinístico nos dois lados → Meta dedupa com CAPI
+  - Advanced Matching com email/phone hashed via fbq init
 
-  Também envia event_id determinístico para deduplicação CAPI:
-  o webhook Purchase usa o mesmo hash → Meta deduplica automaticamente.
+  Funciona apenas para clientes que voltam à thank-you page nativa do
+  Shopify (cartão direto). PIX/gateway externo: cobertos pelo CAPI server.
   =====================================================================
 {% endcomment %}
 
@@ -23,9 +25,10 @@
 (function (w, d) {
   'use strict';
 
-  var CLIENT_ID = 'lk-sneakers';
-  var API_URL   = 'https://ecommerce-tracking-ia-production.up.railway.app';
-  var PLATFORM  = 'shopify';
+  var CLIENT_ID     = 'lk-sneakers';
+  var API_URL       = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  var META_PIXEL_ID = '1018779385487104';
+  var PLATFORM      = 'shopify';
 
   // ── Reuse cookies set by the theme snippet ─────────────────────────────────
   function getCookie(name) {
@@ -36,7 +39,7 @@
   function getMetaIds() {
     return {
       fbp: getCookie('_fbp'),
-      fbc: getCookie('_fbc'),
+      fbc: getCookie('_fbc')
     };
   }
 
@@ -54,7 +57,6 @@
   // Both sides hash the same string → Meta dedups Purchase from CAPI + browser
   function deterministicEventId(orderId, callback) {
     if (!w.crypto || !w.crypto.subtle) {
-      // Fallback: use order_id directly (still allows partial dedup)
       callback('purchase_' + PLATFORM + '_' + orderId);
       return;
     }
@@ -70,7 +72,7 @@
     });
   }
 
-  // ── Transport (same pattern as theme tracker) ─────────────────────────────
+  // ── Transport ─────────────────────────────────────────────────────────────
   function send(payload) {
     var url = API_URL + '/pixel/events';
     if (navigator.sendBeacon) {
@@ -84,22 +86,55 @@
         method:    'POST',
         headers:   { 'Content-Type': 'application/json' },
         body:      JSON.stringify(payload),
-        keepalive: true,
+        keepalive: true
       }).catch(function () {});
     } catch (e) {}
   }
 
-  // ── Fire ──────────────────────────────────────────────────────────────────
+  // ── Order data from Liquid ────────────────────────────────────────────────
   var orderId       = '{{ checkout.order_id }}';
   var orderNumber   = '{{ checkout.order_number | default: checkout.order_id }}';
+  var customerId    = '{{ checkout.customer.id }}';
   var customerEmail = {{ checkout.email | json }};
+  var customerPhone = {{ checkout.shipping_address.phone | default: checkout.billing_address.phone | json }};
   var totalPrice    = {{ checkout.total_price | default: 0 | divided_by: 100.0 }};
   var currency      = {{ checkout.currency | json }};
+  var lineItems     = [
+    {% for line_item in checkout.line_items %}
+      {
+        id:         '{{ line_item.product_id }}',
+        quantity:   {{ line_item.quantity }},
+        item_price: {{ line_item.final_price | divided_by: 100.0 }}
+      }{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ];
+  var contentIds = lineItems.map(function (li) { return li.id; });
 
   if (!orderId) return;
 
+  // ── Load Meta Pixel with Advanced Matching ────────────────────────────────
+  if (META_PIXEL_ID) {
+    !function(f,b,e,v,n,t,s){
+      if(f.fbq)return; n=f.fbq=function(){n.callMethod?
+        n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+      if(!f._fbq)f._fbq=n; n.push=n; n.loaded=!0; n.version='2.0';
+      n.queue=[]; t=b.createElement(e); t.async=!0;
+      t.src=v; s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s);
+    }(w, d, 'script', 'https://connect.facebook.net/en_US/fbevents.js');
+
+    var advancedMatching = {};
+    if (customerEmail) advancedMatching.em = String(customerEmail).toLowerCase();
+    if (customerPhone) advancedMatching.ph = String(customerPhone).replace(/\D/g, '');
+    if (customerId)    advancedMatching.external_id = String(customerId);
+    w.fbq('init', META_PIXEL_ID, advancedMatching);
+  }
+
+  // ── Fire CAPI checkout_completed + Meta Pixel Purchase (same event_id) ────
   deterministicEventId(orderId, function (eventId) {
     var meta = getMetaIds();
+
+    // 1. Our backend (links visitor cookie to email + persists checkout_completed)
     send({
       client_id:    CLIENT_ID,
       event_type:   'checkout_completed',
@@ -115,10 +150,26 @@
         order_id:       String(orderId),
         order_number:   String(orderNumber),
         customer_email: customerEmail,
+        customer_id:    customerId || null,
         total:          totalPrice,
         currency:       currency,
-      },
+        line_items:     lineItems
+      }
     });
+
+    // 2. Meta Pixel browser-side Purchase (deduplicated via eventID with CAPI)
+    if (w.fbq) {
+      try {
+        w.fbq('track', 'Purchase', {
+          value:        totalPrice,
+          currency:     currency,
+          content_type: 'product',
+          content_ids:  contentIds,
+          contents:     lineItems,
+          num_items:    lineItems.length
+        }, { eventID: eventId });
+      } catch (e) {}
+    }
   });
 
 }(window, document));

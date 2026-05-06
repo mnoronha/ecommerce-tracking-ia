@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v3.1
+  Ecommerce Tracking IA — Shopify Snippet  v3.2
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -8,17 +8,26 @@
   2. Em layout/theme.liquid, adicione ANTES de </body>:
        {% render 'et-tracker' %}
 
-  Eventos rastreados:
-  - pageview          (todas as páginas)
-  - product_viewed    (página de produto — com produto, preço, categoria)
-  - add_to_cart       (botão adicionar ao carrinho)
-  - checkout_started  (botão finalizar compra)
-  - checkout_completed (página de confirmação — com order_id para deduplicação CAPI)
+  Eventos rastreados (server + browser):
+  - pageview / PageView
+  - product_viewed / ViewContent      (página de produto)
+  - add_to_cart / AddToCart
+  - checkout_started / InitiateCheckout
+  - checkout_completed / Purchase     (página de confirmação — ver order-status snippet)
 
-  Identifiers capturados para Meta CAPI / GA4:
-  - _fbp  (Meta Pixel browser ID — melhora match rate para 60-80%+)
-  - _fbc  (Meta click ID — setado quando visita vem de anúncio Meta)
-  - _ga   (GA4 client ID — vincula evento server-side à sessão GA4)
+  Identifiers capturados:
+  - _etv  (visitor cookie 1y)             — primeira-parte do nosso sistema
+  - _fbp  (Meta browser ID 90d)           — gerado se Meta Pixel ausente
+  - _fbc  (Meta click ID 90d)             — setado por fbclid
+  - _ga   (GA4 client ID)
+  - _gclid (Google click ID 90d)
+
+  Cart attributes injetados (note_attributes no webhook):
+  - _etv, _fbp, _fbc, _gcid, _gclid       — atravessam gateways externos
+
+  Deduplicação Browser ↔ Server:
+  - Cada track() gera um event_id único, enviado pro nosso CAPI E
+    pro fbq() oficial via parâmetro `eventID`. Meta dedupa.
   =====================================================================
 {% endcomment %}
 
@@ -29,8 +38,9 @@
   // ── Configuração ────────────────────────────────────────────────────────────
   var CLIENT_ID         = 'lk-sneakers';
   var API_URL           = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  // Meta Pixel oficial — deixa '' para desabilitar o lado browser
+  var META_PIXEL_ID     = '1018779385487104';
   // Google Ads AW-ID para remarketing (deixe '' para desativar)
-  // Conversões (Purchase, AddToCart, Checkout) são enviadas server-side — não precisam de gtag
   var GOOGLE_ADS_AW_ID  = '';
 
   // ── Constantes ──────────────────────────────────────────────────────────────
@@ -100,15 +110,12 @@
   }
 
   // ── Meta CAPI identifiers ─────────────────────────────────────────────────────
-  // _fbp: browser identifier for Meta CAPI match quality.
-  //       If Meta Pixel is present it already sets this. If not, we generate
-  //       our own following Meta's format: fb.{subdomain_index}.{ts}.{random}
-  //       This allows CAPI to work at full match quality WITHOUT the Meta Pixel.
+  // _fbp: browser identifier for Meta CAPI match quality. If Meta Pixel is
+  //       loaded below it will overwrite this with its own value — fine.
   // _fbc: set from fbclid URL param when visitor clicks a Meta ad
   function getMetaIds() {
     var fbp = getCookie('_fbp');
     if (!fbp) {
-      // Generate _fbp following Meta's official format
       fbp = 'fb.1.' + Date.now() + '.' + Math.floor(Math.random() * 1e10);
       setCookie('_fbp', fbp, 90);
     }
@@ -134,7 +141,6 @@
   }
 
   // ── Google click ID (gclid) ──────────────────────────────────────────────────
-  // Persisted in cookie so it's available on all subsequent pages after the ad click
   function getGclid() {
     var gclid = (location.search.match(/[?&]gclid=([^&#]*)/) || [])[1];
     if (gclid) {
@@ -167,12 +173,56 @@
     }
   }
 
+  // ── Map nosso event_type → nome do evento padrão Meta ──────────────────────
+  var META_EVENT_MAP = {
+    'pageview':         'PageView',
+    'product_viewed':   'ViewContent',
+    'add_to_cart':      'AddToCart',
+    'checkout_started': 'InitiateCheckout'
+  };
+
+  // Build Meta-flavoured params (content_ids, value, currency) from extra
+  function buildMetaParams(eventType, extra) {
+    extra = extra || {};
+    if (eventType === 'product_viewed') {
+      return {
+        content_ids:  [String(extra.product_id || '')],
+        content_name: extra.product_name,
+        content_type: 'product',
+        value:        Number(extra.product_price || 0),
+        currency:     'BRL'
+      };
+    }
+    if (eventType === 'add_to_cart') {
+      return {
+        content_ids:  [String(extra.product_id || '')],
+        content_name: extra.product_name,
+        content_type: 'product',
+        value:        Number(extra.product_price || 0),
+        currency:     'BRL'
+      };
+    }
+    if (eventType === 'checkout_started') {
+      return {
+        value:     Number(extra.cart_total || 0),
+        currency:  'BRL',
+        num_items: Number(extra.item_count || 0)
+      };
+    }
+    return {};
+  }
+
   // ── Track ────────────────────────────────────────────────────────────────────
+  // Generates a single event_id and uses it for BOTH our CAPI and fbq() so
+  // Meta deduplicates browser ↔ server automatically.
   function track(eventType, extra) {
-    var meta = getMetaIds();
+    var meta    = getMetaIds();
+    var eventId = uuid();
+
     send({
       client_id:    CLIENT_ID,
       event_type:   eventType,
+      event_id:     eventId,
       visitor_id:   getVisitorId(),
       session_id:   getSessionId(),
       page_url:     location.href,
@@ -185,6 +235,14 @@
       gclid:        getGclid(),
       metadata:     extra || {}
     });
+
+    // Browser-side Meta Pixel (deduplicated via eventID)
+    var metaName = META_EVENT_MAP[eventType];
+    if (metaName && w.fbq) {
+      try {
+        w.fbq('track', metaName, buildMetaParams(eventType, extra), { eventID: eventId });
+      } catch(e) {}
+    }
   }
 
   // ── Cart attributes sync ────────────────────────────────────────────────────
@@ -203,7 +261,6 @@
       '_gcid':  getGaClientId() || '',
       '_gclid': getGclid() || ''
     };
-    // Idempotent: skip if same payload already pushed this session
     var stamp = JSON.stringify(attrs);
     try {
       if (sessionStorage.getItem('_etcattr') === stamp) return;
@@ -223,15 +280,28 @@
     } catch(e) {}
   }
 
+  // ── Meta Pixel oficial (fbq) ────────────────────────────────────────────────
+  // Carregado em paralelo ao nosso CAPI server-side. Cada track() compartilha
+  // o mesmo event_id com o fbq → Meta dedupa automaticamente.
+  if (META_PIXEL_ID) {
+    !function(f,b,e,v,n,t,s){
+      if(f.fbq)return; n=f.fbq=function(){n.callMethod?
+        n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+      if(!f._fbq)f._fbq=n; n.push=n; n.loaded=!0; n.version='2.0';
+      n.queue=[]; t=b.createElement(e); t.async=!0;
+      t.src=v; s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s);
+    }(w, d, 'script', 'https://connect.facebook.net/en_US/fbevents.js');
+    w.fbq('init', META_PIXEL_ID);
+  }
+
   // ── Google Ads remarketing snippet (minimal) ─────────────────────────────────
-  // Carrega gtag.js APENAS para alimentar audiences de remarketing (RLSA, Display).
-  // Conversões (Compra, AddToCart, Checkout) são enviadas server-side via Conversion API.
   if (GOOGLE_ADS_AW_ID) {
     w.dataLayer = w.dataLayer || [];
     function gtag() { w.dataLayer.push(arguments); }
     gtag('js', new Date());
     gtag('config', GOOGLE_ADS_AW_ID, {
-      'send_page_view': false,        // pageview via nosso pixel, não duplicar
+      'send_page_view': false,
       'allow_enhanced_conversions': true
     });
     var gtagScript = d.createElement('script');
@@ -280,8 +350,7 @@
       {% else %}
       track('add_to_cart', {});
       {% endif %}
-      // Re-sync cart attributes — at this point a cart definitely exists,
-      // so /cart/update.js is guaranteed to persist them on the cart record.
+      // Re-sync cart attributes — at this point a cart definitely exists.
       setTimeout(syncCartAttributes, 300);
     }
     {% if template.name == 'cart' %}
