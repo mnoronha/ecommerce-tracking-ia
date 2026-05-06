@@ -51,7 +51,9 @@ def _sha256(value: Optional[str]) -> Optional[str]:
 def _build_user_data(event: NormalizedEvent) -> dict:
     """
     Build user_data dict with all available PII (hashed) and browser identifiers.
-    More signals = higher match rate. Target: >80% with fbp + email.
+
+    Each identifier we add raises Event Match Quality. Order of contribution
+    (rough): em > ph > external_id > fbp > fbc > zip > city > ip > ua.
     """
     user_data: dict = {}
     customer = event.customer
@@ -62,6 +64,9 @@ def _build_user_data(event: NormalizedEvent) -> dict:
             phone_clean = "".join(c for c in (customer.phone or "") if c.isdigit())
             if phone_clean:
                 user_data["ph"] = [_sha256(phone_clean)]
+        # external_id ties recurring customers across devices; Meta hashes it
+        if customer.id:
+            user_data["external_id"] = [_sha256(str(customer.id))]
         if customer.address:
             addr = customer.address
             if addr.country:
@@ -73,12 +78,16 @@ def _build_user_data(event: NormalizedEvent) -> dict:
             if addr.zip_code:
                 user_data["zp"] = [_sha256(addr.zip_code.replace(" ", ""))]
 
-    # Browser identifiers — not hashed per Meta spec
+    # Browser identifiers — Meta requires these UN-hashed
     meta = event.metadata or {}
     if meta.get("fbp"):
         user_data["fbp"] = meta["fbp"]
     if meta.get("fbc"):
         user_data["fbc"] = meta["fbc"]
+    if meta.get("ip"):
+        user_data["client_ip_address"] = meta["ip"]
+    if meta.get("user_agent"):
+        user_data["client_user_agent"] = meta["user_agent"]
 
     return user_data
 

@@ -217,11 +217,14 @@ def _dispatch_purchase_capi(
             return
         c = creds_result.data[0]
 
-        # ── Fetch visitor attribution data (gclid, fbp, fbc) ─────────────
+        # ── Fetch visitor attribution data (gclid, fbp, fbc, ip, ua) ─────
         gclid:        str | None = None
         fbp:          str | None = None
         fbc:          str | None = None
         ga_client_id: str | None = None
+        client_ip:    str | None = None
+        client_ua:    str | None = None
+        visitor_uuid: str | None = None
         if order_uuid:
             try:
                 ord_row = (
@@ -231,11 +234,12 @@ def _dispatch_purchase_capi(
                     .limit(1)
                     .execute()
                 )
-                if ord_row.data and ord_row.data[0].get("visitor_id"):
+                visitor_uuid = (ord_row.data or [{}])[0].get("visitor_id")
+                if visitor_uuid:
                     vis_row = (
                         get_supabase().table("visitors")
                         .select("gclid, fbp, fbc, ga_client_id")
-                        .eq("id", ord_row.data[0]["visitor_id"])
+                        .eq("id", visitor_uuid)
                         .limit(1)
                         .execute()
                     )
@@ -247,15 +251,34 @@ def _dispatch_purchase_capi(
             except Exception as exc:
                 logger.debug("visitor attribution lookup failed: %s", exc)
 
+        # ── Last-known IP / UA from the visitor's most recent pixel event ─
+        # Meta uses these as fallback identifiers — adds ~1-2 points to EMQ.
+        if visitor_uuid:
+            try:
+                te_row = (
+                    get_supabase().table("tracking_events")
+                    .select("properties")
+                    .eq("visitor_id", visitor_uuid)
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                if te_row.data:
+                    props = te_row.data[0].get("properties") or {}
+                    client_ip = props.get("ip")
+                    client_ua = props.get("user_agent")
+            except Exception as exc:
+                logger.debug("visitor IP/UA lookup failed: %s", exc)
+
         # ── Meta CAPI ────────────────────────────────────────────────────
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
-            # Enrich event with visitor's fbp/fbc if available
-            if (fbp or fbc) and hasattr(event, "metadata"):
+            # Enrich event with visitor's fbp/fbc/ip/ua if available
+            if (fbp or fbc or client_ip or client_ua) and hasattr(event, "metadata"):
                 meta = dict(event.metadata or {})
-                if fbp and not meta.get("fbp"):
-                    meta["fbp"] = fbp
-                if fbc and not meta.get("fbc"):
-                    meta["fbc"] = fbc
+                if fbp       and not meta.get("fbp"):        meta["fbp"]        = fbp
+                if fbc       and not meta.get("fbc"):        meta["fbc"]        = fbc
+                if client_ip and not meta.get("ip"):         meta["ip"]         = client_ip
+                if client_ua and not meta.get("user_agent"): meta["user_agent"] = client_ua
                 object.__setattr__(event, "metadata", meta)
 
             success, err = meta_capi.send_purchase(
