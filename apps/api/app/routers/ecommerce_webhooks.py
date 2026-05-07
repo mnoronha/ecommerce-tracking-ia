@@ -200,6 +200,15 @@ def _dispatch_purchase_capi(
                 logger.info("capi already sent for order %s — skipping", order_uuid)
                 return
 
+        # Skip orders with no value — Meta rejects Purchase value=0 with HTTP 400
+        # subcode 2804050. These are typically drafts / abandoned carts that
+        # Shopify forwards via orders/create webhook before payment is confirmed.
+        order = getattr(event, "order", None)
+        if order and (order.total or 0) <= 0:
+            _record_capi_error(order_uuid, "skipped: order total is 0 or null")
+            logger.info("skipping CAPI for zero-value order %s", order_uuid)
+            return
+
         creds_result = (
             get_supabase().table("clients")
             .select(

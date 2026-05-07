@@ -66,6 +66,7 @@ def retry_failed_capi() -> None:
     sb = get_supabase()
 
     try:
+        # Skip zero-value orders (drafts / abandoned) — Meta rejects them anyway
         result = (
             sb.table("orders")
             .select(
@@ -74,6 +75,7 @@ def retry_failed_capi() -> None:
                 "financial_status, capi_retry_count, visitor_id"
             )
             .eq("capi_sent", False)
+            .gt("total_price", 0)
             .gte("created_at", cutoff)
             .lt("capi_retry_count", _MAX_RETRIES)
             .order("created_at")
