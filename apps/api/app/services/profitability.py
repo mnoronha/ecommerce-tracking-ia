@@ -168,6 +168,149 @@ def persist_items_and_margin(
     }
 
 
+def backfill_items_from_events(client_uuid: str, pixel_id: str, days: int = 365) -> dict:
+    """
+    Reconstruct order_items for historical orders that were imported before
+    the items pipeline existed. Reads raw_payload (or order_data) from the
+    `events` table to get the line items that the Shopify webhook delivered.
+
+    Idempotent — orders that already have items are skipped. Margin is
+    recomputed afterwards using whatever product_costs are loaded.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    sb     = get_supabase()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    # Orders in scope. Pull a moderately wide window — caller controls `days`.
+    orders = (
+        sb.table("orders")
+        .select("id, platform_order_id, total_price, currency")
+        .eq("client_id", client_uuid)
+        .gte("created_at", cutoff)
+        .execute()
+    ).data or []
+    if not orders:
+        return {"orders_scanned": 0, "items_inserted": 0, "skipped_existing": 0, "no_event": 0}
+
+    order_ids = [o["id"] for o in orders]
+
+    # Skip orders that already have items
+    existing_with_items: set[str] = set()
+    for i in range(0, len(order_ids), 500):
+        chunk = order_ids[i : i + 500]
+        r = (
+            sb.table("order_items")
+            .select("order_id")
+            .in_("order_id", chunk)
+            .execute()
+        ).data or []
+        for row in r:
+            existing_with_items.add(row["order_id"])
+
+    todo = [o for o in orders if o["id"] not in existing_with_items]
+    if not todo:
+        return {
+            "orders_scanned":   len(orders),
+            "items_inserted":   0,
+            "skipped_existing": len(existing_with_items),
+            "no_event":         0,
+            "orders_processed": 0,
+        }
+
+    items_inserted    = 0
+    no_event          = 0
+    orders_processed  = 0
+    cost_cache: dict  = {}
+
+    for o in todo:
+        # Find the matching event: client_id is TEXT (slug) on `events`
+        # and the platform_order_id lives in order_data->>'id'.
+        ev = (
+            sb.table("events")
+            .select("order_data")
+            .eq("client_id", pixel_id)
+            .filter("order_data->>id", "eq", o["platform_order_id"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data or []
+        if not ev:
+            no_event += 1
+            continue
+
+        order_data = ev[0].get("order_data") or {}
+        raw_items  = order_data.get("items") or []
+        if not raw_items:
+            no_event += 1
+            continue
+
+        # Build payloads + compute margin
+        cogs_total          = 0.0
+        revenue_from_items  = 0.0
+        items_with_cost     = 0
+        payloads: list[dict] = []
+
+        for it in raw_items:
+            qty        = int(it.get("quantity") or 1)
+            unit_price = float(it.get("price") or 0)
+            line_total = float(it.get("total") or unit_price * qty)
+            revenue_from_items += line_total
+
+            cost_unit = _lookup_cost(
+                client_uuid,
+                sku=it.get("sku"),
+                platform_product_id=it.get("product_id"),
+                cost_cache=cost_cache,
+            )
+            if cost_unit is not None:
+                cogs_total += cost_unit * qty
+                items_with_cost += 1
+
+            payloads.append({
+                "order_id":             o["id"],
+                "client_id":            client_uuid,
+                "platform_product_id":  it.get("product_id"),
+                "sku":                  it.get("sku"),
+                "name":                 it.get("name"),
+                "quantity":             qty,
+                "unit_price":           unit_price,
+                "line_total":           line_total,
+                "cost_price_snapshot":  cost_unit,
+            })
+
+        if payloads:
+            try:
+                sb.table("order_items").insert(payloads).execute()
+                items_inserted += len(payloads)
+                orders_processed += 1
+            except Exception as exc:
+                logger.warning("backfill items insert failed for order %s: %s", o["id"], exc)
+                continue
+
+        # Update orders row with cogs/profit if any costs were found
+        if items_with_cost > 0:
+            revenue = float(o.get("total_price") or revenue_from_items)
+            gross_profit = round(revenue - cogs_total, 2)
+            margin_pct = round((gross_profit / revenue) * 100, 2) if revenue > 0 else None
+            try:
+                sb.table("orders").update({
+                    "gross_profit": gross_profit,
+                    "cogs_total":   round(cogs_total, 2),
+                    "margin_pct":   margin_pct,
+                }).eq("id", o["id"]).execute()
+            except Exception as exc:
+                logger.debug("margin update failed for order %s: %s", o["id"], exc)
+
+    return {
+        "orders_scanned":   len(orders),
+        "skipped_existing": len(existing_with_items),
+        "orders_processed": orders_processed,
+        "items_inserted":   items_inserted,
+        "no_event":         no_event,
+    }
+
+
 def recompute_all_orders(client_uuid: str, days: int = 365) -> dict:
     """
     Recompute margin for all orders in the window. Useful when the merchant

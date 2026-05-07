@@ -165,6 +165,20 @@ async def recompute_margins(
     return {"status": "recompute_started", "days": days}
 
 
+@router.post("/cogs/{pixel_id}/backfill-items", tags=["cogs"])
+async def backfill_items(pixel_id: str, days: int = 365):
+    """
+    Backfill order_items from historical events. Required after a fresh
+    install (or any time we changed the items pipeline) so that the
+    /journey reports and product-level margin work for past orders.
+
+    Synchronous — returns a per-batch report. Safe to re-run.
+    """
+    client_uuid = _resolve_client(pixel_id)
+    report = profitability.backfill_items_from_events(client_uuid, pixel_id, days)
+    return report
+
+
 @router.get("/cogs/{pixel_id}/coverage", tags=["cogs"])
 async def coverage_report(pixel_id: str, days: int = 30):
     """

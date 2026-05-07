@@ -39,6 +39,7 @@ export default function CogsPage() {
   const [csvText,  setCsvText]  = useState('')
   const [importing, setImporting] = useState(false)
   const [recomputing, setRecomputing] = useState(false)
+  const [backfilling, setBackfilling] = useState(false)
   const [msg,      setMsg]      = useState<{ ok: boolean; text: string } | null>(null)
   const [search,   setSearch]   = useState('')
 
@@ -91,12 +92,30 @@ export default function CogsPage() {
       const res = await fetch(`${API_URL}/cogs/${pixelId}/recompute?days=365`, { method: 'POST' })
       if (!res.ok) throw new Error('Falha ao recalcular')
       setMsg({ ok: true, text: 'Recálculo iniciado em background. Atualize em ~30s.' })
-      // Reload coverage after 5s
       setTimeout(load, 5000)
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message })
     } finally {
       setRecomputing(false)
+    }
+  }
+
+  async function handleBackfill() {
+    if (!confirm('Reconstruir itens dos pedidos históricos? Pode levar 1-2 min.')) return
+    setBackfilling(true); setMsg(null)
+    try {
+      const res = await fetch(`${API_URL}/cogs/${pixelId}/backfill-items?days=365`, { method: 'POST' })
+      if (!res.ok) throw new Error('Falha no backfill')
+      const data = await res.json()
+      setMsg({
+        ok: true,
+        text: `Backfill: ${data.orders_processed} pedidos processados, ${data.items_inserted} itens inseridos, ${data.skipped_existing} já tinham itens.`
+      })
+      await load()
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message })
+    } finally {
+      setBackfilling(false)
     }
   }
 
@@ -174,15 +193,27 @@ export default function CogsPage() {
                 {' '}ou <code className="bg-[#0f1117] px-1.5 py-0.5 rounded">platform_product_id,cost_price</code>
               </p>
             </div>
-            <button
-              onClick={handleRecompute}
-              disabled={recomputing}
-              className="flex items-center gap-2 text-xs bg-[#0f1117] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              {recomputing
-                ? <><Loader2 size={12} className="animate-spin" />Recalculando...</>
-                : <><RefreshCw size={12} />Recalcular margens (365d)</>}
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleBackfill}
+                disabled={backfilling}
+                className="flex items-center gap-2 text-xs bg-[#0f1117] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-1.5 rounded-lg transition-colors"
+                title="Reconstrói itens dos pedidos históricos a partir dos webhooks"
+              >
+                {backfilling
+                  ? <><Loader2 size={12} className="animate-spin" />Backfill...</>
+                  : <><RefreshCw size={12} />Backfill itens históricos</>}
+              </button>
+              <button
+                onClick={handleRecompute}
+                disabled={recomputing}
+                className="flex items-center gap-2 text-xs bg-[#0f1117] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-1.5 rounded-lg transition-colors"
+              >
+                {recomputing
+                  ? <><Loader2 size={12} className="animate-spin" />Recalculando...</>
+                  : <><RefreshCw size={12} />Recalcular margens</>}
+              </button>
+            </div>
           </div>
           <textarea
             value={csvText}
