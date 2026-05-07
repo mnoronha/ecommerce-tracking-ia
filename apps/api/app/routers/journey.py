@@ -18,6 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
+from ..services import meta_campaigns
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -165,20 +166,32 @@ async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
                 p["profit"] += line_profit
             b["units"]   += qty
 
+    # Resolve Meta campaign IDs → names if any UTM looks numeric
+    name_map: dict[str, str] = {}
+    meta_ids = [
+        b["campaign"] for b in bucket.values()
+        if b["platform"] == "meta" and meta_campaigns.is_meta_id(b["campaign"])
+    ]
+    if meta_ids:
+        name_map = meta_campaigns.get_name_map(client_uuid, meta_ids)
+
     # Finalize: sort products inside each campaign, slice top N, format
     campaigns = []
     for b in bucket.values():
         prods = sorted(b["_products"].values(), key=lambda p: p["revenue"], reverse=True)[:top_products]
+        # Replace numeric Meta ID with human name when available
+        display_name = name_map.get(b["campaign"], b["campaign"])
         campaigns.append({
-            "source":      b["source"],
-            "medium":      b["medium"],
-            "campaign":    b["campaign"],
-            "platform":    b["platform"],
-            "orders":      b["orders"],
-            "revenue":     round(b["revenue"], 2),
-            "profit":      round(b["profit"], 2) if b["profit"] else None,
-            "units":       b["units"],
-            "avg_ticket":  round(b["revenue"] / b["orders"], 2) if b["orders"] else 0,
+            "source":            b["source"],
+            "medium":             b["medium"],
+            "campaign":           display_name,
+            "campaign_id":        b["campaign"] if display_name != b["campaign"] else None,
+            "platform":           b["platform"],
+            "orders":             b["orders"],
+            "revenue":            round(b["revenue"], 2),
+            "profit":             round(b["profit"], 2) if b["profit"] else None,
+            "units":              b["units"],
+            "avg_ticket":         round(b["revenue"] / b["orders"], 2) if b["orders"] else 0,
             "top_products": [
                 {
                     "product_id": p["product_id"],
@@ -254,6 +267,14 @@ async def by_product(pixel_id: str, days: int = 30, top_campaigns: int = 5):
             c["revenue"] += line
             c["orders"].add(o["id"])
 
+    # Resolve Meta IDs at the campaign-level (collected across all products)
+    all_meta_ids: set[str] = set()
+    for p in bucket.values():
+        for c in p["_campaigns"].values():
+            if c["platform"] == "meta" and meta_campaigns.is_meta_id(c["campaign"]):
+                all_meta_ids.add(c["campaign"])
+    name_map = meta_campaigns.get_name_map(client_uuid, list(all_meta_ids)) if all_meta_ids else {}
+
     products = []
     for p in bucket.values():
         camps = sorted(p["_campaigns"].values(), key=lambda c: c["revenue"], reverse=True)[:top_campaigns]
@@ -267,15 +288,49 @@ async def by_product(pixel_id: str, days: int = 30, top_campaigns: int = 5):
             "orders":      len(p["orders"]),
             "top_campaigns": [
                 {
-                    "platform": c["platform"],
-                    "source":   c["source"],
-                    "campaign": c["campaign"],
-                    "units":    c["units"],
-                    "revenue":  round(c["revenue"], 2),
-                    "orders":   len(c["orders"]),
+                    "platform":    c["platform"],
+                    "source":      c["source"],
+                    "campaign":    name_map.get(c["campaign"], c["campaign"]),
+                    "campaign_id": c["campaign"] if name_map.get(c["campaign"]) else None,
+                    "units":       c["units"],
+                    "revenue":     round(c["revenue"], 2),
+                    "orders":      len(c["orders"]),
                 }
                 for c in camps
             ],
         })
     products.sort(key=lambda x: x["revenue"], reverse=True)
     return {"days": days, "products": products, "total_orders": len({o["id"] for o in orders})}
+
+
+@router.post(
+    "/journey/{pixel_id}/resolve-meta-names",
+    summary="Sync Meta Ads campaign id → name cache",
+    tags=["journey"],
+)
+async def resolve_meta_names(pixel_id: str):
+    """
+    Pulls every campaign on the client's Meta ad account and caches name in
+    `meta_campaign_names`. After this, journey reports show readable names
+    instead of raw IDs like 120210118442. Safe to re-run.
+    """
+    client_uuid = _resolve(pixel_id)
+    sb = get_supabase()
+    creds = (
+        sb.table("clients")
+        .select("meta_ad_account_id, meta_access_token")
+        .eq("id", client_uuid)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not creds:
+        raise HTTPException(404, "Client not found")
+    c = creds[0]
+    if not (c.get("meta_ad_account_id") and c.get("meta_access_token")):
+        raise HTTPException(400, "Client missing meta_ad_account_id or meta_access_token")
+
+    return meta_campaigns.sync_campaign_names(
+        client_uuid=client_uuid,
+        ad_account_id=c["meta_ad_account_id"],
+        access_token=c["meta_access_token"],
+    )

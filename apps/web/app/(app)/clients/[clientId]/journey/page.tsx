@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, ChevronDown, ChevronRight, Package, Megaphone } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -21,6 +21,7 @@ interface CampaignRow {
   source:        string
   medium:        string
   campaign:      string
+  campaign_id:   string | null
   platform:      string
   orders:        number
   revenue:       number
@@ -30,12 +31,13 @@ interface CampaignRow {
   top_products:  ProductInCampaign[]
 }
 interface CampaignInProduct {
-  platform: string
-  source:   string
-  campaign: string
-  units:    number
-  revenue:  number
-  orders:   number
+  platform:    string
+  source:      string
+  campaign:    string
+  campaign_id: string | null
+  units:       number
+  revenue:     number
+  orders:      number
 }
 interface ProductRow {
   product_id:    string
@@ -75,6 +77,8 @@ export default function JourneyPage() {
   const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [search,   setSearch]   = useState('')
+  const [resolving, setResolving] = useState(false)
+  const [resolveMsg, setResolveMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -92,6 +96,21 @@ export default function JourneyPage() {
   }, [lens, days, pixelId])
 
   useEffect(() => { load() }, [load])
+
+  async function handleResolveMeta() {
+    setResolving(true); setResolveMsg(null)
+    try {
+      const res = await fetch(`${API_URL}/journey/${pixelId}/resolve-meta-names`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.error || 'Falha ao sincronizar')
+      setResolveMsg(`${data.synced} campanhas sincronizadas`)
+      await load()
+    } catch (e) {
+      setResolveMsg('Erro: ' + (e as Error).message)
+    } finally {
+      setResolving(false)
+    }
+  }
 
   function toggle(key: string) {
     setExpanded(prev => {
@@ -149,23 +168,38 @@ export default function JourneyPage() {
 
       {/* Lens toggle */}
       <div className="px-6 pt-6">
-        <div className="inline-flex bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg p-1">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="inline-flex bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg p-1">
+            <button
+              onClick={() => { setLens('campaign'); setExpanded(new Set()) }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                lens === 'campaign' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Megaphone size={14} />Por campanha
+            </button>
+            <button
+              onClick={() => { setLens('product'); setExpanded(new Set()) }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                lens === 'product' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Package size={14} />Por produto
+            </button>
+          </div>
           <button
-            onClick={() => { setLens('campaign'); setExpanded(new Set()) }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              lens === 'campaign' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
+            onClick={handleResolveMeta}
+            disabled={resolving}
+            title="Busca os nomes reais das campanhas no Meta Ads quando elas aparecem como ID numérico"
+            className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-2 rounded-lg transition-colors"
           >
-            <Megaphone size={14} />Por campanha
+            {resolving
+              ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
+              : <><RefreshCw size={12} />Resolver nomes Meta</>}
           </button>
-          <button
-            onClick={() => { setLens('product'); setExpanded(new Set()) }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              lens === 'product' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Package size={14} />Por produto
-          </button>
+          {resolveMsg && (
+            <span className="text-xs text-slate-400">{resolveMsg}</span>
+          )}
         </div>
         <p className="text-xs text-slate-500 mt-3">
           Receita total no período: <span className="text-emerald-400 font-semibold">{fmt(totalRevenue)}</span>
