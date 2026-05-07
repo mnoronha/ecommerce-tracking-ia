@@ -10,7 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import attribution, audiences, cname, cogs, ecommerce_webhooks, insights, live, meta_ads, pacing, pixel, setup
+from .routers import attribution, audiences, cname, cogs, ecommerce_webhooks, insights, journey, live, meta_ads, pacing, pixel, setup
 from .services import alerts, anomalies, capi_retry, meta_audiences, meta_token_health
 
 logging.basicConfig(
@@ -109,6 +109,7 @@ app.include_router(attribution.router)
 app.include_router(live.router)
 app.include_router(cogs.router)
 app.include_router(pacing.router)
+app.include_router(journey.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
