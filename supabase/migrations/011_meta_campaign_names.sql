@@ -8,13 +8,19 @@
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS public.meta_campaign_names (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    client_id    UUID NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
-    campaign_id  TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    status       TEXT,             -- ACTIVE / PAUSED / DELETED
-    objective    TEXT,
-    updated_at   TIMESTAMPTZ DEFAULT now(),
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id       UUID NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
+    campaign_id     TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    -- Level identifies whether this row is the campaign, the adset or the ad.
+    -- Lets the UI show "Anúncio X (na campanha Y)" instead of "X" alone.
+    level           TEXT NOT NULL DEFAULT 'campaign'
+                    CHECK (level IN ('campaign','adset','ad')),
+    parent_id       TEXT,           -- for adsets: campaign_id; for ads: adset_id
+    parent_name     TEXT,            -- denormalized for cheap reads
+    status          TEXT,             -- ACTIVE / PAUSED / DELETED
+    objective       TEXT,
+    updated_at      TIMESTAMPTZ DEFAULT now(),
     UNIQUE (client_id, campaign_id)
 );
 
