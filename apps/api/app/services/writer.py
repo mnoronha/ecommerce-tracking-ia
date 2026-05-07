@@ -321,6 +321,10 @@ def write_tracking_event(
                       "product_price", "product_quantity", "product_category"):
             if field in event.metadata:
                 row[field] = event.metadata[field]
+        # device_type is computed by the pixel router; surface it as a top-level
+        # column so dashboards can filter without a JSONB scan.
+        if event.metadata.get("device_type"):
+            row["device_type"] = event.metadata["device_type"]
     try:
         get_supabase().table("tracking_events").insert(row).execute()
         logger.debug("tracking_events insert OK — %s", event.event_id)
@@ -387,6 +391,7 @@ def write_order(
         except Exception as exc:
             logger.debug("utm inheritance from visitor failed: %s", exc)
 
+    meta = event.metadata or {}
     row = {
         "platform_order_id":     order.id,
         "platform_order_number": order.number,
@@ -404,6 +409,10 @@ def write_order(
         "is_first_purchase":  is_first,
         "is_repeat_purchase": not is_first,
         "capi_sent": False,
+        # Shipping geo — extracted by adapter, used for dashboard filters
+        "shipping_country": meta.get("shipping_country"),
+        "shipping_state":   meta.get("shipping_state"),
+        "shipping_city":    meta.get("shipping_city"),
     }
     if client_uuid:
         row["client_id"] = client_uuid

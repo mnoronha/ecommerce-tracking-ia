@@ -46,6 +46,24 @@ _PIXEL_EVENT_MAP: dict = {
 }
 
 
+def _parse_device(user_agent: Optional[str]) -> str:
+    """
+    Coarse device classification from User-Agent. Mobile bias works well for BR
+    DTC where ~70% of traffic is mobile. We accept some imprecision (Galaxy Tab
+    counts as mobile) in exchange for not bloating the bundle with ua-parser-js.
+    """
+    if not user_agent:
+        return "unknown"
+    ua = user_agent.lower()
+    if any(b in ua for b in ("bot", "crawl", "spider", "googlebot", "bingbot", "facebookexternal")):
+        return "bot"
+    if "ipad" in ua or ("tablet" in ua and "mobile" not in ua):
+        return "tablet"
+    if any(m in ua for m in ("iphone", "android", "mobile", "blackberry", "windows phone")):
+        return "mobile"
+    return "desktop"
+
+
 # ── Request schema ─────────────────────────────────────────────────────────────
 
 class UTMData(BaseModel):
@@ -97,6 +115,7 @@ def _build_normalized(
             **(data.metadata or {}),
             "user_agent":   user_agent,
             "ip":           ip,
+            "device_type":  _parse_device(user_agent),
             "fbp":          data.fbp,
             "fbc":          data.fbc,
             "ga_client_id": data.ga_client_id,

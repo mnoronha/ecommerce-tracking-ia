@@ -31,12 +31,15 @@ interface Order {
   id: string
   email: string | null
   total_price: number
+  gross_profit?: number | null
+  margin_pct?: number | null
   financial_status: string | null
   platform_source: string | null
   utm_source: string | null
   utm_medium: string | null
   utm_campaign: string | null
   is_first_purchase: boolean | null
+  shipping_country?: string | null
   created_at: string
 }
 
@@ -130,6 +133,8 @@ interface RoasData {
   }
 }
 
+type DrilldownKPI = 'revenue' | 'orders' | 'visitors' | 'avgOrderValue' | 'conversionRate' | 'profit'
+
 interface PacingData {
   mtd_revenue:              number
   mtd_orders:               number
@@ -161,12 +166,19 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function KPICard({ title, value, icon: Icon, change, color, hint }: {
+function KPICard({ title, value, icon: Icon, change, color, hint, onClick }: {
   title: string; value: string; icon: React.ElementType
   change?: number; color: string; hint?: string
+  onClick?: () => void
 }) {
+  const Tag: any = onClick ? 'button' : 'div'
   return (
-    <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+    <Tag
+      onClick={onClick}
+      className={`bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e] text-left w-full ${
+        onClick ? 'hover:border-indigo-500/50 cursor-pointer transition-colors' : ''
+      }`}
+    >
       <div className="flex items-start justify-between mb-3">
         <span className="text-sm text-slate-400">{title}</span>
         <div className={`p-2 rounded-lg ${color}`}><Icon size={16} /></div>
@@ -178,7 +190,7 @@ function KPICard({ title, value, icon: Icon, change, color, hint }: {
         </div>
       )}
       {hint && <div className="text-xs text-slate-500">{hint}</div>}
-    </div>
+    </Tag>
   )
 }
 
@@ -218,6 +230,149 @@ function FunnelBar({ steps }: { steps: FunnelStep[] }) {
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function KPIDrilldownModal({
+  kpi,
+  orders,
+  onClose,
+}: {
+  kpi: DrilldownKPI
+  orders: any[]
+  onClose: () => void
+}) {
+  const TITLES: Record<DrilldownKPI, string> = {
+    revenue:        'Receita',
+    orders:         'Pedidos',
+    visitors:       'Visitantes',
+    avgOrderValue:  'Ticket Médio',
+    conversionRate: 'Taxa de Conversão',
+    profit:         'Margem Bruta',
+  }
+
+  // Daily series + breakdown by source/country/device based on KPI semantics
+  const byDay: Record<string, { value: number; count: number }> = {}
+  orders.forEach(o => {
+    const day = fmtDate(o.created_at)
+    if (!byDay[day]) byDay[day] = { value: 0, count: 0 }
+    if (kpi === 'revenue')    byDay[day].value += o.total_price || 0
+    else if (kpi === 'profit') byDay[day].value += o.gross_profit || 0
+    byDay[day].count += 1
+  })
+  const series = Object.entries(byDay).map(([date, v]) => ({
+    date,
+    value: kpi === 'orders' ? v.count : kpi === 'avgOrderValue' ? (v.count ? v.value / v.count : 0) : v.value,
+  }))
+
+  // Breakdown by source
+  const bySource: Record<string, { revenue: number; orders: number }> = {}
+  orders.forEach(o => {
+    const src = o.utm_source || 'direto'
+    if (!bySource[src]) bySource[src] = { revenue: 0, orders: 0 }
+    bySource[src].revenue += o.total_price || 0
+    bySource[src].orders  += 1
+  })
+  const sourceRows = Object.entries(bySource)
+    .map(([source, v]) => ({ source, ...v }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 8)
+
+  // Breakdown by country
+  const byCountry: Record<string, { revenue: number; orders: number }> = {}
+  orders.forEach(o => {
+    const c = o.shipping_country || 'desconhecido'
+    if (!byCountry[c]) byCountry[c] = { revenue: 0, orders: 0 }
+    byCountry[c].revenue += o.total_price || 0
+    byCountry[c].orders  += 1
+  })
+  const countryRows = Object.entries(byCountry)
+    .map(([country, v]) => ({ country, ...v }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 6)
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-end" onClick={onClose}>
+      <div
+        className="w-full max-w-2xl h-full bg-[#0f1117] border-l border-[#2a2f3e] overflow-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-[#0f1117] border-b border-[#2a2f3e] px-6 py-4 flex items-center justify-between z-10">
+          <div>
+            <h2 className="text-lg font-bold text-white">Detalhes — {TITLES[kpi]}</h2>
+            <p className="text-xs text-slate-500 mt-0.5">{orders.length} pedidos no período</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-white text-2xl leading-none">×</button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Daily series */}
+          <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+            <h3 className="text-sm font-semibold text-slate-300 mb-3">Diário</h3>
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={series}>
+                <defs>
+                  <linearGradient id="kpiGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3e" />
+                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10 }} />
+                <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
+                <Tooltip
+                  contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
+                  formatter={(v) => [
+                    kpi === 'revenue' || kpi === 'profit' || kpi === 'avgOrderValue'
+                      ? fmt(Number(v)) : Math.round(Number(v)).toString(),
+                    TITLES[kpi],
+                  ]}
+                />
+                <Area type="monotone" dataKey="value" stroke="#6366f1" fill="url(#kpiGrad)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* By source */}
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+            <div className="px-5 py-3 border-b border-[#2a2f3e]">
+              <h3 className="text-sm font-semibold text-slate-300">Top fontes</h3>
+            </div>
+            <table className="w-full text-sm">
+              <tbody>
+                {sourceRows.map(s => (
+                  <tr key={s.source} className="border-b border-[#2a2f3e] last:border-0">
+                    <td className="px-5 py-2.5 text-slate-300 text-xs">{s.source}</td>
+                    <td className="px-5 py-2.5 text-right text-slate-400 text-xs">{s.orders} pedidos</td>
+                    <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(s.revenue)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* By country */}
+          {countryRows.length > 1 && (
+            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#2a2f3e]">
+                <h3 className="text-sm font-semibold text-slate-300">Top países</h3>
+              </div>
+              <table className="w-full text-sm">
+                <tbody>
+                  {countryRows.map(c => (
+                    <tr key={c.country} className="border-b border-[#2a2f3e] last:border-0">
+                      <td className="px-5 py-2.5 text-slate-300 text-xs">{c.country}</td>
+                      <td className="px-5 py-2.5 text-right text-slate-400 text-xs">{c.orders} pedidos</td>
+                      <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -473,6 +628,11 @@ export default function DashboardPage() {
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
+  const [device,   setDevice]           = useState<string>('all')
+  const [country,  setCountry]          = useState<string>('all')
+  const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
+  const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
+  const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
 
   const params = useParams()
   const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
@@ -500,7 +660,7 @@ export default function DashboardPage() {
     ] = await Promise.all([
       // Bug fix: only paid orders count as revenue
       supabase.from('orders')
-        .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, created_at')
+        .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
         .gte('created_at', startDate.toISOString())
@@ -518,7 +678,7 @@ export default function DashboardPage() {
         .gte('created_at', startDate.toISOString())
         .not('visitor_id', 'is', null),
       supabase.from('tracking_events')
-        .select('event_type, visitor_id')
+        .select('event_type, visitor_id, device_type')
         .eq('client_id', clientId)
         .gte('created_at', startDate.toISOString()),
       supabase.from('tracking_events')
@@ -528,12 +688,27 @@ export default function DashboardPage() {
         .not('product_name', 'is', null),
     ])
 
-    const allOrders  = orders || []
-    const prevOrders = ordersPrev || []
-    const allEvents  = events || []
-    const prodEvents = productEvents || []
-    // Unique visitors with at least one event in the selected period
-    const totalVisitors = new Set((visitorEvents || []).map(e => e.visitor_id)).size
+    // Persist raw data for client-side filter recompute on device/country toggle
+    setAllOrdersRaw(orders || [])
+    setAllEventsRaw(events || [])
+
+    // Apply current filters
+    const filterOrder = (o: any) => {
+      if (country !== 'all' && o.shipping_country !== country) return false
+      return true
+    }
+    const filterEvent = (e: any) => {
+      if (device !== 'all' && e.device_type !== device) return false
+      return true
+    }
+
+    const allOrders  = (orders || []).filter(filterOrder)
+    const prevOrders = ordersPrev || []  // Period comparison ignores filter on purpose
+    const allEvents  = (events || []).filter(filterEvent)
+    const prodEvents = (productEvents || [])
+    // Unique visitors with at least one event in the selected period (after filter)
+    const visitorEventsFiltered = (visitorEvents || []).filter(filterEvent)
+    const totalVisitors = new Set(visitorEventsFiltered.map(e => e.visitor_id)).size
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalRevenue   = allOrders.reduce((s, o) => s + (o.total_price || 0), 0)
@@ -662,7 +837,7 @@ export default function DashboardPage() {
 
     setLastUpdate(new Date())
     setLoading(false)
-  }, [])
+  }, [country, device, CLIENT_PIXEL_ID])
 
   const loadInsights = useCallback(async () => {
     setInsLoading(true)
@@ -775,6 +950,28 @@ export default function DashboardPage() {
           <p className="text-xs text-slate-500">Tracking Dashboard</p>
         </div>
         <div className="flex items-center gap-3">
+          <select
+            value={device}
+            onChange={e => setDevice(e.target.value)}
+            className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
+            title="Filtrar por dispositivo"
+          >
+            <option value="all">Todos dispositivos</option>
+            <option value="mobile">Mobile</option>
+            <option value="desktop">Desktop</option>
+            <option value="tablet">Tablet</option>
+          </select>
+          <select
+            value={country}
+            onChange={e => setCountry(e.target.value)}
+            className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
+            title="Filtrar por país"
+          >
+            <option value="all">Todos países</option>
+            {Array.from(new Set(allOrdersRaw.map(o => o.shipping_country).filter(Boolean))).map(c => (
+              <option key={c as string} value={c as string}>{c as string}</option>
+            ))}
+          </select>
           <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
             {(['7d', '30d', '90d'] as DateRange[]).map(r => (
               <button key={r} onClick={() => setDateRange(r)}
@@ -800,10 +997,12 @@ export default function DashboardPage() {
           <PacingWidget pacing={pacing} />
         )}
 
-        {/* KPIs */}
+        {/* KPIs — clicáveis abrem drilldown */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <KPICard title="Receita"      value={kpis ? fmt(kpis.totalRevenue) : '—'}
-            icon={TrendingUp} change={kpis?.revenueChange} color="bg-emerald-500/10 text-emerald-400" />
+            icon={TrendingUp} change={kpis?.revenueChange}
+            color="bg-emerald-500/10 text-emerald-400"
+            onClick={() => setDrilldown('revenue')} />
           {kpis?.totalProfit != null && (
             <KPICard
               title="Margem"
@@ -811,16 +1010,23 @@ export default function DashboardPage() {
               icon={TrendingUp}
               color="bg-teal-500/10 text-teal-400"
               hint={kpis.marginPct != null ? `${kpis.marginPct.toFixed(1)}% bruta` : undefined}
+              onClick={() => setDrilldown('profit')}
             />
           )}
           <KPICard title="Pedidos"      value={kpis ? kpis.totalOrders.toString() : '—'}
-            icon={ShoppingBag} change={kpis?.ordersChange} color="bg-blue-500/10 text-blue-400" />
+            icon={ShoppingBag} change={kpis?.ordersChange}
+            color="bg-blue-500/10 text-blue-400"
+            onClick={() => setDrilldown('orders')} />
           <KPICard title="Visitantes"   value={kpis ? kpis.totalVisitors.toString() : '—'}
-            icon={Users} color="bg-purple-500/10 text-purple-400" />
+            icon={Users}
+            color="bg-purple-500/10 text-purple-400" />
           <KPICard title="Ticket Médio" value={kpis ? fmt(kpis.avgOrderValue) : '—'}
-            icon={Activity} color="bg-orange-500/10 text-orange-400" />
+            icon={Activity}
+            color="bg-orange-500/10 text-orange-400"
+            onClick={() => setDrilldown('avgOrderValue')} />
           <KPICard title="Conversão"    value={kpis ? kpis.conversionRate.toFixed(1) + '%' : '—'}
-            icon={Percent} color="bg-pink-500/10 text-pink-400" />
+            icon={Percent}
+            color="bg-pink-500/10 text-pink-400" />
         </div>
 
         {/* Revenue + Funnel */}
@@ -1278,6 +1484,14 @@ export default function DashboardPage() {
         </div>
 
       </div>
+
+      {drilldown && (
+        <KPIDrilldownModal
+          kpi={drilldown}
+          orders={allOrdersRaw.filter(o => country === 'all' || o.shipping_country === country)}
+          onClose={() => setDrilldown(null)}
+        />
+      )}
     </div>
   )
 }

@@ -237,6 +237,9 @@ class ShopifyAdapter(BaseAdapter):
         # cart, not just the first URL the customer hit.
         nattr = self._parse_note_attributes(payload)
 
+        # Shipping address — denormalized for country/state/city dashboard filters
+        shipping = payload.get("shipping_address") or payload.get("billing_address") or {}
+
         return NormalizedEvent(
             event_id=str(uuid.uuid4()),
             event_type=event_type,
@@ -262,5 +265,9 @@ class ShopifyAdapter(BaseAdapter):
                 "fbp":               nattr.get("_fbp"),
                 "fbc":               nattr.get("_fbc"),
                 "ga_client_id":      nattr.get("_gcid"),
+                # Shipping address — used to populate orders.shipping_country/state/city
+                "shipping_country":  shipping.get("country_code") or shipping.get("country"),
+                "shipping_state":    shipping.get("province_code") or shipping.get("province"),
+                "shipping_city":     shipping.get("city"),
             },
         )
