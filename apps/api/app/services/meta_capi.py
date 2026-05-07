@@ -53,20 +53,38 @@ def _build_user_data(event: NormalizedEvent) -> dict:
     Build user_data dict with all available PII (hashed) and browser identifiers.
 
     Each identifier we add raises Event Match Quality. Order of contribution
-    (rough): em > ph > external_id > fbp > fbc > zip > city > ip > ua.
+    (rough): em > ph > external_id > fn/ln > fbp > fbc > zip > city > ip > ua.
     """
     user_data: dict = {}
     customer = event.customer
+    email_for_external = None
     if customer:
         if customer.email:
-            user_data["em"] = [_sha256(customer.email)]
+            email_clean = customer.email.strip().lower()
+            user_data["em"] = [_sha256(email_clean)]
+            email_for_external = email_clean
         if customer.phone:
             phone_clean = "".join(c for c in (customer.phone or "") if c.isdigit())
             if phone_clean:
                 user_data["ph"] = [_sha256(phone_clean)]
-        # external_id ties recurring customers across devices; Meta hashes it
+        # First/last name — Meta values these even though hashed
+        if customer.first_name:
+            user_data["fn"] = [_sha256(customer.first_name)]
+        if customer.last_name:
+            user_data["ln"] = [_sha256(customer.last_name)]
+        if customer.date_of_birth:
+            # Meta expects YYYYMMDD before hashing
+            db_clean = "".join(c for c in customer.date_of_birth if c.isdigit())[:8]
+            if len(db_clean) == 8:
+                user_data["db"] = [_sha256(db_clean)]
+        if customer.gender:
+            user_data["ge"] = [_sha256(customer.gender.lower()[:1])]
+        # external_id: prefer the platform customer ID (stable across devices),
+        # fall back to email_hash so we never go without one (Meta rates this 25%+)
         if customer.id:
             user_data["external_id"] = [_sha256(str(customer.id))]
+        elif email_for_external:
+            user_data["external_id"] = [_sha256(email_for_external)]
         if customer.address:
             addr = customer.address
             if addr.country:
@@ -82,8 +100,17 @@ def _build_user_data(event: NormalizedEvent) -> dict:
     meta = event.metadata or {}
     if meta.get("fbp"):
         user_data["fbp"] = meta["fbp"]
+
+    # fbc: prefer pre-built from cookies; otherwise reconstruct from a raw fbclid
+    # captured on the landing URL (?fbclid=...). Format: fb.1.{epoch_ms}.{fbclid}
     if meta.get("fbc"):
         user_data["fbc"] = meta["fbc"]
+    elif meta.get("fbclid"):
+        try:
+            user_data["fbc"] = f"fb.1.{int(time.time() * 1000)}.{meta['fbclid']}"
+        except Exception:
+            pass
+
     if meta.get("ip"):
         user_data["client_ip_address"] = meta["ip"]
     if meta.get("user_agent"):

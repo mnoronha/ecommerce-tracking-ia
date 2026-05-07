@@ -93,15 +93,25 @@ class ShopifyAdapter(BaseAdapter):
         customer = data.get("customer") or {}
         if not customer and not data.get("email"):
             return None
-        name = (
-            f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
-            or None
-        )
+        # Shopify provides first_name/last_name separately on customer AND on
+        # shipping_address. Customer object wins; fall back to shipping address.
+        ship = data.get("shipping_address") or data.get("billing_address") or {}
+        first_name = customer.get("first_name") or ship.get("first_name")
+        last_name  = customer.get("last_name")  or ship.get("last_name")
+        name = (f"{first_name or ''} {last_name or ''}".strip()) or None
+
+        # Customer ID may be absent on guest checkouts ("" or 0) — coerce to None
+        # so downstream code can distinguish "missing" from a real ID.
+        cust_id_raw = customer.get("id")
+        cust_id = str(cust_id_raw) if cust_id_raw else None
+
         return CustomerData(
-            id=str(customer.get("id", "")),
+            id=cust_id,
             email=customer.get("email") or data.get("email"),
             name=name,
-            phone=customer.get("phone"),
+            first_name=first_name,
+            last_name=last_name,
+            phone=customer.get("phone") or ship.get("phone"),
             address=self._parse_address(
                 customer.get("default_address")
                 or data.get("shipping_address")

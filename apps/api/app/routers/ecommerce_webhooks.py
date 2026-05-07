@@ -279,6 +279,55 @@ def _dispatch_purchase_capi(
             except Exception as exc:
                 logger.debug("visitor IP/UA lookup failed: %s", exc)
 
+        # ── Retroactive fallback by email ──────────────────────────────────
+        # When the visitor on the order was created fresh from the webhook
+        # (no _etv cart attribute), the visitor row has no fbp/fbc/IP/UA.
+        # We look up other visitor rows with the same email (any past pixel
+        # session for this customer) and harvest their identifiers. This is
+        # the common case for stores that don't have our Liquid snippet
+        # installed, or guest checkouts that came in via gateway.
+        cust_email = (event.customer.email if hasattr(event, "customer") and event.customer else None)
+        if cust_email and (not fbp or not fbc or not client_ip):
+            try:
+                vis_email_q = (
+                    get_supabase().table("visitors")
+                    .select("id, fbp, fbc, gclid, ga_client_id, last_seen_at")
+                    .eq("email", cust_email.strip().lower())
+                    .order("last_seen_at", desc=True)
+                    .limit(5)
+                    .execute()
+                )
+                candidates = vis_email_q.data or []
+                for v in candidates:
+                    if v.get("id") == visitor_uuid:
+                        continue
+                    if not fbp           and v.get("fbp"):           fbp = v["fbp"]
+                    if not fbc           and v.get("fbc"):           fbc = v["fbc"]
+                    if not gclid         and v.get("gclid"):         gclid = v["gclid"]
+                    if not ga_client_id  and v.get("ga_client_id"):  ga_client_id = v["ga_client_id"]
+                    if fbp and fbc:
+                        break
+
+                # If still no IP/UA, pull from the most recent tracking_event
+                # belonging to any of those candidate visitors.
+                if not client_ip and candidates:
+                    candidate_ids = [v["id"] for v in candidates if v.get("id")]
+                    if candidate_ids:
+                        te_email_q = (
+                            get_supabase().table("tracking_events")
+                            .select("properties")
+                            .in_("visitor_id", candidate_ids)
+                            .order("created_at", desc=True)
+                            .limit(1)
+                            .execute()
+                        )
+                        if te_email_q.data:
+                            props = te_email_q.data[0].get("properties") or {}
+                            client_ip = client_ip or props.get("ip")
+                            client_ua = client_ua or props.get("user_agent")
+            except Exception as exc:
+                logger.debug("retroactive email-based identifier lookup failed: %s", exc)
+
         # ── Meta CAPI ────────────────────────────────────────────────────
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
             # Enrich event with visitor's fbp/fbc/ip/ua if available
@@ -289,6 +338,8 @@ def _dispatch_purchase_capi(
                 if client_ip and not meta.get("ip"):         meta["ip"]         = client_ip
                 if client_ua and not meta.get("user_agent"): meta["user_agent"] = client_ua
                 object.__setattr__(event, "metadata", meta)
+            # Note: meta_capi._build_user_data falls back to fbclid → fbc
+            # automatically if event.metadata.fbclid was set by the adapter.
 
             success, err = meta_capi.send_purchase(
                 pixel_id=c["meta_pixel_id"],
