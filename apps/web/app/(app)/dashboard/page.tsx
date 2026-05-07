@@ -21,6 +21,8 @@ interface KPIs {
   revenueChange: number
   ordersChange: number
   conversionRate: number
+  totalProfit:   number | null
+  marginPct:     number | null
 }
 
 interface RevenuePoint { date: string; revenue: number; orders: number }
@@ -101,17 +103,47 @@ interface RoasCampaign {
   cpm:          number | null
 }
 
+interface RoasCampaignWithMeta extends RoasCampaign {
+  meta_purchases: number
+  meta_revenue:   number
+  meta_cpa:       number | null
+  meta_roas:      number | null
+  cpa_diff_pct:   number | null
+  purchases_diff: number
+}
+
 interface RoasData {
   has_ads_credentials: boolean
   days:       number
-  campaigns:  RoasCampaign[]
+  campaigns:  RoasCampaignWithMeta[]
   totals: {
-    spend:     number
-    revenue:   number
-    orders:    number
-    roas:      number | null
-    total_cpa: number | null
+    spend:           number
+    revenue:         number
+    orders:          number
+    roas:            number | null
+    total_cpa:       number | null
+    meta_purchases:  number
+    meta_revenue:    number
+    meta_cpa:        number | null
+    meta_roas:       number | null
+    cpa_diff_pct:    number | null
   }
+}
+
+interface PacingData {
+  mtd_revenue:              number
+  mtd_orders:               number
+  mtd_profit:               number | null
+  today_revenue:            number
+  today_orders:             number
+  projected_revenue:        number
+  monthly_revenue_goal:     number | null
+  pct_done:                 number | null
+  pct_target:               number
+  on_track:                 boolean | null
+  needed_per_day_remaining: number | null
+  day_of_month:             number
+  days_in_month:            number
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -129,9 +161,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function KPICard({ title, value, icon: Icon, change, color }: {
+function KPICard({ title, value, icon: Icon, change, color, hint }: {
   title: string; value: string; icon: React.ElementType
-  change?: number; color: string
+  change?: number; color: string; hint?: string
 }) {
   return (
     <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
@@ -145,31 +177,123 @@ function KPICard({ title, value, icon: Icon, change, color }: {
           {change >= 0 ? '+' : ''}{change.toFixed(1)}% vs período anterior
         </div>
       )}
+      {hint && <div className="text-xs text-slate-500">{hint}</div>}
     </div>
   )
 }
 
 function FunnelBar({ steps }: { steps: FunnelStep[] }) {
   const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#ec4899', '#10b981']
+  // Compute drop% between adjacent steps so the merchant sees where the leak is
+  const drops = steps.map((step, i) => {
+    if (i === 0 || steps[i - 1].count === 0) return null
+    return 1 - step.count / steps[i - 1].count
+  })
   return (
     <div className="space-y-3">
-      {steps.map((step, i) => (
-        <div key={step.label}>
-          <div className="flex justify-between text-xs mb-1">
-            <span className="text-slate-300">{step.label}</span>
-            <span className="text-slate-400">
-              {step.count.toLocaleString('pt-BR')}
-              <span className="text-slate-500 ml-1">({step.pct.toFixed(1)}%)</span>
-            </span>
+      {steps.map((step, i) => {
+        const drop = drops[i]
+        const isWorstDrop = drop !== null && drop === Math.max(...drops.filter((d): d is number => d !== null))
+        return (
+          <div key={step.label}>
+            <div className="flex justify-between text-xs mb-1">
+              <span className="text-slate-300">{step.label}</span>
+              <span className="text-slate-400">
+                {step.count.toLocaleString('pt-BR')}
+                <span className="text-slate-500 ml-1">({step.pct.toFixed(1)}%)</span>
+              </span>
+            </div>
+            <div className="h-5 bg-[#0f1117] rounded overflow-hidden">
+              <div
+                className="h-full rounded transition-all duration-700"
+                style={{ width: `${Math.max(step.pct, step.count > 0 ? 2 : 0)}%`, backgroundColor: colors[i] }}
+              />
+            </div>
+            {drop !== null && drop > 0.05 && (
+              <p className={`text-xs mt-1 ${isWorstDrop ? 'text-red-400 font-medium' : 'text-slate-600'}`}>
+                ↓ {(drop * 100).toFixed(0)}% perdidos
+                {isWorstDrop && ' · maior queda'}
+              </p>
+            )}
           </div>
-          <div className="h-5 bg-[#0f1117] rounded overflow-hidden">
-            <div
-              className="h-full rounded transition-all duration-700"
-              style={{ width: `${Math.max(step.pct, step.count > 0 ? 2 : 0)}%`, backgroundColor: colors[i] }}
-            />
-          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function PacingWidget({ pacing }: { pacing: PacingData }) {
+  const goal     = pacing.monthly_revenue_goal!
+  const pctDone  = pacing.pct_done ?? 0
+  const onTrack  = pacing.on_track
+  const projDiff = pacing.projected_revenue - goal
+  const projPct  = goal ? (pacing.projected_revenue / goal) * 100 : 0
+  return (
+    <div className="bg-gradient-to-br from-[#1a1f2e] to-[#1a1f2e]/50 rounded-xl border border-[#2a2f3e] p-5">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Pacing — Meta do Mês</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Dia {pacing.day_of_month} de {pacing.days_in_month}
+            {' · '}{pacing.pct_target.toFixed(0)}% do mês decorrido
+          </p>
         </div>
-      ))}
+        <span className={`text-xs px-2 py-1 rounded font-medium ${
+          onTrack === true  ? 'bg-emerald-500/15 text-emerald-300' :
+          onTrack === false ? 'bg-red-500/15 text-red-300' :
+          'bg-slate-500/15 text-slate-400'
+        }`}>
+          {onTrack === true ? 'No ritmo' : onTrack === false ? 'Abaixo da meta' : '—'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-3">
+        <div>
+          <p className="text-xs text-slate-500">Realizado</p>
+          <p className="text-lg font-bold text-white">{fmt(pacing.mtd_revenue)}</p>
+          <p className="text-xs text-slate-400">{pctDone.toFixed(1)}% da meta</p>
+        </div>
+        <div>
+          <p className="text-xs text-slate-500">Meta</p>
+          <p className="text-lg font-bold text-slate-300">{fmt(goal)}</p>
+        </div>
+        <div>
+          <p className="text-xs text-slate-500">Projeção</p>
+          <p className={`text-lg font-bold ${projDiff >= 0 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+            {fmt(pacing.projected_revenue)}
+          </p>
+          <p className="text-xs text-slate-400">
+            {projDiff >= 0 ? '+' : ''}{(projPct - 100).toFixed(0)}% vs meta
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-slate-500">Faltam/dia</p>
+          <p className="text-lg font-bold text-indigo-300">
+            {pacing.needed_per_day_remaining ? fmt(pacing.needed_per_day_remaining) : '—'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-slate-500">Hoje</p>
+          <p className="text-lg font-bold text-emerald-400">{fmt(pacing.today_revenue)}</p>
+          <p className="text-xs text-slate-400">{pacing.today_orders} pedidos</p>
+        </div>
+      </div>
+
+      {/* Progress bar with target marker */}
+      <div className="relative h-2 bg-[#0f1117] rounded-full overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ${
+            onTrack === true ? 'bg-emerald-500' :
+            onTrack === false ? 'bg-yellow-500' : 'bg-indigo-500'
+          }`}
+          style={{ width: `${Math.min(pctDone, 100)}%` }}
+        />
+        <div
+          className="absolute top-0 h-full w-px bg-slate-400/60"
+          style={{ left: `${pacing.pct_target}%` }}
+          title={`Posição esperada: ${pacing.pct_target.toFixed(0)}%`}
+        />
+      </div>
     </div>
   )
 }
@@ -345,6 +469,7 @@ export default function DashboardPage() {
   const [roasData, setRoasData]         = useState<RoasData | null>(null)
   const [roasLoading, setRoasLoading]   = useState(false)
   const [cohortData, setCohortData]     = useState<CohortMonth[]>([])
+  const [pacing, setPacing]             = useState<PacingData | null>(null)
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
@@ -375,7 +500,7 @@ export default function DashboardPage() {
     ] = await Promise.all([
       // Bug fix: only paid orders count as revenue
       supabase.from('orders')
-        .select('id, email, total_price, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, created_at')
+        .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, created_at')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
         .gte('created_at', startDate.toISOString())
@@ -416,11 +541,23 @@ export default function DashboardPage() {
     const avgOrderValue  = allOrders.length ? totalRevenue / allOrders.length : 0
     const conversionRate = totalVisitors > 0 ? (allOrders.length / totalVisitors) * 100 : 0
 
+    // Margin (only counted for orders that have COGS — partial coverage = honest reporting)
+    const ordersWithMargin = allOrders.filter((o: any) => o.gross_profit != null)
+    const totalProfit = ordersWithMargin.length
+      ? ordersWithMargin.reduce((s: number, o: any) => s + (o.gross_profit || 0), 0)
+      : null
+    const revenueWithMargin = ordersWithMargin.reduce((s: number, o: any) => s + (o.total_price || 0), 0)
+    const marginPct = revenueWithMargin > 0 && totalProfit != null
+      ? (totalProfit / revenueWithMargin) * 100
+      : null
+
     setKpis({
       totalRevenue, totalOrders: allOrders.length, totalVisitors, avgOrderValue,
       revenueChange: prevRevenue ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0,
       ordersChange:  prevOrders.length ? ((allOrders.length - prevOrders.length) / prevOrders.length) * 100 : 0,
       conversionRate,
+      totalProfit,
+      marginPct,
     })
 
     setRecentOrders(allOrders.slice(0, 6) as Order[])
@@ -614,10 +751,18 @@ export default function DashboardPage() {
     await fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/${insightId}/read`, { method: 'PATCH' })
   }, [])
 
+  const loadPacing = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/pacing/${CLIENT_PIXEL_ID}`)
+      if (res.ok) setPacing(await res.json())
+    } catch (_) {}
+  }, [])
+
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
   useEffect(() => { loadRoas(dateRange) }, [dateRange, loadRoas])
   useEffect(() => { loadCohort() }, [loadCohort])
+  useEffect(() => { loadPacing() }, [loadPacing])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -650,10 +795,24 @@ export default function DashboardPage() {
 
       <div className="p-6 space-y-6">
 
+        {/* Pacing — month-to-date vs goal */}
+        {pacing && pacing.monthly_revenue_goal && (
+          <PacingWidget pacing={pacing} />
+        )}
+
         {/* KPIs */}
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <KPICard title="Receita"      value={kpis ? fmt(kpis.totalRevenue) : '—'}
             icon={TrendingUp} change={kpis?.revenueChange} color="bg-emerald-500/10 text-emerald-400" />
+          {kpis?.totalProfit != null && (
+            <KPICard
+              title="Margem"
+              value={fmt(kpis.totalProfit)}
+              icon={TrendingUp}
+              color="bg-teal-500/10 text-teal-400"
+              hint={kpis.marginPct != null ? `${kpis.marginPct.toFixed(1)}% bruta` : undefined}
+            />
+          )}
           <KPICard title="Pedidos"      value={kpis ? kpis.totalOrders.toString() : '—'}
             icon={ShoppingBag} change={kpis?.ordersChange} color="bg-blue-500/10 text-blue-400" />
           <KPICard title="Visitantes"   value={kpis ? kpis.totalVisitors.toString() : '—'}
@@ -908,20 +1067,51 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {/* Summary strip */}
+            {/* Summary strip — Real (server-side) vs Meta (Insights API) */}
             {roasData.has_ads_credentials && roasData.totals.spend > 0 && (
-              <div className="grid grid-cols-4 divide-x divide-[#2a2f3e] border-b border-[#2a2f3e]">
-                {[
-                  { label: 'Gasto',     value: fmt(roasData.totals.spend) },
-                  { label: 'Receita',   value: fmt(roasData.totals.revenue) },
-                  { label: 'ROAS',      value: roasData.totals.roas != null ? `${roasData.totals.roas.toFixed(2)}x` : '—' },
-                  { label: 'CPA',       value: roasData.totals.total_cpa != null ? fmt(roasData.totals.total_cpa) : '—' },
-                ].map(s => (
-                  <div key={s.label} className="px-5 py-3 text-center">
-                    <p className="text-xs text-slate-500">{s.label}</p>
-                    <p className="text-sm font-bold text-white mt-0.5">{s.value}</p>
+              <div className="border-b border-[#2a2f3e]">
+                <div className="grid grid-cols-4 divide-x divide-[#2a2f3e]">
+                  {[
+                    { label: 'Gasto',          value: fmt(roasData.totals.spend) },
+                    { label: 'Receita real',   value: fmt(roasData.totals.revenue),
+                      sub: roasData.totals.meta_revenue
+                        ? `Meta diz: ${fmt(roasData.totals.meta_revenue)}`
+                        : undefined },
+                    { label: 'ROAS real',      value: roasData.totals.roas != null ? `${roasData.totals.roas.toFixed(2)}x` : '—',
+                      sub: roasData.totals.meta_roas != null
+                        ? `Meta diz: ${roasData.totals.meta_roas.toFixed(2)}x`
+                        : undefined },
+                    { label: 'CPA real',       value: roasData.totals.total_cpa != null ? fmt(roasData.totals.total_cpa) : '—',
+                      sub: roasData.totals.meta_cpa != null
+                        ? `Meta diz: ${fmt(roasData.totals.meta_cpa)}`
+                        : undefined },
+                  ].map(s => (
+                    <div key={s.label} className="px-5 py-3 text-center">
+                      <p className="text-xs text-slate-500">{s.label}</p>
+                      <p className="text-sm font-bold text-white mt-0.5">{s.value}</p>
+                      {s.sub && <p className="text-xs text-slate-500 mt-0.5">{s.sub}</p>}
+                    </div>
+                  ))}
+                </div>
+                {roasData.totals.cpa_diff_pct != null && Math.abs(roasData.totals.cpa_diff_pct) >= 5 && (
+                  <div className={`px-5 py-2 text-xs ${
+                    roasData.totals.cpa_diff_pct > 0
+                      ? 'bg-yellow-500/5 text-yellow-300'
+                      : 'bg-emerald-500/5 text-emerald-300'
+                  }`}>
+                    {roasData.totals.cpa_diff_pct > 0 ? (
+                      <>
+                        ⚠ Meta está <strong>subestimando</strong> seu CPA em <strong>{roasData.totals.cpa_diff_pct.toFixed(0)}%</strong>.
+                        O CPA real é {Math.abs(roasData.totals.cpa_diff_pct).toFixed(0)}% maior do que o painel do Meta mostra.
+                      </>
+                    ) : (
+                      <>
+                        ✓ Meta está reportando CPA {Math.abs(roasData.totals.cpa_diff_pct).toFixed(0)}% acima do real
+                        ({roasData.totals.meta_purchases} compras vs {roasData.totals.orders} no servidor).
+                      </>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
             )}
 
@@ -937,7 +1127,7 @@ export default function DashboardPage() {
                   <thead>
                     <tr className="border-b border-[#2a2f3e]">
                       {['Campanha', 'Pedidos', 'Receita',
-                        ...(roasData.has_ads_credentials ? ['Gasto', 'ROAS', 'CPA', 'Clicks'] : [])
+                        ...(roasData.has_ads_credentials ? ['Gasto', 'ROAS', 'CPA real', 'CPA Meta', 'Diff', 'Clicks'] : [])
                       ].map(h => (
                         <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                       ))}
@@ -957,7 +1147,14 @@ export default function DashboardPage() {
                             }`}>{c.utm_source}</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-slate-200 font-medium">{c.orders}</td>
+                        <td className="px-4 py-3 text-slate-200 font-medium">
+                          {c.orders}
+                          {c.purchases_diff !== 0 && c.meta_purchases > 0 && (
+                            <span className="text-xs text-slate-500 ml-1" title="Meta reportou">
+                              (Meta: {c.meta_purchases})
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
                         {roasData.has_ads_credentials && (
                           <>
@@ -973,6 +1170,19 @@ export default function DashboardPage() {
                             </td>
                             <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
                               {c.cpa != null ? fmt(c.cpa) : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
+                              {c.meta_cpa != null ? fmt(c.meta_cpa) : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {c.cpa_diff_pct != null ? (
+                                <span className={`text-xs font-medium ${
+                                  Math.abs(c.cpa_diff_pct) < 10 ? 'text-slate-400' :
+                                  c.cpa_diff_pct > 0 ? 'text-yellow-400' : 'text-emerald-400'
+                                }`}>
+                                  {c.cpa_diff_pct > 0 ? '+' : ''}{c.cpa_diff_pct.toFixed(0)}%
+                                </span>
+                              ) : <span className="text-slate-600 text-xs">—</span>}
                             </td>
                             <td className="px-4 py-3 text-slate-400">
                               {c.clicks > 0 ? c.clicks.toLocaleString('pt-BR') : <span className="text-slate-600">—</span>}

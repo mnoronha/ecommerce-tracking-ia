@@ -424,6 +424,15 @@ def write_order(
             if visitor_uuid and order.total:
                 _update_visitor_totals(visitor_uuid, float(order.total))
 
+            # ── Persist line items + compute gross profit ────────────────────
+            # Uses product_costs lookup. Best-effort: never fails the write_order.
+            if client_uuid and order.items:
+                try:
+                    from . import profitability
+                    profitability.persist_items_and_margin(client_uuid, order_uuid, event)
+                except Exception as exc:
+                    logger.debug("profitability calc failed: %s", exc)
+
             return order_uuid
     except Exception as exc:
         logger.error("write_order failed: %s", exc)

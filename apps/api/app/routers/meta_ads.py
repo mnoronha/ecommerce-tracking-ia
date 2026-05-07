@@ -94,42 +94,79 @@ async def get_roas(pixel_id: str, days: int = 30):
     all_names = set(campaign_map.keys()) | {r["campaign_name"] for r in ads_rows}
     rows = []
     for name in all_names:
-        rev_data = campaign_map.get(name, {"revenue": 0.0, "orders": 0})
-        ads      = spend_map.get(name.lower(), {})
-        spend    = ads.get("spend", 0.0)
-        revenue  = rev_data["revenue"]
-        n_orders = rev_data["orders"]
+        rev_data       = campaign_map.get(name, {"revenue": 0.0, "orders": 0})
+        ads            = spend_map.get(name.lower(), {})
+        spend          = ads.get("spend", 0.0)
+        revenue        = rev_data["revenue"]
+        n_orders       = rev_data["orders"]
+        meta_purchases = ads.get("meta_purchases") or 0
+        meta_revenue   = ads.get("meta_revenue") or 0
+        meta_cpa       = ads.get("meta_cpa")
+
+        cpa = round(spend / n_orders, 2) if n_orders > 0 and spend > 0 else None
+
+        # diff_pct: positive means Meta is under-reporting CPA (truth is higher)
+        cpa_diff_pct = None
+        if cpa and meta_cpa and meta_cpa > 0:
+            cpa_diff_pct = round((cpa - meta_cpa) / meta_cpa * 100, 1)
+
+        # Meta over-reports purchases when its attribution window catches
+        # browser-side hits we never recorded as orders. Negative means we
+        # found more orders than Meta did (rare; usually indicates a tag bug).
+        purchases_diff = n_orders - meta_purchases
 
         rows.append({
-            "campaign_name": name,
-            "utm_source":    rev_data.get("utm_source") or ads.get("utm_source"),
-            "spend":         round(spend, 2),
-            "revenue":       round(revenue, 2),
-            "orders":        n_orders,
-            "roas":          round(revenue / spend, 2)        if spend > 0    else None,
-            "cpa":           round(spend / n_orders, 2)       if n_orders > 0 and spend > 0 else None,
-            "impressions":   ads.get("impressions", 0),
-            "clicks":        ads.get("clicks", 0),
-            "ctr":           round(ads["clicks"] / ads["impressions"] * 100, 2)
-                             if ads.get("impressions", 0) > 0 else None,
-            "cpm":           ads.get("cpm"),
+            "campaign_name":  name,
+            "utm_source":     rev_data.get("utm_source") or ads.get("utm_source"),
+            "spend":          round(spend, 2),
+            "revenue":        round(revenue, 2),
+            "orders":         n_orders,
+            "roas":           round(revenue / spend, 2)        if spend > 0    else None,
+            "cpa":            cpa,
+            "impressions":    ads.get("impressions", 0),
+            "clicks":         ads.get("clicks", 0),
+            "ctr":            round(ads["clicks"] / ads["impressions"] * 100, 2)
+                              if ads.get("impressions", 0) > 0 else None,
+            "cpm":            ads.get("cpm"),
+            # Meta-reported numbers for side-by-side comparison
+            "meta_purchases": meta_purchases,
+            "meta_revenue":   round(meta_revenue, 2),
+            "meta_cpa":       meta_cpa,
+            "meta_roas":      round(meta_revenue / spend, 2) if spend > 0 and meta_revenue > 0 else None,
+            "cpa_diff_pct":   cpa_diff_pct,
+            "purchases_diff": purchases_diff,
         })
 
     rows.sort(key=lambda r: r["revenue"], reverse=True)
 
-    total_spend   = round(sum(r["spend"] for r in rows), 2)
-    total_revenue = round(sum(r["revenue"] for r in rows), 2)
-    total_orders  = sum(r["orders"] for r in rows)
+    total_spend          = round(sum(r["spend"] for r in rows), 2)
+    total_revenue        = round(sum(r["revenue"] for r in rows), 2)
+    total_orders         = sum(r["orders"] for r in rows)
+    total_meta_purchases = sum(r["meta_purchases"] for r in rows)
+    total_meta_revenue   = round(sum(r["meta_revenue"] for r in rows), 2)
+
+    real_cpa = round(total_spend / total_orders, 2) if total_orders > 0 and total_spend > 0 else None
+    meta_cpa_total = round(total_spend / total_meta_purchases, 2) \
+                     if total_meta_purchases > 0 and total_spend > 0 else None
+    cpa_diff_pct_total = None
+    if real_cpa and meta_cpa_total and meta_cpa_total > 0:
+        cpa_diff_pct_total = round((real_cpa - meta_cpa_total) / meta_cpa_total * 100, 1)
 
     return {
         "has_ads_credentials": has_ads_creds,
         "days":     days,
         "campaigns": rows,
         "totals": {
-            "spend":      total_spend,
-            "revenue":    total_revenue,
-            "orders":     total_orders,
-            "roas":       round(total_revenue / total_spend, 2) if total_spend > 0 else None,
-            "total_cpa":  round(total_spend / total_orders, 2)  if total_orders > 0 and total_spend > 0 else None,
+            "spend":              total_spend,
+            "revenue":            total_revenue,
+            "orders":             total_orders,
+            "roas":               round(total_revenue / total_spend, 2) if total_spend > 0 else None,
+            "total_cpa":          real_cpa,
+            "meta_purchases":     total_meta_purchases,
+            "meta_revenue":       total_meta_revenue,
+            "meta_cpa":           meta_cpa_total,
+            "meta_roas":          round(total_meta_revenue / total_spend, 2)
+                                  if total_spend > 0 and total_meta_revenue > 0 else None,
+            "cpa_diff_pct":       cpa_diff_pct_total,
         },
     }

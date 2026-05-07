@@ -10,8 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import attribution, audiences, cname, ecommerce_webhooks, insights, meta_ads, pixel, setup
-from .services import alerts, capi_retry, meta_audiences, meta_token_health
+from .routers import attribution, audiences, cname, cogs, ecommerce_webhooks, insights, live, meta_ads, pacing, pixel, setup
+from .services import alerts, anomalies, capi_retry, meta_audiences, meta_token_health
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -58,6 +58,13 @@ _scheduler.add_job(
     minutes=30,
     id="capi_retry",
 )
+_scheduler.add_job(
+    anomalies.run_daily_anomaly_check,
+    "cron",
+    hour=11,  # 11 UTC = 08:00 BRT
+    minute=0,
+    id="anomalies_daily",
+)
 
 
 @app.on_event("startup")
@@ -99,6 +106,9 @@ app.include_router(audiences.router)
 app.include_router(setup.router)
 app.include_router(cname.router)
 app.include_router(attribution.router)
+app.include_router(live.router)
+app.include_router(cogs.router)
+app.include_router(pacing.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
