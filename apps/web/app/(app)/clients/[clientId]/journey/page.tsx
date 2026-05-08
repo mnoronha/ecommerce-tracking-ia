@@ -2,12 +2,12 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 type DateRange = 7 | 30 | 90
-type Lens = 'campaign' | 'product'
+type Lens = 'campaign' | 'product' | 'meta-attribution'
 
 interface ProductInCampaign {
   product_id: string
@@ -49,6 +49,29 @@ interface ProductRow {
   orders:        number
   top_campaigns: CampaignInProduct[]
 }
+interface MetaAttrRow {
+  campaign_id:    string
+  campaign_name:  string
+  spend:          number
+  impressions:    number
+  clicks:         number
+  meta_purchases: number
+  meta_revenue:   number
+  meta_roas:      number | null
+  meta_cpa:       number | null
+  server_orders:  number
+  server_revenue: number
+  purchases_diff: number
+  ads_count:      number
+}
+interface MetaAttrTotals {
+  spend:           number
+  meta_purchases:  number
+  meta_revenue:    number
+  server_orders:   number
+  server_revenue:  number
+  meta_roas:       number | null
+}
 
 const fmt = (n: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
@@ -74,11 +97,16 @@ export default function JourneyPage() {
   const [days,    setDays]    = useState<DateRange>(30)
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [products,  setProducts]  = useState<ProductRow[]>([])
+  const [metaAttr, setMetaAttr] = useState<MetaAttrRow[]>([])
+  const [metaTotals, setMetaTotals] = useState<MetaAttrTotals | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [search,   setSearch]   = useState('')
   const [resolving, setResolving] = useState(false)
   const [resolveMsg, setResolveMsg] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [matching, setMatching] = useState(false)
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -86,9 +114,16 @@ export default function JourneyPage() {
       if (lens === 'campaign') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-campaign?days=${days}&top_products=10`)
         if (res.ok) setCampaigns((await res.json()).campaigns || [])
-      } else {
+      } else if (lens === 'product') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-product?days=${days}&top_campaigns=10`)
         if (res.ok) setProducts((await res.json()).products || [])
+      } else {
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-meta-attribution?days=${days}`)
+        if (res.ok) {
+          const data = await res.json()
+          setMetaAttr(data.campaigns || [])
+          setMetaTotals(data.totals || null)
+        }
       }
     } finally {
       setLoading(false)
@@ -112,6 +147,35 @@ export default function JourneyPage() {
     }
   }
 
+  async function handleSyncMetaAttribution() {
+    setSyncing(true); setActionMsg(null)
+    try {
+      const res = await fetch(`${API_URL}/journey/${pixelId}/sync-meta-attribution?days=7`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.error || 'Falha ao sincronizar')
+      setActionMsg(`${data.synced} linhas (ad×dia) sincronizadas`)
+      await load()
+    } catch (e) {
+      setActionMsg('Erro: ' + (e as Error).message)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  async function handleProbableMatch() {
+    setMatching(true); setActionMsg(null)
+    try {
+      const res = await fetch(`${API_URL}/journey/${pixelId}/probable-match?days=${days}`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || data.error || 'Falha ao rodar match')
+      setActionMsg(`${data.matched}/${data.eligible || 0} pedidos atribuídos · ${data.no_data || 0} sem dado`)
+    } catch (e) {
+      setActionMsg('Erro: ' + (e as Error).message)
+    } finally {
+      setMatching(false)
+    }
+  }
+
   function toggle(key: string) {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -131,10 +195,17 @@ export default function JourneyPage() {
         p.name.toLowerCase().includes(search.toLowerCase()) ||
         (p.sku && p.sku.toLowerCase().includes(search.toLowerCase())))
     : products
+  const filteredMetaAttr = search
+    ? metaAttr.filter(m =>
+        m.campaign_name.toLowerCase().includes(search.toLowerCase()) ||
+        m.campaign_id.toLowerCase().includes(search.toLowerCase()))
+    : metaAttr
 
   const totalRevenue = lens === 'campaign'
     ? campaigns.reduce((s, c) => s + c.revenue, 0)
-    : products.reduce((s, p) => s + p.revenue, 0)
+    : lens === 'product'
+      ? products.reduce((s, p) => s + p.revenue, 0)
+      : metaTotals?.meta_revenue || 0
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -186,19 +257,55 @@ export default function JourneyPage() {
             >
               <Package size={14} />Por produto
             </button>
+            <button
+              onClick={() => { setLens('meta-attribution'); setExpanded(new Set()) }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                lens === 'meta-attribution' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Target size={14} />Atribuído pelo Meta
+            </button>
           </div>
-          <button
-            onClick={handleResolveMeta}
-            disabled={resolving}
-            title="Busca os nomes reais das campanhas no Meta Ads quando elas aparecem como ID numérico"
-            className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-2 rounded-lg transition-colors"
-          >
-            {resolving
-              ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
-              : <><RefreshCw size={12} />Resolver nomes Meta</>}
-          </button>
-          {resolveMsg && (
+          {lens !== 'meta-attribution' ? (
+            <button
+              onClick={handleResolveMeta}
+              disabled={resolving}
+              title="Busca os nomes reais das campanhas no Meta Ads quando elas aparecem como ID numérico"
+              className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-2 rounded-lg transition-colors"
+            >
+              {resolving
+                ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
+                : <><RefreshCw size={12} />Resolver nomes Meta</>}
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={handleSyncMetaAttribution}
+                disabled={syncing}
+                title="Puxa do Meta Marketing API as conversões reportadas por anúncio (últimos 7d)"
+                className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-2 rounded-lg transition-colors"
+              >
+                {syncing
+                  ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
+                  : <><RefreshCw size={12} />Sincronizar atribuição Meta</>}
+              </button>
+              <button
+                onClick={handleProbableMatch}
+                disabled={matching}
+                title="Atribui pedidos sem UTM ao anúncio mais provável do dia (com confiança)"
+                className="flex items-center gap-2 text-xs bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 px-3 py-2 rounded-lg transition-colors"
+              >
+                {matching
+                  ? <><Loader2 size={12} className="animate-spin" />Calculando...</>
+                  : <><Sparkles size={12} />Match probabilístico</>}
+              </button>
+            </>
+          )}
+          {resolveMsg && lens !== 'meta-attribution' && (
             <span className="text-xs text-slate-400">{resolveMsg}</span>
+          )}
+          {actionMsg && lens === 'meta-attribution' && (
+            <span className="text-xs text-slate-400">{actionMsg}</span>
           )}
         </div>
         <p className="text-xs text-slate-500 mt-3">
@@ -211,6 +318,88 @@ export default function JourneyPage() {
         {loading ? (
           <div className="flex items-center gap-2 text-slate-500 text-sm py-12 justify-center">
             <Loader2 size={16} className="animate-spin" /> Carregando jornadas...
+          </div>
+        ) : lens === 'meta-attribution' ? (
+          <div className="space-y-4">
+            {metaTotals && (
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <Mini label="Spend Meta"        value={fmt(metaTotals.spend)} />
+                <Mini label="Compras (Meta)"    value={metaTotals.meta_purchases.toString()} accent="emerald" />
+                <Mini label="Receita (Meta)"    value={fmt(metaTotals.meta_revenue)} accent="emerald" />
+                <Mini label="Pedidos (server)"  value={metaTotals.server_orders.toString()} />
+                <Mini label="ROAS (Meta)"       value={metaTotals.meta_roas != null ? metaTotals.meta_roas.toFixed(2) + 'x' : '—'} accent="teal" />
+              </div>
+            )}
+            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#2a2f3e] flex items-center justify-between">
+                <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">
+                  Reconciliação Meta-reported × server-side
+                </p>
+                <p className="text-xs text-slate-500">
+                  diff = compras Meta − pedidos server
+                </p>
+              </div>
+              {filteredMetaAttr.length === 0 ? (
+                <p className="text-slate-500 text-sm text-center py-8 px-5">
+                  Sem dados. Clique <span className="text-slate-300">"Sincronizar atribuição Meta"</span> para puxar do Marketing API.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-slate-500 border-b border-[#2a2f3e]">
+                        <th className="px-5 py-2.5 text-left font-medium">Campanha</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Spend</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Cliques</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Compras Meta</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Receita Meta</th>
+                        <th className="px-5 py-2.5 text-right font-medium">ROAS</th>
+                        <th className="px-5 py-2.5 text-right font-medium">CPA</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Pedidos server</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Diff</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredMetaAttr.map(m => {
+                        const diff = m.purchases_diff
+                        const diffClass = diff === 0
+                          ? 'text-slate-500'
+                          : diff > 0
+                            ? 'text-amber-400'
+                            : 'text-rose-400'
+                        return (
+                          <tr key={m.campaign_id} className="border-t border-[#2a2f3e] hover:bg-[#252a3a]/40">
+                            <td className="px-5 py-2.5 max-w-md">
+                              <p className="text-slate-200 truncate">{m.campaign_name}</p>
+                              <p className="text-xs text-slate-600 font-mono truncate">{m.campaign_id} · {m.ads_count} ads</p>
+                            </td>
+                            <td className="px-5 py-2.5 text-right text-slate-300 whitespace-nowrap">{fmt(m.spend)}</td>
+                            <td className="px-5 py-2.5 text-right text-slate-400 whitespace-nowrap">{m.clicks.toLocaleString('pt-BR')}</td>
+                            <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{m.meta_purchases}</td>
+                            <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(m.meta_revenue)}</td>
+                            <td className="px-5 py-2.5 text-right text-teal-400 whitespace-nowrap">
+                              {m.meta_roas != null ? m.meta_roas.toFixed(2) + 'x' : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-5 py-2.5 text-right text-slate-300 whitespace-nowrap">
+                              {m.meta_cpa != null ? fmt(m.meta_cpa) : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="px-5 py-2.5 text-right text-slate-400 whitespace-nowrap">{m.server_orders}</td>
+                            <td className={`px-5 py-2.5 text-right font-semibold whitespace-nowrap ${diffClass}`}>
+                              {diff > 0 ? `+${diff}` : diff}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              <span className="text-slate-400 font-medium">Como ler:</span> Meta atribui via janela de cliques/views (até 7d). O server conta pedidos
+              cuja UTM bate com o ID da campanha. Diff &gt; 0 = Meta credita compras que o server não vê (provável janela de view ou pedidos sem UTM).
+              Use <span className="text-slate-400">Match probabilístico</span> para tentar atribuir esses pedidos ao anúncio mais provável do dia.
+            </p>
           </div>
         ) : lens === 'campaign' ? (
           <div className="space-y-2">

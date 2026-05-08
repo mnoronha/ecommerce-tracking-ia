@@ -1,5 +1,5 @@
 /**
- * Ecommerce Tracking Pixel — tracker.js  v2.0.0
+ * Ecommerce Tracking Pixel — tracker.js  v2.1.0
  *
  * Usage:
  *   <script
@@ -18,9 +18,13 @@
   // ── Constants ──────────────────────────────────────────────────────────────
   var COOKIE_VISITOR    = '_etv';   // visitor ID  — 1st-party, 1 year
   var COOKIE_ATTR       = '_eta';   // UTM attribution — 30 days
+  var COOKIE_GCLID      = '_etg';   // Google click ID — 90 days
+  var COOKIE_FBP        = '_fbp';   // Meta browser ID — 90 days (Meta standard)
+  var COOKIE_FBC        = '_fbc';   // Meta click ID  — 90 days (Meta standard)
   var STORAGE_SESSION   = '_ets';   // session ID — sessionStorage (tab lifetime)
   var VISITOR_TTL_DAYS  = 365;
   var ATTR_TTL_DAYS     = 30;
+  var AD_ID_TTL_DAYS    = 90;
 
   // ── Bootstrap config ──────────────────────────────────────────────────────
   var cfg    = w.__ETConfig || {};
@@ -117,18 +121,72 @@
     return null;
   }
 
+  // ── Advertising identifiers ───────────────────────────────────────────────
+  function getQueryParam(name) {
+    var re = new RegExp('[?&]' + name + '=([^&#]*)', 'i');
+    var match = location.search.match(re);
+    return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : null;
+  }
+
+  // gclid — Google click ID (URL param, persisted 90 days)
+  function getGclid() {
+    var fresh = getQueryParam('gclid');
+    if (fresh) {
+      setCookie(COOKIE_GCLID, fresh, AD_ID_TTL_DAYS);
+      return fresh;
+    }
+    return getCookie(COOKIE_GCLID) || null;
+  }
+
+  // _fbp — Meta browser ID. If Meta Pixel is on the page, the cookie already exists;
+  // otherwise we generate one in Meta's documented format.
+  function getFbp() {
+    var fbp = getCookie(COOKIE_FBP);
+    if (fbp) return fbp;
+    // Meta format: fb.1.{timestamp_ms}.{random_int}
+    var rand = Math.floor(Math.random() * 1e16).toString();
+    fbp = 'fb.1.' + Date.now() + '.' + rand;
+    setCookie(COOKIE_FBP, fbp, AD_ID_TTL_DAYS);
+    return fbp;
+  }
+
+  // _fbc — Meta click ID. Built from ?fbclid= and persisted 90 days.
+  function getFbc() {
+    var fresh = getQueryParam('fbclid');
+    if (fresh) {
+      var fbc = 'fb.1.' + Date.now() + '.' + fresh;
+      setCookie(COOKIE_FBC, fbc, AD_ID_TTL_DAYS);
+      return fbc;
+    }
+    return getCookie(COOKIE_FBC) || null;
+  }
+
+  // GA4 client_id — extracted from the _ga cookie set by gtag.js / GA4
+  // Format of _ga: GA1.{n}.{client_id_part1}.{client_id_part2}
+  function getGaClientId() {
+    var ga = getCookie('_ga');
+    if (!ga) return null;
+    var parts = ga.split('.');
+    if (parts.length < 4) return null;
+    return parts[2] + '.' + parts[3];
+  }
+
   // ── Payload builder ───────────────────────────────────────────────────────
   function buildPayload(eventType, extra) {
     return {
-      client_id:  CLIENT_ID,
-      event_type: eventType,
-      visitor_id: getVisitorId(),
-      session_id: getSessionId(),
-      page_url:   location.href,
-      referrer:   document.referrer || null,
-      utm:        getAttribution(),
-      timestamp:  new Date().toISOString(),
-      metadata:   extra || {}
+      client_id:    CLIENT_ID,
+      event_type:   eventType,
+      visitor_id:   getVisitorId(),
+      session_id:   getSessionId(),
+      page_url:     location.href,
+      referrer:     document.referrer || null,
+      utm:          getAttribution(),
+      timestamp:    new Date().toISOString(),
+      fbp:          getFbp(),
+      fbc:          getFbc(),
+      ga_client_id: getGaClientId(),
+      gclid:        getGclid(),
+      metadata:     extra || {}
     };
   }
 
@@ -212,10 +270,14 @@
 
   // ── Public API ────────────────────────────────────────────────────────────
   w.ET = {
-    track:         track,
-    getVisitorId:  getVisitorId,
-    getSessionId:  getSessionId,
-    getAttribution: getAttribution
+    track:          track,
+    getVisitorId:   getVisitorId,
+    getSessionId:   getSessionId,
+    getAttribution: getAttribution,
+    getFbp:         getFbp,
+    getFbc:         getFbc,
+    getGclid:       getGclid,
+    getGaClientId:  getGaClientId
   };
 
   // ── Fire initial pageview ─────────────────────────────────────────────────

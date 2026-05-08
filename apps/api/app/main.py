@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .limiter import limiter
 from .routers import attribution, audiences, cname, cogs, ecommerce_webhooks, insights, journey, live, meta_ads, pacing, pixel, setup
-from .services import alerts, anomalies, capi_retry, meta_audiences, meta_token_health
+from .services import alerts, anomalies, capi_retry, meta_attribution_sync, meta_audiences, meta_token_health
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -64,6 +64,13 @@ _scheduler.add_job(
     hour=11,  # 11 UTC = 08:00 BRT
     minute=0,
     id="anomalies_daily",
+)
+_scheduler.add_job(
+    meta_attribution_sync.run_daily_sync_all_clients,
+    "cron",
+    hour=9,   # 09 UTC = 06:00 BRT — early so dashboards are fresh by morning
+    minute=0,
+    id="meta_attribution_sync",
 )
 
 
