@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import attribution_engine, ga4, google_ads, meta_capi, writer
+from ..services import attribution_engine, ga4, google_ads, meta_capi, profitability, writer
 from ..services.adapters import (
     NuvemshopAdapter,
     ShopifyAdapter,
@@ -144,7 +144,24 @@ def _dispatch_refund_capi(
                 user_data=user_data,
                 test_event_code=settings.META_TEST_EVENT_CODE or None,
             )
-            if not ok:
+            if ok:
+                # Resolve the order_uuid so we can flag the refund row as CAPI-sent.
+                try:
+                    client_uuid = writer.resolve_client_uuid(client_pixel_id)
+                    if client_uuid:
+                        ord_row = (
+                            get_supabase().table("orders")
+                            .select("id")
+                            .eq("client_id", client_uuid)
+                            .eq("platform_order_id", str(order.id))
+                            .limit(1)
+                            .execute()
+                        )
+                        if ord_row and ord_row.data:
+                            writer.mark_refund_capi_sent(ord_row.data[0]["id"], refund_id)
+                except Exception as exc:
+                    logger.debug("mark_refund_capi_sent lookup failed: %s", exc)
+            else:
                 logger.warning("refund CAPI failed order=%s err=%s", order.id, err)
 
         # GA4 refund
@@ -161,6 +178,14 @@ def _dispatch_refund_capi(
                     client_pixel_id, order.id, refund_amount)
     except Exception as exc:
         logger.warning("_dispatch_refund_capi error for %s: %s", client_pixel_id, exc)
+
+
+def _recompute_order_profit_after_refund(order_uuid: str) -> None:
+    """Background helper: refresh gross_profit / margin_pct after a refund hits."""
+    try:
+        profitability.recompute_after_refund(order_uuid)
+    except Exception as exc:
+        logger.warning("_recompute_order_profit_after_refund failed for %s: %s", order_uuid, exc)
 
 
 def _record_capi_error(order_uuid: Optional[str], err: str) -> None:
@@ -461,8 +486,12 @@ async def receive_webhook(
         fulfillment_status = (event.raw_payload or {}).get("fulfillment_status") or "fulfilled"
         writer.update_order_fulfillment(client_uuid, event.order.id, fulfillment_status)
 
-    # Refunds — send negative-value Purchase to Meta + refund event to GA4
+    # Refunds — persist to refunds table, then dispatch negative-value Purchase
+    # to Meta CAPI + refund event to GA4 in the background.
     if event.event_type.value == "order.refunded":
+        refund_order_uuid = writer.write_refund(client_uuid, event)
         background_tasks.add_task(_dispatch_refund_capi, client_id, event)
+        if refund_order_uuid:
+            background_tasks.add_task(_recompute_order_profit_after_refund, refund_order_uuid)
 
     return {"status": "ok", "event_id": event.event_id, "event_type": event.event_type}

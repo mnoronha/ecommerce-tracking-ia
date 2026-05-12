@@ -254,6 +254,7 @@ async def receive_pixel_event(
         ga_client_id=body.ga_client_id,
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
+    writer.write_cart_event(client_uuid, visitor_uuid, event)
 
     if visitor_uuid:
         background_tasks.add_task(writer.update_lead_score, visitor_uuid, event.event_type)

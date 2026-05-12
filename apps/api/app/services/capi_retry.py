@@ -95,16 +95,19 @@ def retry_failed_capi() -> None:
     for order in failed:
         try:
             # ── Fetch credentials for this client ─────────────────────────────
+            # NOTE: use .limit(1) instead of .maybe_single() — the latter raises
+            # "Missing response / code 204" when the row is not found, which
+            # gets persisted to capi_last_error and pollutes diagnostics.
             client_row = (
                 sb.table("clients")
                 .select("pixel_id, meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret")
                 .eq("id", order["client_id"])
-                .maybe_single()
+                .limit(1)
                 .execute()
             )
             if not (client_row and client_row.data):
                 continue
-            c = client_row.data
+            c = client_row.data[0]
 
             # ── Fetch visitor for browser identifiers ─────────────────────────
             visitor = None
@@ -113,11 +116,11 @@ def retry_failed_capi() -> None:
                     sb.table("visitors")
                     .select("fbp, fbc, ga_client_id")
                     .eq("id", order["visitor_id"])
-                    .maybe_single()
+                    .limit(1)
                     .execute()
                 )
                 if v_row and v_row.data:
-                    visitor = v_row.data
+                    visitor = v_row.data[0]
 
             event = _build_event(order, visitor)
 

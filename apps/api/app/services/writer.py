@@ -332,6 +332,55 @@ def write_tracking_event(
         logger.error("write_tracking_event failed: %s", exc)
 
 
+# ── cart_events ────────────────────────────────────────────────────────────────
+
+# Maps pixel event_type → cart_events.action CHECK constraint value.
+_CART_ACTION_MAP = {
+    "cart.created":     "add",
+    "cart.updated":     "update_quantity",
+    "checkout.started": "begin_checkout",
+}
+
+
+def write_cart_event(
+    client_uuid: Optional[str],
+    visitor_uuid: Optional[str],
+    event: NormalizedEvent,
+) -> None:
+    """
+    Insert a cart_events row when the pixel reports cart activity.
+    Powers cart-abandonment analytics and recovery flows downstream.
+    """
+    action = _CART_ACTION_MAP.get(event.event_type.value)
+    if not action:
+        return
+
+    meta = event.metadata or {}
+    row: dict = {
+        "action":         action,
+        "session_id":     event.session_id,
+        "cart_items":     meta.get("cart_items"),
+        "cart_total":     meta.get("cart_total") if meta.get("cart_total") is not None else meta.get("product_price"),
+        "cart_currency":  meta.get("currency") or "BRL",
+        "item_count":     meta.get("item_count"),
+        "product_id":     meta.get("product_id"),
+        "product_name":   meta.get("product_name"),
+        "product_price":  meta.get("product_price"),
+    }
+    if client_uuid:
+        row["client_id"] = client_uuid
+    if visitor_uuid:
+        row["visitor_id"] = visitor_uuid
+    # Drop keys whose values are None — keeps the insert payload clean.
+    row = {k: v for k, v in row.items() if v is not None}
+    try:
+        get_supabase().table("cart_events").insert(row).execute()
+        logger.debug("cart_events insert OK — action=%s visitor=%s", action, visitor_uuid)
+    except Exception as exc:
+        logger.warning("write_cart_event failed: %s", exc)
+
+
+
 # ── orders ────────────────────────────────────────────────────────────────────
 
 def write_order(
@@ -500,6 +549,91 @@ def set_visitor_email(
         logger.debug("visitor %s → email linked: %s", visitor_uuid, email)
     except Exception as exc:
         logger.warning("set_visitor_email failed: %s", exc)
+
+
+# ── refunds ───────────────────────────────────────────────────────────────────
+
+def write_refund(
+    client_uuid: Optional[str],
+    event: NormalizedEvent,
+) -> Optional[str]:
+    """
+    Persist a refund into the refunds table.
+
+    The adapter packs the refund this way:
+      event.order.id     = original platform order_id (NOT the refund_id)
+      event.order.total  = refund amount (positive number)
+      event.metadata.refund_id = the platform's refund_id
+
+    Returns the order_uuid we resolved (so the caller can pass it to CAPI senders).
+    """
+    if not client_uuid or not event.order or not event.order.id:
+        return None
+    platform_order_id = str(event.order.id)
+    refund_amount     = float(event.order.total or 0)
+    if refund_amount <= 0:
+        logger.debug("write_refund: skipping zero/negative refund for order %s", platform_order_id)
+        return None
+
+    refund_id = (event.metadata or {}).get("refund_id")
+
+    try:
+        ord_row = (
+            get_supabase().table("orders")
+            .select("id, total_price")
+            .eq("client_id", client_uuid)
+            .eq("platform_order_id", platform_order_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("write_refund: order lookup failed for %s: %s", platform_order_id, exc)
+        return None
+
+    if not (ord_row and ord_row.data):
+        logger.info("write_refund: original order %s not found — refund dropped", platform_order_id)
+        return None
+    order = ord_row.data[0]
+    order_uuid    = order["id"]
+    original_total = float(order.get("total_price") or 0)
+    is_partial    = original_total > 0 and refund_amount < original_total
+
+    row = {
+        "client_id":          client_uuid,
+        "order_id":           order_uuid,
+        "platform_refund_id": refund_id,
+        "amount":             refund_amount,
+        "currency":           event.order.currency or "BRL",
+        "is_partial":         is_partial,
+    }
+    try:
+        get_supabase().table("refunds").insert(row).execute()
+        logger.info("refund persisted — order=%s amount=%.2f partial=%s",
+                    platform_order_id, refund_amount, is_partial)
+    except Exception as exc:
+        logger.warning("write_refund insert failed for %s: %s", platform_order_id, exc)
+
+    return order_uuid
+
+
+def mark_refund_capi_sent(order_uuid: str, refund_id: Optional[str]) -> None:
+    """Mark a refund row as CAPI-sent once Meta acknowledges the negative-value Purchase."""
+    if not order_uuid:
+        return
+    try:
+        q = (
+            get_supabase().table("refunds")
+            .update({
+                "capi_sent":    True,
+                "capi_sent_at": datetime.now(timezone.utc).isoformat(),
+            })
+            .eq("order_id", order_uuid)
+        )
+        if refund_id:
+            q = q.eq("platform_refund_id", refund_id)
+        q.execute()
+    except Exception as exc:
+        logger.debug("mark_refund_capi_sent failed: %s", exc)
 
 
 # ── fulfillment_status update ─────────────────────────────────────────────────

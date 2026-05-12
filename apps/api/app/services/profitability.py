@@ -168,6 +168,66 @@ def persist_items_and_margin(
     }
 
 
+def recompute_after_refund(order_uuid: str) -> Optional[dict]:
+    """
+    Recompute gross_profit and margin_pct on an order after a refund lands.
+
+    Net revenue = total_price − Σ refund.amount. We don't refund the COGS on a
+    return (no automatic restock signal yet), so gross_profit shrinks by the
+    refunded amount.
+    """
+    if not order_uuid:
+        return None
+    sb = get_supabase()
+    try:
+        ord_row = (
+            sb.table("orders")
+            .select("total_price, cogs_total")
+            .eq("id", order_uuid)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.warning("recompute_after_refund: order lookup failed for %s: %s", order_uuid, exc)
+        return None
+    if not (ord_row and ord_row.data):
+        return None
+    order = ord_row.data[0]
+
+    try:
+        refs = (
+            sb.table("refunds").select("amount").eq("order_id", order_uuid).execute()
+        ).data or []
+    except Exception as exc:
+        logger.warning("recompute_after_refund: refunds lookup failed for %s: %s", order_uuid, exc)
+        return None
+
+    refund_total = sum(float(r.get("amount") or 0) for r in refs)
+    total_price  = float(order.get("total_price") or 0)
+    cogs         = order.get("cogs_total")
+    if cogs is None:
+        # Without COGS we can't compute meaningful margin — record refund total only.
+        return {"refund_total": refund_total, "gross_profit": None, "margin_pct": None}
+
+    net_revenue  = max(0.0, total_price - refund_total)
+    gross_profit = round(net_revenue - float(cogs), 2)
+    margin_pct   = round((gross_profit / net_revenue) * 100, 2) if net_revenue > 0 else None
+
+    try:
+        sb.table("orders").update({
+            "gross_profit": gross_profit,
+            "margin_pct":   margin_pct,
+        }).eq("id", order_uuid).execute()
+    except Exception as exc:
+        logger.warning("recompute_after_refund: order update failed for %s: %s", order_uuid, exc)
+    return {
+        "refund_total": round(refund_total, 2),
+        "net_revenue":  round(net_revenue, 2),
+        "gross_profit": gross_profit,
+        "margin_pct":   margin_pct,
+    }
+
+
 def backfill_items_from_events(client_uuid: str, pixel_id: str, days: int = 365) -> dict:
     """
     Reconstruct order_items for historical orders that were imported before
