@@ -10,8 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import attribution, audiences, cname, cogs, ecommerce_webhooks, insights, journey, live, meta_ads, pacing, pixel, setup
-from .services import alerts, anomalies, capi_retry, cart_abandonment, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
+from .routers import attribution, audiences, cname, cogs, creatives, ecommerce_webhooks, insights, journey, live, meta_ads, pacing, pixel, setup
+from .services import alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -92,6 +92,21 @@ _scheduler.add_job(
     minute=0,
     id="ltv_stats_refresh",
 )
+_scheduler.add_job(
+    creative_sync.run_daily_for_all_clients,
+    "cron",
+    hour=10,  # 10 UTC = 07:00 BRT — after meta_attribution_sync (09 UTC)
+    minute=0,
+    id="creative_sync",
+)
+_scheduler.add_job(
+    creative_intelligence.run_weekly_for_all_clients,
+    "cron",
+    day_of_week="tue",
+    hour=11,  # 11 UTC Tue = 08:00 BRT — fresh report for Tuesday standups
+    minute=0,
+    id="creative_intelligence",
+)
 
 
 @app.on_event("startup")
@@ -137,6 +152,7 @@ app.include_router(live.router)
 app.include_router(cogs.router)
 app.include_router(pacing.router)
 app.include_router(journey.router)
+app.include_router(creatives.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
