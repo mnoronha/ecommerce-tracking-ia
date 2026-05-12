@@ -180,8 +180,16 @@ def send_purchase(
     access_token: str,
     event: NormalizedEvent,
     test_event_code: Optional[str] = None,
+    value_override: Optional[float] = None,
 ) -> tuple[bool, Optional[str]]:
-    """Send Purchase event. Returns (success, error_message)."""
+    """
+    Send Purchase event. Returns (success, error_message).
+
+    `value_override` — when set, sent to Meta as the conversion value instead of
+    the order total. Used for value-based bidding: pass the customer's predicted
+    LTV so Meta optimizes for high-LTV cohorts rather than one-time purchases.
+    The raw order total is always preserved in custom_data.order_total for audit.
+    """
     if not pixel_id or not access_token:
         return False, "missing pixel_id or access_token"
     order = event.order
@@ -192,6 +200,9 @@ def send_purchase(
     # Isso garante deduplicação mesmo em retries de webhook ou reprocessamento.
     dedup_id = _deterministic_purchase_id(event.platform or "webhook", str(order.id))
 
+    order_total = float(order.total or 0)
+    bid_value = float(value_override) if value_override is not None else order_total
+
     capi_event = {
         "event_name":    "Purchase",
         "event_time":    int(time.time()),
@@ -200,8 +211,9 @@ def send_purchase(
         "user_data":     _build_user_data(event),
         "custom_data": {
             "currency": (order.currency or "BRL").upper(),
-            "value":    float(order.total or 0),
+            "value":    bid_value,
             "order_id": str(order.id),
+            "order_total": order_total,
             # content_ids and contents improve ML signal for Meta Advantage+
             "content_ids":  [str(item.product_id) for item in (order.items or []) if item.product_id],
             "contents": [

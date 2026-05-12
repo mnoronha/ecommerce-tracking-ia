@@ -459,6 +459,22 @@ def write_order(
             rescued_cookie_id      = cookie.get("id")
 
     meta = event.metadata or {}
+
+    # Predicted LTV — computed here so it's available for both DB persistence
+    # and downstream CAPI/Google Ads conversion-value override.
+    predicted_ltv_value: Optional[float] = None
+    if client_uuid and order.total:
+        try:
+            from . import ltv_predictor
+            predicted_ltv_value = ltv_predictor.predict_ltv(
+                client_uuid=client_uuid,
+                total_price=float(order.total),
+                utm_source=effective_utm_source,
+                utm_medium=effective_utm_medium,
+            )
+        except Exception as exc:
+            logger.debug("predict_ltv failed: %s", exc)
+
     row = {
         "platform_order_id":     order.id,
         "platform_order_number": order.number,
@@ -476,6 +492,7 @@ def write_order(
         "is_first_purchase":  is_first,
         "is_repeat_purchase": not is_first,
         "capi_sent": False,
+        "predicted_ltv": predicted_ltv_value,
         # Shipping geo — extracted by adapter, used for dashboard filters
         "shipping_country": meta.get("shipping_country"),
         "shipping_state":   meta.get("shipping_state"),

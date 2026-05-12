@@ -72,7 +72,7 @@ def retry_failed_capi() -> None:
             .select(
                 "id, client_id, platform_order_id, platform_order_number, "
                 "platform_source, email, phone, total_price, currency, "
-                "financial_status, capi_retry_count, visitor_id"
+                "financial_status, capi_retry_count, visitor_id, predicted_ltv"
             )
             .eq("capi_sent", False)
             .gt("total_price", 0)
@@ -100,7 +100,7 @@ def retry_failed_capi() -> None:
             # gets persisted to capi_last_error and pollutes diagnostics.
             client_row = (
                 sb.table("clients")
-                .select("pixel_id, meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret")
+                .select("pixel_id, meta_pixel_id, meta_access_token, ga4_measurement_id, ga4_api_secret, value_based_bidding")
                 .eq("id", order["client_id"])
                 .limit(1)
                 .execute()
@@ -127,6 +127,12 @@ def retry_failed_capi() -> None:
             # ── Try Meta CAPI ─────────────────────────────────────────────────
             meta_ok = False
             meta_err = None
+            # Value-based bidding: pass predicted_ltv as conversion value when set.
+            bid_override: Optional[float] = None
+            if c.get("value_based_bidding"):
+                val = order.get("predicted_ltv")
+                if val is not None:
+                    bid_override = float(val)
             if c.get("meta_pixel_id") and c.get("meta_access_token"):
                 try:
                     meta_ok, meta_err = meta_capi.send_purchase(
@@ -134,6 +140,7 @@ def retry_failed_capi() -> None:
                         access_token=c["meta_access_token"],
                         event=event,
                         test_event_code=settings.META_TEST_EVENT_CODE or None,
+                        value_override=bid_override,
                     )
                 except Exception as exc:
                     meta_err = f"{type(exc).__name__}: {str(exc)[:200]}"

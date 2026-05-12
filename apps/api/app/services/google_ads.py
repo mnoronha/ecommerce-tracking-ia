@@ -71,6 +71,7 @@ def send_conversion(
     order_id:             Optional[str] = None,
     occurred_at:          Optional[datetime] = None,
     manager_id:           Optional[str] = None,
+    value_override:       Optional[float] = None,
 ) -> bool:
     """
     Upload a click conversion to Google Ads API.
@@ -102,6 +103,7 @@ def send_conversion(
 
     clean_cid = customer_id.replace("-", "").replace(" ", "")
     conv_time = (occurred_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S+00:00")
+    bid_value = float(value_override) if value_override is not None else float(value)
 
     headers = {
         "Authorization":   f"Bearer {access_token}",
@@ -115,7 +117,7 @@ def send_conversion(
         "gclid":              gclid,
         "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
         "conversionDateTime": conv_time,
-        "conversionValue":    float(value),
+        "conversionValue":    bid_value,
         "currencyCode":       (currency or "BRL").upper(),
     }
     if order_id:

@@ -68,7 +68,7 @@ def _fetch_paid_orders_with_items(client_uuid: str, days: int) -> list[dict]:
 
     orders = (
         sb.table("orders")
-        .select("id, total_price, gross_profit, utm_source, utm_medium, utm_campaign, "
+        .select("id, total_price, gross_profit, predicted_ltv, utm_source, utm_medium, utm_campaign, "
                 "utm_content, platform_source, shipping_country, created_at")
         .eq("client_id", client_uuid)
         .eq("financial_status", "paid")
@@ -135,13 +135,18 @@ async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
                 "platform":   _platform_from_source(source),
                 "orders":     0,
                 "revenue":    0.0,
+                "revenue_ltv": 0.0,  # sum of predicted_ltv — what Meta/Google should bid for
                 "profit":     0.0,
                 "units":      0,
                 "_products":  {},  # platform_product_id → aggregates
             }
         b = bucket[key]
         b["orders"]  += 1
-        b["revenue"] += float(o.get("total_price") or 0)
+        total_price_val = float(o.get("total_price") or 0)
+        b["revenue"] += total_price_val
+        # predicted_ltv falls back to total_price when missing so the totals
+        # stay comparable on historical orders predating the LTV column.
+        b["revenue_ltv"] += float(o.get("predicted_ltv") or total_price_val)
         if o.get("gross_profit") is not None:
             b["profit"] += float(o["gross_profit"])
 
@@ -181,6 +186,15 @@ async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
         prods = sorted(b["_products"].values(), key=lambda p: p["revenue"], reverse=True)[:top_products]
         # Replace numeric Meta ID with human name when available
         display_name = name_map.get(b["campaign"], b["campaign"])
+        revenue       = round(b["revenue"], 2)
+        revenue_ltv   = round(b["revenue_ltv"], 2)
+        # ltv_uplift_pct is how much bigger the LTV-projected revenue is vs
+        # immediate revenue. A campaign at 50% uplift is bringing high-LTV
+        # buyers; a campaign at 5% is bringing one-and-done buyers.
+        ltv_uplift_pct = (
+            round(((revenue_ltv - revenue) / revenue) * 100, 1)
+            if revenue > 0 else None
+        )
         campaigns.append({
             "source":            b["source"],
             "medium":             b["medium"],
@@ -188,7 +202,9 @@ async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
             "campaign_id":        b["campaign"] if display_name != b["campaign"] else None,
             "platform":           b["platform"],
             "orders":             b["orders"],
-            "revenue":            round(b["revenue"], 2),
+            "revenue":            revenue,
+            "revenue_ltv":        revenue_ltv,
+            "ltv_uplift_pct":     ltv_uplift_pct,
             "profit":             round(b["profit"], 2) if b["profit"] else None,
             "units":              b["units"],
             "avg_ticket":         round(b["revenue"] / b["orders"], 2) if b["orders"] else 0,

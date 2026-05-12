@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .limiter import limiter
 from .routers import attribution, audiences, cname, cogs, ecommerce_webhooks, insights, journey, live, meta_ads, pacing, pixel, setup
-from .services import alerts, anomalies, capi_retry, cart_abandonment, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
+from .services import alerts, anomalies, capi_retry, cart_abandonment, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -84,6 +84,13 @@ _scheduler.add_job(
     hour=4,   # 04 UTC = 01:00 BRT — well after the previous UTC day closed
     minute=0,
     id="sessionization",
+)
+_scheduler.add_job(
+    ltv_predictor.run_daily_for_all_clients,
+    "cron",
+    hour=5,   # 05 UTC = 02:00 BRT — after sessionization, before attribution sync
+    minute=0,
+    id="ltv_stats_refresh",
 )
 
 

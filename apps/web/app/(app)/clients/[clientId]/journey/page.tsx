@@ -18,17 +18,19 @@ interface ProductInCampaign {
   profit:     number | null
 }
 interface CampaignRow {
-  source:        string
-  medium:        string
-  campaign:      string
-  campaign_id:   string | null
-  platform:      string
-  orders:        number
-  revenue:       number
-  profit:        number | null
-  units:         number
-  avg_ticket:    number
-  top_products:  ProductInCampaign[]
+  source:           string
+  medium:           string
+  campaign:         string
+  campaign_id:      string | null
+  platform:         string
+  orders:           number
+  revenue:          number
+  revenue_ltv:      number
+  ltv_uplift_pct:   number | null
+  profit:           number | null
+  units:            number
+  avg_ticket:       number
+  top_products:     ProductInCampaign[]
 }
 interface CampaignInProduct {
   platform:    string
@@ -424,15 +426,30 @@ export default function JourneyPage() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-sm font-bold text-emerald-400">{fmt(c.revenue)}</p>
-                      <p className="text-xs text-slate-500">{c.orders} pedidos · {c.units} un.</p>
+                      <div className="flex items-center gap-2 justify-end">
+                        <p className="text-xs text-slate-500">{c.orders} pedidos · {c.units} un.</p>
+                        {c.ltv_uplift_pct != null && c.ltv_uplift_pct > 0 && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30"
+                            title={`Receita projetada (LTV): ${fmt(c.revenue_ltv)} — quanto Meta/Google deveriam pagar por estes clientes`}
+                          >
+                            +{c.ltv_uplift_pct.toFixed(0)}% LTV
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </button>
 
                   {open && (
                     <div className="border-t border-[#2a2f3e] bg-[#0f1117]">
-                      <div className="px-5 py-3 grid grid-cols-4 gap-4">
+                      <div className="px-5 py-3 grid grid-cols-5 gap-4">
                         <Mini label="Pedidos"      value={c.orders.toString()} />
                         <Mini label="Receita"      value={fmt(c.revenue)} accent="emerald" />
+                        <Mini
+                          label="Receita LTV"
+                          value={fmt(c.revenue_ltv)}
+                          accent="violet"
+                        />
                         <Mini label="Ticket médio" value={fmt(c.avg_ticket)} />
                         <Mini label="Margem"       value={c.profit != null ? fmt(c.profit) : '—'} accent="teal" />
                       </div>
@@ -531,13 +548,14 @@ export default function JourneyPage() {
   )
 }
 
-function Mini({ label, value, accent }: { label: string; value: string; accent?: 'emerald' | 'teal' }) {
+function Mini({ label, value, accent }: { label: string; value: string; accent?: 'emerald' | 'teal' | 'violet' }) {
   return (
     <div>
       <p className="text-xs text-slate-500">{label}</p>
       <p className={`text-sm font-bold mt-0.5 ${
         accent === 'emerald' ? 'text-emerald-400' :
-        accent === 'teal'    ? 'text-teal-400'    : 'text-white'
+        accent === 'teal'    ? 'text-teal-400'    :
+        accent === 'violet'  ? 'text-violet-400'  : 'text-white'
       }`}>{value}</p>
     </div>
   )

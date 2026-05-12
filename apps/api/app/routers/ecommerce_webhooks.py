@@ -240,7 +240,8 @@ def _dispatch_purchase_capi(
                 "meta_pixel_id, meta_access_token, "
                 "ga4_measurement_id, ga4_api_secret, "
                 "google_ads_customer_id, google_ads_conversion_action_id, "
-                "google_ads_refresh_token"
+                "google_ads_refresh_token, "
+                "value_based_bidding"
             )
             .eq("pixel_id", client_pixel_id)
             .limit(1)
@@ -250,6 +251,26 @@ def _dispatch_purchase_capi(
             _record_capi_error(order_uuid, "client credentials row not found")
             return
         c = creds_result.data[0]
+
+        # Resolve the bid value: when value-based bidding is enabled and the
+        # order has a predicted_ltv, send the LTV instead of the order total.
+        # This is what teaches Meta/Google to optimize for high-LTV buyers.
+        bid_value_override: Optional[float] = None
+        if c.get("value_based_bidding") and order_uuid:
+            try:
+                ltv_row = (
+                    get_supabase().table("orders")
+                    .select("predicted_ltv")
+                    .eq("id", order_uuid)
+                    .limit(1)
+                    .execute()
+                )
+                if ltv_row and ltv_row.data:
+                    val = ltv_row.data[0].get("predicted_ltv")
+                    if val is not None:
+                        bid_value_override = float(val)
+            except Exception as exc:
+                logger.debug("predicted_ltv lookup failed for %s: %s", order_uuid, exc)
 
         # ── Fetch visitor attribution data (gclid, fbp, fbc, ip, ua) ─────
         gclid:        str | None = None
@@ -371,6 +392,7 @@ def _dispatch_purchase_capi(
                 access_token=c["meta_access_token"],
                 event=event,  # type: ignore[arg-type]
                 test_event_code=settings.META_TEST_EVENT_CODE or None,
+                value_override=bid_value_override,
             )
             if success and order_uuid:
                 writer.mark_capi_sent(order_uuid)
@@ -405,6 +427,7 @@ def _dispatch_purchase_capi(
                 order_id=str(event.order.id),  # type: ignore[union-attr]
                 refresh_token=c["google_ads_refresh_token"],
                 manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+                value_override=bid_value_override,
             )
     except Exception as exc:
         err = f"{type(exc).__name__}: {str(exc)[:200]}"
