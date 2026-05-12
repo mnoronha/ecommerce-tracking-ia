@@ -95,9 +95,10 @@ class ShopifyAdapter(BaseAdapter):
             return None
         # Shopify provides first_name/last_name separately on customer AND on
         # shipping_address. Customer object wins; fall back to shipping address.
-        ship = data.get("shipping_address") or data.get("billing_address") or {}
-        first_name = customer.get("first_name") or ship.get("first_name")
-        last_name  = customer.get("last_name")  or ship.get("last_name")
+        ship = data.get("shipping_address") or {}
+        bill = data.get("billing_address") or {}
+        first_name = customer.get("first_name") or ship.get("first_name") or bill.get("first_name")
+        last_name  = customer.get("last_name")  or ship.get("last_name")  or bill.get("last_name")
         name = (f"{first_name or ''} {last_name or ''}".strip()) or None
 
         # Customer ID may be absent on guest checkouts ("" or 0) — coerce to None
@@ -105,16 +106,27 @@ class ShopifyAdapter(BaseAdapter):
         cust_id_raw = customer.get("id")
         cust_id = str(cust_id_raw) if cust_id_raw else None
 
+        # Phone fallback chain — Shopify guest checkouts often leave the customer
+        # object empty but populate phone on the order or in shipping/billing.
+        # Each match raises Meta EMQ ~5-15 points.
+        phone = (
+            customer.get("phone")
+            or data.get("phone")
+            or ship.get("phone")
+            or bill.get("phone")
+        )
+
         return CustomerData(
             id=cust_id,
-            email=customer.get("email") or data.get("email"),
+            email=customer.get("email") or data.get("email") or data.get("contact_email"),
             name=name,
             first_name=first_name,
             last_name=last_name,
-            phone=customer.get("phone") or ship.get("phone"),
+            phone=phone,
             address=self._parse_address(
                 customer.get("default_address")
                 or data.get("shipping_address")
+                or data.get("billing_address")
                 or {}
             ),
         )

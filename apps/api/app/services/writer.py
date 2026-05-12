@@ -440,6 +440,24 @@ def write_order(
         except Exception as exc:
             logger.debug("utm inheritance from visitor failed: %s", exc)
 
+    # Last-resort: rescue attribution from attribution_cookies. Triggered when
+    # the order has no UTM and the visitor record also has none (typical for
+    # guest checkouts via PIX gateways that bypass the Shopify thank-you page).
+    rescued_cookie_id: Optional[str] = None
+    if client_uuid and not effective_utm_source:
+        meta_ev = event.metadata or {}
+        cookie = lookup_attribution_cookie(
+            client_uuid=client_uuid,
+            visitor_cookie_id=meta_ev.get("visitor_cookie_id"),
+            email=customer.email if customer else None,
+        )
+        if cookie:
+            effective_utm_source   = cookie.get("utm_source")
+            effective_utm_medium   = cookie.get("utm_medium")
+            effective_utm_campaign = cookie.get("utm_campaign")
+            effective_utm_content  = cookie.get("utm_content")
+            rescued_cookie_id      = cookie.get("id")
+
     meta = event.metadata or {}
     row = {
         "platform_order_id":     order.id,
@@ -477,6 +495,11 @@ def write_order(
         if result.data:
             order_uuid = result.data[0]["id"]
             logger.debug("orders upsert OK — %s (first=%s)", order_uuid, is_first)
+
+            # Flag the attribution cookie as consumed so it's not reused on a
+            # subsequent order from the same visitor.
+            if rescued_cookie_id:
+                mark_attribution_cookie_used(rescued_cookie_id, order_uuid)
 
             # ── Update visitor totals ─────────────────────────────────────────
             if visitor_uuid and order.total:
@@ -549,6 +572,100 @@ def set_visitor_email(
         logger.debug("visitor %s → email linked: %s", visitor_uuid, email)
     except Exception as exc:
         logger.warning("set_visitor_email failed: %s", exc)
+
+
+# ── attribution_cookies ───────────────────────────────────────────────────────
+#
+# Persisted record of (visitor_cookie_id → UTMs) captured by the pixel. Acts as
+# a server-side backup of the _eta cookie so we can rescue attribution when the
+# order webhook arrives without UTMs and the visitor row was created fresh from
+# the webhook (no cart-token bridge, no _etv attribute).
+
+def write_attribution_cookie(
+    client_uuid: Optional[str],
+    visitor_cookie_id: Optional[str],
+    event: NormalizedEvent,
+) -> None:
+    """
+    Persist the visitor's attribution context when the pixel sees UTMs or click
+    IDs. Idempotent-ish: writes a new row per pageview so we keep history; the
+    lookup function below always picks the freshest. Skips when there's no
+    actual attribution to record.
+    """
+    utm = event.utm
+    meta = event.metadata or {}
+    has_utm = utm and (utm.source or utm.medium or utm.campaign or utm.content or utm.term)
+    has_clickid = meta.get("fbclid") or meta.get("gclid")
+    if not (has_utm or has_clickid):
+        return
+    if not (client_uuid and visitor_cookie_id):
+        return
+
+    row = {
+        "client_id":         client_uuid,
+        "visitor_cookie_id": visitor_cookie_id,
+        "utm_source":        utm.source   if utm else None,
+        "utm_medium":        utm.medium   if utm else None,
+        "utm_campaign":      utm.campaign if utm else None,
+        "utm_content":       utm.content  if utm else None,
+        "utm_term":          utm.term     if utm else None,
+        "fbclid":            meta.get("fbclid"),
+        "gclid":             meta.get("gclid"),
+        "referrer":          event.referrer,
+        "landing_url":       event.page_url,
+    }
+    row = {k: v for k, v in row.items() if v is not None}
+    try:
+        get_supabase().table("attribution_cookies").insert(row).execute()
+    except Exception as exc:
+        logger.debug("write_attribution_cookie failed: %s", exc)
+
+
+def lookup_attribution_cookie(
+    client_uuid: str,
+    visitor_cookie_id: Optional[str] = None,
+    email: Optional[str] = None,
+) -> Optional[dict]:
+    """
+    Find the freshest unused attribution cookie for a buyer. Used by write_order
+    as a last-resort fallback when neither the webhook payload nor the visitor
+    record carry UTMs. Returns the matching row or None.
+    """
+    if not client_uuid or not (visitor_cookie_id or email):
+        return None
+    sb = get_supabase()
+    try:
+        q = (
+            sb.table("attribution_cookies")
+            .select("id, utm_source, utm_medium, utm_campaign, utm_content, fbclid, gclid")
+            .eq("client_id", client_uuid)
+            .is_("used_in_order_id", "null")
+            .gte("expires_at", datetime.now(timezone.utc).isoformat())
+            .order("created_at", desc=True)
+            .limit(1)
+        )
+        if visitor_cookie_id:
+            q = q.eq("visitor_cookie_id", visitor_cookie_id)
+        elif email:
+            q = q.eq("email", email.strip().lower())
+        rows = q.execute().data or []
+    except Exception as exc:
+        logger.debug("lookup_attribution_cookie failed: %s", exc)
+        return None
+    return rows[0] if rows else None
+
+
+def mark_attribution_cookie_used(cookie_id: str, order_uuid: str) -> None:
+    """Flag an attribution_cookies row as consumed by an order so it's not re-used."""
+    if not (cookie_id and order_uuid):
+        return
+    try:
+        get_supabase().table("attribution_cookies").update({
+            "used_in_order_id": order_uuid,
+            "used_at":          datetime.now(timezone.utc).isoformat(),
+        }).eq("id", cookie_id).execute()
+    except Exception as exc:
+        logger.debug("mark_attribution_cookie_used failed: %s", exc)
 
 
 # ── refunds ───────────────────────────────────────────────────────────────────
