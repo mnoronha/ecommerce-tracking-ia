@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from ..database import get_supabase
 from ..services import meta_attribution_sync, meta_campaigns
@@ -490,3 +491,182 @@ async def resolve_meta_names(pixel_id: str):
         ad_account_id=c["meta_ad_account_id"],
         access_token=c["meta_access_token"],
     )
+
+
+# ── Post-purchase attribution survey ─────────────────────────────────────────
+#
+# Captures the buyer's own answer to "how did you hear about us?" right after
+# checkout. Crossed with our UTM/click-id data, this is the only way to recover
+# attribution for the 90% of orders that arrive without UTMs (dark social,
+# influencers, word-of-mouth).
+
+_VALID_SURVEY_SOURCES = {
+    "meta", "instagram", "facebook",
+    "google", "youtube", "tiktok",
+    "organic_search", "referral_friend", "influencer",
+    "email", "podcast", "event_offline", "other",
+}
+
+
+class SurveyResponseBody(BaseModel):
+    source_declared: str = Field(..., description="One of the canonical buckets")
+    free_text:       Optional[str] = None
+    order_id:        Optional[str] = None  # Shopify platform_order_id
+    visitor_cookie_id: Optional[str] = None
+    page_url:        Optional[str]  = None
+
+
+@router.post(
+    "/journey/{pixel_id}/survey-response",
+    summary="Submit a post-purchase 'how did you hear about us?' answer",
+    tags=["journey"],
+)
+async def submit_survey_response(pixel_id: str, body: SurveyResponseBody):
+    if body.source_declared not in _VALID_SURVEY_SOURCES:
+        raise HTTPException(400, f"invalid source_declared (must be one of {sorted(_VALID_SURVEY_SOURCES)})")
+
+    client_uuid = _resolve(pixel_id)
+    sb = get_supabase()
+
+    # Resolve platform_order_id → orders.id when possible (the pixel only knows
+    # the Shopify order number at thank-you time).
+    order_uuid: Optional[str] = None
+    visitor_uuid: Optional[str] = None
+    if body.order_id:
+        try:
+            o = (
+                sb.table("orders")
+                .select("id, visitor_id")
+                .eq("client_id", client_uuid)
+                .eq("platform_order_id", str(body.order_id))
+                .limit(1)
+                .execute()
+            )
+            if o and o.data:
+                order_uuid   = o.data[0]["id"]
+                visitor_uuid = o.data[0].get("visitor_id")
+        except Exception as exc:
+            logger.debug("survey order lookup failed: %s", exc)
+
+    if not visitor_uuid and body.visitor_cookie_id:
+        try:
+            v = (
+                sb.table("visitors")
+                .select("id")
+                .eq("client_id", client_uuid)
+                .eq("visitor_id", body.visitor_cookie_id)
+                .limit(1)
+                .execute()
+            )
+            if v and v.data:
+                visitor_uuid = v.data[0]["id"]
+        except Exception as exc:
+            logger.debug("survey visitor lookup failed: %s", exc)
+
+    row = {
+        "client_id":         client_uuid,
+        "order_id":          order_uuid,
+        "visitor_id":        visitor_uuid,
+        "visitor_cookie_id": body.visitor_cookie_id,
+        "source_declared":   body.source_declared,
+        "free_text":         (body.free_text or "").strip()[:500] or None,
+        "page_url":          body.page_url,
+    }
+    try:
+        result = sb.table("post_purchase_surveys").insert(row).execute()
+        return {"status": "ok", "id": (result.data or [{}])[0].get("id")}
+    except Exception as exc:
+        logger.warning("survey insert failed: %s", exc)
+        raise HTTPException(500, "failed to persist survey response")
+
+
+@router.get(
+    "/journey/{pixel_id}/by-declared-source",
+    summary="Aggregate orders by buyer-declared source, with UTM cross-check",
+    tags=["journey"],
+)
+async def by_declared_source(pixel_id: str, days: int = 30):
+    """
+    For each declared source bucket, returns:
+      - declared_orders / declared_revenue (orders that reported this source)
+      - utm_match_orders / utm_match_revenue (declared AND have a matching utm_source)
+      - utm_miss_orders / utm_miss_revenue (declared but no matching utm)
+
+    A high utm_miss share is the value the survey unlocks — those are sales
+    we could not have attributed any other way.
+    """
+    client_uuid = _resolve(pixel_id)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    sb = get_supabase()
+
+    surveys = (
+        sb.table("post_purchase_surveys")
+        .select("source_declared, order_id, created_at")
+        .eq("client_id", client_uuid)
+        .gte("created_at", cutoff)
+        .execute()
+    ).data or []
+    if not surveys:
+        return {"days": days, "by_source": [], "total_responses": 0}
+
+    order_ids = list({s["order_id"] for s in surveys if s.get("order_id")})
+    orders_by_id: dict[str, dict] = {}
+    if order_ids:
+        for i in range(0, len(order_ids), 500):
+            chunk = order_ids[i:i + 500]
+            r = (
+                sb.table("orders")
+                .select("id, total_price, utm_source, utm_medium")
+                .in_("id", chunk)
+                .execute()
+            ).data or []
+            for o in r:
+                orders_by_id[o["id"]] = o
+
+    bucket: dict[str, dict] = {}
+    for s in surveys:
+        src = s["source_declared"]
+        b = bucket.setdefault(src, {
+            "source_declared":    src,
+            "responses":          0,
+            "declared_orders":    0,
+            "declared_revenue":   0.0,
+            "utm_match_orders":   0,
+            "utm_match_revenue":  0.0,
+            "utm_miss_orders":    0,
+            "utm_miss_revenue":   0.0,
+        })
+        b["responses"] += 1
+        order = orders_by_id.get(s.get("order_id") or "")
+        if not order:
+            continue
+        rev = float(order.get("total_price") or 0)
+        b["declared_orders"]  += 1
+        b["declared_revenue"] += rev
+        utm_platform = _platform_from_source(order.get("utm_source"))
+        # Bucket-vs-utm match logic: declared 'meta'/'instagram'/'facebook' match
+        # utm_source like fb/instagram; 'google'/'youtube' match google; etc.
+        match_table = {
+            "meta": "meta", "instagram": "meta", "facebook": "meta",
+            "google": "google", "youtube": "google",
+            "tiktok": "tiktok",
+            "organic_search": "organic",
+            "email": "email",
+        }
+        expected = match_table.get(src)
+        if expected and utm_platform == expected:
+            b["utm_match_orders"]  += 1
+            b["utm_match_revenue"] += rev
+        else:
+            b["utm_miss_orders"]   += 1
+            b["utm_miss_revenue"]  += rev
+
+    rows = []
+    for b in bucket.values():
+        b["declared_revenue"]  = round(b["declared_revenue"], 2)
+        b["utm_match_revenue"] = round(b["utm_match_revenue"], 2)
+        b["utm_miss_revenue"]  = round(b["utm_miss_revenue"], 2)
+        rows.append(b)
+    rows.sort(key=lambda r: r["declared_revenue"], reverse=True)
+
+    return {"days": days, "by_source": rows, "total_responses": len(surveys)}

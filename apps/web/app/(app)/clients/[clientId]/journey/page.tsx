@@ -7,7 +7,18 @@ import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Targ
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 type DateRange = 7 | 30 | 90
-type Lens = 'campaign' | 'product' | 'meta-attribution'
+type Lens = 'campaign' | 'product' | 'meta-attribution' | 'declared-source'
+
+interface DeclaredSourceRow {
+  source_declared:    string
+  responses:          number
+  declared_orders:    number
+  declared_revenue:   number
+  utm_match_orders:   number
+  utm_match_revenue:  number
+  utm_miss_orders:    number
+  utm_miss_revenue:   number
+}
 
 interface ProductInCampaign {
   product_id: string
@@ -101,6 +112,8 @@ export default function JourneyPage() {
   const [products,  setProducts]  = useState<ProductRow[]>([])
   const [metaAttr, setMetaAttr] = useState<MetaAttrRow[]>([])
   const [metaTotals, setMetaTotals] = useState<MetaAttrTotals | null>(null)
+  const [declared, setDeclared] = useState<DeclaredSourceRow[]>([])
+  const [declaredTotal, setDeclaredTotal] = useState(0)
   const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [search,   setSearch]   = useState('')
@@ -119,12 +132,19 @@ export default function JourneyPage() {
       } else if (lens === 'product') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-product?days=${days}&top_campaigns=10`)
         if (res.ok) setProducts((await res.json()).products || [])
-      } else {
+      } else if (lens === 'meta-attribution') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-meta-attribution?days=${days}`)
         if (res.ok) {
           const data = await res.json()
           setMetaAttr(data.campaigns || [])
           setMetaTotals(data.totals || null)
+        }
+      } else {
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-declared-source?days=${days}`)
+        if (res.ok) {
+          const data = await res.json()
+          setDeclared(data.by_source || [])
+          setDeclaredTotal(data.total_responses || 0)
         }
       }
     } finally {
@@ -207,7 +227,9 @@ export default function JourneyPage() {
     ? campaigns.reduce((s, c) => s + c.revenue, 0)
     : lens === 'product'
       ? products.reduce((s, p) => s + p.revenue, 0)
-      : metaTotals?.meta_revenue || 0
+      : lens === 'declared-source'
+        ? declared.reduce((s, d) => s + d.declared_revenue, 0)
+        : metaTotals?.meta_revenue || 0
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -267,8 +289,16 @@ export default function JourneyPage() {
             >
               <Target size={14} />Atribuído pelo Meta
             </button>
+            <button
+              onClick={() => { setLens('declared-source'); setExpanded(new Set()) }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                lens === 'declared-source' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Sparkles size={14} />Como te conheceram
+            </button>
           </div>
-          {lens !== 'meta-attribution' ? (
+          {lens === 'campaign' || lens === 'product' ? (
             <button
               onClick={handleResolveMeta}
               disabled={resolving}
@@ -279,7 +309,7 @@ export default function JourneyPage() {
                 ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
                 : <><RefreshCw size={12} />Resolver nomes Meta</>}
             </button>
-          ) : (
+          ) : lens === 'meta-attribution' ? (
             <>
               <button
                 onClick={handleSyncMetaAttribution}
@@ -302,8 +332,8 @@ export default function JourneyPage() {
                   : <><Sparkles size={12} />Match probabilístico</>}
               </button>
             </>
-          )}
-          {resolveMsg && lens !== 'meta-attribution' && (
+          ) : null}
+          {resolveMsg && (lens === 'campaign' || lens === 'product') && (
             <span className="text-xs text-slate-400">{resolveMsg}</span>
           )}
           {actionMsg && lens === 'meta-attribution' && (
@@ -401,6 +431,88 @@ export default function JourneyPage() {
               <span className="text-slate-400 font-medium">Como ler:</span> Meta atribui via janela de cliques/views (até 7d). O server conta pedidos
               cuja UTM bate com o ID da campanha. Diff &gt; 0 = Meta credita compras que o server não vê (provável janela de view ou pedidos sem UTM).
               Use <span className="text-slate-400">Match probabilístico</span> para tentar atribuir esses pedidos ao anúncio mais provável do dia.
+            </p>
+          </div>
+        ) : lens === 'declared-source' ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Mini label="Respostas no período"     value={declaredTotal.toString()} accent="emerald" />
+              <Mini
+                label="Receita rastreada"
+                value={fmt(declared.reduce((s, d) => s + d.declared_revenue, 0))}
+                accent="emerald"
+              />
+              <Mini
+                label="Bateu com UTM"
+                value={fmt(declared.reduce((s, d) => s + d.utm_match_revenue, 0))}
+                accent="teal"
+              />
+              <Mini
+                label="Sem UTM correspondente"
+                value={fmt(declared.reduce((s, d) => s + d.utm_miss_revenue, 0))}
+                accent="violet"
+              />
+            </div>
+            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+              <div className="px-5 py-3 border-b border-[#2a2f3e] flex items-center justify-between">
+                <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">
+                  Atribuição declarada × UTM
+                </p>
+                <p className="text-xs text-slate-500">
+                  miss = receita que só o survey capturou
+                </p>
+              </div>
+              {declared.length === 0 ? (
+                <p className="text-slate-500 text-sm text-center py-8 px-5">
+                  Sem respostas no período. O modal aparece automaticamente na página de obrigado.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-xs text-slate-500 border-b border-[#2a2f3e]">
+                        <th className="px-5 py-2.5 text-left font-medium">Fonte declarada</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Respostas</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Receita declarada</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Match UTM</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Miss UTM (rescate)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {declared.map(d => {
+                        const missShare = d.declared_revenue > 0
+                          ? (d.utm_miss_revenue / d.declared_revenue) * 100
+                          : 0
+                        return (
+                          <tr key={d.source_declared} className="border-t border-[#2a2f3e] hover:bg-[#252a3a]/40">
+                            <td className="px-5 py-2.5">
+                              <p className="text-slate-200 capitalize">{d.source_declared.replace(/_/g, ' ')}</p>
+                              <p className="text-xs text-slate-600">{d.responses} respostas</p>
+                            </td>
+                            <td className="px-5 py-2.5 text-right text-slate-400 whitespace-nowrap">{d.declared_orders}</td>
+                            <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(d.declared_revenue)}</td>
+                            <td className="px-5 py-2.5 text-right text-teal-400 whitespace-nowrap">
+                              {fmt(d.utm_match_revenue)}
+                              <span className="text-xs text-slate-600 ml-2">{d.utm_match_orders}</span>
+                            </td>
+                            <td className="px-5 py-2.5 text-right whitespace-nowrap">
+                              <span className="text-violet-400 font-semibold">{fmt(d.utm_miss_revenue)}</span>
+                              {missShare > 0 && (
+                                <span className="text-xs text-violet-400/70 ml-2">{missShare.toFixed(0)}%</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              <span className="text-slate-400 font-medium">Como ler:</span> a coluna <span className="text-violet-400">Miss UTM</span> é
+              a receita que <em>só</em> o survey capturou — pedidos onde o cliente declarou uma fonte (ex: TikTok) mas não tinha UTM/fbclid
+              correspondente. Esse é o valor que rebalanceia o orçamento — fontes invisíveis aparecem aqui.
             </p>
           </div>
         ) : lens === 'campaign' ? (

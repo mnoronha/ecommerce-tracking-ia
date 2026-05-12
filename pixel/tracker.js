@@ -268,6 +268,180 @@
     w.addEventListener('popstate', trackPageview);
   })();
 
+  // ── Post-purchase attribution survey ──────────────────────────────────────
+  // Renders a small "how did you hear about us?" modal on the thank-you page,
+  // POSTs the answer to /journey/<client>/survey-response. Crossed with our
+  // UTMs/click IDs in the dashboard, this rescues attribution for the bulk of
+  // orders that arrive without a UTM (dark social, influencers, word of mouth).
+
+  var SURVEY_STORAGE_KEY = '_etsurvey';   // localStorage: orders already answered
+
+  var SURVEY_OPTIONS = [
+    { key: 'meta',            label: 'Instagram / Facebook' },
+    { key: 'google',          label: 'Google (busca ou anúncio)' },
+    { key: 'tiktok',          label: 'TikTok' },
+    { key: 'youtube',         label: 'YouTube' },
+    { key: 'influencer',      label: 'Indicação de influenciador' },
+    { key: 'referral_friend', label: 'Indicação de amigo / família' },
+    { key: 'organic_search',  label: 'Busca orgânica' },
+    { key: 'email',           label: 'E-mail' },
+    { key: 'podcast',         label: 'Podcast' },
+    { key: 'event_offline',   label: 'Evento / loja física' },
+    { key: 'other',           label: 'Outro' }
+  ];
+
+  function isThankYouPage() {
+    // Shopify: /checkouts/<token>/thank_you or /orders/<id>
+    // Generic: /thank-you, /obrigado, /pedido-confirmado
+    var p = (location.pathname || '').toLowerCase();
+    return /\/(thank[-_ ]?you|obrigado|orders\/[^/]+|pedido-confirmado|order-confirmation)/.test(p);
+  }
+
+  function extractOrderId() {
+    // Best effort: pull from URL path /orders/<id> or query ?order_id=
+    var m = (location.pathname || '').match(/\/orders\/([^/?#]+)/i);
+    if (m && m[1]) return m[1];
+    var q = getQueryParam('order_id') || getQueryParam('order');
+    if (q) return q;
+    // Shopify exposes a global on thank-you pages
+    try {
+      if (w.Shopify && w.Shopify.checkout && w.Shopify.checkout.order_id) {
+        return String(w.Shopify.checkout.order_id);
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function alreadyAnswered(orderId) {
+    try {
+      var stored = localStorage.getItem(SURVEY_STORAGE_KEY);
+      if (!stored) return false;
+      var ids = JSON.parse(stored);
+      return Array.isArray(ids) && ids.indexOf(orderId) >= 0;
+    } catch (e) { return false; }
+  }
+
+  function markAnswered(orderId) {
+    try {
+      var stored = localStorage.getItem(SURVEY_STORAGE_KEY);
+      var ids = stored ? JSON.parse(stored) : [];
+      if (!Array.isArray(ids)) ids = [];
+      if (ids.indexOf(orderId) < 0) ids.push(orderId);
+      // Keep only last 50 to avoid unbounded growth
+      if (ids.length > 50) ids = ids.slice(-50);
+      localStorage.setItem(SURVEY_STORAGE_KEY, JSON.stringify(ids));
+    } catch (e) { /* ignore */ }
+  }
+
+  function submitSurvey(sourceKey, freeText, orderId) {
+    if (!CLIENT_ID || !API_URL) return;
+    var url = API_URL + '/journey/' + encodeURIComponent(CLIENT_ID) + '/survey-response';
+    var payload = {
+      source_declared:   sourceKey,
+      free_text:         freeText || null,
+      order_id:          orderId || null,
+      visitor_cookie_id: getVisitorId(),
+      page_url:          location.href
+    };
+    try {
+      fetch(url, {
+        method:    'POST',
+        headers:   { 'Content-Type': 'application/json' },
+        body:      JSON.stringify(payload),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) { /* ignore */ }
+  }
+
+  function renderSurveyModal(orderId) {
+    if (!d.body) return;
+    if (d.getElementById('_etsurvey-root')) return;
+
+    var root = d.createElement('div');
+    root.id = '_etsurvey-root';
+    root.style.cssText = [
+      'position:fixed','inset:0','z-index:2147483646',
+      'display:flex','align-items:flex-end','justify-content:center',
+      'pointer-events:none'
+    ].join(';');
+
+    var card = d.createElement('div');
+    card.style.cssText = [
+      'pointer-events:auto',
+      'background:#0f1117','color:#e5e7eb',
+      'border:1px solid #2a2f3e','border-radius:14px 14px 0 0',
+      'box-shadow:0 -8px 32px rgba(0,0,0,.4)',
+      'width:min(420px,92vw)','padding:18px 18px 16px',
+      'font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
+      'margin-bottom:0'
+    ].join(';');
+
+    var close = d.createElement('button');
+    close.textContent = '×';
+    close.setAttribute('aria-label', 'Fechar');
+    close.style.cssText = [
+      'position:absolute','top:8px','right:12px',
+      'background:transparent','border:0','color:#94a3b8',
+      'font-size:22px','cursor:pointer','line-height:1'
+    ].join(';');
+    close.onclick = function () { d.body.removeChild(root); };
+    card.style.position = 'relative';
+    card.appendChild(close);
+
+    var title = d.createElement('div');
+    title.textContent = 'Antes de você ir — como você nos conheceu?';
+    title.style.cssText = 'font-weight:600;font-size:15px;margin-bottom:4px;color:#fff';
+    card.appendChild(title);
+
+    var subtitle = d.createElement('div');
+    subtitle.textContent = 'Sua resposta nos ajuda a melhorar a experiência. Leva 2 segundos.';
+    subtitle.style.cssText = 'font-size:12px;color:#94a3b8;margin-bottom:12px';
+    card.appendChild(subtitle);
+
+    var grid = d.createElement('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px';
+
+    SURVEY_OPTIONS.forEach(function (opt) {
+      var btn = d.createElement('button');
+      btn.type = 'button';
+      btn.textContent = opt.label;
+      btn.style.cssText = [
+        'background:#1a1f2e','color:#e5e7eb',
+        'border:1px solid #2a2f3e','border-radius:8px',
+        'padding:9px 10px','font-size:12.5px','cursor:pointer',
+        'text-align:left','transition:background .15s,border-color .15s'
+      ].join(';');
+      btn.onmouseover = function () { btn.style.background = '#252a3a'; btn.style.borderColor = '#3a4055'; };
+      btn.onmouseout  = function () { btn.style.background = '#1a1f2e'; btn.style.borderColor = '#2a2f3e'; };
+      btn.onclick = function () {
+        submitSurvey(opt.key, null, orderId);
+        if (orderId) markAnswered(orderId);
+        // Replace modal contents with a thank-you confirmation that fades.
+        card.innerHTML = '';
+        var ok = d.createElement('div');
+        ok.textContent = 'Obrigado pelo feedback!';
+        ok.style.cssText = 'font-size:14px;color:#34d399;padding:6px 0;text-align:center;font-weight:600';
+        card.appendChild(ok);
+        w.setTimeout(function () {
+          try { d.body.removeChild(root); } catch (e) { /* ignore */ }
+        }, 1500);
+      };
+      grid.appendChild(btn);
+    });
+    card.appendChild(grid);
+
+    root.appendChild(card);
+    d.body.appendChild(root);
+  }
+
+  function maybeShowSurvey() {
+    if (!isThankYouPage()) return;
+    var orderId = extractOrderId() || 'no-order-' + Date.now();
+    if (alreadyAnswered(orderId)) return;
+    // Small delay so the page settles first (and conversion pixels fire first).
+    w.setTimeout(function () { renderSurveyModal(orderId); }, 1200);
+  }
+
   // ── Public API ────────────────────────────────────────────────────────────
   w.ET = {
     track:          track,
@@ -277,14 +451,19 @@
     getFbp:         getFbp,
     getFbc:         getFbc,
     getGclid:       getGclid,
-    getGaClientId:  getGaClientId
+    getGaClientId:  getGaClientId,
+    showSurvey:     renderSurveyModal
   };
 
   // ── Fire initial pageview ─────────────────────────────────────────────────
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', trackPageview);
+    document.addEventListener('DOMContentLoaded', function () {
+      trackPageview();
+      maybeShowSurvey();
+    });
   } else {
     trackPageview();
+    maybeShowSurvey();
   }
 
 }(window, document));
