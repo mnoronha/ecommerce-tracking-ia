@@ -203,6 +203,7 @@ def send_purchase(
     order_total = float(order.total or 0)
     bid_value = float(value_override) if value_override is not None else order_total
 
+    meta = event.metadata or {}
     capi_event = {
         "event_name":    "Purchase",
         "event_time":    int(time.time()),
@@ -228,6 +229,13 @@ def send_purchase(
             "num_items": sum(item.quantity or 1 for item in (order.items or [])),
         },
     }
+    # event_source_url: prefer the order confirmation page, fall back to landing page
+    source_url = (
+        event.page_url
+        or meta.get("order_status_url")
+    )
+    if source_url:
+        capi_event["event_source_url"] = source_url
     return _send(pixel_id, access_token, [capi_event], test_event_code)
 
 

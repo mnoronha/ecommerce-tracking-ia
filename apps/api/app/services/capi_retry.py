@@ -18,7 +18,7 @@ from typing import Optional
 from ..database import get_supabase
 from ..config import settings
 from . import meta_capi, ga4
-from ..models.events import NormalizedEvent, EventType, OrderData, CustomerData
+from ..models.events import NormalizedEvent, EventType, OrderData, CustomerData, Address
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +28,26 @@ _BATCH_LIMIT        = 50
 
 
 def _build_event(order: dict, visitor: Optional[dict]) -> NormalizedEvent:
-    """Reconstruct a minimal NormalizedEvent from persisted order + visitor."""
+    """Reconstruct a rich NormalizedEvent from persisted order + visitor data."""
+    # Build address from stored order fields (shipped from migration 015+)
+    addr: Optional[Address] = None
+    if any(order.get(f) for f in ("shipping_country", "shipping_state", "shipping_city", "zip_code")):
+        addr = Address(
+            country=order.get("shipping_country"),
+            state=order.get("shipping_state"),
+            city=order.get("shipping_city"),
+            zip_code=order.get("zip_code"),
+        )
+
     customer = CustomerData(
         email=order.get("email"),
         phone=order.get("phone"),
+        first_name=order.get("first_name"),
+        last_name=order.get("last_name"),
+        id=order.get("platform_customer_id"),
+        address=addr,
     )
+
     order_data = OrderData(
         id=str(order["platform_order_id"]),
         number=str(order.get("platform_order_number") or order["platform_order_id"]),
@@ -40,10 +55,15 @@ def _build_event(order: dict, visitor: Optional[dict]) -> NormalizedEvent:
         total=float(order.get("total_price") or 0),
         currency=order.get("currency") or "BRL",
     )
-    metadata = {}
+
+    metadata: dict = {}
+    # Browser identifiers — prefer stored-on-order (from webhook); fall back to visitor
+    if order.get("browser_ip"):   metadata["ip"]          = order["browser_ip"]
+    if order.get("browser_ua"):   metadata["user_agent"]  = order["browser_ua"]
     if visitor:
-        if visitor.get("fbp"): metadata["fbp"] = visitor["fbp"]
-        if visitor.get("fbc"): metadata["fbc"] = visitor["fbc"]
+        if visitor.get("fbp") and not metadata.get("fbp"): metadata["fbp"] = visitor["fbp"]
+        if visitor.get("fbc") and not metadata.get("fbc"): metadata["fbc"] = visitor["fbc"]
+
     return NormalizedEvent(
         event_id=f"retry_{order['id']}",
         event_type=EventType.ORDER_PAID,
@@ -71,8 +91,11 @@ def retry_failed_capi() -> None:
             sb.table("orders")
             .select(
                 "id, client_id, platform_order_id, platform_order_number, "
-                "platform_source, email, phone, total_price, currency, "
-                "financial_status, capi_retry_count, visitor_id, predicted_ltv"
+                "platform_source, email, phone, first_name, last_name, "
+                "total_price, currency, financial_status, capi_retry_count, "
+                "visitor_id, predicted_ltv, "
+                "shipping_country, shipping_state, shipping_city, zip_code, "
+                "browser_ip, browser_ua"
             )
             .eq("capi_sent", False)
             .gt("total_price", 0)
@@ -114,7 +137,7 @@ def retry_failed_capi() -> None:
             if order.get("visitor_id"):
                 v_row = (
                     sb.table("visitors")
-                    .select("fbp, fbc, ga_client_id")
+                    .select("fbp, fbc, ga_client_id, ttclid")
                     .eq("id", order["visitor_id"])
                     .limit(1)
                     .execute()

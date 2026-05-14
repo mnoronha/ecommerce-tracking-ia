@@ -262,6 +262,10 @@ class ShopifyAdapter(BaseAdapter):
         # Shipping address — denormalized for country/state/city dashboard filters
         shipping = payload.get("shipping_address") or payload.get("billing_address") or {}
 
+        client_details = payload.get("client_details") or {}
+        browser_ip = payload.get("browser_ip") or client_details.get("browser_ip")
+        user_agent = client_details.get("user_agent")
+
         return NormalizedEvent(
             event_id=str(uuid.uuid4()),
             event_type=event_type,
@@ -291,5 +295,10 @@ class ShopifyAdapter(BaseAdapter):
                 "shipping_country":  shipping.get("country_code") or shipping.get("country"),
                 "shipping_state":    shipping.get("province_code") or shipping.get("province"),
                 "shipping_city":     shipping.get("city"),
+                # Browser identifiers for Meta CAPI EMQ — Shopify includes these on every order
+                "ip":                browser_ip,
+                "user_agent":        user_agent,
+                # Order confirmation page URL — used as event_source_url in CAPI
+                "order_status_url":  payload.get("order_status_url"),
             },
         )

@@ -478,13 +478,17 @@ def write_order(
         except Exception as exc:
             logger.debug("predict_ltv failed: %s", exc)
 
+    cust_addr = customer.address if customer and customer.address else None
+
     row = {
         "platform_order_id":     order.id,
         "platform_order_number": order.number,
         "platform_source":       event.platform,
         "platform":              event.platform,
-        "email":                 customer.email  if customer else None,
-        "phone":                 customer.phone  if customer else None,
+        "email":                 customer.email      if customer else None,
+        "phone":                 customer.phone      if customer else None,
+        "first_name":            customer.first_name if customer else None,
+        "last_name":             customer.last_name  if customer else None,
         "total_price":           order.total,
         "currency":              order.currency or "BRL",
         "financial_status":      order.status,
@@ -497,9 +501,13 @@ def write_order(
         "capi_sent": False,
         "predicted_ltv": predicted_ltv_value,
         # Shipping geo — extracted by adapter, used for dashboard filters
-        "shipping_country": meta.get("shipping_country"),
-        "shipping_state":   meta.get("shipping_state"),
-        "shipping_city":    meta.get("shipping_city"),
+        "shipping_country": meta.get("shipping_country") or (cust_addr.country if cust_addr else None),
+        "shipping_state":   meta.get("shipping_state")   or (cust_addr.state   if cust_addr else None),
+        "shipping_city":    meta.get("shipping_city")    or (cust_addr.city    if cust_addr else None),
+        # Zip code and browser identifiers for rich CAPI retry
+        "zip_code":   cust_addr.zip_code if cust_addr else None,
+        "browser_ip": meta.get("ip"),
+        "browser_ua": meta.get("user_agent"),
     }
     if client_uuid:
         row["client_id"] = client_uuid
