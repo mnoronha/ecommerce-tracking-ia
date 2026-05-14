@@ -46,7 +46,12 @@ function LoginForm() {
 
         <div className="bg-[#1a1f2e] rounded-2xl border border-[#2a2f3e] p-6">
           <h2 className="text-base font-semibold text-white mb-1">Entrar na plataforma</h2>
-          <p className="text-xs text-slate-500 mb-5">Use as credenciais fornecidas pela Pareto Plus</p>
+          <p className="text-xs text-slate-500 mb-5">
+            Não tem conta?{' '}
+            <a href="/register" className="text-indigo-400 hover:text-indigo-300 transition-colors">
+              Criar conta grátis →
+            </a>
+          </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

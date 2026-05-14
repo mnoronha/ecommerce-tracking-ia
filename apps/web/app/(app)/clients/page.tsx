@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
-import { Plus, Settings, BarChart2, ShoppingBag, Users } from 'lucide-react'
+import { Plus, Settings, BarChart2, ShoppingBag, Users, Zap } from 'lucide-react'
+import { PLANS, type PlanId } from '@/lib/plans'
 
 interface Client {
   id: string
@@ -30,27 +31,75 @@ const PLATFORM_LABEL: Record<string, string> = {
   woocommerce: 'WooCommerce',
 }
 
+async function getAgencyPlan(userId: string): Promise<{ plan: PlanId; clientLimit: number; trialDaysLeft: number | null } | null> {
+  const supabase = await createSupabaseServerClient()
+  const { data } = await supabase
+    .from('agency_members')
+    .select('agency:agencies(plan, client_limit, trial_ends_at)')
+    .eq('user_id', userId)
+    .limit(1)
+    .single()
+  if (!data?.agency) return null
+  const ag = (Array.isArray(data.agency) ? data.agency[0] : data.agency) as { plan: string; client_limit: number; trial_ends_at: string | null }
+  let trialDaysLeft: number | null = null
+  if (ag.trial_ends_at) {
+    const diff = new Date(ag.trial_ends_at).getTime() - Date.now()
+    if (diff > 0) trialDaysLeft = Math.ceil(diff / 86400_000)
+  }
+  return { plan: ag.plan as PlanId, clientLimit: ag.client_limit, trialDaysLeft }
+}
+
+const PLAN_COLORS: Record<PlanId, string> = {
+  rastreador:   'bg-slate-500/15 text-slate-300 border-slate-500/30',
+  inteligencia: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+  predicao:     'bg-purple-500/15 text-purple-300 border-purple-500/30',
+}
+
 export default async function ClientsPage() {
   const supabase = await createSupabaseServerClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
 
-  const clients = await getClients()
+  const [clients, agencyPlan] = await Promise.all([getClients(), getAgencyPlan(user.id)])
+
+  const planInfo = agencyPlan ? PLANS.find(p => p.id === agencyPlan.plan) : null
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
+      {/* Trial banner */}
+      {agencyPlan?.trialDaysLeft != null && agencyPlan.trialDaysLeft > 0 && (
+        <div className="mb-5 bg-indigo-500/10 border border-indigo-500/20 rounded-xl px-5 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap size={14} className="text-indigo-400" />
+            <p className="text-sm text-indigo-300 font-medium">
+              Trial gratuito: <strong>{agencyPlan.trialDaysLeft} dias restantes</strong>
+            </p>
+          </div>
+          <span className="text-xs text-slate-500">Plano {planInfo?.name}</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-white">Clientes</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{clients.length} cliente{clients.length !== 1 ? 's' : ''} cadastrado{clients.length !== 1 ? 's' : ''}</p>
+          <div className="flex items-center gap-3 mb-0.5">
+            <h1 className="text-xl font-bold text-white">Minhas Lojas</h1>
+            {planInfo && (
+              <span className={`text-xs px-2.5 py-1 rounded-full border font-medium ${PLAN_COLORS[agencyPlan!.plan]}`}>
+                {planInfo.name}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-slate-500">
+            {clients.length}{agencyPlan ? `/${agencyPlan.clientLimit === 9999 ? '∞' : agencyPlan.clientLimit}` : ''} loja{clients.length !== 1 ? 's' : ''}
+          </p>
         </div>
         <Link
           href="/clients/new"
           className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
         >
           <Plus size={15} />
-          Novo cliente
+          Nova loja
         </Link>
       </div>
 
