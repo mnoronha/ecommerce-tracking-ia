@@ -38,25 +38,34 @@ def _run_analysis(pixel_id: str, client_uuid: str) -> None:
 
 
 @router.get("/{pixel_id}")
-async def get_insights(pixel_id: str, limit: int = 10):
+async def get_insights(
+    pixel_id: str,
+    limit: int = 10,
+    offset: int = 0,
+    type: str | None = None,
+    severity: str | None = None,
+):
     """
-    Retorna os insights mais recentes do cliente (para o dashboard).
+    Retorna os insights do cliente com suporte a paginação e filtros.
     """
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:
         raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
 
     try:
-        result = (
+        q = (
             get_supabase()
             .table("ai_insights")
             .select("id, type, severity, title, content, data, is_read, created_at")
             .eq("client_id", client_uuid)
             .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
         )
-        return {"insights": result.data or [], "client_id": client_uuid}
+        if type:
+            q = q.eq("type", type)
+        if severity:
+            q = q.eq("severity", severity)
+        result = q.range(offset, offset + limit - 1).execute()
+        return {"insights": result.data or [], "client_id": client_uuid, "offset": offset, "limit": limit}
     except Exception as exc:
         logger.error("Erro ao buscar insights: %s", exc)
         raise HTTPException(status_code=500, detail="Erro ao buscar insights")

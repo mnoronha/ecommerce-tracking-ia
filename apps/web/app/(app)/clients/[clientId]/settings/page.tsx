@@ -25,6 +25,8 @@ interface ClientRow {
   google_ads_checkout_action_id: string | null
   google_ads_aw_id: string | null
   google_ads_refresh_token: string | null
+  tiktok_pixel_id: string | null
+  tiktok_access_token: string | null
   alert_email: string | null
   slack_webhook_url: string | null
   is_active: boolean
@@ -185,6 +187,8 @@ export default function ClientSettingsPage() {
         google_ads_checkout_action_id:    form.google_ads_checkout_action_id || null,
         google_ads_aw_id:                 form.google_ads_aw_id || null,
         google_ads_refresh_token:         form.google_ads_refresh_token || null,
+        tiktok_pixel_id:                 form.tiktok_pixel_id   || null,
+        tiktok_access_token:             form.tiktok_access_token || null,
         alert_email:                     form.alert_email      || null,
         slack_webhook_url:               form.slack_webhook_url || null,
         is_active:                       form.is_active,
@@ -470,6 +474,17 @@ export default function ClientSettingsPage() {
                 Conectar Google Ads
               </a>
             )}
+          </Field>
+        </Section>
+
+        <Section title="TikTok Ads">
+          <Field label="Pixel Code" hint="TikTok Pixel Code (ex: C3XXXXXXXXXXXX)">
+            <input value={form.tiktok_pixel_id || ''} onChange={e => set('tiktok_pixel_id', e.target.value)}
+              placeholder="C3XXXXXXXXXXXX" className={INPUT} />
+          </Field>
+          <Field label="Events API Access Token">
+            <input type="password" value={form.tiktok_access_token || ''} onChange={e => set('tiktok_access_token', e.target.value)}
+              placeholder="TikTok Events API token..." className={INPUT} />
           </Field>
         </Section>
 

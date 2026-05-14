@@ -97,6 +97,9 @@ interface RoasCampaign {
   utm_source:   string | null
   spend:        number
   revenue:      number
+  gross_profit: number | null
+  margin_pct:   number | null
+  margin_roas:  number | null
   orders:       number
   roas:         number | null
   cpa:          number | null
@@ -117,11 +120,15 @@ interface RoasCampaignWithMeta extends RoasCampaign {
 
 interface RoasData {
   has_ads_credentials: boolean
+  has_cogs:   boolean
   days:       number
   campaigns:  RoasCampaignWithMeta[]
   totals: {
     spend:           number
     revenue:         number
+    gross_profit:    number | null
+    margin_pct:      number | null
+    margin_roas:     number | null
     orders:          number
     roas:            number | null
     total_cpa:       number | null
@@ -1276,7 +1283,7 @@ export default function DashboardPage() {
             {/* Summary strip — Real (server-side) vs Meta (Insights API) */}
             {roasData.has_ads_credentials && roasData.totals.spend > 0 && (
               <div className="border-b border-[#2a2f3e]">
-                <div className="grid grid-cols-4 divide-x divide-[#2a2f3e]">
+                <div className={`grid divide-x divide-[#2a2f3e] ${roasData.has_cogs ? 'grid-cols-5' : 'grid-cols-4'}`}>
                   {[
                     { label: 'Gasto',          value: fmt(roasData.totals.spend) },
                     { label: 'Receita real',   value: fmt(roasData.totals.revenue),
@@ -1291,6 +1298,13 @@ export default function DashboardPage() {
                       sub: roasData.totals.meta_cpa != null
                         ? `Meta diz: ${fmt(roasData.totals.meta_cpa)}`
                         : undefined },
+                    ...(roasData.has_cogs && roasData.totals.gross_profit != null ? [{
+                      label: 'ROAS de Margem',
+                      value: roasData.totals.margin_roas != null ? `${roasData.totals.margin_roas.toFixed(2)}x` : '—',
+                      sub: roasData.totals.margin_pct != null
+                        ? `Margem: ${roasData.totals.margin_pct.toFixed(1)}%`
+                        : undefined,
+                    }] : []),
                   ].map(s => (
                     <div key={s.label} className="px-5 py-3 text-center">
                       <p className="text-xs text-slate-500">{s.label}</p>
@@ -1333,6 +1347,7 @@ export default function DashboardPage() {
                   <thead>
                     <tr className="border-b border-[#2a2f3e]">
                       {['Campanha', 'Pedidos', 'Receita',
+                        ...(roasData.has_cogs ? ['Lucro Bruto', 'ROAS Margem'] : []),
                         ...(roasData.has_ads_credentials ? ['Gasto', 'ROAS', 'CPA real', 'CPA Meta', 'Diff', 'Clicks'] : [])
                       ].map(h => (
                         <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
@@ -1362,6 +1377,25 @@ export default function DashboardPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
+                        {roasData.has_cogs && (
+                          <>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {c.gross_profit != null
+                                ? <span className="text-teal-400 font-medium">{fmt(c.gross_profit)}</span>
+                                : <span className="text-slate-600">—</span>}
+                              {c.margin_pct != null && (
+                                <span className="text-xs text-slate-500 ml-1">{c.margin_pct.toFixed(0)}%</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap">
+                              {c.margin_roas != null ? (
+                                <span className={`font-bold ${c.margin_roas >= 2 ? 'text-teal-400' : c.margin_roas >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                  {c.margin_roas.toFixed(2)}x
+                                </span>
+                              ) : <span className="text-slate-600">—</span>}
+                            </td>
+                          </>
+                        )}
                         {roasData.has_ads_credentials && (
                           <>
                             <td className="px-4 py-3 text-slate-300 whitespace-nowrap">

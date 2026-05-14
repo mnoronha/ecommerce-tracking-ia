@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import attribution_engine, ga4, google_ads, meta_capi, profitability, writer
+from ..services import attribution_engine, ga4, google_ads, meta_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
     ShopifyAdapter,
@@ -241,6 +241,7 @@ def _dispatch_purchase_capi(
                 "ga4_measurement_id, ga4_api_secret, "
                 "google_ads_customer_id, google_ads_conversion_action_id, "
                 "google_ads_refresh_token, "
+                "tiktok_pixel_id, tiktok_access_token, "
                 "value_based_bidding"
             )
             .eq("pixel_id", client_pixel_id)
@@ -277,6 +278,7 @@ def _dispatch_purchase_capi(
         fbp:          str | None = None
         fbc:          str | None = None
         ga_client_id: str | None = None
+        ttclid:       str | None = None
         client_ip:    str | None = None
         client_ua:    str | None = None
         visitor_uuid: str | None = None
@@ -293,16 +295,17 @@ def _dispatch_purchase_capi(
                 if visitor_uuid:
                     vis_row = (
                         get_supabase().table("visitors")
-                        .select("gclid, fbp, fbc, ga_client_id")
+                        .select("gclid, fbp, fbc, ga_client_id, ttclid")
                         .eq("id", visitor_uuid)
                         .limit(1)
                         .execute()
                     )
                     if vis_row.data:
-                        gclid = vis_row.data[0].get("gclid")
-                        fbp   = vis_row.data[0].get("fbp")
-                        fbc   = vis_row.data[0].get("fbc")
+                        gclid        = vis_row.data[0].get("gclid")
+                        fbp          = vis_row.data[0].get("fbp")
+                        fbc          = vis_row.data[0].get("fbc")
                         ga_client_id = vis_row.data[0].get("ga_client_id")
+                        ttclid       = vis_row.data[0].get("ttclid")
             except Exception as exc:
                 logger.debug("visitor attribution lookup failed: %s", exc)
 
@@ -351,6 +354,7 @@ def _dispatch_purchase_capi(
                     if not fbc           and v.get("fbc"):           fbc = v["fbc"]
                     if not gclid         and v.get("gclid"):         gclid = v["gclid"]
                     if not ga_client_id  and v.get("ga_client_id"):  ga_client_id = v["ga_client_id"]
+                    if not ttclid        and v.get("ttclid"):        ttclid = v["ttclid"]
                     if fbp and fbc:
                         break
 
@@ -429,6 +433,17 @@ def _dispatch_purchase_capi(
                 manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
                 value_override=bid_value_override,
             )
+
+        # ── TikTok Events API ────────────────────────────────────────────
+        if c.get("tiktok_pixel_id") and c.get("tiktok_access_token"):
+            tiktok_capi.send_purchase(
+                pixel_code=c["tiktok_pixel_id"],
+                access_token=c["tiktok_access_token"],
+                event=event,  # type: ignore[arg-type]
+                ttclid=ttclid,
+                value_override=bid_value_override,
+            )
+
     except Exception as exc:
         err = f"{type(exc).__name__}: {str(exc)[:200]}"
         logger.warning("_dispatch_purchase_capi error for %s: %s", client_pixel_id, err)

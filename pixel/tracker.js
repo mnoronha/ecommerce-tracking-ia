@@ -21,6 +21,7 @@
   var COOKIE_GCLID      = '_etg';   // Google click ID — 90 days
   var COOKIE_FBP        = '_fbp';   // Meta browser ID — 90 days (Meta standard)
   var COOKIE_FBC        = '_fbc';   // Meta click ID  — 90 days (Meta standard)
+  var COOKIE_TTCLID     = '_ettc';  // TikTok click ID — 90 days
   var STORAGE_SESSION   = '_ets';   // session ID — sessionStorage (tab lifetime)
   var VISITOR_TTL_DAYS  = 365;
   var ATTR_TTL_DAYS     = 30;
@@ -161,6 +162,16 @@
     return getCookie(COOKIE_FBC) || null;
   }
 
+  // ttclid — TikTok click ID (URL param, persisted 90 days)
+  function getTtclid() {
+    var fresh = getQueryParam('ttclid');
+    if (fresh) {
+      setCookie(COOKIE_TTCLID, fresh, AD_ID_TTL_DAYS);
+      return fresh;
+    }
+    return getCookie(COOKIE_TTCLID) || null;
+  }
+
   // GA4 client_id — extracted from the _ga cookie set by gtag.js / GA4
   // Format of _ga: GA1.{n}.{client_id_part1}.{client_id_part2}
   function getGaClientId() {
@@ -186,6 +197,7 @@
       fbc:          getFbc(),
       ga_client_id: getGaClientId(),
       gclid:        getGclid(),
+      ttclid:       getTtclid(),
       metadata:     extra || {}
     };
   }

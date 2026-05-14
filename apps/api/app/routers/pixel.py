@@ -90,6 +90,7 @@ class PixelEventRequest(BaseModel):
     fbc:          Optional[str] = None  # Meta click ID (_fbc cookie / fbclid)
     ga_client_id: Optional[str] = None  # GA4 client ID (_ga cookie)
     gclid:        Optional[str] = None  # Google click ID (gclid URL param)
+    ttclid:       Optional[str] = None  # TikTok click ID (ttclid URL param)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -120,6 +121,7 @@ def _build_normalized(
             "fbc":          data.fbc,
             "ga_client_id": data.ga_client_id,
             "gclid":        data.gclid,
+            "ttclid":       data.ttclid,
         },
     )
 
@@ -252,6 +254,7 @@ async def receive_pixel_event(
         fbc=body.fbc,
         cart_token=(body.metadata or {}).get("cart_token"),
         ga_client_id=body.ga_client_id,
+        ttclid=body.ttclid,
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
     writer.write_cart_event(client_uuid, visitor_uuid, event)

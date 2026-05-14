@@ -58,7 +58,7 @@ async def get_roas(pixel_id: str, days: int = 30):
     start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
     orders_result = (
         sb.table("orders")
-        .select("utm_campaign, utm_source, utm_medium, total_price, financial_status")
+        .select("utm_campaign, utm_source, utm_medium, total_price, gross_profit, financial_status")
         .eq("client_id", client_uuid)
         .gte("created_at", start_date)
         .execute()
@@ -70,13 +70,18 @@ async def get_roas(pixel_id: str, days: int = 30):
         key = o.get("utm_campaign") or "(sem campanha)"
         if key not in campaign_map:
             campaign_map[key] = {
-                "revenue": 0.0,
-                "orders":  0,
-                "utm_source": o.get("utm_source"),
-                "utm_medium": o.get("utm_medium"),
+                "revenue":      0.0,
+                "gross_profit": 0.0,
+                "orders":       0,
+                "utm_source":   o.get("utm_source"),
+                "utm_medium":   o.get("utm_medium"),
+                "has_cogs":     False,
             }
         campaign_map[key]["revenue"] += float(o.get("total_price") or 0)
         campaign_map[key]["orders"]  += 1
+        if o.get("gross_profit") is not None:
+            campaign_map[key]["gross_profit"] += float(o["gross_profit"])
+            campaign_map[key]["has_cogs"] = True
 
     # ── Buscar gasto das campanhas no Meta Ads API ────────────────────────────
     ads_rows: list[dict] = []
@@ -93,11 +98,14 @@ async def get_roas(pixel_id: str, days: int = 30):
     # ── Merge ─────────────────────────────────────────────────────────────────
     all_names = set(campaign_map.keys()) | {r["campaign_name"] for r in ads_rows}
     rows = []
+    any_cogs = any(v.get("has_cogs") for v in campaign_map.values())
     for name in all_names:
-        rev_data       = campaign_map.get(name, {"revenue": 0.0, "orders": 0})
+        rev_data       = campaign_map.get(name, {"revenue": 0.0, "gross_profit": 0.0, "orders": 0, "has_cogs": False})
         ads            = spend_map.get(name.lower(), {})
         spend          = ads.get("spend", 0.0)
         revenue        = rev_data["revenue"]
+        gross_profit   = rev_data.get("gross_profit") or 0.0
+        has_cogs       = rev_data.get("has_cogs", False)
         n_orders       = rev_data["orders"]
         meta_purchases = ads.get("meta_purchases") or 0
         meta_revenue   = ads.get("meta_revenue") or 0
@@ -115,11 +123,18 @@ async def get_roas(pixel_id: str, days: int = 30):
         # found more orders than Meta did (rare; usually indicates a tag bug).
         purchases_diff = n_orders - meta_purchases
 
+        # Margin ROAS: gross_profit / spend — the metric DTC cares about most
+        margin_roas = round(gross_profit / spend, 2) if spend > 0 and has_cogs else None
+        margin_pct  = round(gross_profit / revenue * 100, 1) if revenue > 0 and has_cogs else None
+
         rows.append({
             "campaign_name":  name,
             "utm_source":     rev_data.get("utm_source") or ads.get("utm_source"),
             "spend":          round(spend, 2),
             "revenue":        round(revenue, 2),
+            "gross_profit":   round(gross_profit, 2) if has_cogs else None,
+            "margin_pct":     margin_pct,
+            "margin_roas":    margin_roas,
             "orders":         n_orders,
             "roas":           round(revenue / spend, 2)        if spend > 0    else None,
             "cpa":            cpa,
@@ -144,6 +159,7 @@ async def get_roas(pixel_id: str, days: int = 30):
     total_orders         = sum(r["orders"] for r in rows)
     total_meta_purchases = sum(r["meta_purchases"] for r in rows)
     total_meta_revenue   = round(sum(r["meta_revenue"] for r in rows), 2)
+    total_gross_profit   = round(sum(r["gross_profit"] or 0 for r in rows), 2) if any_cogs else None
 
     real_cpa = round(total_spend / total_orders, 2) if total_orders > 0 and total_spend > 0 else None
     meta_cpa_total = round(total_spend / total_meta_purchases, 2) \
@@ -152,13 +168,22 @@ async def get_roas(pixel_id: str, days: int = 30):
     if real_cpa and meta_cpa_total and meta_cpa_total > 0:
         cpa_diff_pct_total = round((real_cpa - meta_cpa_total) / meta_cpa_total * 100, 1)
 
+    total_margin_roas = round(total_gross_profit / total_spend, 2) \
+                        if any_cogs and total_gross_profit and total_spend > 0 else None
+    total_margin_pct  = round(total_gross_profit / total_revenue * 100, 1) \
+                        if any_cogs and total_gross_profit and total_revenue > 0 else None
+
     return {
         "has_ads_credentials": has_ads_creds,
-        "days":     days,
-        "campaigns": rows,
+        "has_cogs":   any_cogs,
+        "days":       days,
+        "campaigns":  rows,
         "totals": {
             "spend":              total_spend,
             "revenue":            total_revenue,
+            "gross_profit":       total_gross_profit,
+            "margin_pct":         total_margin_pct,
+            "margin_roas":        total_margin_roas,
             "orders":             total_orders,
             "roas":               round(total_revenue / total_spend, 2) if total_spend > 0 else None,
             "total_cpa":          real_cpa,
