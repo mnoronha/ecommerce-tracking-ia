@@ -1,15 +1,18 @@
 /**
- * Ecommerce Tracking Pixel — tracker.js  v2.1.0
+ * Ecommerce Tracking Pixel — tracker.js  v2.2.0
  *
- * Usage:
+ * Usage A — HTML attribute (manual install):
  *   <script
- *     src="/pixel/tracker.js"
+ *     src="https://api.example.com/static/tracker.js"
  *     data-client-id="YOUR_CLIENT_ID"
- *     data-api-url="https://api.yourdomain.com"
  *     async
  *   ></script>
  *
- * Or configure programmatically before the script tag:
+ * Usage B — Shopify ScriptTag API (auto-install, no theme editing):
+ *   src: https://api.example.com/static/tracker.js?client_id=YOUR_CLIENT_ID
+ *   (api-url is auto-detected from the script's own origin)
+ *
+ * Usage C — programmatic config before the tag:
  *   <script>window.__ETConfig = { clientId: "...", apiUrl: "..." };</script>
  */
 (function (w, d) {
@@ -21,6 +24,7 @@
   var COOKIE_GCLID      = '_etg';   // Google click ID — 90 days
   var COOKIE_FBP        = '_fbp';   // Meta browser ID — 90 days (Meta standard)
   var COOKIE_FBC        = '_fbc';   // Meta click ID  — 90 days (Meta standard)
+  var COOKIE_TTCLID     = '_ettc';  // TikTok click ID — 90 days
   var STORAGE_SESSION   = '_ets';   // session ID — sessionStorage (tab lifetime)
   var VISITOR_TTL_DAYS  = 365;
   var ATTR_TTL_DAYS     = 30;
@@ -34,8 +38,36 @@
     return scripts[scripts.length - 1];
   })();
 
-  var CLIENT_ID = cfg.clientId || (script && script.getAttribute('data-client-id')) || '';
-  var API_URL   = (cfg.apiUrl   || (script && script.getAttribute('data-api-url'))   || '').replace(/\/$/, '');
+  // Read a param from the script's own src URL.
+  // Enables Shopify ScriptTag usage: tracker.js?client_id=xxx
+  function _srcParam(name) {
+    try {
+      if (script && script.src) {
+        return new URL(script.src).searchParams.get(name);
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // When loaded via ScriptTag API the api_url isn't set — infer from script origin
+  function _scriptOrigin() {
+    try {
+      if (script && script.src) return new URL(script.src).origin;
+    } catch (e) {}
+    return '';
+  }
+
+  var CLIENT_ID = cfg.clientId
+    || (script && script.getAttribute('data-client-id'))
+    || _srcParam('client_id')
+    || '';
+
+  var API_URL = (
+    cfg.apiUrl
+    || (script && script.getAttribute('data-api-url'))
+    || _srcParam('api_url')
+    || _scriptOrigin()
+  ).replace(/\/$/, '');
 
   // ── Cookie utilities ───────────────────────────────────────────────────────
   function setCookie(name, value, days) {
@@ -161,6 +193,16 @@
     return getCookie(COOKIE_FBC) || null;
   }
 
+  // ttclid — TikTok click ID (URL param, persisted 90 days)
+  function getTtclid() {
+    var fresh = getQueryParam('ttclid');
+    if (fresh) {
+      setCookie(COOKIE_TTCLID, fresh, AD_ID_TTL_DAYS);
+      return fresh;
+    }
+    return getCookie(COOKIE_TTCLID) || null;
+  }
+
   // GA4 client_id — extracted from the _ga cookie set by gtag.js / GA4
   // Format of _ga: GA1.{n}.{client_id_part1}.{client_id_part2}
   function getGaClientId() {
@@ -186,6 +228,7 @@
       fbc:          getFbc(),
       ga_client_id: getGaClientId(),
       gclid:        getGclid(),
+      ttclid:       getTtclid(),
       metadata:     extra || {}
     };
   }
