@@ -1,5 +1,5 @@
 /**
- * Ecommerce Tracking Pixel — tracker.js  v2.1.0
+ * Ecommerce Tracking Pixel — tracker.js  v2.3.0
  *
  * Usage:
  *   <script
@@ -454,28 +454,70 @@
     w.setTimeout(function () { renderSurveyModal(orderId); }, 1200);
   }
 
+  // ── Shopify cart attribute injection ──────────────────────────────────────
+  // Writes visitor/ad identifiers as Shopify cart note_attributes so that the
+  // orders/paid webhook carries fbp, fbc, gclid, and visitor cookie ID.
+  // Without this, server-side attribution falls back to email-only matching,
+  // which only works for ~0.1% of visitors who have a prior order.
+  // Keys prefixed with _ are hidden from the merchant UI but forwarded on webhooks.
+
+  var _CART_INJECT_KEY = '_etci'; // sessionStorage flag: already injected this session
+
+  function injectShopifyCartAttributes() {
+    if (!w.Shopify) return; // only on Shopify storefronts
+    try {
+      if (sessionStorage.getItem(_CART_INJECT_KEY)) return;
+      sessionStorage.setItem(_CART_INJECT_KEY, '1');
+    } catch (e) { /* private mode — proceed anyway */ }
+
+    var attrs = { '_etv': getVisitorId() };
+    var fbp    = getFbp();
+    var fbc    = getFbc();
+    var gclid  = getGclid();
+    var gcid   = getGaClientId();
+    var ttclid = getTtclid();
+
+    if (fbp)    attrs['_fbp']   = fbp;
+    if (fbc)    attrs['_fbc']   = fbc;
+    if (gclid)  attrs['_gclid'] = gclid;
+    if (gcid)   attrs['_gcid']  = gcid;
+    if (ttclid) attrs['_ettc']  = ttclid;
+
+    try {
+      fetch('/cart/update.js', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ attributes: attrs }),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) { /* ignore */ }
+  }
+
   // ── Public API ────────────────────────────────────────────────────────────
   w.ET = {
-    track:          track,
-    getVisitorId:   getVisitorId,
-    getSessionId:   getSessionId,
-    getAttribution: getAttribution,
-    getFbp:         getFbp,
-    getFbc:         getFbc,
-    getGclid:       getGclid,
-    getGaClientId:  getGaClientId,
-    showSurvey:     renderSurveyModal
+    track:           track,
+    getVisitorId:    getVisitorId,
+    getSessionId:    getSessionId,
+    getAttribution:  getAttribution,
+    getFbp:          getFbp,
+    getFbc:          getFbc,
+    getGclid:        getGclid,
+    getGaClientId:   getGaClientId,
+    showSurvey:      renderSurveyModal,
+    injectCartAttrs: injectShopifyCartAttributes
   };
 
-  // ── Fire initial pageview ─────────────────────────────────────────────────
+  // ── Fire initial pageview + cart injection ────────────────────────────────
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       trackPageview();
       maybeShowSurvey();
+      injectShopifyCartAttributes();
     });
   } else {
     trackPageview();
     maybeShowSurvey();
+    injectShopifyCartAttributes();
   }
 
 }(window, document));
