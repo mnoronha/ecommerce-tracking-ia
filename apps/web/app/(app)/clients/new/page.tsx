@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
@@ -43,7 +43,7 @@ interface InstallResult {
   tracker_src: string
 }
 
-export default function NewClientWizard() {
+function NewClientWizard() {
   const router       = useRouter()
   const searchParams = useSearchParams()
   const isFresh      = searchParams.get('fresh') === '1'
@@ -578,5 +578,13 @@ export default function NewClientWizard() {
 
       </div>
     </div>
+  )
+}
+
+export default function NewClientPage() {
+  return (
+    <Suspense>
+      <NewClientWizard />
+    </Suspense>
   )
 }
