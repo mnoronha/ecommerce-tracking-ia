@@ -403,6 +403,15 @@ export default function ClientSettingsPage() {
               </a>
             )}
           </Field>
+          <Field label="Access Token" hint="System User token (permanente) — cole aqui ou use OAuth acima">
+            <input
+              type="password"
+              value={form.meta_access_token || ''}
+              onChange={e => set('meta_access_token', e.target.value)}
+              placeholder={form.meta_access_token ? '••••••••••••••••' : 'EAAxxxxxxx...'}
+              className={INPUT}
+            />
+          </Field>
           <Field label="Pixel ID" hint="auto-detectado após conectar OAuth, ou preencha manualmente">
             <input value={form.meta_pixel_id || ''} onChange={e => set('meta_pixel_id', e.target.value)}
               placeholder="1018779385487104" className={INPUT} />
