@@ -66,15 +66,15 @@ def send_purchase(
         or f"server.{str(order.id).replace('-', '')[:16]}"
     )
 
-    # Build items array from line_items metadata if available
+    # Build items array from order line items
     items = []
-    if event.metadata and isinstance(event.metadata.get("line_items"), list):
-        for item in event.metadata["line_items"]:
+    if order.items:
+        for item in order.items:
             items.append({
-                "item_id":   str(item.get("product_id", "")),
-                "item_name": str(item.get("name", item.get("title", ""))),
-                "price":     float(item.get("price", 0)),
-                "quantity":  int(item.get("quantity", 1)),
+                "item_id":   str(item.product_id or item.id or ""),
+                "item_name": str(item.name or ""),
+                "price":     float(item.price or 0),
+                "quantity":  int(item.quantity or 1),
             })
 
     payload = {
