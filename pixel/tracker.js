@@ -152,6 +152,7 @@
   }
 
   // _fbc — Meta click ID. Built from ?fbclid= and persisted 90 days.
+  // Increased coverage: also try to extract from referrer if main param missing
   function getFbc() {
     var fresh = getQueryParam('fbclid');
     if (fresh) {
@@ -159,6 +160,20 @@
       setCookie(COOKIE_FBC, fbc, AD_ID_TTL_DAYS);
       return fbc;
     }
+    // Try to extract fbclid from referrer URL if it has one
+    // (improves coverage for cases where fbclid may be in redirect chain)
+    try {
+      var ref = document.referrer;
+      if (ref) {
+        var refMatch = ref.match(/[\?&]fbclid=([^&#]*)/);
+        if (refMatch && refMatch[1]) {
+          var fbclid = decodeURIComponent(refMatch[1]);
+          var fbc = 'fb.1.' + Date.now() + '.' + fbclid;
+          setCookie(COOKIE_FBC, fbc, AD_ID_TTL_DAYS);
+          return fbc;
+        }
+      }
+    } catch (e) { /* ignore */ }
     return getCookie(COOKIE_FBC) || null;
   }
 
@@ -182,23 +197,54 @@
     return parts[2] + '.' + parts[3];
   }
 
+  // Facebook Login ID — from FB SDK or Meta Pixel
+  // Improves EMQ by up to 8% when sent to Meta CAPI
+  function getFacebookLoginId() {
+    try {
+      // Check if FB SDK is loaded and user is logged in
+      if (w.FB && w.FB.AppEvents) {
+        var userId = w.FB.AppEvents.getUserID();
+        if (userId) return String(userId);
+      }
+    } catch (e) { /* FB SDK may not be available */ }
+    return null;
+  }
+
+  // Date of Birth — from data attribute or localStorage
+  // Improves EMQ by up to 6% when sent to Meta CAPI
+  // Format: YYYYMMDD (stored in localStorage as _etdob)
+  function getDateOfBirth() {
+    try {
+      // Check if set programmatically via window attribute
+      if (w.__ETConfig && w.__ETConfig.dateOfBirth) {
+        return String(w.__ETConfig.dateOfBirth);
+      }
+      // Check localStorage (can be set by checkout form)
+      var stored = localStorage.getItem('_etdob');
+      if (stored) return stored;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
   // ── Payload builder ───────────────────────────────────────────────────────
   function buildPayload(eventType, extra) {
     return {
-      client_id:    CLIENT_ID,
-      event_type:   eventType,
-      visitor_id:   getVisitorId(),
-      session_id:   getSessionId(),
-      page_url:     location.href,
-      referrer:     document.referrer || null,
-      utm:          getAttribution(),
-      timestamp:    new Date().toISOString(),
-      fbp:          getFbp(),
-      fbc:          getFbc(),
-      ga_client_id: getGaClientId(),
-      gclid:        getGclid(),
-      ttclid:       getTtclid(),
-      metadata:     extra || {}
+      client_id:       CLIENT_ID,
+      event_type:      eventType,
+      visitor_id:      getVisitorId(),
+      session_id:      getSessionId(),
+      page_url:        location.href,
+      referrer:        document.referrer || null,
+      utm:             getAttribution(),
+      timestamp:       new Date().toISOString(),
+      fbp:             getFbp(),
+      fbc:             getFbc(),
+      ga_client_id:    getGaClientId(),
+      gclid:           getGclid(),
+      ttclid:          getTtclid(),
+      facebook_login:  getFacebookLoginId(),
+      date_of_birth:   getDateOfBirth(),
+      metadata:        extra || {}
     };
   }
 
@@ -476,12 +522,16 @@
     var gclid  = getGclid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
+    var fb_login = getFacebookLoginId();
+    var dob    = getDateOfBirth();
 
-    if (fbp)    attrs['_fbp']   = fbp;
-    if (fbc)    attrs['_fbc']   = fbc;
-    if (gclid)  attrs['_gclid'] = gclid;
-    if (gcid)   attrs['_gcid']  = gcid;
-    if (ttclid) attrs['_ettc']  = ttclid;
+    if (fbp)       attrs['_fbp']   = fbp;
+    if (fbc)       attrs['_fbc']   = fbc;
+    if (gclid)     attrs['_gclid'] = gclid;
+    if (gcid)      attrs['_gcid']  = gcid;
+    if (ttclid)    attrs['_ettc']  = ttclid;
+    if (fb_login)  attrs['_fblogin'] = fb_login;
+    if (dob)       attrs['_dob']   = dob;
 
     try {
       fetch('/cart/update.js', {

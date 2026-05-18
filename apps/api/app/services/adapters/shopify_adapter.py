@@ -291,6 +291,10 @@ class ShopifyAdapter(BaseAdapter):
                 "fbp":               nattr.get("_fbp"),
                 "fbc":               nattr.get("_fbc"),
                 "ga_client_id":      nattr.get("_gcid"),
+                "ttclid":            nattr.get("_ettc"),
+                # Facebook Login ID & Date of Birth — improves Meta CAPI EMQ (+8% and +6%)
+                "facebook_login":    nattr.get("_fblogin"),
+                "date_of_birth":     nattr.get("_dob"),
                 # Shipping address — used to populate orders.shipping_country/state/city
                 "shipping_country":  shipping.get("country_code") or shipping.get("country"),
                 "shipping_state":    shipping.get("province_code") or shipping.get("province"),
