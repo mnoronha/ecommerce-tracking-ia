@@ -647,9 +647,11 @@ export default function DashboardPage() {
   const loadData = useCallback(async (range: DateRange) => {
     setLoading(true)
 
-    const { data: clientData } = await supabase
-      .from('clients').select('id')
-      .eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+    // Check if CLIENT_PIXEL_ID is a UUID (client ID) or a pixel_id
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
+    const { data: clientData } = isUUID
+      ? await supabase.from('clients').select('id').eq('id', CLIENT_PIXEL_ID).limit(1).single()
+      : await supabase.from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
 
     if (!clientData) { setLoading(false); return }
 

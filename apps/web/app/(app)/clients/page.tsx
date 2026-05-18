@@ -21,7 +21,10 @@ async function getClients(): Promise<Client[]> {
     .from('clients')
     .select('id,name,pixel_id,ecommerce_platform,is_active,meta_pixel_id,ga4_measurement_id,created_at')
     .order('created_at', { ascending: false })
-  if (error) return []
+  if (error) {
+    console.error('[getClients] Error:', error)
+    return []
+  }
   return data || []
 }
 
