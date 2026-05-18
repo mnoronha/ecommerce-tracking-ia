@@ -111,7 +111,12 @@
       "PowerShell(supabase login *)",
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\maico\\\\ecommerce-tracking-ia\\\\app\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName | Sort-Object FullName)",
       "Bash(xargs -I{} basename {} .py)",
-      "PowerShell(try { $r = Invoke-WebRequest -Uri \"https://ecommerce-tracking-ia-production.up.railway.app/health\" -TimeoutSec 20 -UseBasicParsing; $r.Content } catch { $_.Exception.Message })"
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"https://ecommerce-tracking-ia-production.up.railway.app/health\" -TimeoutSec 20 -UseBasicParsing; $r.Content } catch { $_.Exception.Message })",
+      "Bash(python *)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(Get-ChildItem -Path C:\\\\Users\\\\maico\\\\ecommerce-tracking-ia -Recurse -Include \"*tracker*\", \"*pixel*\" -Exclude node_modules, .next, .git)",
+      "Bash(Select-Object -First 20 FullName)"
     ]
   },
   "enableAllProjectMcpServers": true,
