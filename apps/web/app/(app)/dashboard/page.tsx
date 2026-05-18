@@ -649,11 +649,17 @@ export default function DashboardPage() {
 
     // Check if CLIENT_PIXEL_ID is a UUID (client ID) or a pixel_id
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
-    const { data: clientData } = isUUID
+    console.log('[loadData] CLIENT_PIXEL_ID:', CLIENT_PIXEL_ID, 'isUUID:', isUUID)
+    const { data: clientData, error: clientError } = isUUID
       ? await supabase.from('clients').select('id').eq('id', CLIENT_PIXEL_ID).limit(1).single()
       : await supabase.from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
 
-    if (!clientData) { setLoading(false); return }
+    console.log('[loadData] clientData:', clientData, 'error:', clientError)
+    if (!clientData) {
+      console.log('[loadData] No client data found')
+      setLoading(false)
+      return
+    }
 
     const clientId = clientData.id
     const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
