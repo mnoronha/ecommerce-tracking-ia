@@ -500,6 +500,86 @@
     w.setTimeout(function () { renderSurveyModal(orderId); }, 1200);
   }
 
+  // ── Fire client-side Purchase event on thank-you page ─────────────────────
+  // Meta CAPI needs both pixel (client) + server-side dispatches to dedup
+  // correctly. Without a browser-side Purchase, EMQ drops and Meta cannot
+  // measure browser-only signals like view/click attribution windows.
+  // Idempotent: only fires once per orderId per device via localStorage.
+  var PURCHASE_STORAGE_KEY = '_etpurchase';
+
+  function alreadyFiredPurchase(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      if (!stored) return false;
+      var ids = JSON.parse(stored);
+      return Array.isArray(ids) && ids.indexOf(orderId) >= 0;
+    } catch (e) { return false; }
+  }
+
+  function markPurchaseFired(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      var ids = stored ? JSON.parse(stored) : [];
+      if (!Array.isArray(ids)) ids = [];
+      if (ids.indexOf(orderId) < 0) ids.push(orderId);
+      if (ids.length > 50) ids = ids.slice(-50);
+      localStorage.setItem(PURCHASE_STORAGE_KEY, JSON.stringify(ids));
+    } catch (e) { /* ignore */ }
+  }
+
+  function extractOrderDetails() {
+    // Best effort: pull order details from Shopify thank-you page globals.
+    var details = { order_id: null, value: null, currency: 'BRL', items: [] };
+    try {
+      var s = w.Shopify;
+      if (s && s.checkout) {
+        details.order_id = s.checkout.order_id ? String(s.checkout.order_id) : null;
+        details.value    = (s.checkout.total_price != null) ? Number(s.checkout.total_price) : null;
+        details.currency = s.checkout.currency || details.currency;
+        if (Array.isArray(s.checkout.line_items)) {
+          details.items = s.checkout.line_items.map(function (li) {
+            return {
+              product_id: String(li.product_id || ''),
+              variant_id: String(li.variant_id || ''),
+              name:       li.title,
+              sku:        li.sku,
+              price:      Number(li.price || 0),
+              quantity:   Number(li.quantity || 1)
+            };
+          });
+        }
+      }
+      // dataLayer fallback (GTM-style)
+      if (!details.value && w.dataLayer) {
+        for (var i = w.dataLayer.length - 1; i >= 0; i--) {
+          var entry = w.dataLayer[i];
+          if (entry && (entry.event === 'purchase' || entry.event === 'transaction')) {
+            if (entry.transaction_id && !details.order_id) details.order_id = String(entry.transaction_id);
+            if (entry.value != null && details.value == null) details.value = Number(entry.value);
+            if (entry.currency && !details.currency) details.currency = entry.currency;
+            break;
+          }
+        }
+      }
+    } catch (e) { /* best effort */ }
+    return details;
+  }
+
+  function maybeTrackPurchase() {
+    if (!isThankYouPage()) return;
+    var details = extractOrderDetails();
+    var orderId = details.order_id || extractOrderId();
+    if (!orderId) return;
+    if (alreadyFiredPurchase(orderId)) return;
+    track('purchase', {
+      order_id: orderId,
+      value:    details.value,
+      currency: details.currency,
+      items:    details.items
+    });
+    markPurchaseFired(orderId);
+  }
+
   // ── Shopify cart attribute injection ──────────────────────────────────────
   // Writes visitor/ad identifiers as Shopify cart note_attributes so that the
   // orders/paid webhook carries fbp, fbc, gclid, and visitor cookie ID.
@@ -561,11 +641,13 @@
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       trackPageview();
+      maybeTrackPurchase();
       maybeShowSurvey();
       injectShopifyCartAttributes();
     });
   } else {
     trackPageview();
+    maybeTrackPurchase();
     maybeShowSurvey();
     injectShopifyCartAttributes();
   }

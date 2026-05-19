@@ -198,6 +198,51 @@ def attribute_order(order: dict, visitor: Optional[dict]) -> int:
     order_ts = _parse_ts(order.get('created_at')) or datetime.now(timezone.utc)
     journey  = _build_journey(visitor or {}, order_ts) if visitor else []
 
+    # ── Fallback 1: order's own UTM fields (set by webhook adapter) ─────────
+    # The pixel doesn't always persist utm_history on the visitor row, so
+    # we use orders.utm_* as a strong signal when present.
+    if not journey and order.get('utm_source'):
+        journey = [{
+            'ts':       order.get('created_at'),
+            'source':   order.get('utm_source'),
+            'medium':   order.get('utm_medium'),
+            'campaign': order.get('utm_campaign'),
+        }]
+
+    # ── Fallback 2: attribution_cookies (recent visitor session) ────────────
+    # We persist a rolling list of UTM-tagged visits keyed by visitor_cookie
+    # and email. Use the most recent matching cookie to recover attribution
+    # when the visitor record was created fresh from a webhook (guest PIX flow).
+    if not journey and order.get('client_id'):
+        try:
+            visitor_cookie = (visitor or {}).get('visitor_id')
+            cookie_q = (
+                sb.table('attribution_cookies')
+                .select('utm_source, utm_medium, utm_campaign, utm_content, created_at')
+                .eq('client_id', order['client_id'])
+                .not_.is_('utm_source', None)
+                .order('created_at', desc=True)
+                .limit(1)
+            )
+            if visitor_cookie:
+                cookie_q = cookie_q.eq('visitor_cookie_id', visitor_cookie)
+            elif order.get('email'):
+                cookie_q = cookie_q.eq('email', str(order['email']).strip().lower())
+            else:
+                cookie_q = None
+            if cookie_q is not None:
+                res = cookie_q.execute()
+                if res and res.data:
+                    c = res.data[0]
+                    journey = [{
+                        'ts':       c.get('created_at') or order.get('created_at'),
+                        'source':   c.get('utm_source'),
+                        'medium':   c.get('utm_medium'),
+                        'campaign': c.get('utm_campaign'),
+                    }]
+        except Exception as exc:
+            logger.debug('attribution_cookies fallback failed for %s: %s', order.get('id'), exc)
+
     # If no journey, attribute 100% to "direct" for all models
     if not journey:
         journey = [{
@@ -258,7 +303,8 @@ def recompute_for_client(client_uuid: str, days: int = 90) -> dict:
 
     orders_resp = (
         sb.table('orders')
-        .select('id, client_id, visitor_id, total_price, created_at')
+        .select('id, client_id, visitor_id, total_price, created_at, '
+                'utm_source, utm_medium, utm_campaign, utm_content, email')
         .eq('client_id', client_uuid)
         .eq('financial_status', 'paid')
         .gte('created_at', cutoff)

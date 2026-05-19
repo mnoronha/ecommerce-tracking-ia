@@ -453,6 +453,7 @@ def write_order(
             client_uuid=client_uuid,
             visitor_cookie_id=meta_ev.get("visitor_cookie_id"),
             email=customer.email if customer else None,
+            visitor_uuid=visitor_uuid,
         )
         if cookie:
             effective_utm_source   = cookie.get("utm_source")
@@ -480,6 +481,39 @@ def write_order(
 
     cust_addr = customer.address if customer and customer.address else None
 
+    # ── Status downgrade protection ──────────────────────────────────────────
+    # Shopify sends multiple orders/create webhooks for the same order over
+    # time. If a later create overwrites a prior paid status, we'd lose the
+    # paid signal and the order would never reach Meta CAPI. Look up the
+    # existing row and skip overwriting terminal states (paid/refunded) and
+    # the capi_sent flag with stale data from a non-paid webhook.
+    existing_status: Optional[str] = None
+    existing_capi_sent: bool = False
+    if client_uuid and order.id:
+        try:
+            exists = (
+                sb.table("orders")
+                .select("financial_status, capi_sent")
+                .eq("client_id", client_uuid)
+                .eq("platform_order_id", order.id)
+                .limit(1)
+                .execute()
+            )
+            if exists and exists.data:
+                existing_status = exists.data[0].get("financial_status")
+                existing_capi_sent = bool(exists.data[0].get("capi_sent"))
+        except Exception as exc:
+            logger.debug("order existence check failed: %s", exc)
+
+    _TERMINAL_STATUSES = {"paid", "refunded", "partially_refunded", "voided"}
+    incoming_status = order.status
+    # Keep the more authoritative status: paid/refunded should never be
+    # downgraded by a later orders/create webhook that arrives stale.
+    if existing_status in _TERMINAL_STATUSES and incoming_status not in _TERMINAL_STATUSES:
+        effective_status = existing_status
+    else:
+        effective_status = incoming_status
+
     row = {
         "platform_order_id":     order.id,
         "platform_order_number": order.number,
@@ -491,14 +525,13 @@ def write_order(
         "last_name":             customer.last_name  if customer else None,
         "total_price":           order.total,
         "currency":              order.currency or "BRL",
-        "financial_status":      order.status,
+        "financial_status":      effective_status,
         "utm_source":   effective_utm_source,
         "utm_medium":   effective_utm_medium,
         "utm_campaign": effective_utm_campaign,
         "utm_content":  effective_utm_content,
         "is_first_purchase":  is_first,
         "is_repeat_purchase": not is_first,
-        "capi_sent": False,
         "predicted_ltv": predicted_ltv_value,
         # Shipping geo — extracted by adapter, used for dashboard filters
         "shipping_country": meta.get("shipping_country") or (cust_addr.country if cust_addr else None),
@@ -509,6 +542,10 @@ def write_order(
         "browser_ip": meta.get("ip"),
         "browser_ua": meta.get("user_agent"),
     }
+    # Only initialize capi_sent=False for brand new orders. Existing orders
+    # that already had capi_sent=true must NOT be reset by a later webhook.
+    if not existing_capi_sent:
+        row["capi_sent"] = False
     if client_uuid:
         row["client_id"] = client_uuid
     if visitor_uuid:
@@ -540,7 +577,7 @@ def write_order(
                     from . import profitability
                     profitability.persist_items_and_margin(client_uuid, order_uuid, event)
                 except Exception as exc:
-                    logger.debug("profitability calc failed: %s", exc)
+                    logger.warning("profitability calc failed for order %s: %s", order_uuid, exc)
 
             return order_uuid
     except Exception as exc:
@@ -653,15 +690,37 @@ def lookup_attribution_cookie(
     client_uuid: str,
     visitor_cookie_id: Optional[str] = None,
     email: Optional[str] = None,
+    visitor_uuid: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Find the freshest unused attribution cookie for a buyer. Used by write_order
     as a last-resort fallback when neither the webhook payload nor the visitor
     record carry UTMs. Returns the matching row or None.
+
+    Lookup priority:
+      1. visitor_cookie_id (exact _etv match — strongest)
+      2. visitor_uuid → resolve visitor.visitor_id (the cookie text) and match
+      3. email (least specific, but works when neither cookie is known)
     """
-    if not client_uuid or not (visitor_cookie_id or email):
+    if not client_uuid or not (visitor_cookie_id or email or visitor_uuid):
         return None
     sb = get_supabase()
+
+    # Resolve visitor_uuid → visitor_cookie_id when the caller has only the UUID
+    if not visitor_cookie_id and visitor_uuid:
+        try:
+            v = (
+                sb.table("visitors")
+                .select("visitor_id")
+                .eq("id", visitor_uuid)
+                .limit(1)
+                .execute()
+            )
+            if v and v.data:
+                visitor_cookie_id = v.data[0].get("visitor_id")
+        except Exception as exc:
+            logger.debug("visitor cookie resolve failed: %s", exc)
+
     try:
         q = (
             sb.table("attribution_cookies")
@@ -669,6 +728,7 @@ def lookup_attribution_cookie(
             .eq("client_id", client_uuid)
             .is_("used_in_order_id", "null")
             .gte("expires_at", datetime.now(timezone.utc).isoformat())
+            .not_.is_("utm_source", "null")
             .order("created_at", desc=True)
             .limit(1)
         )
@@ -800,6 +860,27 @@ def update_order_fulfillment(
         logger.warning("update_order_fulfillment failed: %s", exc)
 
 
+def update_order_financial_status(
+    client_uuid: str,
+    platform_order_id: str,
+    financial_status: str,
+) -> None:
+    """
+    Update financial_status on an existing order. Used by orders/cancelled to
+    flip the status to 'voided' so CAPI retry / dashboards stop treating the
+    order as a paid conversion.
+    """
+    if not client_uuid or not platform_order_id:
+        return
+    try:
+        get_supabase().table("orders").update(
+            {"financial_status": financial_status}
+        ).eq("client_id", client_uuid).eq("platform_order_id", platform_order_id).execute()
+        logger.debug("financial_status=%s for order %s", financial_status, platform_order_id)
+    except Exception as exc:
+        logger.warning("update_order_financial_status failed: %s", exc)
+
+
 # ── Lead quality score ────────────────────────────────────────────────────────
 
 _LEAD_SCORE_MAP: dict[str, int] = {
@@ -870,11 +951,13 @@ def reset_retargeting_score(visitor_uuid: str) -> None:
 # ── Mark CAPI sent ─────────────────────────────────────────────────────────────
 
 def mark_capi_sent(order_uuid: str) -> None:
-    """Mark an order as successfully sent to Meta CAPI."""
+    """Mark an order as successfully sent to Meta CAPI. Clears any stale
+    capi_last_error from earlier failed attempts."""
     try:
         get_supabase().table("orders").update({
-            "capi_sent":    True,
-            "capi_sent_at": datetime.now(timezone.utc).isoformat(),
+            "capi_sent":       True,
+            "capi_sent_at":    datetime.now(timezone.utc).isoformat(),
+            "capi_last_error": None,
         }).eq("id", order_uuid).execute()
         logger.debug("capi_sent=true for order %s", order_uuid)
     except Exception as exc:

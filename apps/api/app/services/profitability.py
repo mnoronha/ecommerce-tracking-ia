@@ -124,15 +124,15 @@ def persist_items_and_margin(
             "cost_price_snapshot":  cost_unit,
         })
 
-    # Insert items (best-effort — never raise to caller)
+    # Persist items (idempotent: delete + insert pattern because the table
+    # has no unique constraint we can rely on for upsert — sku is often null
+    # on Shopify guest checkouts and product_id is shared across variants).
     try:
         if items_payload:
-            sb.table("order_items").upsert(
-                items_payload,
-                on_conflict="order_id,sku" if all(p.get("sku") for p in items_payload) else None,
-            ).execute()
+            sb.table("order_items").delete().eq("order_id", order_uuid).execute()
+            sb.table("order_items").insert(items_payload).execute()
     except Exception as exc:
-        logger.warning("order_items insert failed: %s", exc)
+        logger.warning("order_items insert failed for order %s: %s", order_uuid, exc)
 
     # Update orders row with margin columns. Skip if no costs at all to avoid
     # falsely showing 100% margin when COGS aren't loaded yet.

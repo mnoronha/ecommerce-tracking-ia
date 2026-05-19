@@ -65,7 +65,8 @@ def _attribute_async(order_uuid: str, visitor_uuid: Optional[str]) -> None:  # t
         sb = get_supabase()
         order_row = (
             sb.table("orders")
-            .select("id, client_id, visitor_id, total_price, created_at, financial_status")
+            .select("id, client_id, visitor_id, total_price, created_at, financial_status, "
+                    "utm_source, utm_medium, utm_campaign, utm_content, email")
             .eq("id", order_uuid)
             .maybe_single()
             .execute()
@@ -78,7 +79,7 @@ def _attribute_async(order_uuid: str, visitor_uuid: Optional[str]) -> None:  # t
         if visitor_uuid:
             v_row = (
                 sb.table("visitors")
-                .select("id, gclid, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at")
+                .select("id, visitor_id, gclid, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at")
                 .eq("id", visitor_uuid)
                 .maybe_single()
                 .execute()
@@ -532,6 +533,17 @@ async def receive_webhook(
     if event.event_type.value == "order.fulfilled" and client_uuid and event.order:
         fulfillment_status = (event.raw_payload or {}).get("fulfillment_status") or "fulfilled"
         writer.update_order_fulfillment(client_uuid, event.order.id, fulfillment_status)
+
+    # Order cancelled — update financial_status so dashboards exclude these
+    # and CAPI retry job stops trying to send them as conversions.
+    if event.event_type.value == "order.cancelled" and client_uuid and event.order:
+        try:
+            writer.update_order_financial_status(client_uuid, event.order.id, "voided")
+        except Exception as exc:
+            logger.warning("update cancelled status failed: %s", exc)
+        # If the order had already been sent to Meta as a purchase, send a
+        # compensating refund event so Meta removes the conversion credit.
+        background_tasks.add_task(_dispatch_refund_capi, client_id, event)
 
     # Refunds — persist to refunds table, then dispatch negative-value Purchase
     # to Meta CAPI + refund event to GA4 in the background.

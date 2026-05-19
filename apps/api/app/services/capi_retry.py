@@ -87,6 +87,8 @@ def retry_failed_capi() -> None:
 
     try:
         # Skip zero-value orders (drafts / abandoned) — Meta rejects them anyway
+        # Only retry orders that are actually paid — pending/expired/refunded
+        # must NEVER be sent to conversion APIs (caused phantom conversions).
         result = (
             sb.table("orders")
             .select(
@@ -98,6 +100,7 @@ def retry_failed_capi() -> None:
                 "browser_ip, browser_ua"
             )
             .eq("capi_sent", False)
+            .eq("financial_status", "paid")
             .gt("total_price", 0)
             .gte("created_at", cutoff)
             .lt("capi_retry_count", _MAX_RETRIES)
@@ -183,16 +186,17 @@ def retry_failed_capi() -> None:
                     pass
 
             # ── Update order based on Meta result ─────────────────────────────
-            # Note: we do NOT clear capi_last_error on success — keeping the
-            # sync-path error visible is the only way to diagnose why the sync
-            # path failed in the first place. Once sync is healthy this column
-            # will stay null on healthy orders.
+            # Clear stale capi_last_error on success — keeping it visible
+            # after a successful retry was confusing (looked like the order
+            # had failed when it actually recovered). The successful retry
+            # is recorded via capi_sent + capi_retry_count.
             update: dict = {
                 "capi_retry_count": (order.get("capi_retry_count") or 0) + 1,
             }
             if meta_ok:
-                update["capi_sent"]    = True
-                update["capi_sent_at"] = datetime.now(timezone.utc).isoformat()
+                update["capi_sent"]       = True
+                update["capi_sent_at"]    = datetime.now(timezone.utc).isoformat()
+                update["capi_last_error"] = None
             elif meta_err:
                 update["capi_last_error"] = meta_err
 

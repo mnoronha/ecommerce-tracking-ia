@@ -89,6 +89,32 @@ class ShopifyAdapter(BaseAdapter):
             zip_code=addr.get("zip"),
         )
 
+    def _merge_address_fields(self, *addresses: dict) -> Optional[Address]:
+        """
+        Build an Address by picking each field from the first available source.
+        Shopify often populates zip on shipping but not on customer.default_address,
+        so per-field fallback prevents losing data that exists on a sibling.
+        Critical for Meta EMQ: zip_code adds ~6 points to match quality.
+        """
+        valid = [a for a in addresses if a]
+        if not valid:
+            return None
+
+        def _pick(key: str) -> Optional[str]:
+            for a in valid:
+                v = a.get(key)
+                if v:
+                    return v
+            return None
+
+        return Address(
+            street=_pick("address1"),
+            city=_pick("city"),
+            state=_pick("province"),
+            country=_pick("country"),
+            zip_code=_pick("zip"),
+        )
+
     def _parse_customer(self, data: dict) -> Optional[CustomerData]:
         customer = data.get("customer") or {}
         if not customer and not data.get("email"):
@@ -116,6 +142,9 @@ class ShopifyAdapter(BaseAdapter):
             or bill.get("phone")
         )
 
+        # Per-field fallback across customer.default_address → shipping → billing.
+        # Previously took the first non-empty address dict whole, losing zip when
+        # the chosen address didn't carry it (the other addresses often do).
         return CustomerData(
             id=cust_id,
             email=customer.get("email") or data.get("email") or data.get("contact_email"),
@@ -123,11 +152,10 @@ class ShopifyAdapter(BaseAdapter):
             first_name=first_name,
             last_name=last_name,
             phone=phone,
-            address=self._parse_address(
-                customer.get("default_address")
-                or data.get("shipping_address")
-                or data.get("billing_address")
-                or {}
+            address=self._merge_address_fields(
+                customer.get("default_address") or {},
+                ship,
+                bill,
             ),
         )
 

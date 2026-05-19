@@ -1,18 +1,15 @@
 /**
  * Ecommerce Tracking Pixel — tracker.js  v2.3.0
  *
- * Usage A — HTML attribute (manual install):
+ * Usage:
  *   <script
- *     src="https://api.example.com/static/tracker.js"
+ *     src="/pixel/tracker.js"
  *     data-client-id="YOUR_CLIENT_ID"
+ *     data-api-url="https://api.yourdomain.com"
  *     async
  *   ></script>
  *
- * Usage B — Shopify ScriptTag API (auto-install, no theme editing):
- *   src: https://api.example.com/static/tracker.js?client_id=YOUR_CLIENT_ID
- *   (api-url is auto-detected from the script's own origin)
- *
- * Usage C — programmatic config before the tag:
+ * Or configure programmatically before the script tag:
  *   <script>window.__ETConfig = { clientId: "...", apiUrl: "..." };</script>
  */
 (function (w, d) {
@@ -38,36 +35,8 @@
     return scripts[scripts.length - 1];
   })();
 
-  // Read a param from the script's own src URL.
-  // Enables Shopify ScriptTag usage: tracker.js?client_id=xxx
-  function _srcParam(name) {
-    try {
-      if (script && script.src) {
-        return new URL(script.src).searchParams.get(name);
-      }
-    } catch (e) {}
-    return null;
-  }
-
-  // When loaded via ScriptTag API the api_url isn't set — infer from script origin
-  function _scriptOrigin() {
-    try {
-      if (script && script.src) return new URL(script.src).origin;
-    } catch (e) {}
-    return '';
-  }
-
-  var CLIENT_ID = cfg.clientId
-    || (script && script.getAttribute('data-client-id'))
-    || _srcParam('client_id')
-    || '';
-
-  var API_URL = (
-    cfg.apiUrl
-    || (script && script.getAttribute('data-api-url'))
-    || _srcParam('api_url')
-    || _scriptOrigin()
-  ).replace(/\/$/, '');
+  var CLIENT_ID = cfg.clientId || (script && script.getAttribute('data-client-id')) || '';
+  var API_URL   = (cfg.apiUrl   || (script && script.getAttribute('data-api-url'))   || '').replace(/\/$/, '');
 
   // ── Cookie utilities ───────────────────────────────────────────────────────
   function setCookie(name, value, days) {
@@ -183,6 +152,7 @@
   }
 
   // _fbc — Meta click ID. Built from ?fbclid= and persisted 90 days.
+  // Increased coverage: also try to extract from referrer if main param missing
   function getFbc() {
     var fresh = getQueryParam('fbclid');
     if (fresh) {
@@ -190,6 +160,20 @@
       setCookie(COOKIE_FBC, fbc, AD_ID_TTL_DAYS);
       return fbc;
     }
+    // Try to extract fbclid from referrer URL if it has one
+    // (improves coverage for cases where fbclid may be in redirect chain)
+    try {
+      var ref = document.referrer;
+      if (ref) {
+        var refMatch = ref.match(/[\?&]fbclid=([^&#]*)/);
+        if (refMatch && refMatch[1]) {
+          var fbclid = decodeURIComponent(refMatch[1]);
+          var fbc = 'fb.1.' + Date.now() + '.' + fbclid;
+          setCookie(COOKIE_FBC, fbc, AD_ID_TTL_DAYS);
+          return fbc;
+        }
+      }
+    } catch (e) { /* ignore */ }
     return getCookie(COOKIE_FBC) || null;
   }
 
@@ -213,23 +197,54 @@
     return parts[2] + '.' + parts[3];
   }
 
+  // Facebook Login ID — from FB SDK or Meta Pixel
+  // Improves EMQ by up to 8% when sent to Meta CAPI
+  function getFacebookLoginId() {
+    try {
+      // Check if FB SDK is loaded and user is logged in
+      if (w.FB && w.FB.AppEvents) {
+        var userId = w.FB.AppEvents.getUserID();
+        if (userId) return String(userId);
+      }
+    } catch (e) { /* FB SDK may not be available */ }
+    return null;
+  }
+
+  // Date of Birth — from data attribute or localStorage
+  // Improves EMQ by up to 6% when sent to Meta CAPI
+  // Format: YYYYMMDD (stored in localStorage as _etdob)
+  function getDateOfBirth() {
+    try {
+      // Check if set programmatically via window attribute
+      if (w.__ETConfig && w.__ETConfig.dateOfBirth) {
+        return String(w.__ETConfig.dateOfBirth);
+      }
+      // Check localStorage (can be set by checkout form)
+      var stored = localStorage.getItem('_etdob');
+      if (stored) return stored;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
   // ── Payload builder ───────────────────────────────────────────────────────
   function buildPayload(eventType, extra) {
     return {
-      client_id:    CLIENT_ID,
-      event_type:   eventType,
-      visitor_id:   getVisitorId(),
-      session_id:   getSessionId(),
-      page_url:     location.href,
-      referrer:     document.referrer || null,
-      utm:          getAttribution(),
-      timestamp:    new Date().toISOString(),
-      fbp:          getFbp(),
-      fbc:          getFbc(),
-      ga_client_id: getGaClientId(),
-      gclid:        getGclid(),
-      ttclid:       getTtclid(),
-      metadata:     extra || {}
+      client_id:       CLIENT_ID,
+      event_type:      eventType,
+      visitor_id:      getVisitorId(),
+      session_id:      getSessionId(),
+      page_url:        location.href,
+      referrer:        document.referrer || null,
+      utm:             getAttribution(),
+      timestamp:       new Date().toISOString(),
+      fbp:             getFbp(),
+      fbc:             getFbc(),
+      ga_client_id:    getGaClientId(),
+      gclid:           getGclid(),
+      ttclid:          getTtclid(),
+      facebook_login:  getFacebookLoginId(),
+      date_of_birth:   getDateOfBirth(),
+      metadata:        extra || {}
     };
   }
 
@@ -485,82 +500,92 @@
     w.setTimeout(function () { renderSurveyModal(orderId); }, 1200);
   }
 
+  // ── Fire client-side Purchase event on thank-you page ─────────────────────
+  // Meta CAPI needs both pixel (client) + server-side dispatches to dedup
+  // correctly. Without a browser-side Purchase, EMQ drops and Meta cannot
+  // measure browser-only signals like view/click attribution windows.
+  // Idempotent: only fires once per orderId per device via localStorage.
+  var PURCHASE_STORAGE_KEY = '_etpurchase';
+
+  function alreadyFiredPurchase(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      if (!stored) return false;
+      var ids = JSON.parse(stored);
+      return Array.isArray(ids) && ids.indexOf(orderId) >= 0;
+    } catch (e) { return false; }
+  }
+
+  function markPurchaseFired(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      var ids = stored ? JSON.parse(stored) : [];
+      if (!Array.isArray(ids)) ids = [];
+      if (ids.indexOf(orderId) < 0) ids.push(orderId);
+      if (ids.length > 50) ids = ids.slice(-50);
+      localStorage.setItem(PURCHASE_STORAGE_KEY, JSON.stringify(ids));
+    } catch (e) { /* ignore */ }
+  }
+
+  function extractOrderDetails() {
+    // Best effort: pull order details from Shopify thank-you page globals.
+    var details = { order_id: null, value: null, currency: 'BRL', items: [] };
+    try {
+      var s = w.Shopify;
+      if (s && s.checkout) {
+        details.order_id = s.checkout.order_id ? String(s.checkout.order_id) : null;
+        details.value    = (s.checkout.total_price != null) ? Number(s.checkout.total_price) : null;
+        details.currency = s.checkout.currency || details.currency;
+        if (Array.isArray(s.checkout.line_items)) {
+          details.items = s.checkout.line_items.map(function (li) {
+            return {
+              product_id: String(li.product_id || ''),
+              variant_id: String(li.variant_id || ''),
+              name:       li.title,
+              sku:        li.sku,
+              price:      Number(li.price || 0),
+              quantity:   Number(li.quantity || 1)
+            };
+          });
+        }
+      }
+      // dataLayer fallback (GTM-style)
+      if (!details.value && w.dataLayer) {
+        for (var i = w.dataLayer.length - 1; i >= 0; i--) {
+          var entry = w.dataLayer[i];
+          if (entry && (entry.event === 'purchase' || entry.event === 'transaction')) {
+            if (entry.transaction_id && !details.order_id) details.order_id = String(entry.transaction_id);
+            if (entry.value != null && details.value == null) details.value = Number(entry.value);
+            if (entry.currency && !details.currency) details.currency = entry.currency;
+            break;
+          }
+        }
+      }
+    } catch (e) { /* best effort */ }
+    return details;
+  }
+
+  function maybeTrackPurchase() {
+    if (!isThankYouPage()) return;
+    var details = extractOrderDetails();
+    var orderId = details.order_id || extractOrderId();
+    if (!orderId) return;
+    if (alreadyFiredPurchase(orderId)) return;
+    track('purchase', {
+      order_id: orderId,
+      value:    details.value,
+      currency: details.currency,
+      items:    details.items
+    });
+    markPurchaseFired(orderId);
+  }
+
   // ── Shopify cart attribute injection ──────────────────────────────────────
   // Writes visitor/ad identifiers as Shopify cart note_attributes so that the
   // orders/paid webhook carries fbp, fbc, gclid, and visitor cookie ID.
   // Without this, server-side attribution falls back to email-only matching,
   // which only works for ~0.1% of visitors who have a prior order.
   // Keys prefixed with _ are hidden from the merchant UI but forwarded on webhooks.
-
-  // ── EMQ Improvements: capture Facebook Login ID and DOB ──────────────────
-  // Facebook Login ID (+8% EMQ) and DOB (+6% EMQ) are optional but improve
-  // Event Match Quality significantly when available.
-
-  function captureFacebookLoginId() {
-    if (typeof FB === 'undefined') return;
-    try {
-      FB.getLoginStatus(function (response) {
-        if (response.status === 'connected') {
-          var userId = response.authResponse.userID;
-          if (userId) {
-            setCookie('_fblogin', userId, AD_ID_TTL_DAYS);
-            injectSingleAttribute('_fblogin', userId);
-          }
-        }
-      });
-    } catch (e) { /* ignore */ }
-  }
-
-  function captureDateOfBirth() {
-    var dobPatterns = ['birth_date', 'dob', 'date_of_birth', 'birthDate', 'birth-date'];
-    for (var i = 0; i < dobPatterns.length; i++) {
-      var input = d.querySelector('input[name*="' + dobPatterns[i] + '"]');
-      if (input && input.value) {
-        var dob = _normalizeDOB(input.value);
-        if (dob) {
-          setCookie('_dob', dob, AD_ID_TTL_DAYS);
-          injectSingleAttribute('_dob', dob);
-          return;
-        }
-      }
-    }
-  }
-
-  function _normalizeDOB(value) {
-    var cleaned = value.replace(/\D/g, '');
-    if (cleaned.length === 8) return cleaned;
-    var parts = value.match(/(\d{1,4})[\/\-](\d{1,2})[\/\-](\d{1,4})/);
-    if (parts) {
-      var year = parts[3], month = parts[1], day = parts[2];
-      if (parseInt(year) > 31) {
-        return year + _padStart(month, 2, '0') + _padStart(day, 2, '0');
-      } else {
-        return parts[3] + _padStart(month, 2, '0') + _padStart(day, 2, '0');
-      }
-    }
-    return null;
-  }
-
-  function _padStart(str, length, char) {
-    str = String(str);
-    while (str.length < length) str = char + str;
-    return str;
-  }
-
-  function injectSingleAttribute(key, value) {
-    if (!value) return;
-    var attrs = {};
-    attrs[key] = String(value).substring(0, 1000);
-    try {
-      fetch('/cart/update.js', {
-        method:      'POST',
-        headers:     { 'Content-Type': 'application/json' },
-        body:        JSON.stringify({ attributes: attrs }),
-        credentials: 'same-origin',
-        keepalive:   true
-      }).catch(function () {});
-    } catch (e) { /* ignore */ }
-  }
 
   var _CART_INJECT_KEY = '_etci'; // sessionStorage flag: already injected this session
 
@@ -577,16 +602,16 @@
     var gclid  = getGclid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
-    var fblogin = getCookie('_fblogin');
-    var dob    = getCookie('_dob');
+    var fb_login = getFacebookLoginId();
+    var dob    = getDateOfBirth();
 
-    if (fbp)    attrs['_fbp']   = fbp;
-    if (fbc)    attrs['_fbc']   = fbc;
-    if (gclid)  attrs['_gclid'] = gclid;
-    if (gcid)   attrs['_gcid']  = gcid;
-    if (ttclid) attrs['_ettc']  = ttclid;
-    if (fblogin) attrs['_fblogin'] = fblogin;
-    if (dob)    attrs['_dob']    = dob;
+    if (fbp)       attrs['_fbp']   = fbp;
+    if (fbc)       attrs['_fbc']   = fbc;
+    if (gclid)     attrs['_gclid'] = gclid;
+    if (gcid)      attrs['_gcid']  = gcid;
+    if (ttclid)    attrs['_ettc']  = ttclid;
+    if (fb_login)  attrs['_fblogin'] = fb_login;
+    if (dob)       attrs['_dob']   = dob;
 
     try {
       fetch('/cart/update.js', {
@@ -616,40 +641,15 @@
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       trackPageview();
+      maybeTrackPurchase();
       maybeShowSurvey();
       injectShopifyCartAttributes();
-      // Capture EMQ identifiers (Facebook Login + DOB) with slight delay
-      w.setTimeout(function () {
-        captureFacebookLoginId();
-        captureDateOfBirth();
-      }, 500);
     });
   } else {
     trackPageview();
+    maybeTrackPurchase();
     maybeShowSurvey();
     injectShopifyCartAttributes();
-    // Capture EMQ identifiers (Facebook Login + DOB) with slight delay
-    w.setTimeout(function () {
-      captureFacebookLoginId();
-      captureDateOfBirth();
-    }, 500);
   }
-
-  // Listen for form changes to re-capture DOB
-  d.addEventListener('change', function (e) {
-    var name = (e.target.name || '').toLowerCase();
-    if (name.includes('birth') || name.includes('dob') || name.includes('date')) {
-      captureDateOfBirth();
-    }
-  }, true);
-
-  // Capture before checkout submission
-  d.addEventListener('submit', function (e) {
-    if (e.target && e.target.action && e.target.action.includes('/checkout')) {
-      captureFacebookLoginId();
-      captureDateOfBirth();
-      injectShopifyCartAttributes();
-    }
-  }, true);
 
 }(window, document));
