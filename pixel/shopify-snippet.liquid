@@ -495,5 +495,86 @@
     }
   }, true);
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Thank-you page — fire Purchase event (browser-side)
+  // Pareado com o Purchase server-side (CAPI) via event_id → Meta dedupa.
+  // Idempotente por orderId (localStorage), só dispara uma vez por device.
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  var PURCHASE_STORAGE_KEY = '_etpurchase';
+
+  function isThankYouPage() {
+    var p = (location.pathname || '').toLowerCase();
+    return /\/(thank[-_ ]?you|obrigado|orders\/[^/]+|pedido-confirmado|order-confirmation)/.test(p);
+  }
+
+  function alreadyFiredPurchase(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      if (!stored) return false;
+      var ids = JSON.parse(stored);
+      return Array.isArray(ids) && ids.indexOf(orderId) >= 0;
+    } catch (e) { return false; }
+  }
+
+  function markPurchaseFired(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      var ids = stored ? JSON.parse(stored) : [];
+      if (!Array.isArray(ids)) ids = [];
+      if (ids.indexOf(orderId) < 0) ids.push(orderId);
+      if (ids.length > 50) ids = ids.slice(-50);
+      localStorage.setItem(PURCHASE_STORAGE_KEY, JSON.stringify(ids));
+    } catch (e) {}
+  }
+
+  function extractOrderDetails() {
+    var details = { order_id: null, value: null, currency: 'BRL', items: [] };
+    try {
+      var s = w.Shopify;
+      if (s && s.checkout) {
+        details.order_id = s.checkout.order_id ? String(s.checkout.order_id) : null;
+        details.value    = (s.checkout.total_price != null) ? Number(s.checkout.total_price) : null;
+        details.currency = s.checkout.currency || details.currency;
+        if (Array.isArray(s.checkout.line_items)) {
+          details.items = s.checkout.line_items.map(function (li) {
+            return {
+              product_id: String(li.product_id || ''),
+              variant_id: String(li.variant_id || ''),
+              name:       li.title,
+              sku:        li.sku,
+              price:      Number(li.price || 0),
+              quantity:   Number(li.quantity || 1)
+            };
+          });
+        }
+      }
+      if (!details.order_id) {
+        var m = (location.pathname || '').match(/\/orders\/([^/?#]+)/i);
+        if (m && m[1]) details.order_id = m[1];
+      }
+    } catch (e) {}
+    return details;
+  }
+
+  function maybeTrackPurchase() {
+    if (!isThankYouPage()) return;
+    var details = extractOrderDetails();
+    if (!details.order_id) return;
+    if (alreadyFiredPurchase(details.order_id)) return;
+    track('purchase', {
+      order_id: details.order_id,
+      value:    details.value,
+      currency: details.currency,
+      items:    details.items
+    });
+    markPurchaseFired(details.order_id);
+  }
+
+  if (d.readyState === 'loading') {
+    d.addEventListener('DOMContentLoaded', maybeTrackPurchase);
+  } else {
+    maybeTrackPurchase();
+  }
+
 }(window, document));
 </script>
