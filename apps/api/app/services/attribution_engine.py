@@ -41,19 +41,22 @@ def _infer_platform(source: Optional[str], medium: Optional[str], gclid_present:
     s = (source or '').lower()
     m = (medium or '').lower()
 
-    if gclid_present or 'google' in s or m in ('cpc', 'paid_search', 'ppc'):
-        return 'google'
-    if 'facebook' in s or 'instagram' in s or 'meta' in s or 'fb' in s:
+    # An explicit source name wins over implicit click-id signals — a visitor
+    # with utm_source=facebook AND a gclid (e.g. retargeted from a prior Google
+    # session) is a Meta-driven conversion this touchpoint, not Google.
+    if 'facebook' in s or 'instagram' in s or 'meta' in s or s == 'fb':
         return 'meta'
     if 'tiktok' in s:
         return 'tiktok'
     if 'pinterest' in s:
         return 'pinterest'
+    if 'google' in s or gclid_present or m in ('cpc', 'paid_search', 'ppc'):
+        return 'google'
     if not s and not m:
         return 'direct'
-    if m in ('email', 'newsletter'):
+    if m in ('email', 'newsletter') or 'klaviyo' in s:
         return 'email'
-    if m in ('organic',) or 'google' in s and m == 'organic':
+    if m == 'organic':
         return 'organic'
     if 'shopify' in s:
         return 'shopify'
@@ -322,7 +325,7 @@ def recompute_for_client(client_uuid: str, days: int = 90) -> dict:
     if visitor_ids:
         v_resp = (
             sb.table('visitors')
-            .select('id, gclid, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at')
+            .select('id, visitor_id, gclid, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at')
             .in_('id', list(visitor_ids))
             .execute()
         )
