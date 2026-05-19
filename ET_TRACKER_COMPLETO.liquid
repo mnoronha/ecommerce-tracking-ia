@@ -63,38 +63,28 @@
       exp.setTime(exp.getTime() + days * 864e5);
       expires = '; expires=' + exp.toUTCString();
     }
-    // Compute the registrable domain (eTLD+1) so cookies persist across
-    // www.foo.com.br and foo.com.br. Browsers reject cookies set to public
-    // suffixes (com.br, co.uk) — the old logic `slice(-2)` did exactly that
-    // and silently dropped the cookie, regenerating _etv on every pageview.
-    // We bias toward two-segment TLDs (com.br, co.uk, com.ar, com.mx, …)
-    // and fall back to the last two labels otherwise.
+    // Browsers reject cookies whose domain is a public suffix (com.br, co.uk).
+    // The old logic `slice(-2)` produced exactly that on Brazilian stores and
+    // the cookie silently vanished, regenerating _etv on every pageview.
     var domain = '';
     try {
       var host = location.hostname;
-      // Don't try to set a domain attribute on localhost or raw IPs
       if (host && host.indexOf('.') !== -1 && !/^\d+(\.\d+)+$/.test(host)) {
         var parts = host.split('.');
-        var twoSegmentTlds = {
+        var twoSegTlds = {
           'com.br': 1, 'co.uk': 1, 'co.jp': 1, 'co.kr': 1, 'co.in': 1,
           'com.au': 1, 'com.ar': 1, 'com.mx': 1, 'com.co': 1, 'com.pe': 1,
           'com.sg': 1, 'com.hk': 1, 'com.tw': 1, 'com.tr': 1, 'com.ua': 1
         };
         var lastTwo = parts.slice(-2).join('.');
-        if (twoSegmentTlds[lastTwo] && parts.length >= 3) {
-          // domain=.example.com.br
+        if (twoSegTlds[lastTwo] && parts.length >= 3) {
           domain = '; domain=.' + parts.slice(-3).join('.');
         } else if (parts.length >= 2) {
-          // domain=.example.com
           domain = '; domain=.' + lastTwo;
         }
       }
     } catch (e) {}
-    // Browsers silently drop a cookie when domain is a public suffix; if our
-    // first attempt produced one, fall back to the bare host (no domain attr).
     d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
-    // Verify it stuck — if not, retry without the domain attribute. The
-    // host-only cookie still works for tracking, just doesn't cross subdomains.
     if (domain) {
       try {
         if (d.cookie.indexOf(name + '=') === -1) {
@@ -504,6 +494,142 @@
       syncCartAttributes();
     }
   }, true);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // Purchase tracking — thank-you page (browser-side)
+  //
+  // CRÍTICO: o event_id DEVE ser idêntico ao que o backend gera, para que
+  // Meta dedupe corretamente o browser-side com o CAPI server-side.
+  // Backend usa: sha256("purchase_shopify_" + order_id). Replicamos aqui.
+  //
+  // Fluxos cobertos:
+  //   - Cartão (volta p/ thank-you): browser + CAPI usam mesmo event_id
+  //     → Meta dedupa para 1 Purchase ✅
+  //   - PIX/gateway externo (não volta): só CAPI dispara (1 Purchase) ✅
+  //   - Refresh thank-you: localStorage bloqueia 2º disparo ✅
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  var PURCHASE_STORAGE_KEY = '_etpurchase';
+
+  // SHA-256 via Web Crypto. Mesma fórmula do backend → mesmo event_id → dedup.
+  function sha256Hex(str) {
+    if (w.crypto && w.crypto.subtle && w.TextEncoder) {
+      var enc = new TextEncoder().encode(str);
+      return w.crypto.subtle.digest('SHA-256', enc).then(function(buf) {
+        var arr = new Uint8Array(buf);
+        var hex = '';
+        for (var i = 0; i < arr.length; i++) {
+          hex += ('0' + arr[i].toString(16)).slice(-2);
+        }
+        return hex;
+      });
+    }
+    return Promise.resolve('purchase_browser_' + str);
+  }
+
+  function isThankYouPage() {
+    var p = (location.pathname || '').toLowerCase();
+    return /\/(thank[-_ ]?you|obrigado|orders\/[^/]+|pedido-confirmado|order-confirmation)/.test(p);
+  }
+
+  function alreadyFiredPurchase(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      if (!stored) return false;
+      var ids = JSON.parse(stored);
+      return Array.isArray(ids) && ids.indexOf(orderId) >= 0;
+    } catch (e) { return false; }
+  }
+
+  function markPurchaseFired(orderId) {
+    try {
+      var stored = localStorage.getItem(PURCHASE_STORAGE_KEY);
+      var ids = stored ? JSON.parse(stored) : [];
+      if (!Array.isArray(ids)) ids = [];
+      if (ids.indexOf(orderId) < 0) ids.push(orderId);
+      if (ids.length > 50) ids = ids.slice(-50);
+      localStorage.setItem(PURCHASE_STORAGE_KEY, JSON.stringify(ids));
+    } catch (e) {}
+  }
+
+  function extractOrderDetails() {
+    var details = { order_id: null, value: null, currency: 'BRL', items: [] };
+    try {
+      var s = w.Shopify;
+      if (s && s.checkout) {
+        details.order_id = s.checkout.order_id ? String(s.checkout.order_id) : null;
+        details.value    = (s.checkout.total_price != null) ? Number(s.checkout.total_price) : null;
+        details.currency = s.checkout.currency || details.currency;
+        if (Array.isArray(s.checkout.line_items)) {
+          details.items = s.checkout.line_items.map(function (li) {
+            return {
+              product_id: String(li.product_id || ''),
+              variant_id: String(li.variant_id || ''),
+              name:       li.title,
+              sku:        li.sku,
+              price:      Number(li.price || 0),
+              quantity:   Number(li.quantity || 1)
+            };
+          });
+        }
+      }
+      if (!details.order_id) {
+        var m = (location.pathname || '').match(/\/orders\/([^/?#]+)/i);
+        if (m && m[1]) details.order_id = m[1];
+      }
+    } catch (e) {}
+    return details;
+  }
+
+  // track() com event_id pré-computado, garante dedup browser↔CAPI.
+  function trackWithEventId(eventType, eventId, extra) {
+    var meta = getMetaIds();
+    send({
+      client_id:    CLIENT_ID,
+      event_type:   eventType,
+      event_id:     eventId,
+      visitor_id:   getVisitorId(),
+      session_id:   getSessionId(),
+      page_url:     location.href,
+      referrer:     d.referrer || null,
+      utm:          getAttribution(),
+      timestamp:    new Date().toISOString(),
+      fbp:          meta.fbp,
+      fbc:          meta.fbc,
+      ga_client_id: getGaClientId(),
+      gclid:        getGclid(),
+      metadata:     extra || {}
+    });
+    var metaName = META_EVENT_MAP[eventType];
+    if (metaName && w.fbq) {
+      try {
+        w.fbq('track', metaName, buildMetaParams(eventType, extra), { eventID: eventId });
+      } catch(e) {}
+    }
+  }
+
+  function maybeTrackPurchase() {
+    if (!isThankYouPage()) return;
+    var details = extractOrderDetails();
+    if (!details.order_id) return;
+    if (alreadyFiredPurchase(details.order_id)) return;
+
+    // sha256("purchase_shopify_<order_id>") — mesma fórmula do backend
+    sha256Hex('purchase_shopify_' + details.order_id).then(function(eventId) {
+      trackWithEventId('purchase', eventId, {
+        order_id: details.order_id,
+        value:    details.value,
+        currency: details.currency,
+        items:    details.items
+      });
+      markPurchaseFired(details.order_id);
+    });
+  }
+
+  if (d.readyState === 'loading') {
+    d.addEventListener('DOMContentLoaded', maybeTrackPurchase);
+  } else {
+    maybeTrackPurchase();
+  }
 
 }(window, document));
 </script>

@@ -496,11 +496,35 @@
   }, true);
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  // Thank-you page — fire Purchase event (browser-side)
-  // Pareado com o Purchase server-side (CAPI) via event_id → Meta dedupa.
-  // Idempotente por orderId (localStorage), só dispara uma vez por device.
+  // Purchase tracking — thank-you page (browser-side)
+  //
+  // CRÍTICO: o event_id DEVE ser idêntico ao que o backend gera, para que
+  // Meta dedupe corretamente o browser-side com o CAPI server-side.
+  // Backend usa: sha256("purchase_shopify_" + order_id). Replicamos aqui.
+  //
+  // Fluxos cobertos:
+  //   - Cartão (volta p/ thank-you): browser + CAPI usam mesmo event_id
+  //     → Meta dedupa para 1 Purchase ✅
+  //   - PIX/gateway externo (não volta): só CAPI dispara (1 Purchase) ✅
+  //   - Refresh thank-you: localStorage bloqueia 2º disparo ✅
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   var PURCHASE_STORAGE_KEY = '_etpurchase';
+
+  // SHA-256 via Web Crypto. Mesma fórmula do backend → mesmo event_id → dedup.
+  function sha256Hex(str) {
+    if (w.crypto && w.crypto.subtle && w.TextEncoder) {
+      var enc = new TextEncoder().encode(str);
+      return w.crypto.subtle.digest('SHA-256', enc).then(function(buf) {
+        var arr = new Uint8Array(buf);
+        var hex = '';
+        for (var i = 0; i < arr.length; i++) {
+          hex += ('0' + arr[i].toString(16)).slice(-2);
+        }
+        return hex;
+      });
+    }
+    return Promise.resolve('purchase_browser_' + str);
+  }
 
   function isThankYouPage() {
     var p = (location.pathname || '').toLowerCase();
@@ -556,18 +580,49 @@
     return details;
   }
 
+  // track() com event_id pré-computado, garante dedup browser↔CAPI.
+  function trackWithEventId(eventType, eventId, extra) {
+    var meta = getMetaIds();
+    send({
+      client_id:    CLIENT_ID,
+      event_type:   eventType,
+      event_id:     eventId,
+      visitor_id:   getVisitorId(),
+      session_id:   getSessionId(),
+      page_url:     location.href,
+      referrer:     d.referrer || null,
+      utm:          getAttribution(),
+      timestamp:    new Date().toISOString(),
+      fbp:          meta.fbp,
+      fbc:          meta.fbc,
+      ga_client_id: getGaClientId(),
+      gclid:        getGclid(),
+      metadata:     extra || {}
+    });
+    var metaName = META_EVENT_MAP[eventType];
+    if (metaName && w.fbq) {
+      try {
+        w.fbq('track', metaName, buildMetaParams(eventType, extra), { eventID: eventId });
+      } catch(e) {}
+    }
+  }
+
   function maybeTrackPurchase() {
     if (!isThankYouPage()) return;
     var details = extractOrderDetails();
     if (!details.order_id) return;
     if (alreadyFiredPurchase(details.order_id)) return;
-    track('purchase', {
-      order_id: details.order_id,
-      value:    details.value,
-      currency: details.currency,
-      items:    details.items
+
+    // sha256("purchase_shopify_<order_id>") — mesma fórmula do backend
+    sha256Hex('purchase_shopify_' + details.order_id).then(function(eventId) {
+      trackWithEventId('purchase', eventId, {
+        order_id: details.order_id,
+        value:    details.value,
+        currency: details.currency,
+        items:    details.items
+      });
+      markPurchaseFired(details.order_id);
     });
-    markPurchaseFired(details.order_id);
   }
 
   if (d.readyState === 'loading') {
