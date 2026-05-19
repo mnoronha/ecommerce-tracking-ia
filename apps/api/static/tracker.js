@@ -492,6 +492,76 @@
   // which only works for ~0.1% of visitors who have a prior order.
   // Keys prefixed with _ are hidden from the merchant UI but forwarded on webhooks.
 
+  // ── EMQ Improvements: capture Facebook Login ID and DOB ──────────────────
+  // Facebook Login ID (+8% EMQ) and DOB (+6% EMQ) are optional but improve
+  // Event Match Quality significantly when available.
+
+  function captureFacebookLoginId() {
+    if (typeof FB === 'undefined') return;
+    try {
+      FB.getLoginStatus(function (response) {
+        if (response.status === 'connected') {
+          var userId = response.authResponse.userID;
+          if (userId) {
+            setCookie('_fblogin', userId, AD_ID_TTL_DAYS);
+            injectSingleAttribute('_fblogin', userId);
+          }
+        }
+      });
+    } catch (e) { /* ignore */ }
+  }
+
+  function captureDateOfBirth() {
+    var dobPatterns = ['birth_date', 'dob', 'date_of_birth', 'birthDate', 'birth-date'];
+    for (var i = 0; i < dobPatterns.length; i++) {
+      var input = d.querySelector('input[name*="' + dobPatterns[i] + '"]');
+      if (input && input.value) {
+        var dob = _normalizeDOB(input.value);
+        if (dob) {
+          setCookie('_dob', dob, AD_ID_TTL_DAYS);
+          injectSingleAttribute('_dob', dob);
+          return;
+        }
+      }
+    }
+  }
+
+  function _normalizeDOB(value) {
+    var cleaned = value.replace(/\D/g, '');
+    if (cleaned.length === 8) return cleaned;
+    var parts = value.match(/(\d{1,4})[\/\-](\d{1,2})[\/\-](\d{1,4})/);
+    if (parts) {
+      var year = parts[3], month = parts[1], day = parts[2];
+      if (parseInt(year) > 31) {
+        return year + _padStart(month, 2, '0') + _padStart(day, 2, '0');
+      } else {
+        return parts[3] + _padStart(month, 2, '0') + _padStart(day, 2, '0');
+      }
+    }
+    return null;
+  }
+
+  function _padStart(str, length, char) {
+    str = String(str);
+    while (str.length < length) str = char + str;
+    return str;
+  }
+
+  function injectSingleAttribute(key, value) {
+    if (!value) return;
+    var attrs = {};
+    attrs[key] = String(value).substring(0, 1000);
+    try {
+      fetch('/cart/update.js', {
+        method:      'POST',
+        headers:     { 'Content-Type': 'application/json' },
+        body:        JSON.stringify({ attributes: attrs }),
+        credentials: 'same-origin',
+        keepalive:   true
+      }).catch(function () {});
+    } catch (e) { /* ignore */ }
+  }
+
   var _CART_INJECT_KEY = '_etci'; // sessionStorage flag: already injected this session
 
   function injectShopifyCartAttributes() {
@@ -507,12 +577,16 @@
     var gclid  = getGclid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
+    var fblogin = getCookie('_fblogin');
+    var dob    = getCookie('_dob');
 
     if (fbp)    attrs['_fbp']   = fbp;
     if (fbc)    attrs['_fbc']   = fbc;
     if (gclid)  attrs['_gclid'] = gclid;
     if (gcid)   attrs['_gcid']  = gcid;
     if (ttclid) attrs['_ettc']  = ttclid;
+    if (fblogin) attrs['_fblogin'] = fblogin;
+    if (dob)    attrs['_dob']    = dob;
 
     try {
       fetch('/cart/update.js', {
@@ -544,11 +618,38 @@
       trackPageview();
       maybeShowSurvey();
       injectShopifyCartAttributes();
+      // Capture EMQ identifiers (Facebook Login + DOB) with slight delay
+      w.setTimeout(function () {
+        captureFacebookLoginId();
+        captureDateOfBirth();
+      }, 500);
     });
   } else {
     trackPageview();
     maybeShowSurvey();
     injectShopifyCartAttributes();
+    // Capture EMQ identifiers (Facebook Login + DOB) with slight delay
+    w.setTimeout(function () {
+      captureFacebookLoginId();
+      captureDateOfBirth();
+    }, 500);
   }
+
+  // Listen for form changes to re-capture DOB
+  d.addEventListener('change', function (e) {
+    var name = (e.target.name || '').toLowerCase();
+    if (name.includes('birth') || name.includes('dob') || name.includes('date')) {
+      captureDateOfBirth();
+    }
+  }, true);
+
+  // Capture before checkout submission
+  d.addEventListener('submit', function (e) {
+    if (e.target && e.target.action && e.target.action.includes('/checkout')) {
+      captureFacebookLoginId();
+      captureDateOfBirth();
+      injectShopifyCartAttributes();
+    }
+  }, true);
 
 }(window, document));
