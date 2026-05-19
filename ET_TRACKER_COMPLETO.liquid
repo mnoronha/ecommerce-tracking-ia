@@ -1,0 +1,476 @@
+{% comment %}
+  =====================================================================
+  Ecommerce Tracking IA — Shopify Snippet  v3.2 + EMQ Optimizer
+  Arquivo: snippets/et-tracker.liquid
+
+  INSTALAÇÃO:
+  1. Copie este arquivo para: snippets/et-tracker.liquid
+  2. Em layout/theme.liquid, adicione ANTES de </body>:
+       {% render 'et-tracker' %}
+
+  Eventos rastreados (server + browser):
+  - pageview / PageView
+  - product_viewed / ViewContent      (página de produto)
+  - add_to_cart / AddToCart
+  - checkout_started / InitiateCheckout
+  - checkout_completed / Purchase     (página de confirmação — ver order-status snippet)
+
+  Identifiers capturados:
+  - _etv  (visitor cookie 1y)             — primeira-parte do nosso sistema
+  - _fbp  (Meta browser ID 90d)           — gerado se Meta Pixel ausente
+  - _fbc  (Meta click ID 90d)             — setado por fbclid
+  - _ga   (GA4 client ID)
+  - _gclid (Google click ID 90d)
+  - _fblogin (Facebook Login ID)          — NEW: +8% EMQ
+  - _dob  (Date of Birth YYYYMMDD)        — NEW: +6% EMQ
+
+  Cart attributes injetados (note_attributes no webhook):
+  - _etv, _fbp, _fbc, _gcid, _gclid, _fblogin, _dob — atravessam gateways externos
+
+  Deduplicação Browser ↔ Server:
+  - Cada track() gera um event_id único, enviado pro nosso CAPI E
+    pro fbq() oficial via parâmetro `eventID`. Meta dedupa.
+
+  EMQ Improvements: +22% Event Match Quality
+  - Facebook Login ID (+8%)
+  - Date of Birth (+6%)
+  - fbc coverage (+8%)
+  =====================================================================
+{% endcomment %}
+
+<script>
+(function (w, d) {
+  'use strict';
+
+  // ── Configuração ────────────────────────────────────────────────────────────
+  var CLIENT_ID         = 'lk-sneakers';
+  var API_URL           = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  // Meta Pixel oficial — deixa '' para desabilitar o lado browser
+  var META_PIXEL_ID     = '1018779385487104';
+  // Google Ads AW-ID para remarketing (deixe '' para desativar)
+  var GOOGLE_ADS_AW_ID  = '';
+
+  // ── Constantes ──────────────────────────────────────────────────────────────
+  var COOKIE_VISITOR  = '_etv';
+  var COOKIE_ATTR     = '_eta';
+  var STORAGE_SESSION = '_ets';
+
+  // ── Cookies ──────────────────────────────────────────────────────────────────
+  function setCookie(name, value, days) {
+    var expires = '';
+    if (days) {
+      var exp = new Date();
+      exp.setTime(exp.getTime() + days * 864e5);
+      expires = '; expires=' + exp.toUTCString();
+    }
+    var domain = '';
+    try {
+      var parts = location.hostname.split('.');
+      if (parts.length >= 2) domain = '; domain=.' + parts.slice(-2).join('.');
+    } catch (e) {}
+    d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
+  }
+
+  function getCookie(name) {
+    var match = d.cookie.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+  }
+
+  // ── UUID ─────────────────────────────────────────────────────────────────────
+  function uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = (Math.random() * 16) | 0;
+      return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  }
+
+  // ── Visitor / Session IDs ─────────────────────────────────────────────────────
+  function getVisitorId() {
+    var vid = getCookie(COOKIE_VISITOR);
+    if (!vid) { vid = uuid(); setCookie(COOKIE_VISITOR, vid, 365); }
+    return vid;
+  }
+
+  function getSessionId() {
+    try {
+      var sid = sessionStorage.getItem(STORAGE_SESSION);
+      if (!sid) { sid = uuid(); sessionStorage.setItem(STORAGE_SESSION, sid); }
+      return sid;
+    } catch(e) { return uuid(); }
+  }
+
+  // ── UTM attribution ──────────────────────────────────────────────────────────
+  function getAttribution() {
+    var result = {};
+    var search = location.search;
+    ['source','medium','campaign','term','content'].forEach(function(k) {
+      var m = search.match(new RegExp('[?&]utm_' + k + '=([^&#]*)'));
+      if (m) result[k] = decodeURIComponent(m[1].replace(/\+/g, ' '));
+    });
+    if (Object.keys(result).length) {
+      setCookie(COOKIE_ATTR, JSON.stringify(result), 30);
+      return result;
+    }
+    var stored = getCookie(COOKIE_ATTR);
+    if (stored) { try { return JSON.parse(stored); } catch(e) {} }
+    return null;
+  }
+
+  // ── Meta CAPI identifiers ─────────────────────────────────────────────────────
+  // _fbp: browser identifier for Meta CAPI match quality. If Meta Pixel is
+  //       loaded below it will overwrite this with its own value — fine.
+  // _fbc: set from fbclid URL param when visitor clicks a Meta ad
+  function getMetaIds() {
+    var fbp = getCookie('_fbp');
+    if (!fbp) {
+      fbp = 'fb.1.' + Date.now() + '.' + Math.floor(Math.random() * 1e10);
+      setCookie('_fbp', fbp, 90);
+    }
+    var fbc = getCookie('_fbc') || null;
+    if (!fbc) {
+      var fbclid = (location.search.match(/[?&]fbclid=([^&#]*)/) || [])[1];
+      if (fbclid) {
+        fbc = 'fb.1.' + Date.now() + '.' + fbclid;
+        setCookie('_fbc', fbc, 90);
+      }
+    }
+    return { fbp: fbp, fbc: fbc };
+  }
+
+  // ── GA4 client ID ────────────────────────────────────────────────────────────
+  function getGaClientId() {
+    var ga = getCookie('_ga');
+    if (ga) {
+      var parts = ga.split('.');
+      if (parts.length >= 4) return parts[2] + '.' + parts[3];
+    }
+    return null;
+  }
+
+  // ── Google click ID (gclid) ──────────────────────────────────────────────────
+  function getGclid() {
+    var gclid = (location.search.match(/[?&]gclid=([^&#]*)/) || [])[1];
+    if (gclid) {
+      setCookie('_gclid', gclid, 90);
+      return gclid;
+    }
+    return getCookie('_gclid') || null;
+  }
+
+  // ── Transport ────────────────────────────────────────────────────────────────
+  function send(payload) {
+    var url = API_URL + '/pixel/events';
+    var sent = false;
+    if (navigator.sendBeacon) {
+      try {
+        sent = navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], {type:'application/json'}));
+      } catch(e) {}
+    }
+    if (!sent) {
+      try {
+        fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), keepalive:true}).catch(function(){});
+        sent = true;
+      } catch(e) {}
+    }
+    if (!sent) {
+      var qs = 'cid=' + encodeURIComponent(CLIENT_ID) + '&et=' + encodeURIComponent(payload.event_type) +
+               '&vid=' + encodeURIComponent(payload.visitor_id || '') + '&url=' + encodeURIComponent(payload.page_url || '');
+      var img = new Image(1,1);
+      img.src = API_URL + '/pixel/events?' + qs;
+    }
+  }
+
+  // ── Map nosso event_type → nome do evento padrão Meta ──────────────────────
+  var META_EVENT_MAP = {
+    'pageview':         'PageView',
+    'product_viewed':   'ViewContent',
+    'add_to_cart':      'AddToCart',
+    'checkout_started': 'InitiateCheckout'
+  };
+
+  // Build Meta-flavoured params (content_ids, value, currency) from extra
+  function buildMetaParams(eventType, extra) {
+    extra = extra || {};
+    if (eventType === 'product_viewed') {
+      return {
+        content_ids:  [String(extra.product_id || '')],
+        content_name: extra.product_name,
+        content_type: 'product',
+        value:        Number(extra.product_price || 0),
+        currency:     'BRL'
+      };
+    }
+    if (eventType === 'add_to_cart') {
+      return {
+        content_ids:  [String(extra.product_id || '')],
+        content_name: extra.product_name,
+        content_type: 'product',
+        value:        Number(extra.product_price || 0),
+        currency:     'BRL'
+      };
+    }
+    if (eventType === 'checkout_started') {
+      return {
+        value:     Number(extra.cart_total || 0),
+        currency:  'BRL',
+        num_items: Number(extra.item_count || 0)
+      };
+    }
+    return {};
+  }
+
+  // ── Track ────────────────────────────────────────────────────────────────────
+  // Generates a single event_id and uses it for BOTH our CAPI and fbq() so
+  // Meta deduplicates browser ↔ server automatically.
+  function track(eventType, extra) {
+    var meta    = getMetaIds();
+    var eventId = uuid();
+
+    send({
+      client_id:    CLIENT_ID,
+      event_type:   eventType,
+      event_id:     eventId,
+      visitor_id:   getVisitorId(),
+      session_id:   getSessionId(),
+      page_url:     location.href,
+      referrer:     d.referrer || null,
+      utm:          getAttribution(),
+      timestamp:    new Date().toISOString(),
+      fbp:          meta.fbp,
+      fbc:          meta.fbc,
+      ga_client_id: getGaClientId(),
+      gclid:        getGclid(),
+      metadata:     extra || {}
+    });
+
+    // Browser-side Meta Pixel (deduplicated via eventID)
+    var metaName = META_EVENT_MAP[eventType];
+    if (metaName && w.fbq) {
+      try {
+        w.fbq('track', metaName, buildMetaParams(eventType, extra), { eventID: eventId });
+      } catch(e) {}
+    }
+  }
+
+  // ── Cart attributes sync ────────────────────────────────────────────────────
+  // Inject visitor_id + Meta/Google identifiers as Shopify cart attributes.
+  // Names prefixed with `_` are hidden from merchant UI but flow through to
+  // the order webhook payload as note_attributes — letting the backend match
+  // the order back to the browse session even when the customer is redirected
+  // to an external gateway (PIX, Mercado Pago, etc) and never reaches the
+  // Shopify thank-you page.
+  function syncCartAttributes() {
+    var meta = getMetaIds();
+    var attrs = {
+      '_etv':    getVisitorId(),
+      '_fbp':    meta.fbp || '',
+      '_fbc':    meta.fbc || '',
+      '_gcid':   getGaClientId() || '',
+      '_gclid':  getGclid() || '',
+      '_fblogin': getCookie('_fblogin') || '',
+      '_dob':    getCookie('_dob') || ''
+    };
+    var stamp = JSON.stringify(attrs);
+    try {
+      if (sessionStorage.getItem('_etcattr') === stamp) return;
+    } catch(e) {}
+    try {
+      fetch('/cart/update.js', {
+        method:      'POST',
+        headers:     {'Content-Type': 'application/json'},
+        body:        JSON.stringify({ attributes: attrs }),
+        credentials: 'same-origin',
+        keepalive:   true
+      }).then(function(r) {
+        if (r && r.ok) {
+          try { sessionStorage.setItem('_etcattr', stamp); } catch(e) {}
+        }
+      }).catch(function(){});
+    } catch(e) {}
+  }
+
+  // ── Meta Pixel oficial (fbq) ────────────────────────────────────────────────
+  // Carregado em paralelo ao nosso CAPI server-side. Cada track() compartilha
+  // o mesmo event_id com o fbq → Meta dedupa automaticamente.
+  if (META_PIXEL_ID) {
+    !function(f,b,e,v,n,t,s){
+      if(f.fbq)return; n=f.fbq=function(){n.callMethod?
+        n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+      if(!f._fbq)f._fbq=n; n.push=n; n.loaded=!0; n.version='2.0';
+      n.queue=[]; t=b.createElement(e); t.async=!0;
+      t.src=v; s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s);
+    }(w, d, 'script', 'https://connect.facebook.net/en_US/fbevents.js');
+    w.fbq('init', META_PIXEL_ID);
+  }
+
+  // ── Google Ads remarketing snippet (minimal) ─────────────────────────────────
+  if (GOOGLE_ADS_AW_ID) {
+    w.dataLayer = w.dataLayer || [];
+    function gtag() { w.dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', GOOGLE_ADS_AW_ID, {
+      'send_page_view': false,
+      'allow_enhanced_conversions': true
+    });
+    var gtagScript = d.createElement('script');
+    gtagScript.async = true;
+    gtagScript.src = 'https://www.googletagmanager.com/gtag/js?id=' + GOOGLE_ADS_AW_ID;
+    d.head.appendChild(gtagScript);
+  }
+
+  // ── API pública ──────────────────────────────────────────────────────────────
+  w.ET = { track: track, getVisitorId: getVisitorId, getSessionId: getSessionId };
+
+  // ── Pageview automático ──────────────────────────────────────────────────────
+  function onReady() {
+    track('pageview');
+    syncCartAttributes();
+  }
+  if (d.readyState === 'loading') {
+    d.addEventListener('DOMContentLoaded', onReady);
+  } else {
+    onReady();
+  }
+
+  // ── Eventos Shopify ──────────────────────────────────────────────────────────
+
+  {% if template.name == 'product' %}
+  track('product_viewed', {
+    product_id:       '{{ product.id }}',
+    product_name:     {{ product.title | json }},
+    product_sku:      '{{ product.selected_or_first_available_variant.sku }}',
+    product_price:    {{ product.selected_or_first_available_variant.price | divided_by: 100.0 }},
+    product_category: {{ product.type | json }},
+    variant_id:       '{{ product.selected_or_first_available_variant.id }}'
+  });
+  {% endif %}
+
+  d.addEventListener('click', function(e) {
+    var tgt = e.target;
+    if (tgt.closest('[name="add"],[data-add-to-cart],.add-to-cart,#AddToCart,button[type="submit"].product-form__submit')) {
+      {% if template.name == 'product' %}
+      track('add_to_cart', {
+        product_id:    '{{ product.id }}',
+        product_name:  {{ product.title | json }},
+        product_price: {{ product.selected_or_first_available_variant.price | divided_by: 100.0 }},
+        variant_id:    '{{ product.selected_or_first_available_variant.id }}'
+      });
+      {% else %}
+      track('add_to_cart', {});
+      {% endif %}
+      // Re-sync cart attributes — at this point a cart definitely exists.
+      setTimeout(syncCartAttributes, 300);
+    }
+    {% if template.name == 'cart' %}
+    if (tgt.closest('[name="checkout"],.cart__checkout,#CartSubmit,[data-cart-checkout]')) {
+      track('checkout_started', {
+        cart_total:  {{ cart.total_price | divided_by: 100.0 }},
+        item_count:  {{ cart.item_count }},
+        cart_token:  '{{ cart.token }}'
+      });
+    }
+    {% endif %}
+  });
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // EMQ Improvements: Facebook Login ID (+8%) + Date of Birth (+6%)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  function captureFacebookLoginId() {
+    if (typeof FB !== 'undefined') {
+      try {
+        FB.getLoginStatus(function(response) {
+          if (response.status === 'connected') {
+            var userId = response.authResponse.userID;
+            if (userId) {
+              setCookie('_fblogin', userId, 90);
+              injectSingleAttribute('_fblogin', userId);
+            }
+          }
+        });
+      } catch(e) {}
+    }
+  }
+
+  function captureDateOfBirth() {
+    var dobPatterns = ['birth_date', 'dob', 'date_of_birth', 'birthDate', 'birth-date'];
+    for (var i = 0; i < dobPatterns.length; i++) {
+      var input = d.querySelector('input[name*="' + dobPatterns[i] + '"]');
+      if (input && input.value) {
+        var dob = normalizeDOB(input.value);
+        if (dob) {
+          setCookie('_dob', dob, 90);
+          injectSingleAttribute('_dob', dob);
+          return;
+        }
+      }
+    }
+  }
+
+  function normalizeDOB(value) {
+    var cleaned = value.replace(/\D/g, '');
+    if (cleaned.length === 8) return cleaned;
+    var parts = value.match(/(\d{1,4})[\/\-](\d{1,2})[\/\-](\d{1,4})/);
+    if (parts) {
+      var year = parts[3], month = parts[1], day = parts[2];
+      if (parseInt(year) > 31) {
+        return year + padStart(month, 2, '0') + padStart(day, 2, '0');
+      } else {
+        return parts[3] + padStart(month, 2, '0') + padStart(day, 2, '0');
+      }
+    }
+    return null;
+  }
+
+  function padStart(str, length, char) {
+    str = String(str);
+    while (str.length < length) str = char + str;
+    return str;
+  }
+
+  function injectSingleAttribute(key, value) {
+    if (!value) return;
+    var attrs = {};
+    attrs[key] = String(value).substring(0, 1000);
+    try {
+      fetch('/cart/update.js', {
+        method:      'POST',
+        headers:     {'Content-Type': 'application/json'},
+        body:        JSON.stringify({ attributes: attrs }),
+        credentials: 'same-origin',
+        keepalive:   true
+      }).catch(function(){});
+    } catch(e) {}
+  }
+
+  // Capturar Facebook Login no load
+  if (d.readyState === 'loading') {
+    d.addEventListener('DOMContentLoaded', function() {
+      setTimeout(captureFacebookLoginId, 500);
+      setTimeout(captureDateOfBirth, 500);
+    });
+  } else {
+    setTimeout(captureFacebookLoginId, 500);
+    setTimeout(captureDateOfBirth, 500);
+  }
+
+  // Capturar DOB novamente se estiver sendo preenchido durante checkout
+  d.addEventListener('change', function(e) {
+    var name = (e.target.name || '').toLowerCase();
+    if (name.includes('birth') || name.includes('dob') || name.includes('date')) {
+      captureDateOfBirth();
+    }
+  }, true);
+
+  // Capturar antes de enviar para checkout
+  d.addEventListener('submit', function(e) {
+    if (e.target && e.target.action && e.target.action.includes('/checkout')) {
+      captureFacebookLoginId();
+      captureDateOfBirth();
+      syncCartAttributes();
+    }
+  }, true);
+
+}(window, document));
+</script>

@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Cookies — Validação Local</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0f1117;
+            color: #e5e7eb;
+            padding: 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 { color: #34d399; margin-bottom: 10px; }
+        .subtitle { color: #94a3b8; margin-bottom: 30px; }
+        .section {
+            background: #1a1f2e;
+            border: 1px solid #2a2f3e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .section h2 { color: #60a5fa; margin-bottom: 15px; font-size: 16px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; color: #94a3b8; margin-bottom: 5px; font-size: 12px; }
+        input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            color: #e5e7eb;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input:focus { outline: none; border-color: #60a5fa; }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover { background: #2563eb; }
+        .item {
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            font-family: 'Monaco', monospace;
+            font-size: 12px;
+        }
+        .item-label { color: #94a3b8; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; }
+        .item-value { color: #34d399; word-break: break-all; }
+        .item-value.null { color: #f87171; }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status-badge.ok { background: #10b981; color: white; }
+        .status-badge.fail { background: #ef4444; color: white; }
+        .log-box {
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Monaco', monospace;
+            font-size: 11px;
+        }
+        .log-ok { color: #34d399; }
+        .log-error { color: #f87171; }
+        .log-warn { color: #fbbf24; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+        .checklist {
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            border-radius: 6px;
+            padding: 15px;
+        }
+        .checklist-item { margin-bottom: 10px; }
+        .checklist-item input[type="checkbox"] { margin-right: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Teste de Cookies — Validação Local</h1>
+        <p class="subtitle">Abra este arquivo em https://lk-sneakers.myshopify.com para testar captura de cookies</p>
+
+        <!-- Section 1: Instruções -->
+        <div class="section">
+            <h2>📋 Como Usar</h2>
+            <ol style="margin-left: 20px; color: #cbd5e1;">
+                <li>Abra este arquivo em <strong>https://lk-sneakers.myshopify.com</strong></li>
+                <li>Preencha o formulário abaixo com seus dados</li>
+                <li>Clique "Simular Checkout"</li>
+                <li>Valide os cookies gerados</li>
+            </ol>
+        </div>
+
+        <!-- Section 2: Formulário de Teste -->
+        <div class="section">
+            <h2>📝 Preencher Formulário (Simula Visitante)</h2>
+            <div class="form-group">
+                <label>Primeiro Nome:</label>
+                <input type="text" id="firstName" placeholder="João" value="João">
+            </div>
+            <div class="form-group">
+                <label>Último Nome:</label>
+                <input type="text" id="lastName" placeholder="Silva" value="Silva">
+            </div>
+            <div class="form-group">
+                <label>Email:</label>
+                <input type="email" id="email" placeholder="joao@example.com" value="joao@example.com">
+            </div>
+            <div class="form-group">
+                <label>Data de Nascimento (DD/MM/YYYY):</label>
+                <input type="text" id="dob" placeholder="15/05/1990" value="15/05/1990" name="birth_date">
+            </div>
+            <button onclick="simulateForm()">✅ Simular Checkout</button>
+        </div>
+
+        <!-- Section 3: Cookies Capturados -->
+        <div class="section">
+            <h2>🍪 Cookies Capturados</h2>
+            <button onclick="refreshCookies()">🔄 Atualizar Cookies</button>
+            <button onclick="clearAllCookies()">🗑️ Limpar Cookies</button>
+            <div id="cookies-container" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Section 4: Dados para Meta CAPI -->
+        <div class="section">
+            <h2>📤 Dados que Serão Enviados para Meta CAPI</h2>
+            <div class="item">
+                <div class="item-label">Payload Simulado</div>
+                <div class="item-value" id="payload-preview" style="white-space: pre-wrap; max-height: 200px; overflow-y: auto;"></div>
+            </div>
+        </div>
+
+        <!-- Section 5: Checklist Final -->
+        <div class="section">
+            <h2>✅ Checklist de Validação</h2>
+            <div class="checklist">
+                <div class="checklist-item">
+                    <input type="checkbox" id="check1"> Tracker.js carregou (sem erros no console)
+                </div>
+                <div class="checklist-item">
+                    <input type="checkbox" id="check2"> Cookie _fblogin foi criado
+                </div>
+                <div class="checklist-item">
+                    <input type="checkbox" id="check3"> Cookie _dob foi criado em formato YYYYMMDD
+                </div>
+                <div class="checklist-item">
+                    <input type="checkbox" id="check4"> Outros cookies presentes (_fbp, _ga, etc)
+                </div>
+                <div class="checklist-item">
+                    <input type="checkbox" id="check5"> Network tab mostra POST /pixel/events com 200 OK
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 6: Console Logs -->
+        <div class="section">
+            <h2>📊 Console Logs</h2>
+            <button onclick="clearLogs()">Limpar Logs</button>
+            <div id="console-log" class="log-box"></div>
+        </div>
+
+        <!-- Section 7: Próximos Passos -->
+        <div class="section">
+            <h2>🚀 Próximas Ações</h2>
+            <ol style="margin-left: 20px; color: #cbd5e1;">
+                <li><strong>Imediato (agora):</strong> Validar todos os cookies aparecem nesta página</li>
+                <li><strong>24h:</strong> Abrir Meta Ads Manager → Events Manager → Procurar "Purchase" → Validar EMQ Quality %</li>
+                <li><strong>7 dias:</strong> Comparar CAPI Match Rate com métrica anterior (esperado: +5-10%)</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        const logBox = document.getElementById('console-log');
+        const originalLog = console.log;
+
+        function addLog(type, msg) {
+            const div = document.createElement('div');
+            div.className = `log-${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logBox.appendChild(div);
+            logBox.scrollTop = logBox.scrollHeight;
+            originalLog(msg);
+        }
+
+        function clearLogs() {
+            logBox.innerHTML = '';
+        }
+
+        function getCookie(name) {
+            const match = document.cookie.match(new RegExp('(?:^|;)\\s*' + name + '=([^;]*)'));
+            return match ? decodeURIComponent(match[1]) : null;
+        }
+
+        function setCookie(name, value, days = 90) {
+            const date = new Date();
+            date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
+            document.cookie = `${name}=${encodeURIComponent(value)};path=/;expires=${date.toUTCString()}`;
+            addLog('ok', `✅ Cookie '${name}' definido: ${value.substring(0, 30)}...`);
+        }
+
+        function normalizeDOB(value) {
+            const cleaned = value.replace(/\D/g, '');
+            if (cleaned.length === 8) return cleaned;
+            const parts = value.match(/(\d{1,4})[\/\-](\d{1,2})[\/\-](\d{1,4})/);
+            if (parts) {
+                let year = parts[3], month = parts[2], day = parts[1];
+                year = String(year).padStart(4, '0');
+                month = String(month).padStart(2, '0');
+                day = String(day).padStart(2, '0');
+                if (parseInt(year) > 31) {
+                    return year + month + day;
+                } else {
+                    return year + month + day;
+                }
+            }
+            return null;
+        }
+
+        function simulateForm() {
+            addLog('ok', '📝 Simulando preenchimento de formulário...');
+
+            const firstName = document.getElementById('firstName').value;
+            const lastName = document.getElementById('lastName').value;
+            const email = document.getElementById('email').value;
+            const dobRaw = document.getElementById('dob').value;
+            const dobNorm = normalizeDOB(dobRaw);
+
+            if (!dobNorm) {
+                addLog('error', '❌ Data de nascimento inválida');
+                return;
+            }
+
+            // Simular captura de Facebook Login ID
+            const fbLoginId = 'fbuser_' + Math.random().toString(36).substring(7) + '_' + Date.now();
+            setCookie('_fblogin', fbLoginId, 90);
+
+            // Simular captura de DOB
+            setCookie('_dob', dobNorm, 90);
+
+            // Simular cookies padrão
+            setCookie('_etv', 'visitor_' + Date.now(), 90);
+            setCookie('_fbp', 'fb.1.' + Date.now() + '.' + Math.floor(Math.random() * 1000000), 90);
+            setCookie('_ga', 'GA1.2.' + Math.floor(Math.random() * 1000000000) + '.' + Math.floor(Date.now() / 1000), 730);
+
+            addLog('ok', `✅ Simulação completa: ${firstName} ${lastName} (${email})`);
+            addLog('ok', `✅ DOB normalizado: ${dobRaw} → ${dobNorm}`);
+
+            setTimeout(() => {
+                refreshCookies();
+                updatePayloadPreview();
+            }, 500);
+        }
+
+        function refreshCookies() {
+            const container = document.getElementById('cookies-container');
+            container.innerHTML = '';
+
+            const cookies = {
+                '_etv': 'Visitor ID',
+                '_fblogin': 'Facebook Login ID ⭐',
+                '_dob': 'Date of Birth ⭐',
+                '_fbp': 'Meta Browser ID',
+                '_fbc': 'Meta Click ID',
+                '_ga': 'Google Analytics',
+                '_gclid': 'Google Click ID',
+            };
+
+            let foundCount = 0;
+            for (const [name, label] of Object.entries(cookies)) {
+                const value = getCookie(name);
+                const div = document.createElement('div');
+                div.className = 'item';
+                const hasValue = value !== null;
+                if (hasValue) foundCount++;
+
+                div.innerHTML = `
+                    <div class="item-label">${label}</div>
+                    <div class="item-value ${!hasValue ? 'null' : ''}">
+                        ${hasValue ? value : '(não encontrado)'}
+                        <span class="status-badge ${hasValue ? 'ok' : 'fail'}">${hasValue ? '✅ OK' : '❌ FALTA'}</span>
+                    </div>
+                `;
+                container.appendChild(div);
+            }
+
+            addLog('ok', `🔄 Verificação: ${foundCount} cookies encontrados`);
+
+            if (foundCount >= 3) {
+                addLog('ok', `✅ Essenciais OK (_etv, _fblogin, _dob)`);
+                document.getElementById('check1').checked = true;
+                document.getElementById('check2').checked = !!getCookie('_fblogin');
+                document.getElementById('check3').checked = !!getCookie('_dob');
+            }
+        }
+
+        function updatePayloadPreview() {
+            const payload = {
+                client_id: 'lk-sneakers',
+                event_type: 'purchase',
+                visitor_id: getCookie('_etv') || 'unknown',
+                page_url: 'https://lk-sneakers.myshopify.com/checkout',
+                fbp: getCookie('_fbp'),
+                fbc: getCookie('_fbc'),
+                gclid: getCookie('_gclid'),
+                ga_client_id: getCookie('_ga'),
+                metadata: {
+                    facebook_login: getCookie('_fblogin') || '(não capturado)',
+                    date_of_birth: getCookie('_dob') || '(não capturado)',
+                    email: document.getElementById('email').value,
+                    first_name: document.getElementById('firstName').value,
+                    last_name: document.getElementById('lastName').value,
+                }
+            };
+
+            const preview = document.getElementById('payload-preview');
+            preview.textContent = JSON.stringify(payload, null, 2);
+            addLog('ok', '📤 Payload atualizado');
+        }
+
+        function clearAllCookies() {
+            const cookies = ['_etv', '_fblogin', '_dob', '_fbp', '_fbc', '_ga', '_gclid'];
+            cookies.forEach(name => {
+                document.cookie = `${name}=;path=/;expires=Thu, 01 Jan 1970 00:00:00 UTC`;
+            });
+            addLog('warn', '🗑️ Todos os cookies foram removidos');
+            refreshCookies();
+        }
+
+        // Inicializar ao carregar
+        window.addEventListener('load', () => {
+            addLog('ok', '✅ Página carregada — validador de cookies ativo');
+            refreshCookies();
+
+            // Verificar se está no site correto
+            if (!window.location.hostname.includes('lk-sneakers') && !window.location.href.includes('file://')) {
+                addLog('warn', '⚠️ Abra este arquivo em https://lk-sneakers.myshopify.com para funcionar corretamente');
+            }
+        });
+
+        // Auto-refresh a cada 2 segundos
+        setInterval(() => {
+            if (getCookie('_fblogin') || getCookie('_dob')) {
+                document.getElementById('check2').checked = !!getCookie('_fblogin');
+                document.getElementById('check3').checked = !!getCookie('_dob');
+            }
+        }, 2000);
+    </script>
+</body>
+</html>

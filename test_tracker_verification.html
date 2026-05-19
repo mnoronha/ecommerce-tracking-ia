@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste de Tracking — Verificação EMQ</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0f1117;
+            color: #e5e7eb;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #34d399;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #94a3b8;
+            margin-bottom: 30px;
+        }
+        .section {
+            background: #1a1f2e;
+            border: 1px solid #2a2f3e;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .section h2 {
+            color: #60a5fa;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .item {
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+        }
+        .item-label {
+            color: #94a3b8;
+            font-size: 11px;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .item-value {
+            color: #34d399;
+            word-break: break-all;
+            word-wrap: break-word;
+        }
+        .item-value.null {
+            color: #f87171;
+        }
+        .item-value.warning {
+            color: #fbbf24;
+        }
+        button {
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        .log-box {
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Monaco', monospace;
+            font-size: 11px;
+        }
+        .log-error { color: #f87171; }
+        .log-warn { color: #fbbf24; }
+        .log-ok { color: #34d399; }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            color: #94a3b8;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        input {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0f1117;
+            border: 1px solid #2a2f3e;
+            color: #e5e7eb;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input:focus {
+            outline: none;
+            border-color: #60a5fa;
+            box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.1);
+        }
+        .status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .status.ok { background: #10b981; color: white; }
+        .status.fail { background: #ef4444; color: white; }
+        .status.warn { background: #f59e0b; color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Teste de Tracking — EMQ Verification</h1>
+        <p class="subtitle">Simulação de cliente Shopify para validar captura de dados e erros</p>
+
+        <!-- Section 1: Tracker Status -->
+        <div class="section">
+            <h2>1️⃣ Status do Tracker</h2>
+            <button onclick="checkTrackerStatus()">Verificar Status</button>
+            <button onclick="simulateEventAndCaptureData()">Simular Evento</button>
+            <div id="tracker-status" class="grid"></div>
+        </div>
+
+        <!-- Section 2: Cookies & Identifiers -->
+        <div class="section">
+            <h2>2️⃣ Identificadores Capturados (Cookies)</h2>
+            <button onclick="checkIdentifiers()">Atualizar Identificadores</button>
+            <div id="identifiers" class="grid"></div>
+        </div>
+
+        <!-- Section 3: EMQ Fields -->
+        <div class="section">
+            <h2>3️⃣ Campos de EMQ (Event Match Quality)</h2>
+            <div class="form-group">
+                <label>Nome:</label>
+                <input type="text" id="firstName" placeholder="João">
+            </div>
+            <div class="form-group">
+                <label>Sobrenome:</label>
+                <input type="text" id="lastName" placeholder="Silva">
+            </div>
+            <div class="form-group">
+                <label>Email:</label>
+                <input type="email" id="email" placeholder="joao@example.com">
+            </div>
+            <div class="form-group">
+                <label>Data de Nascimento (DD/MM/YYYY):</label>
+                <input type="text" id="dob" placeholder="15/05/1990" name="birth_date">
+            </div>
+            <button onclick="checkEMQCapture()">Validar Captura de EMQ</button>
+            <div id="emq-status" class="grid"></div>
+        </div>
+
+        <!-- Section 4: Console Logs -->
+        <div class="section">
+            <h2>4️⃣ Console & Network Logs</h2>
+            <button onclick="testFetch()">Testar POST /pixel/events</button>
+            <button onclick="clearLogs()">Limpar Logs</button>
+            <div id="console-log" class="log-box"></div>
+        </div>
+
+        <!-- Section 5: Test Events -->
+        <div class="section">
+            <h2>5️⃣ Testar Eventos</h2>
+            <button onclick="simulatePageView()">📄 Page View</button>
+            <button onclick="simulateProductView()">📦 Product View</button>
+            <button onclick="simulateAddToCart()">🛒 Add to Cart</button>
+            <button onclick="simulatePurchase()">💳 Purchase</button>
+        </div>
+
+        <!-- Section 6: Summary -->
+        <div class="section" id="summary">
+            <h2>✅ Sumário</h2>
+            <div id="summary-content"></div>
+        </div>
+    </div>
+
+    <!-- Carregar tracker.js -->
+    <script src="https://ecommerce-tracking-ia-production.up.railway.app/static/tracker.js?client_id=lk-sneakers" async></script>
+
+    <!-- Meta Pixel (para testar FB SDK) -->
+    <script>
+        !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+        fbq('init','1018779385487104');
+    </script>
+
+    <script>
+        const logBox = document.getElementById('console-log');
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+
+        // Interceptar console para logging
+        console.log = function(...args) {
+            originalLog(...args);
+            addLog('ok', '[LOG]', ...args);
+        };
+        console.error = function(...args) {
+            originalError(...args);
+            addLog('error', '[ERROR]', ...args);
+        };
+        console.warn = function(...args) {
+            originalWarn(...args);
+            addLog('warn', '[WARN]', ...args);
+        };
+
+        function addLog(type, label, ...args) {
+            const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+            const div = document.createElement('div');
+            div.className = `log-${type}`;
+            div.textContent = `${label} ${msg}`;
+            logBox.appendChild(div);
+            logBox.scrollTop = logBox.scrollHeight;
+        }
+
+        function clearLogs() {
+            logBox.innerHTML = '';
+        }
+
+        function checkTrackerStatus() {
+            clearDiv('tracker-status');
+            addLog('ok', '[TEST]', 'Verificando status do tracker...');
+
+            const items = [
+                { label: 'Window.ET', value: typeof window.ET !== 'undefined' ? '✅ Carregado' : '❌ Não carregado' },
+                { label: 'Client ID', value: window.ET?.getVisitorId ? '✅ OK' : '❌ FALHA' },
+                { label: 'API URL', value: 'https://ecommerce-tracking-ia-production.up.railway.app' },
+                { label: 'Meta Pixel', value: typeof fbq !== 'undefined' ? '✅ Carregado' : '❌ Não carregado' }
+            ];
+
+            renderItems('tracker-status', items);
+        }
+
+        function checkIdentifiers() {
+            clearDiv('identifiers');
+            addLog('ok', '[TEST]', 'Verificando identificadores...');
+
+            const items = [
+                { label: '_etv (Visitor ID)', value: document.cookie.match(/(?:^|;)\s*_etv=([^;]*)/)?.[1] || '(não capturado)' },
+                { label: '_fbp (Meta Browser ID)', value: document.cookie.match(/(?:^|;)\s*_fbp=([^;]*)/)?.[1]?.substring(0, 30) + '...' || '(não capturado)' },
+                { label: '_fbc (Meta Click ID)', value: document.cookie.match(/(?:^|;)\s*_fbc=([^;]*)/)?.[1] || '(não capturado)' },
+                { label: '_fblogin (FB Login ID) ⭐', value: document.cookie.match(/(?:^|;)\s*_fblogin=([^;]*)/)?.[1] || '(não capturado)' },
+                { label: '_dob (Date of Birth) ⭐', value: document.cookie.match(/(?:^|;)\s*_dob=([^;]*)/)?.[1] || '(não capturado)' },
+                { label: '_ga (GA Client ID)', value: document.cookie.match(/(?:^|;)\s*_ga=([^;]*)/)?.[1] || '(não capturado)' }
+            ];
+
+            renderItems('identifiers', items);
+        }
+
+        function checkEMQCapture() {
+            clearDiv('emq-status');
+            addLog('ok', '[TEST]', 'Validando captura de EMQ...');
+
+            // Simular detecção de DOB
+            const dobInput = document.getElementById('dob');
+            if (dobInput.value) {
+                // Simular a função de normalização
+                const normalized = normalizeDOB(dobInput.value);
+                console.log('[EMQ] DOB capturado e normalizado:', normalized);
+            }
+
+            const items = [
+                { label: 'Primeiro Nome', value: document.getElementById('firstName').value || '(vazio)' },
+                { label: 'Último Nome', value: document.getElementById('lastName').value || '(vazio)' },
+                { label: 'Email', value: document.getElementById('email').value || '(vazio)' },
+                { label: 'DOB Raw', value: document.getElementById('dob').value || '(vazio)' },
+                { label: 'DOB Normalizado (YYYYMMDD)', value: document.getElementById('dob').value ? normalizeDOB(document.getElementById('dob').value) : '(vazio)' }
+            ];
+
+            renderItems('emq-status', items);
+        }
+
+        function normalizeDOB(value) {
+            const cleaned = value.replace(/\D/g, '');
+            if (cleaned.length === 8) return cleaned;
+            const parts = value.match(/(\d{1,4})[\/\-](\d{1,2})[\/\-](\d{1,4})/);
+            if (parts) {
+                const year = parts[3], month = padStart(parts[1], 2, '0'), day = padStart(parts[2], 2, '0');
+                if (parseInt(year) > 31) {
+                    return year + month + day;
+                } else {
+                    return parts[3] + month + day;
+                }
+            }
+            return null;
+        }
+
+        function padStart(str, length, char) {
+            str = String(str);
+            while (str.length < length) str = char + str;
+            return str;
+        }
+
+        function testFetch() {
+            addLog('ok', '[TEST]', 'Testando POST /pixel/events...');
+
+            const payload = {
+                client_id: 'lk-sneakers',
+                event_type: 'test_event',
+                visitor_id: window.ET?.getVisitorId?.() || 'test-' + Date.now(),
+                page_url: window.location.href,
+                fbp: window.ET?.getFbp?.() || 'test',
+                fbc: window.ET?.getFbc?.() || null,
+                gclid: window.ET?.getGclid?.() || null,
+                ga_client_id: window.ET?.getGaClientId?.() || null
+            };
+
+            fetch('https://ecommerce-tracking-ia-production.up.railway.app/pixel/events', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                keepalive: true
+            })
+            .then(r => {
+                addLog(r.ok ? 'ok' : 'error', '[FETCH]', `Response: ${r.status} ${r.statusText}`);
+                return r.json();
+            })
+            .then(data => addLog('ok', '[FETCH]', 'Data:', JSON.stringify(data).substring(0, 100)))
+            .catch(e => addLog('error', '[FETCH]', 'Erro:', e.message));
+        }
+
+        function simulateEventAndCaptureData() {
+            addLog('ok', '[SIMULATE]', 'Disparando evento de teste...');
+            if (window.ET?.track) {
+                window.ET.track('test_event', { test: true });
+                addLog('ok', '[SIMULATE]', 'Evento disparado com sucesso');
+            } else {
+                addLog('error', '[SIMULATE]', 'Window.ET.track não disponível');
+            }
+            checkIdentifiers();
+        }
+
+        function simulatePageView() {
+            addLog('ok', '[EVENT]', 'Page View');
+            if (window.ET?.track) window.ET.track('pageview');
+        }
+
+        function simulateProductView() {
+            addLog('ok', '[EVENT]', 'Product View');
+            if (window.ET?.track) window.ET.track('product_viewed', { product_id: 'SKU-001', product_name: 'Produto Teste' });
+        }
+
+        function simulateAddToCart() {
+            addLog('ok', '[EVENT]', 'Add to Cart');
+            if (window.ET?.track) window.ET.track('add_to_cart', { product_id: 'SKU-001', quantity: 1 });
+        }
+
+        function simulatePurchase() {
+            addLog('ok', '[EVENT]', 'Purchase');
+            if (window.ET?.track) window.ET.track('purchase', { order_id: 'TEST-' + Date.now(), order_value: 99.99 });
+        }
+
+        function clearDiv(id) {
+            document.getElementById(id).innerHTML = '';
+        }
+
+        function renderItems(containerId, items) {
+            const container = document.getElementById(containerId);
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                const isNull = item.value === '(não capturado)' || item.value === '(vazio)';
+                div.innerHTML = `
+                    <div class="item-label">${item.label}</div>
+                    <div class="item-value ${isNull ? 'null' : ''}">${item.value}</div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // Inicializar ao carregar
+        window.addEventListener('load', function() {
+            addLog('ok', '[INIT]', 'Página carregada — iniciando verificações...');
+            setTimeout(() => {
+                checkTrackerStatus();
+                checkIdentifiers();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

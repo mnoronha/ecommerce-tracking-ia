@@ -234,6 +234,14 @@ def _dispatch_purchase_capi(
             logger.info("skipping CAPI for zero-value order %s", order_uuid)
             return
 
+        # Skip orders that are not actually paid — even if we received order.paid webhook,
+        # the order's financial_status might be "expired", "pending", "refunded", etc.
+        # Only send conversions for orders with financial_status="paid"
+        if order and order.status and order.status.lower() != "paid":
+            _record_capi_error(order_uuid, f"skipped: order financial_status is '{order.status}', not 'paid'")
+            logger.info("skipping CAPI for non-paid order %s (status=%s)", order_uuid, order.status)
+            return
+
         creds_result = (
             get_supabase().table("clients")
             .select(
