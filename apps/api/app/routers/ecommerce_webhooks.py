@@ -511,7 +511,8 @@ async def receive_webhook(
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
 
     # Fire Purchase CAPI + GA4 for paid orders (non-blocking, marks capi_sent)
-    if event.event_type.value in ("order.paid", "checkout.completed") and order_uuid:
+    # Only on order.paid (payment confirmed), NOT checkout.completed (which fires before payment)
+    if event.event_type.value == "order.paid" and order_uuid:
         background_tasks.add_task(_dispatch_purchase_capi, client_id, event, order_uuid)
         # Visitor converted — reset retargeting score so they leave retargeting audiences
         if visitor_uuid:
