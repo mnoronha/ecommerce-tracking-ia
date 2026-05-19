@@ -63,12 +63,45 @@
       exp.setTime(exp.getTime() + days * 864e5);
       expires = '; expires=' + exp.toUTCString();
     }
+    // Compute the registrable domain (eTLD+1) so cookies persist across
+    // www.foo.com.br and foo.com.br. Browsers reject cookies set to public
+    // suffixes (com.br, co.uk) — the old logic `slice(-2)` did exactly that
+    // and silently dropped the cookie, regenerating _etv on every pageview.
+    // We bias toward two-segment TLDs (com.br, co.uk, com.ar, com.mx, …)
+    // and fall back to the last two labels otherwise.
     var domain = '';
     try {
-      var parts = location.hostname.split('.');
-      if (parts.length >= 2) domain = '; domain=.' + parts.slice(-2).join('.');
+      var host = location.hostname;
+      // Don't try to set a domain attribute on localhost or raw IPs
+      if (host && host.indexOf('.') !== -1 && !/^\d+(\.\d+)+$/.test(host)) {
+        var parts = host.split('.');
+        var twoSegmentTlds = {
+          'com.br': 1, 'co.uk': 1, 'co.jp': 1, 'co.kr': 1, 'co.in': 1,
+          'com.au': 1, 'com.ar': 1, 'com.mx': 1, 'com.co': 1, 'com.pe': 1,
+          'com.sg': 1, 'com.hk': 1, 'com.tw': 1, 'com.tr': 1, 'com.ua': 1
+        };
+        var lastTwo = parts.slice(-2).join('.');
+        if (twoSegmentTlds[lastTwo] && parts.length >= 3) {
+          // domain=.example.com.br
+          domain = '; domain=.' + parts.slice(-3).join('.');
+        } else if (parts.length >= 2) {
+          // domain=.example.com
+          domain = '; domain=.' + lastTwo;
+        }
+      }
     } catch (e) {}
+    // Browsers silently drop a cookie when domain is a public suffix; if our
+    // first attempt produced one, fall back to the bare host (no domain attr).
     d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
+    // Verify it stuck — if not, retry without the domain attribute. The
+    // host-only cookie still works for tracking, just doesn't cross subdomains.
+    if (domain) {
+      try {
+        if (d.cookie.indexOf(name + '=') === -1) {
+          d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/; SameSite=Lax';
+        }
+      } catch (e) {}
+    }
   }
 
   function getCookie(name) {

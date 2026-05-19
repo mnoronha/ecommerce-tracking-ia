@@ -63,12 +63,35 @@
       exp.setTime(exp.getTime() + days * 864e5);
       expires = '; expires=' + exp.toUTCString();
     }
+    // Browsers reject cookies whose domain is a public suffix (com.br, co.uk).
+    // The old logic `slice(-2)` produced exactly that on Brazilian stores and
+    // the cookie silently vanished, regenerating _etv on every pageview.
     var domain = '';
     try {
-      var parts = location.hostname.split('.');
-      if (parts.length >= 2) domain = '; domain=.' + parts.slice(-2).join('.');
+      var host = location.hostname;
+      if (host && host.indexOf('.') !== -1 && !/^\d+(\.\d+)+$/.test(host)) {
+        var parts = host.split('.');
+        var twoSegTlds = {
+          'com.br': 1, 'co.uk': 1, 'co.jp': 1, 'co.kr': 1, 'co.in': 1,
+          'com.au': 1, 'com.ar': 1, 'com.mx': 1, 'com.co': 1, 'com.pe': 1,
+          'com.sg': 1, 'com.hk': 1, 'com.tw': 1, 'com.tr': 1, 'com.ua': 1
+        };
+        var lastTwo = parts.slice(-2).join('.');
+        if (twoSegTlds[lastTwo] && parts.length >= 3) {
+          domain = '; domain=.' + parts.slice(-3).join('.');
+        } else if (parts.length >= 2) {
+          domain = '; domain=.' + lastTwo;
+        }
+      }
     } catch (e) {}
     d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/' + domain + '; SameSite=Lax';
+    if (domain) {
+      try {
+        if (d.cookie.indexOf(name + '=') === -1) {
+          d.cookie = name + '=' + encodeURIComponent(value) + expires + '; path=/; SameSite=Lax';
+        }
+      } catch (e) {}
+    }
   }
 
   function getCookie(name) {

@@ -770,13 +770,17 @@ export default function DashboardPage() {
     setRevenueData(points)
 
     // ── Conversion funnel ─────────────────────────────────────────────────────
+    // Count unique visitors per stage so the funnel reflects people, not events.
+    // Purchases must filter to financial_status='paid' — otherwise pending /
+    // voided / draft orders inflate it past the checkout count, producing the
+    // impossible "more sales than checkouts" funnel.
     const uniq = (type: string) =>
       new Set(allEvents.filter(e => e.event_type === type).map(e => e.visitor_id)).size
     const pageviews     = uniq('pageview')
     const productViewed = uniq('view_product')
     const addToCart     = uniq('add_to_cart')
     const checkout      = uniq('begin_checkout')
-    const purchases     = allOrders.length
+    const purchases     = allOrders.filter((o: any) => o.financial_status === 'paid').length
     const top           = pageviews || 1
     setFunnelSteps([
       { label: 'Pageviews',         count: pageviews,     pct: 100 },
