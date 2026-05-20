@@ -424,24 +424,33 @@ def _dispatch_purchase_capi(
             )
 
         # ── Google Ads Conversion API ─────────────────────────────────────
+        # Fire whenever credentials + an order are available. send_conversion
+        # internally prefers gclid for click-attributed conversions and falls
+        # back to Enhanced Conversions for Leads (hashed email/phone) when no
+        # gclid is present — covers organic/direct/social/email-driven sales.
         if (
-            gclid
-            and c.get("google_ads_customer_id")
+            c.get("google_ads_customer_id")
             and c.get("google_ads_conversion_action_id")
             and c.get("google_ads_refresh_token")
             and event.order  # type: ignore[union-attr]
         ):
-            google_ads.send_conversion(
-                customer_id=c["google_ads_customer_id"],
-                conversion_action_id=c["google_ads_conversion_action_id"],
-                gclid=gclid,
-                value=float(event.order.total or 0),  # type: ignore[union-attr]
-                currency=event.order.currency or "BRL",  # type: ignore[union-attr]
-                order_id=str(event.order.id),  # type: ignore[union-attr]
-                refresh_token=c["google_ads_refresh_token"],
-                manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
-                value_override=bid_value_override,
-            )
+            cust = getattr(event, "customer", None)
+            email = cust.email if cust else None
+            phone = cust.phone if cust else None
+            if gclid or email or phone:
+                google_ads.send_conversion(
+                    customer_id=c["google_ads_customer_id"],
+                    conversion_action_id=c["google_ads_conversion_action_id"],
+                    value=float(event.order.total or 0),  # type: ignore[union-attr]
+                    currency=event.order.currency or "BRL",  # type: ignore[union-attr]
+                    refresh_token=c["google_ads_refresh_token"],
+                    gclid=gclid,
+                    email=email,
+                    phone=phone,
+                    order_id=str(event.order.id),  # type: ignore[union-attr]
+                    manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+                    value_override=bid_value_override,
+                )
 
         # ── TikTok Events API ────────────────────────────────────────────
         if c.get("tiktok_pixel_id") and c.get("tiktok_access_token"):

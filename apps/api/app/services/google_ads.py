@@ -1,12 +1,17 @@
 """
 Google Ads Conversion API — server-side conversion upload.
 
-Sends purchase events via GCLID to Google Ads for accurate attribution,
-bypassing browser-side tag requirements (replaces gtag conversion tracking).
+Sends purchase events to Google Ads. Prefers GCLID for direct click
+attribution, but falls back to Enhanced Conversions for Leads
+(hashed email/phone) when no GCLID is available — covering organic,
+direct, social and email-driven sales that previously went unreported.
 
-Docs: https://developers.google.com/google-ads/api/docs/conversions/upload-clicks
+Docs:
+- GCLID upload:        https://developers.google.com/google-ads/api/docs/conversions/upload-clicks
+- Enhanced for leads:  https://developers.google.com/google-ads/api/docs/conversions/upload-enhanced-conversions-for-leads
 """
 
+import hashlib
 import logging
 import time
 from datetime import datetime, timezone
@@ -61,36 +66,72 @@ def _get_access_token(client_id: str, client_secret: str, refresh_token: str) ->
     return None
 
 
+def _sha256(value: Optional[str]) -> Optional[str]:
+    """SHA-256 the lowercased+trimmed value, as Google requires for user_identifiers."""
+    if not value:
+        return None
+    return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
+
+
+def _normalize_phone_e164(phone: Optional[str]) -> Optional[str]:
+    """Coerce a phone string to E.164 (+5511999999999). Assumes BR when no country code."""
+    if not phone:
+        return None
+    raw = phone.strip()
+    digits = "".join(c for c in raw if c.isdigit())
+    if not digits:
+        return None
+    if raw.startswith("+"):
+        return "+" + digits
+    # 10/11-digit BR mobile/landline → prepend country code
+    if len(digits) in (10, 11):
+        return "+55" + digits
+    # Already has a country code embedded
+    return "+" + digits
+
+
 def send_conversion(
     customer_id:          str,
     conversion_action_id: str,
-    gclid:                str,
     value:                float,
     currency:             str,
     refresh_token:        str,
+    gclid:                Optional[str] = None,
+    email:                Optional[str] = None,
+    phone:                Optional[str] = None,
     order_id:             Optional[str] = None,
     occurred_at:          Optional[datetime] = None,
     manager_id:           Optional[str] = None,
     value_override:       Optional[float] = None,
 ) -> bool:
     """
-    Upload a click conversion to Google Ads API.
+    Upload a conversion to Google Ads.
+
+    Match strategy (best-available):
+      1. gclid present  → Click conversion with GCLID + enhanced identifiers
+      2. no gclid       → Enhanced Conversions for Leads (hashed email/phone only)
+
+    Either gclid OR (email/phone) is required — silently returns False when
+    neither is present, so the caller can keep this side-effect optional.
+
+    The conversion action must be configured in the Google Ads UI to accept
+    enhanced conversions. order_id is included whenever provided so the upload
+    is idempotent across retries.
 
     SaaS model: OAuth app credentials (developer token, client id/secret) are
-    shared across all clients and stored in Railway env vars. The refresh_token
-    is per-client and stored in clients.google_ads_refresh_token in Supabase —
-    generated when the client authenticates their Google Ads account.
-
-    order_id is optional — pass it for Purchase events (deduplication);
-    omit it for mid-funnel events (AddToCart, Checkout).
+    shared across all clients in Railway env vars; refresh_token is per-client.
 
     Returns True on success, False on any error (never raises).
     """
-    if not all([customer_id, conversion_action_id, gclid, refresh_token,
+    if not all([customer_id, conversion_action_id, refresh_token,
                 settings.GOOGLE_ADS_DEVELOPER_TOKEN,
                 settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
                 settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET]):
-        logger.debug("google_ads: skipped — missing credentials or gclid")
+        logger.debug("google_ads: skipped — missing OAuth/customer credentials")
+        return False
+
+    if not (gclid or email or phone):
+        logger.debug("google_ads: skipped — no gclid and no email/phone")
         return False
 
     access_token = _get_access_token(
@@ -114,19 +155,31 @@ def send_conversion(
         headers["login-customer-id"] = manager_id.replace("-", "")
 
     conv: dict = {
-        "gclid":              gclid,
         "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
         "conversionDateTime": conv_time,
         "conversionValue":    bid_value,
         "currencyCode":       (currency or "BRL").upper(),
     }
+    if gclid:
+        conv["gclid"] = gclid
     if order_id:
         conv["orderId"] = str(order_id)
+
+    identifiers = []
+    if email:
+        identifiers.append({"hashedEmail": _sha256(email)})
+    phone_e164 = _normalize_phone_e164(phone)
+    if phone_e164:
+        identifiers.append({"hashedPhoneNumber": _sha256(phone_e164)})
+    if identifiers:
+        conv["userIdentifiers"] = identifiers
 
     payload = {
         "conversions":   [conv],
         "partialFailure": True,
     }
+
+    match_label = "gclid" if gclid else "enhanced_only"
 
     delay = 1.0
     for attempt in range(3):
@@ -140,24 +193,28 @@ def send_conversion(
             if resp.status_code == 200:
                 result = resp.json()
                 if result.get("partialFailureError"):
-                    logger.warning("google_ads partial failure for order=%s: %s",
-                                   order_id, result["partialFailureError"])
+                    logger.warning("google_ads partial failure (%s) order=%s: %s",
+                                   match_label, order_id, result["partialFailureError"])
                     return False
-                logger.info("google_ads conversion sent — order=%s gclid=%s…",
-                            order_id, gclid[:20])
+                logger.info("google_ads conversion sent (%s) — order=%s",
+                            match_label, order_id)
                 return True
             if 400 <= resp.status_code < 500:
-                logger.warning("google_ads HTTP %s (no retry) order=%s: %s",
-                               resp.status_code, order_id, resp.text[:300])
+                logger.warning("google_ads HTTP %s (no retry, %s) order=%s: %s",
+                               resp.status_code, match_label, order_id, resp.text[:300])
                 return False
-            logger.warning("google_ads HTTP %s attempt %d/3", resp.status_code, attempt + 1)
+            logger.warning("google_ads HTTP %s attempt %d/3 (%s)",
+                           resp.status_code, attempt + 1, match_label)
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.warning("google_ads network error attempt %d/3: %s", attempt + 1, exc)
+            logger.warning("google_ads network error attempt %d/3 (%s): %s",
+                           attempt + 1, match_label, exc)
         except Exception as exc:
-            logger.error("google_ads exception for order=%s: %s", order_id, exc)
+            logger.error("google_ads exception (%s) for order=%s: %s",
+                         match_label, order_id, exc)
             return False
         if attempt < 2:
             time.sleep(delay * (2 ** attempt))
 
-    logger.error("google_ads failed after 3 attempts for order=%s", order_id)
+    logger.error("google_ads failed after 3 attempts (%s) for order=%s",
+                 match_label, order_id)
     return False
