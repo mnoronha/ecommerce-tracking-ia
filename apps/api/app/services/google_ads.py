@@ -24,7 +24,9 @@ from ..config import settings
 logger = logging.getLogger(__name__)
 
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
-_ADS_API   = "https://googleads.googleapis.com/v17"
+# Google Ads aposenta versões da API a cada ~ano. v17-v19 já retornam 404.
+# Manter nesta constante pra atualizar num lugar só quando a v21 expirar.
+_ADS_API   = "https://googleads.googleapis.com/v21"
 
 # Per-refresh-token cache: {refresh_token_prefix -> {token, expires_at}}
 # Keyed by first 16 chars of refresh_token to avoid storing full secrets in memory keys.
