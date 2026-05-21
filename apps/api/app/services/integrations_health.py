@@ -107,8 +107,9 @@ def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -
         if not token:
             return {"status": "expired", "error": "refresh_token rejected"}
         clean_cid = customer_id.replace("-", "").replace(" ", "")
-        # Hit a cheap, scope-safe endpoint to confirm the developer token + scopes pair works
-        r = httpx.get(
+        # Hit a cheap, scope-safe endpoint to confirm the developer token + scopes pair works.
+        # searchStream is a POST endpoint — sending a tiny query.
+        r = httpx.post(
             f"https://googleads.googleapis.com/v17/customers/{clean_cid}/googleAds:searchStream",
             headers={
                 "Authorization":   f"Bearer {token}",
