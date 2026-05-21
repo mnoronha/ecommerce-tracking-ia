@@ -107,18 +107,17 @@ def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -
         if not token:
             return {"status": "expired", "error": "refresh_token rejected"}
         clean_cid = customer_id.replace("-", "").replace(" ", "")
-        # Hit a cheap, scope-safe endpoint to confirm the developer token + scopes pair works.
-        # searchStream is a POST endpoint — sending a tiny query.
-        r = httpx.post(
-            f"https://googleads.googleapis.com/v17/customers/{clean_cid}/googleAds:searchStream",
+        # listAccessibleCustomers is the cheapest auth-only probe — confirms
+        # the OAuth token + developer token pair without needing campaign access.
+        # Uses /v18 since /v17 is deprecated.
+        r = httpx.get(
+            "https://googleads.googleapis.com/v18/customers:listAccessibleCustomers",
             headers={
                 "Authorization":   f"Bearer {token}",
                 "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
-                "Content-Type":    "application/json",
                 **({"login-customer-id": settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")}
                    if settings.GOOGLE_ADS_MANAGER_ID else {}),
             },
-            json={"query": "SELECT customer.id FROM customer LIMIT 1"},
             timeout=_TIMEOUT,
         )
         if r.status_code == 200:
