@@ -14,6 +14,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
+from ..config import settings
 from ..database import get_supabase
 from ..services import integrations_health
 
@@ -21,6 +22,31 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
 _PLATFORM_KEYS = {"meta", "google_ads", "ga4", "tiktok", "pinterest", "shopify"}
+
+
+@router.get("/_envcheck", summary="Diagnóstico — quais env vars o runtime enxerga (sem valores)")
+async def env_check():
+    """
+    Temporário. Devolve {var_name: 'set'|'missing', length: N} pra cada env var
+    de integração que o backend exige. Nunca expõe valores. Apagar depois
+    de resolver o gap do Google Ads.
+    """
+    def state(name: str) -> dict:
+        val = getattr(settings, name, "") or ""
+        return {
+            "status":  "set" if val else "missing",
+            "length":  len(val),
+            "preview": (val[:4] + "…" + val[-2:]) if len(val) > 8 else ("***" if val else ""),
+        }
+    return {
+        "GOOGLE_ADS_DEVELOPER_TOKEN":     state("GOOGLE_ADS_DEVELOPER_TOKEN"),
+        "GOOGLE_ADS_OAUTH_CLIENT_ID":     state("GOOGLE_ADS_OAUTH_CLIENT_ID"),
+        "GOOGLE_ADS_OAUTH_CLIENT_SECRET": state("GOOGLE_ADS_OAUTH_CLIENT_SECRET"),
+        "GOOGLE_ADS_REFRESH_TOKEN":       state("GOOGLE_ADS_REFRESH_TOKEN"),
+        "GOOGLE_ADS_MANAGER_ID":          state("GOOGLE_ADS_MANAGER_ID"),
+        "META_APP_ID":                    state("META_APP_ID"),
+        "META_APP_SECRET":                state("META_APP_SECRET"),
+    }
 
 
 def _load_client(pixel_id: str) -> dict:
