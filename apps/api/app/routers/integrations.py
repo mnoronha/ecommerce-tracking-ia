@@ -74,7 +74,7 @@ async def google_introspect(pixel_id: str):
                               json={"query": "SELECT customer.id FROM customer LIMIT 1"}, timeout=10)
             attempts.append({"version": version, "status": resp.status_code,
                              "requested_url": str(resp.request.url),
-                             "body": resp.text[:160]})
+                             "body": resp.text[:600]})
             if resp.status_code != 404:
                 break
         except Exception as exc:
