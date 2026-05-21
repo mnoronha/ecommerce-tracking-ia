@@ -133,7 +133,8 @@ def check_google_ads(
             r = httpx.post(
                 f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search",
                 headers=headers,
-                json={"query": "SELECT customer.id FROM customer LIMIT 1", "pageSize": 1},
+                # No pageSize — Google rejects it alongside LIMIT in the query.
+                json={"query": "SELECT customer.id FROM customer LIMIT 1"},
                 timeout=_TIMEOUT,
             )
             if r.status_code != 404:
