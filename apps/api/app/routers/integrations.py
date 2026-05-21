@@ -24,6 +24,47 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 _PLATFORM_KEYS = {"meta", "google_ads", "ga4", "tiktok", "pinterest", "shopify"}
 
 
+@router.get("/{pixel_id}/meta/_introspect", summary="Diagnóstico Meta — quem é o dono do token")
+async def meta_introspect(pixel_id: str):
+    """
+    Temporário. Pega o meta_access_token do DB do cliente e chama dois
+    endpoints Meta sem usar APP_SECRET:
+
+      - GET /me?access_token=...      → confirma se o token é válido por si só
+      - GET /me/permissions?access_token=...  → lista permissions concedidas
+
+    Isto separa "token quebrado" de "app desativado". O check normal
+    /test/meta usa APP_ID|APP_SECRET, que falha se a *conta de developer*
+    do app não está ativa — independente do token.
+    """
+    import httpx
+    sb = get_supabase()
+    r = (
+        sb.table("clients")
+        .select("meta_access_token, meta_pixel_id, meta_ad_account_id")
+        .eq("pixel_id", pixel_id)
+        .limit(1)
+        .execute()
+    )
+    if not (r and r.data and r.data[0].get("meta_access_token")):
+        return {"error": "no token in DB"}
+    token = r.data[0]["meta_access_token"]
+    out: dict = {}
+    try:
+        me = httpx.get("https://graph.facebook.com/v19.0/me",
+                       params={"access_token": token, "fields": "id,name"}, timeout=10).json()
+        out["me"] = me
+    except Exception as exc:
+        out["me_error"] = str(exc)
+    try:
+        perms = httpx.get("https://graph.facebook.com/v19.0/me/permissions",
+                          params={"access_token": token}, timeout=10).json()
+        out["permissions"] = perms
+    except Exception as exc:
+        out["permissions_error"] = str(exc)
+    return out
+
+
 @router.get("/_envcheck", summary="Diagnóstico — quais env vars o runtime enxerga (sem valores)")
 async def env_check():
     """
