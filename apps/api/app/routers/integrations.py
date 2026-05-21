@@ -67,7 +67,7 @@ async def google_introspect(pixel_id: str):
     if settings.GOOGLE_ADS_MANAGER_ID:
         headers["login-customer-id"] = settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")
     attempts = []
-    for version in ("v19", "v18", "v17"):
+    for version in ("v21", "v20", "v19", "v18"):
         url = f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search"
         try:
             resp = httpx.post(url, headers=headers,
