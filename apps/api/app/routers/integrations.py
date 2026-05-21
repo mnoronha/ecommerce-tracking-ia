@@ -30,7 +30,11 @@ async def env_check():
     Temporário. Devolve {var_name: 'set'|'missing', length: N} pra cada env var
     de integração que o backend exige. Nunca expõe valores. Apagar depois
     de resolver o gap do Google Ads.
+
+    Também lista os NOMES (não valores) de toda env var contendo 'GOOGLE',
+    'META', 'TIKTOK' ou 'PINTEREST', pra detectar typo no Railway.
     """
+    import os
     def state(name: str) -> dict:
         val = getattr(settings, name, "") or ""
         return {
@@ -38,14 +42,20 @@ async def env_check():
             "length":  len(val),
             "preview": (val[:4] + "…" + val[-2:]) if len(val) > 8 else ("***" if val else ""),
         }
+    keywords = ("GOOGLE", "META", "TIKTOK", "PINTEREST", "GA4_")
+    all_matching = sorted([k for k in os.environ.keys() if any(w in k.upper() for w in keywords)])
     return {
-        "GOOGLE_ADS_DEVELOPER_TOKEN":     state("GOOGLE_ADS_DEVELOPER_TOKEN"),
-        "GOOGLE_ADS_OAUTH_CLIENT_ID":     state("GOOGLE_ADS_OAUTH_CLIENT_ID"),
-        "GOOGLE_ADS_OAUTH_CLIENT_SECRET": state("GOOGLE_ADS_OAUTH_CLIENT_SECRET"),
-        "GOOGLE_ADS_REFRESH_TOKEN":       state("GOOGLE_ADS_REFRESH_TOKEN"),
-        "GOOGLE_ADS_MANAGER_ID":          state("GOOGLE_ADS_MANAGER_ID"),
-        "META_APP_ID":                    state("META_APP_ID"),
-        "META_APP_SECRET":                state("META_APP_SECRET"),
+        "expected": {
+            "GOOGLE_ADS_DEVELOPER_TOKEN":     state("GOOGLE_ADS_DEVELOPER_TOKEN"),
+            "GOOGLE_ADS_OAUTH_CLIENT_ID":     state("GOOGLE_ADS_OAUTH_CLIENT_ID"),
+            "GOOGLE_ADS_OAUTH_CLIENT_SECRET": state("GOOGLE_ADS_OAUTH_CLIENT_SECRET"),
+            "GOOGLE_ADS_REFRESH_TOKEN":       state("GOOGLE_ADS_REFRESH_TOKEN"),
+            "GOOGLE_ADS_MANAGER_ID":          state("GOOGLE_ADS_MANAGER_ID"),
+            "META_APP_ID":                    state("META_APP_ID"),
+            "META_APP_SECRET":                state("META_APP_SECRET"),
+        },
+        # Names only — never values. Lets us catch typos / wrong service.
+        "all_env_var_names_matching": all_matching,
     }
 
 
