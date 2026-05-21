@@ -630,6 +630,7 @@
     var ttclid = getTtclid();
     var fb_login = getFacebookLoginId();
     var dob    = getDateOfBirth();
+    var utm    = getAttribution() || {};
 
     if (fbp)       attrs['_fbp']   = fbp;
     if (fbc)       attrs['_fbc']   = fbc;
@@ -638,6 +639,13 @@
     if (ttclid)    attrs['_ettc']  = ttclid;
     if (fb_login)  attrs['_fblogin'] = fb_login;
     if (dob)       attrs['_dob']   = dob;
+    // UTMs survive checkout via cart attribute, so the backend can recover
+    // source/medium/campaign even when Shopify's landing_site is stale.
+    if (utm.source)   attrs['_utm_source']   = utm.source;
+    if (utm.medium)   attrs['_utm_medium']   = utm.medium;
+    if (utm.campaign) attrs['_utm_campaign'] = utm.campaign;
+    if (utm.content)  attrs['_utm_content']  = utm.content;
+    if (utm.term)     attrs['_utm_term']     = utm.term;
 
     try {
       fetch('/cart/update.js', {

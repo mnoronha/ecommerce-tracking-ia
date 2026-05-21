@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v3.2 + EMQ Optimizer
+  Ecommerce Tracking IA — Shopify Snippet  v3.5 + UTM cart-attribute relay
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -26,6 +26,8 @@
 
   Cart attributes injetados (note_attributes no webhook):
   - _etv, _fbp, _fbc, _gcid, _gclid, _fblogin, _dob — atravessam gateways externos
+  - _utm_source, _utm_medium, _utm_campaign, _utm_content, _utm_term
+    — preservam origem mesmo quando Shopify perde o landing_site
 
   Deduplicação Browser ↔ Server:
   - Cada track() gera um event_id único, enviado pro nosso CAPI E
@@ -284,6 +286,10 @@
   // Shopify thank-you page.
   function syncCartAttributes() {
     var meta = getMetaIds();
+    var utm  = getAttribution() || {};
+    // UTMs survive checkout via cart attribute, so even when Shopify drops
+    // landing_site (e.g. multi-session journeys, PIX redirects) the backend
+    // still recovers the original source/medium/campaign from note_attributes.
     var attrs = {
       '_etv':    getVisitorId(),
       '_fbp':    meta.fbp || '',
@@ -291,7 +297,12 @@
       '_gcid':   getGaClientId() || '',
       '_gclid':  getGclid() || '',
       '_fblogin': getCookie('_fblogin') || '',
-      '_dob':    getCookie('_dob') || ''
+      '_dob':    getCookie('_dob') || '',
+      '_utm_source':   utm.source   || '',
+      '_utm_medium':   utm.medium   || '',
+      '_utm_campaign': utm.campaign || '',
+      '_utm_content':  utm.content  || '',
+      '_utm_term':     utm.term     || ''
     };
     var stamp = JSON.stringify(attrs);
     try {

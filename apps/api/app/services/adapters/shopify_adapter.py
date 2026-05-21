@@ -59,24 +59,153 @@ class ShopifyAdapter(BaseAdapter):
     # Parsing helpers                                                      #
     # ------------------------------------------------------------------ #
 
-    def _parse_utm_from_landing(self, landing_site: str) -> Optional[UTMParams]:
-        """Extract UTM params + gclid/fbclid from Shopify's landing_site URL."""
-        if not landing_site:
+    # Domains we can map to a coarse source/medium when no UTM is present.
+    # Matched against urlparse(referring_site).netloc with leading "www." / "l."
+    # / "m." stripped.
+    _REFERRER_MAP: dict = {
+        "google.com":      ("google",    "organic"),
+        "google.com.br":   ("google",    "organic"),
+        "bing.com":        ("bing",      "organic"),
+        "duckduckgo.com":  ("duckduckgo","organic"),
+        "yahoo.com":       ("yahoo",     "organic"),
+        "instagram.com":   ("instagram", "social"),
+        "facebook.com":    ("facebook",  "social"),
+        "fb.com":          ("facebook",  "social"),
+        "messenger.com":   ("facebook",  "social"),
+        "tiktok.com":      ("tiktok",    "social"),
+        "youtube.com":     ("youtube",   "social"),
+        "youtu.be":        ("youtube",   "social"),
+        "twitter.com":     ("twitter",   "social"),
+        "x.com":           ("twitter",   "social"),
+        "t.co":            ("twitter",   "social"),
+        "linkedin.com":    ("linkedin",  "social"),
+        "pinterest.com":   ("pinterest", "social"),
+        "whatsapp.com":    ("whatsapp",  "social"),
+        "wa.me":           ("whatsapp",  "social"),
+        "reddit.com":      ("reddit",    "social"),
+        "klaviyo.com":     ("klaviyo",   "email"),
+    }
+
+    @staticmethod
+    def _normalize_referrer_host(referring_site: str) -> Optional[str]:
+        """Strip protocol + common subdomain prefixes for referrer lookup."""
+        if not referring_site:
             return None
         try:
-            qs = parse_qs(urlparse(landing_site).query)
-            p = {k: v[0] for k, v in qs.items() if v}
-            if not any(k in p for k in ("utm_source", "utm_medium", "utm_campaign", "gclid", "fbclid")):
-                return None
-            return UTMParams(
-                source=p.get("utm_source"),
-                medium=p.get("utm_medium"),
-                campaign=p.get("utm_campaign"),
-                term=p.get("utm_term"),
-                content=p.get("utm_content"),
-            )
+            host = urlparse(referring_site).netloc.lower()
         except Exception:
             return None
+        if not host:
+            return None
+        for prefix in ("www.", "l.", "m.", "lm.", "out.", "go.", "link."):
+            if host.startswith(prefix):
+                host = host[len(prefix):]
+                break
+        return host
+
+    def _infer_utm(
+        self,
+        landing_site:   Optional[str],
+        referring_site: Optional[str],
+        source_name:    Optional[str],
+        note_attrs:     Optional[dict] = None,
+    ) -> Optional[UTMParams]:
+        """
+        Best-available attribution for a Shopify order.
+
+        Cascade (highest priority first). Signals tied to the *current*
+        landing URL beat cart-attribute leftovers from older sessions:
+
+          1. UTM in landing_site qs                      — explicit, this visit
+          2. UTM in note_attrs (`_utm_*`)                — explicit, our cookie (≤30d)
+          3. gclid in landing_site                       — google/cpc, this visit
+          4. fbclid in landing_site                      — facebook/paid_social, this visit
+          5. srsltid in landing_site                     — google/organic (Shopping/Search)
+          6. _kx= in landing_site                        — klaviyo/email
+          7. gclid in note_attrs                         — google/cpc (older session)
+          8. _fbc in note_attrs                          — facebook/paid_social (older session)
+          9. referring_site host map                     — e.g. instagram → social
+         10. source_name == 'pos'                        — pos/in_store
+         11. None (truly unattributed)
+
+        Older clickids are demoted past current-visit signals so a customer
+        who arrived today via Google Shopping (srsltid) but has a stale fbc
+        cookie from a past Instagram ad is still credited to Google.
+        """
+        note_attrs = note_attrs or {}
+
+        qs: dict = {}
+        if landing_site:
+            try:
+                qs_raw = parse_qs(urlparse(landing_site).query)
+                qs = {k: v[0] for k, v in qs_raw.items() if v}
+            except Exception:
+                qs = {}
+
+        # 1. Explicit UTM in the landing URL — strongest, current-visit signal
+        if any(qs.get(k) for k in ("utm_source", "utm_medium", "utm_campaign")):
+            return UTMParams(
+                source=qs.get("utm_source"),
+                medium=qs.get("utm_medium"),
+                campaign=qs.get("utm_campaign"),
+                term=qs.get("utm_term"),
+                content=qs.get("utm_content"),
+            )
+
+        # 2. Pixel-injected UTMs from `_utm_*` cart attributes (≤30d cookie)
+        if any(note_attrs.get("_utm_" + k) for k in ("source", "medium", "campaign")):
+            return UTMParams(
+                source=note_attrs.get("_utm_source"),
+                medium=note_attrs.get("_utm_medium"),
+                campaign=note_attrs.get("_utm_campaign"),
+                term=note_attrs.get("_utm_term"),
+                content=note_attrs.get("_utm_content"),
+            )
+
+        # 3-4. Current-visit clickids
+        if qs.get("gclid"):
+            return UTMParams(source="google", medium="cpc")
+        if qs.get("fbclid"):
+            return UTMParams(source="facebook", medium="paid_social")
+
+        # 5. Google Shopping / Search organic — landing carries srsltid
+        if qs.get("srsltid"):
+            return UTMParams(source="google", medium="organic")
+
+        # 6. Klaviyo's per-recipient identifier on email links
+        if qs.get("_kx"):
+            return UTMParams(source="klaviyo", medium="email")
+
+        # 7-8. Older clickids — only when nothing on the current visit matched
+        if note_attrs.get("_gclid"):
+            return UTMParams(source="google", medium="cpc")
+        if note_attrs.get("_fbc"):
+            return UTMParams(source="facebook", medium="paid_social")
+
+        # 9. Referring-site host map — covers organic search and unattributed social
+        host = self._normalize_referrer_host(referring_site or "")
+        if host:
+            for domain, (source, medium) in self._REFERRER_MAP.items():
+                if host == domain or host.endswith("." + domain):
+                    return UTMParams(source=source, medium=medium)
+
+        # 10. POS terminal sale (Shopify Point of Sale) — physical store
+        sn = (source_name or "").lower()
+        if sn == "pos":
+            return UTMParams(source="pos", medium="in_store")
+
+        # 11. Draft order created in Shopify Admin — usually phone/WhatsApp
+        # orders the merchant entered by hand. No digital trail to attribute.
+        if sn == "shopify_draft_order":
+            return UTMParams(source="draft", medium="manual")
+
+        # 12. source_name == "web" with no UTM / referrer / clickids → typed
+        # the URL directly or used a saved bookmark. Surface it explicitly so
+        # the dashboard distinguishes "direct" from "unknown / not received".
+        if sn == "web":
+            return UTMParams(source="direct", medium="none")
+
+        return None
 
     def _parse_address(self, addr: dict) -> Optional[Address]:
         if not addr:
@@ -293,6 +422,8 @@ class ShopifyAdapter(BaseAdapter):
         client_details = payload.get("client_details") or {}
         browser_ip = payload.get("browser_ip") or client_details.get("browser_ip")
         user_agent = client_details.get("user_agent")
+        source_name = payload.get("source_name")
+        referring_site = payload.get("referring_site")
 
         return NormalizedEvent(
             event_id=str(uuid.uuid4()),
@@ -302,7 +433,7 @@ class ShopifyAdapter(BaseAdapter):
             timestamp=timestamp,
             customer=self._parse_customer(payload),
             order=order,
-            utm=self._parse_utm_from_landing(landing_site),
+            utm=self._infer_utm(landing_site, referring_site, source_name, nattr),
             raw_payload=payload,
             metadata={
                 "shop_domain":       headers.get("x-shopify-shop-domain"),
