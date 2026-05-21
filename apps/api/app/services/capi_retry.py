@@ -22,9 +22,18 @@ from ..models.events import NormalizedEvent, EventType, OrderData, CustomerData,
 
 logger = logging.getLogger(__name__)
 
-_RETRY_WINDOW_HOURS = 24
+# Retry window covers Friday-night incidents where the on-call sees the
+# breakage only Monday morning. 72h gives a real shot at recovery without
+# resending events Meta would dedupe anyway.
+_RETRY_WINDOW_HOURS = 72
 _MAX_RETRIES        = 5
 _BATCH_LIMIT        = 50
+
+# Sentinel prefix written to capi_last_error when a row exhausts retries.
+# Lets the health alert filter "really dead" rows (`capi_dead:%`) apart from
+# rows still in the retry queue. Keeps the dead state in an existing column
+# instead of adding a new boolean.
+_DEAD_PREFIX        = "capi_dead:"
 
 
 def _build_event(order: dict, visitor: Optional[dict]) -> NormalizedEvent:
@@ -190,21 +199,30 @@ def retry_failed_capi() -> None:
             # after a successful retry was confusing (looked like the order
             # had failed when it actually recovered). The successful retry
             # is recorded via capi_sent + capi_retry_count.
-            update: dict = {
-                "capi_retry_count": (order.get("capi_retry_count") or 0) + 1,
-            }
+            next_count = (order.get("capi_retry_count") or 0) + 1
+            update: dict = {"capi_retry_count": next_count}
             if meta_ok:
                 update["capi_sent"]       = True
                 update["capi_sent_at"]    = datetime.now(timezone.utc).isoformat()
                 update["capi_last_error"] = None
             elif meta_err:
-                update["capi_last_error"] = meta_err
+                # Last attempt and still failing — mark as dead so the health
+                # alert and ops dashboards can distinguish it from rows still
+                # in the retry queue.
+                if next_count >= _MAX_RETRIES:
+                    update["capi_last_error"] = f"{_DEAD_PREFIX} {meta_err}"[:500]
+                    logger.warning(
+                        "capi_retry: order %s exhausted retries — marked capi_dead: %s",
+                        order["platform_order_id"], meta_err,
+                    )
+                else:
+                    update["capi_last_error"] = meta_err
 
             sb.table("orders").update(update).eq("id", order["id"]).execute()
 
             if meta_ok:
                 logger.info("capi_retry: order %s recovered (attempt %d)",
-                            order["platform_order_id"], update["capi_retry_count"])
+                            order["platform_order_id"], next_count)
         except Exception as exc:
             logger.warning("capi_retry: order %s failed: %s", order.get("id"), exc)
             try:

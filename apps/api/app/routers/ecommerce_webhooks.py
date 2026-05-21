@@ -468,6 +468,92 @@ def _dispatch_purchase_capi(
         _record_capi_error(order_uuid, err)
 
 
+def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
+    """
+    Server-side InitiateCheckout via the Shopify `checkouts/create` webhook.
+    Runs in addition to the pixel — when the browser pixel is blocked by an
+    adblocker or never fires (mobile in-app browser, redirect to PIX gateway
+    before JS runs), the webhook still arrives and Meta gets a funnel event.
+
+    event_id is derived deterministically from the checkout token so this
+    backup deduplicates with itself across `checkouts/update` retries.
+    The current snippet generates a fresh UUID for its InitiateCheckout, so
+    Meta will count both in rare double-fire cases — accept that overcount
+    in exchange for never missing the signal when JS is blocked.
+    """
+    import hashlib
+
+    try:
+        topic = (getattr(event, "metadata", {}) or {}).get("topic", "")
+        if topic not in ("checkouts/create", "checkouts/update"):
+            return
+
+        raw = event.raw_payload or {}
+        token = raw.get("token") or raw.get("cart_token") or ""
+        if not token:
+            return
+
+        creds_result = (
+            get_supabase().table("clients")
+            .select(
+                "meta_pixel_id, meta_access_token, "
+                "ga4_measurement_id, ga4_api_secret"
+            )
+            .eq("pixel_id", client_pixel_id)
+            .limit(1)
+            .execute()
+        )
+        if not (creds_result and creds_result.data):
+            return
+        c = creds_result.data[0]
+
+        # Enrich the event with checkout totals so Meta InitiateCheckout
+        # carries a meaningful `value` instead of zero.
+        try:
+            total = float(raw.get("total_price") or raw.get("total_line_items_price") or 0)
+            line_items = raw.get("line_items") or []
+            num_items = sum(int(li.get("quantity") or 1) for li in line_items)
+            meta_dict = dict(event.metadata or {})
+            meta_dict.setdefault("cart_total", total)
+            meta_dict.setdefault("item_count", num_items)
+            object.__setattr__(event, "metadata", meta_dict)
+        except Exception as exc:
+            logger.debug("funnel enrich failed: %s", exc)
+
+        # Deterministic event_id — re-deliveries of the same checkout collapse
+        # in Meta's dedup window.
+        det_id = hashlib.sha256(f"ic_shopify_{token}".encode()).hexdigest()
+        object.__setattr__(event, "event_id", det_id)
+
+        # ── Meta CAPI InitiateCheckout ───────────────────────────────────
+        if c.get("meta_pixel_id") and c.get("meta_access_token"):
+            try:
+                ok, err = meta_capi.send_pixel_event(
+                    pixel_id=c["meta_pixel_id"],
+                    access_token=c["meta_access_token"],
+                    event=event,  # type: ignore[arg-type]
+                    test_event_code=settings.META_TEST_EVENT_CODE or None,
+                )
+                if not ok:
+                    logger.debug("funnel CAPI failed: %s", err)
+            except Exception as exc:
+                logger.debug("funnel meta send failed: %s", exc)
+
+        # ── GA4 begin_checkout ───────────────────────────────────────────
+        if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
+            try:
+                ga4.send_pixel_event(
+                    measurement_id=c["ga4_measurement_id"],
+                    api_secret=c["ga4_api_secret"],
+                    event=event,  # type: ignore[arg-type]
+                )
+            except Exception as exc:
+                logger.debug("funnel ga4 send failed: %s", exc)
+
+    except Exception as exc:
+        logger.warning("_dispatch_funnel_capi error for %s: %s", client_pixel_id, exc)
+
+
 @router.post(
     "/webhook/{platform}/{client_id}",
     summary="Unified webhook receiver",
@@ -527,6 +613,11 @@ async def receive_webhook(
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
+
+    # Fire InitiateCheckout server-side via the Shopify `checkouts/create`
+    # webhook — backup for sessions where the browser pixel never runs.
+    if event.event_type.value == "checkout.started":
+        background_tasks.add_task(_dispatch_funnel_capi, client_id, event)
 
     # Fire Purchase CAPI + GA4 for paid orders (non-blocking, marks capi_sent)
     # Only on order.paid (payment confirmed), NOT checkout.completed (which fires before payment)

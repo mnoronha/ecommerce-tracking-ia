@@ -30,6 +30,8 @@ class ShopifyAdapter(BaseAdapter):
         "refunds/create": EventType.ORDER_REFUNDED,
         "carts/create": EventType.CART_CREATED,
         "carts/update": EventType.CART_UPDATED,
+        "checkouts/create": EventType.CHECKOUT_STARTED,
+        "checkouts/update": EventType.CHECKOUT_STARTED,
         "customers/create": EventType.CUSTOMER_CREATED,
     }
 

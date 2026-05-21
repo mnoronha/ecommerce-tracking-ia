@@ -37,8 +37,9 @@ _REQUIRED_TOPICS = [
     "orders/fulfilled",
     "carts/create",
     "carts/update",
+    "checkouts/create",      # InitiateCheckout server-side backup when pixel is blocked
     "customers/create",
-    "refunds/create",  # for handling refunds (sends negative Purchase to Meta)
+    "refunds/create",        # for handling refunds (sends negative Purchase to Meta)
 ]
 
 

@@ -66,6 +66,12 @@ _scheduler.add_job(
     id="anomalies_daily",
 )
 _scheduler.add_job(
+    anomalies.run_capi_health_check_all_clients,
+    "interval",
+    hours=1,
+    id="capi_health_hourly",
+)
+_scheduler.add_job(
     meta_attribution_sync.run_daily_sync_all_clients,
     "cron",
     hour=9,   # 09 UTC = 06:00 BRT — early so dashboards are fresh by morning

@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 _REVENUE_DROP_CRITICAL = 0.25
 _REVENUE_DROP_WARNING  = 0.15
 _BIG_ORDER_MULTIPLE    = 3.0
+# CAPI health: ratio of paid orders in the last hour that never made it to
+# Meta. Above the warning threshold means we're losing optimization signals
+# in real time — pages an on-call before Meta starts drifting.
+_CAPI_FAIL_RATIO_WARN  = 0.05    # 5%
+_CAPI_FAIL_RATIO_ALARM = 0.20    # 20%
+_CAPI_HEALTH_MIN_PAID  = 5       # ignore tiny samples (no statistical signal)
 
 
 def _slack(webhook: str, text: str) -> None:
@@ -107,6 +113,52 @@ def _check_one_client(client: dict) -> list[dict]:
     except Exception as exc:
         logger.debug("revenue check failed for %s: %s", pixel_id, exc)
 
+    # ── CAPI health: paid orders in the last hour that never reached Meta ─────
+    # Catches token revocation, regional Meta API outages, and adapter bugs
+    # while we can still recover via retry — before the optimization signal
+    # degrades for several days.
+    try:
+        last_hour = now - timedelta(hours=1)
+        hour_paid = (
+            sb.table("orders")
+            .select("id, capi_sent, capi_last_error", count="exact")
+            .eq("client_id", client_id)
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", last_hour.isoformat())
+            .execute()
+        )
+        rows = hour_paid.data or []
+        total_paid = len(rows)
+        if total_paid >= _CAPI_HEALTH_MIN_PAID:
+            unsent = [r for r in rows if not r.get("capi_sent")]
+            dead   = [r for r in unsent
+                      if (r.get("capi_last_error") or "").startswith("capi_dead:")]
+            fail_ratio = len(unsent) / total_paid
+            if fail_ratio >= _CAPI_FAIL_RATIO_ALARM:
+                findings.append({
+                    "type":     "capi_health_alarm",
+                    "severity": "critical",
+                    "message":  (
+                        f":rotating_light: *{pixel_id}*: CAPI falhando — "
+                        f"{len(unsent)}/{total_paid} pedidos da última hora não chegaram no Meta "
+                        f"({fail_ratio * 100:.0f}%, {len(dead)} esgotaram retries). "
+                        f"Verifique o token e logs."
+                    ),
+                })
+            elif fail_ratio >= _CAPI_FAIL_RATIO_WARN:
+                findings.append({
+                    "type":     "capi_health_warning",
+                    "severity": "warning",
+                    "message":  (
+                        f":warning: *{pixel_id}*: CAPI degradado — "
+                        f"{len(unsent)}/{total_paid} pedidos da última hora ainda não enviados "
+                        f"({fail_ratio * 100:.0f}%)."
+                    ),
+                })
+    except Exception as exc:
+        logger.debug("capi health check failed for %s: %s", pixel_id, exc)
+
     # ── Big order: 24h max > 3x avg ticket ─────────────────────────────────────
     try:
         if recent:
@@ -154,3 +206,95 @@ def run_daily_anomaly_check() -> None:
         except Exception as exc:
             logger.warning("anomaly check failed for %s: %s", c.get("pixel_id"), exc)
     logger.info("anomalies: checked %d clients, %d findings", len(clients), total_findings)
+
+
+def _check_capi_health_one_client(client: dict) -> Optional[dict]:
+    """
+    Hourly CAPI health probe. Returns a finding dict when failures cross the
+    warning/alarm threshold, else None. Runs much more often than the daily
+    check so token expiry / outage gets caught while we can still recover.
+    """
+    sb = get_supabase()
+    client_id = client["id"]
+    pixel_id  = client.get("pixel_id") or "unknown"
+    webhook   = client.get("slack_webhook_url")
+
+    now       = datetime.now(timezone.utc)
+    last_hour = now - timedelta(hours=1)
+
+    try:
+        rows = (
+            sb.table("orders")
+            .select("id, capi_sent, capi_last_error")
+            .eq("client_id", client_id)
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", last_hour.isoformat())
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("capi health probe failed for %s: %s", pixel_id, exc)
+        return None
+
+    if len(rows) < _CAPI_HEALTH_MIN_PAID:
+        return None
+
+    unsent = [r for r in rows if not r.get("capi_sent")]
+    if not unsent:
+        return None
+
+    dead       = [r for r in unsent if (r.get("capi_last_error") or "").startswith("capi_dead:")]
+    fail_ratio = len(unsent) / len(rows)
+
+    if fail_ratio >= _CAPI_FAIL_RATIO_ALARM:
+        finding = {
+            "type":     "capi_health_alarm",
+            "severity": "critical",
+            "message":  (
+                f":rotating_light: *{pixel_id}*: CAPI falhando — "
+                f"{len(unsent)}/{len(rows)} pedidos da última hora não chegaram no Meta "
+                f"({fail_ratio * 100:.0f}%, {len(dead)} esgotaram retries). "
+                f"Verifique o token e logs."
+            ),
+        }
+    elif fail_ratio >= _CAPI_FAIL_RATIO_WARN:
+        finding = {
+            "type":     "capi_health_warning",
+            "severity": "warning",
+            "message":  (
+                f":warning: *{pixel_id}*: CAPI degradado — "
+                f"{len(unsent)}/{len(rows)} pedidos da última hora ainda não enviados "
+                f"({fail_ratio * 100:.0f}%)."
+            ),
+        }
+    else:
+        return None
+
+    _slack(webhook, finding["message"])
+    return finding
+
+
+def run_capi_health_check_all_clients() -> None:
+    """Hourly cron entry point — flags clients losing CAPI in real time."""
+    sb = get_supabase()
+    try:
+        clients = (
+            sb.table("clients")
+            .select("id, pixel_id, slack_webhook_url")
+            .eq("is_active", True)
+            .not_.is_("meta_access_token", "null")
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.error("capi_health: failed to load clients: %s", exc)
+        return
+
+    alerted = 0
+    for c in clients:
+        try:
+            if _check_capi_health_one_client(c):
+                alerted += 1
+        except Exception as exc:
+            logger.warning("capi_health: client %s failed: %s", c.get("pixel_id"), exc)
+    if alerted:
+        logger.warning("capi_health: %d/%d clients above threshold", alerted, len(clients))

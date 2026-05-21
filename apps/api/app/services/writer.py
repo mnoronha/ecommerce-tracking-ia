@@ -462,6 +462,40 @@ def write_order(
             effective_utm_content  = cookie.get("utm_content")
             rescued_cookie_id      = cookie.get("id")
 
+    # Cross-device / cross-cookie recovery: if the customer's email matches a
+    # prior visitor row that DID capture UTMs, inherit the earliest one as
+    # first-touch attribution. Covers the common case of browsing on mobile
+    # via an Instagram ad, then completing the purchase from a clean desktop
+    # the next day — without this the order would fall back to "direct".
+    if (
+        client_uuid
+        and not effective_utm_source
+        and customer and customer.email
+    ):
+        try:
+            prior = (
+                sb.table("visitors")
+                .select("first_utm_source,first_utm_medium,first_utm_campaign,first_utm_content,first_seen_at")
+                .eq("client_id", client_uuid)
+                .eq("email", customer.email.strip().lower())
+                .not_.is_("first_utm_source", "null")
+                .order("first_seen_at")  # earliest = first-touch
+                .limit(1)
+                .execute()
+            )
+            if prior and prior.data:
+                v = prior.data[0]
+                effective_utm_source   = v.get("first_utm_source")
+                effective_utm_medium   = v.get("first_utm_medium")
+                effective_utm_campaign = v.get("first_utm_campaign")
+                effective_utm_content  = v.get("first_utm_content")
+                logger.info(
+                    "writer: cross-device UTM recovered for %s — first-touch from prior visit",
+                    customer.email[:3] + "***",
+                )
+        except Exception as exc:
+            logger.debug("cross-device UTM inheritance failed: %s", exc)
+
     meta = event.metadata or {}
 
     # Predicted LTV — computed here so it's available for both DB persistence
