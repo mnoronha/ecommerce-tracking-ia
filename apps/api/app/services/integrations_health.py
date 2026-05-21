@@ -120,7 +120,7 @@ def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -
             headers["login-customer-id"] = settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")
 
         r = None
-        for version in ("v19", "v18", "v17"):
+        for version in ("v21", "v20", "v19"):
             r = httpx.post(
                 f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search",
                 headers=headers,
@@ -136,7 +136,14 @@ def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -
         if r.status_code == 401:
             return {"status": "expired", "error": "OAuth token rejected"}
         if r.status_code == 403:
-            return {"status": "invalid", "error": "developer token or customer access denied: " + r.text[:200]}
+            txt = r.text
+            if "USER_PERMISSION_DENIED" in txt:
+                hint = ("conta-cliente sem acesso. Defina GOOGLE_ADS_MANAGER_ID "
+                        "(MCC) no Railway ou conceda acesso ao usuário OAuth.")
+                return {"status": "invalid", "error": hint}
+            if "DEVELOPER_TOKEN" in txt:
+                return {"status": "invalid", "error": "developer token não aprovado/ inválido"}
+            return {"status": "invalid", "error": "acesso negado: " + txt[:200]}
         return {"status": "invalid", "error": f"HTTP {r.status_code}: {r.text[:200]}"}
     except Exception as exc:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
