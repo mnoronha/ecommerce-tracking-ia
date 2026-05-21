@@ -13,9 +13,23 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 type Step     = 1 | 2 | 3 | 4
 type Platform = 'shopify' | 'nuvemshop' | 'woocommerce'
-type AdsTab   = 'meta' | 'google' | 'tiktok' | 'pinterest'
+type AdsTab   = 'meta' | 'google' | 'tiktok' | 'pinterest' | 'ga4'
 
 type ProbeResult = { status: string; error?: string | null } | null
+
+// Readable pixel_id from the store name (lk-sneakers vs random UUID).
+// Falls back to a short random suffix to dodge collisions.
+function slugify(name: string): string {
+  const base = name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+  if (!base) return ''
+  const suffix = Math.random().toString(36).slice(2, 6)
+  return `${base}-${suffix}`
+}
 
 const STEP_LABELS: Record<Step, string> = {
   1: 'Loja',
@@ -59,6 +73,7 @@ function NewClientWizard() {
   const [storeName, setStoreName] = useState('')
   const [domain,    setDomain]    = useState('')
   const [apiToken,  setApiToken]  = useState('')
+  const [apiSecret, setApiSecret] = useState('')  // Shopify API secret key — assina os webhooks (HMAC)
 
   // Created client
   const [pixelId,    setPixelId]    = useState('')
@@ -67,9 +82,10 @@ function NewClientWizard() {
   // Step 2
   const [adsTab,      setAdsTab]      = useState<AdsTab>('meta')
   const [metaForm,    setMetaForm]    = useState({ pixel_id: '', access_token: '', ad_account_id: '' })
-  const [googleForm,  setGoogleForm]  = useState({ customer_id: '', aw_id: '' })
+  const [googleForm,  setGoogleForm]  = useState({ customer_id: '', aw_id: '', conversion_action_id: '', login_customer_id: '' })
   const [tiktokForm,  setTiktokForm]  = useState({ pixel_id: '', access_token: '' })
   const [pinterestForm, setPinterestForm] = useState({ ad_account_id: '', access_token: '', tag_id: '' })
+  const [ga4Form,     setGa4Form]     = useState({ measurement_id: '', api_secret: '' })
   const [savingAds,   setSavingAds]   = useState(false)
   const [probes,      setProbes]      = useState<Record<string, ProbeResult>>({})
   const [probing,     setProbing]     = useState<string | null>(null)
@@ -83,11 +99,12 @@ function NewClientWizard() {
   function setG(k: string, v: string) { setGoogleForm(f => ({ ...f, [k]: v })) }
   function setT(k: string, v: string) { setTiktokForm(f => ({ ...f, [k]: v })) }
   function setP(k: string, v: string) { setPinterestForm(f => ({ ...f, [k]: v })) }
+  function setGA(k: string, v: string) { setGa4Form(f => ({ ...f, [k]: v })) }
 
   // Save current ads tab then live-probe the integration. Each Testar agora
   // button calls this. The probe writes <platform>_health back so the
   // dashboard health card updates immediately.
-  async function handleTestConnection(platform: 'meta' | 'google_ads' | 'tiktok' | 'pinterest') {
+  async function handleTestConnection(platform: 'meta' | 'google_ads' | 'tiktok' | 'pinterest' | 'ga4') {
     if (!pixelId) return
     setProbing(platform)
     setProbes(p => ({ ...p, [platform]: null }))
@@ -117,13 +134,18 @@ function NewClientWizard() {
         .from('agency_members').select('agency_id').eq('user_id', user.id).limit(1).single()
       if (!mem) { setError('Usuário não vinculado a nenhuma agência.'); return }
 
+      const slug = slugify(storeName)
       const payload: Record<string, string | boolean> = {
         name: storeName, ecommerce_platform: platform, agency_id: mem.agency_id, is_active: true,
       }
+      if (slug) payload.pixel_id = slug   // readable id; DB default UUID if empty
       if (domain) {
         if (platform === 'shopify') {
           payload.shopify_domain = domain.replace(/^https?:\/\//, '')
-          if (apiToken) payload.shopify_access_token = apiToken
+          if (apiToken)  payload.shopify_access_token  = apiToken
+          // API secret key signs Shopify webhooks (HMAC) — without it, a new
+          // client's webhooks fail signature validation in production.
+          if (apiSecret) payload.shopify_webhook_secret = apiSecret
         } else if (platform === 'nuvemshop') {
           payload.nuvemshop_store_id = domain
           if (apiToken) payload.nuvemshop_access_token = apiToken
@@ -152,13 +174,17 @@ function NewClientWizard() {
         meta_pixel_id:       metaForm.pixel_id      || null,
         meta_access_token:   metaForm.access_token  || null,
         meta_ad_account_id:  metaForm.ad_account_id || null,
-        google_ads_customer_id: googleForm.customer_id || null,
-        google_ads_aw_id:       googleForm.aw_id       || null,
+        google_ads_customer_id:          googleForm.customer_id          || null,
+        google_ads_aw_id:                googleForm.aw_id                || null,
+        google_ads_conversion_action_id: googleForm.conversion_action_id || null,
+        google_ads_login_customer_id:    googleForm.login_customer_id    || null,
         tiktok_pixel_id:     tiktokForm.pixel_id     || null,
         tiktok_access_token: tiktokForm.access_token || null,
         pinterest_ad_account_id: pinterestForm.ad_account_id || null,
         pinterest_access_token:  pinterestForm.access_token  || null,
         pinterest_tag_id:        pinterestForm.tag_id        || null,
+        ga4_measurement_id:  ga4Form.measurement_id || null,
+        ga4_api_secret:      ga4Form.api_secret     || null,
       }).eq('id', clientDbId)
     } finally {
       setSavingAds(false)
@@ -304,6 +330,17 @@ function NewClientWizard() {
                       </code>
                     </div>
                   </div>
+                  <div>
+                    <label className={LABEL}>
+                      API Secret Key
+                      <span className="text-slate-600 font-normal ml-1">(assina os webhooks — sem ela, o rastreamento falha)</span>
+                    </label>
+                    <input type="password" value={apiSecret} onChange={e => setApiSecret(e.target.value)}
+                      placeholder="shpss_... ou hash de 32 caracteres" className={INPUT} />
+                    <p className="mt-1.5 text-xs text-slate-600">
+                      No mesmo app: <strong className="text-slate-400">API credentials</strong> → <strong className="text-slate-400">API secret key</strong>. É o que valida a assinatura HMAC dos webhooks deste cliente.
+                    </p>
+                  </div>
                 </>
               )}
 
@@ -347,12 +384,12 @@ function NewClientWizard() {
               <p className="text-xs text-slate-500 mb-6">Opcional — configure depois nas Configurações se preferir.</p>
 
               <div className="flex gap-1 bg-[#0f1117] rounded-lg p-1 border border-[#2a2f3e] mb-6 overflow-x-auto">
-                {(['meta', 'google', 'tiktok', 'pinterest'] as AdsTab[]).map(t => (
+                {(['meta', 'google', 'tiktok', 'pinterest', 'ga4'] as AdsTab[]).map(t => (
                   <button key={t} onClick={() => setAdsTab(t)}
-                    className={`flex-1 min-w-[90px] py-2 rounded-lg text-xs font-medium transition-colors ${
+                    className={`flex-1 min-w-[84px] py-2 rounded-lg text-xs font-medium transition-colors ${
                       adsTab === t ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}>
-                    {t === 'meta' ? 'Meta Ads' : t === 'google' ? 'Google Ads' : t === 'tiktok' ? 'TikTok Ads' : 'Pinterest'}
+                    {t === 'meta' ? 'Meta Ads' : t === 'google' ? 'Google Ads' : t === 'tiktok' ? 'TikTok Ads' : t === 'pinterest' ? 'Pinterest' : 'GA4'}
                   </button>
                 ))}
               </div>
@@ -378,10 +415,18 @@ function NewClientWizard() {
                   <div><label className={LABEL}>Customer ID</label>
                     <input value={googleForm.customer_id} onChange={e => setG('customer_id', e.target.value)}
                       placeholder="162-897-1213" className={INPUT} /></div>
-                  <div><label className={LABEL}>AW-ID <span className="text-slate-600 font-normal">(remarketing)</span></label>
+                  <div><label className={LABEL}>Conversion Action ID <span className="text-slate-600 font-normal">(necessário p/ enviar conversões)</span></label>
+                    <input value={googleForm.conversion_action_id} onChange={e => setG('conversion_action_id', e.target.value)}
+                      placeholder="1500331104" className={INPUT} />
+                    <p className="mt-1 text-xs text-slate-600">Google Ads → Goals → Conversions → sua ação → o número no fim da URL.</p>
+                  </div>
+                  <div><label className={LABEL}>MCC / Manager ID <span className="text-slate-600 font-normal">(opcional — só se a conta é gerenciada por uma MCC diferente da padrão)</span></label>
+                    <input value={googleForm.login_customer_id} onChange={e => setG('login_customer_id', e.target.value)}
+                      placeholder="985-863-8484" className={INPUT} /></div>
+                  <div><label className={LABEL}>AW-ID <span className="text-slate-600 font-normal">(remarketing, opcional)</span></label>
                     <input value={googleForm.aw_id} onChange={e => setG('aw_id', e.target.value)}
                       placeholder="AW-123456789" className={INPUT} /></div>
-                  <p className="text-xs text-slate-600">OAuth Google Ads: configure nas Configurações após criar a loja.</p>
+                  <p className="text-xs text-slate-600">O OAuth (refresh token) é conectado nas Configurações após criar a loja.</p>
                 </div>
               )}
 
@@ -411,12 +456,26 @@ function NewClientWizard() {
                 </div>
               )}
 
+              {adsTab === 'ga4' && (
+                <div className="space-y-4">
+                  <div><label className={LABEL}>Measurement ID</label>
+                    <input value={ga4Form.measurement_id} onChange={e => setGA('measurement_id', e.target.value)}
+                      placeholder="G-XXXXXXXXXX" className={INPUT} /></div>
+                  <div><label className={LABEL}>API Secret</label>
+                    <input type="password" value={ga4Form.api_secret} onChange={e => setGA('api_secret', e.target.value)}
+                      placeholder="xxxxxxxx" className={INPUT} />
+                    <p className="mt-1 text-xs text-slate-600">GA4 → Admin → Data Streams → seu stream → Measurement Protocol API secrets → criar.</p>
+                  </div>
+                </div>
+              )}
+
               {/* Testar conexão — salva os campos atuais e dispara probe live */}
               <div className="mt-5 pt-5 border-t border-[#2a2f3e]">
                 {(() => {
                   const platform = adsTab === 'meta' ? 'meta'
                                   : adsTab === 'google' ? 'google_ads'
                                   : adsTab === 'tiktok' ? 'tiktok'
+                                  : adsTab === 'ga4' ? 'ga4'
                                   : 'pinterest'
                   const probe = probes[platform]
                   const isProbing = probing === platform
