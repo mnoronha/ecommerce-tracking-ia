@@ -1,11 +1,18 @@
 """
 TikTok Events API (CAPI) — server-side event sender.
 
-Sends server-side purchase events to TikTok, complementing the browser pixel.
+Sends server-side funnel events to TikTok, complementing the browser pixel.
 Improves attribution reliability and bypasses iOS / ad-blocker restrictions.
 
-Events sent:
-  PlaceAnOrder — on order.paid webhook
+Events sent (TikTok event names in parens):
+  ViewContent       — on product.viewed   pixel event
+  AddToCart         — on cart.created/updated webhook or pixel event
+  InitiateCheckout  — on checkouts/create webhook or pixel begin_checkout
+  PlaceAnOrder      — on order.paid webhook
+
+Advanced matching: every event carries hashed email + phone + external_id +
+ip + user_agent in `context.user` so TikTok can identify the visitor even
+without a fresh ttclid.
 
 Docs: https://business-api.tiktok.com/portal/docs?id=1771101027431425
 """
@@ -172,4 +179,67 @@ def send_purchase(
         },
     }
 
+    return _send(pixel_code, access_token, payload)
+
+
+# ── Funnel events ─────────────────────────────────────────────────────────────
+
+_TIKTOK_EVENT_MAP = {
+    "product.viewed":    "ViewContent",
+    "cart.created":      "AddToCart",
+    "cart.updated":      "AddToCart",
+    "checkout.started":  "InitiateCheckout",
+}
+
+
+def send_pixel_event(
+    pixel_code: str,
+    access_token: str,
+    event: NormalizedEvent,
+    ttclid: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
+    """
+    Send ViewContent / AddToCart / InitiateCheckout to TikTok Events API.
+    Mirrors meta_capi.send_pixel_event so the webhook dispatchers can call
+    every CAPI service through the same signature.
+    """
+    if not pixel_code or not access_token:
+        return False, "missing pixel_code or access_token"
+
+    tiktok_event_name = _TIKTOK_EVENT_MAP.get(event.event_type.value)
+    if not tiktok_event_name:
+        return False, f"unmapped event_type: {event.event_type.value}"
+
+    meta = event.metadata or {}
+
+    # event_id must match what the snippet sends so TikTok dedupes browser ↔ server
+    event_id = event.event_id or hashlib.sha256(
+        f"{tiktok_event_name}_{event.client_id}_{int(time.time())}".encode()
+    ).hexdigest()[:32]
+
+    properties: dict = {"currency": "BRL"}
+    if tiktok_event_name in ("ViewContent", "AddToCart"):
+        if meta.get("product_id"):
+            properties["contents"] = [{
+                "content_id":   str(meta.get("product_id") or ""),
+                "content_name": meta.get("product_name", ""),
+                "price":        float(meta.get("product_price") or 0),
+                "quantity":     int(meta.get("product_quantity") or 1),
+            }]
+        properties["value"] = float(meta.get("product_price") or 0)
+    elif tiktok_event_name == "InitiateCheckout":
+        properties["value"]    = float(meta.get("cart_total") or 0)
+        properties["num_items"] = int(meta.get("item_count") or 0)
+
+    payload = {
+        "pixel_code": pixel_code,
+        "event":      tiktok_event_name,
+        "event_id":   event_id,
+        "timestamp":  int(time.time()),
+        "context": {
+            "user": _build_user(event, ttclid),
+            "page": {"url": (event.page_url or meta.get("page_url") or "")},
+        },
+        "properties": properties,
+    }
     return _send(pixel_code, access_token, payload)

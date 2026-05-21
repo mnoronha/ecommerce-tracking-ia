@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import attribution_engine, ga4, google_ads, meta_capi, profitability, tiktok_capi, writer
+from ..services import attribution_engine, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
     ShopifyAdapter,
@@ -251,6 +251,7 @@ def _dispatch_purchase_capi(
                 "google_ads_customer_id, google_ads_conversion_action_id, "
                 "google_ads_refresh_token, "
                 "tiktok_pixel_id, tiktok_access_token, "
+                "pinterest_ad_account_id, pinterest_access_token, pinterest_tag_id, "
                 "value_based_bidding"
             )
             .eq("pixel_id", client_pixel_id)
@@ -462,6 +463,20 @@ def _dispatch_purchase_capi(
                 value_override=bid_value_override,
             )
 
+        # ── Pinterest Conversions API ─────────────────────────────────────
+        if (
+            c.get("pinterest_ad_account_id")
+            and c.get("pinterest_access_token")
+            and c.get("pinterest_tag_id")
+        ):
+            pinterest_capi.send_purchase(
+                ad_account_id=c["pinterest_ad_account_id"],
+                access_token=c["pinterest_access_token"],
+                tag_id=c["pinterest_tag_id"],
+                event=event,  # type: ignore[arg-type]
+                value_override=bid_value_override,
+            )
+
     except Exception as exc:
         err = f"{type(exc).__name__}: {str(exc)[:200]}"
         logger.warning("_dispatch_purchase_capi error for %s: %s", client_pixel_id, err)
@@ -470,26 +485,42 @@ def _dispatch_purchase_capi(
 
 def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
     """
-    Server-side InitiateCheckout via the Shopify `checkouts/create` webhook.
+    Server-side mid-funnel events (AddToCart + InitiateCheckout) via Shopify
+    `carts/create` and `checkouts/create` / `checkouts/update` webhooks.
+
     Runs in addition to the pixel — when the browser pixel is blocked by an
     adblocker or never fires (mobile in-app browser, redirect to PIX gateway
-    before JS runs), the webhook still arrives and Meta gets a funnel event.
+    before JS runs), the webhook still arrives and Meta / GA4 / Google Ads
+    get the funnel event anyway.
 
-    event_id is derived deterministically from the checkout token so this
-    backup deduplicates with itself across `checkouts/update` retries.
-    The current snippet generates a fresh UUID for its InitiateCheckout, so
-    Meta will count both in rare double-fire cases — accept that overcount
-    in exchange for never missing the signal when JS is blocked.
+    event_id is derived deterministically from the cart/checkout token so
+    duplicate webhook deliveries collapse in each platform's dedup window.
+    The browser snippet still uses random UUIDs, so rare double-fires can
+    happen — accepted in exchange for never missing the signal when JS is
+    blocked.
+
+    Why we only fire on `carts/create` (not `carts/update`): updates fire
+    on every quantity change and would flood Meta with duplicate AddToCart
+    events. The create webhook captures the moment that matters — first
+    item dropped into the cart.
     """
     import hashlib
 
     try:
         topic = (getattr(event, "metadata", {}) or {}).get("topic", "")
-        if topic not in ("checkouts/create", "checkouts/update"):
+
+        # Decide event class from the Shopify topic
+        if topic == "carts/create":
+            kind            = "atc"
+            event_id_prefix = "atc_shopify_"
+        elif topic in ("checkouts/create", "checkouts/update"):
+            kind            = "ic"
+            event_id_prefix = "ic_shopify_"
+        else:
             return
 
         raw = event.raw_payload or {}
-        token = raw.get("token") or raw.get("cart_token") or ""
+        token = raw.get("token") or raw.get("cart_token") or raw.get("id") or ""
         if not token:
             return
 
@@ -497,7 +528,11 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
             get_supabase().table("clients")
             .select(
                 "meta_pixel_id, meta_access_token, "
-                "ga4_measurement_id, ga4_api_secret"
+                "ga4_measurement_id, ga4_api_secret, "
+                "google_ads_customer_id, google_ads_refresh_token, "
+                "google_ads_add_to_cart_action_id, google_ads_checkout_action_id, "
+                "tiktok_pixel_id, tiktok_access_token, "
+                "pinterest_ad_account_id, pinterest_access_token, pinterest_tag_id"
             )
             .eq("pixel_id", client_pixel_id)
             .limit(1)
@@ -507,25 +542,31 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
             return
         c = creds_result.data[0]
 
-        # Enrich the event with checkout totals so Meta InitiateCheckout
-        # carries a meaningful `value` instead of zero.
+        # Enrich event with cart totals / item count so each platform carries
+        # a meaningful `value` instead of zero.
         try:
-            total = float(raw.get("total_price") or raw.get("total_line_items_price") or 0)
             line_items = raw.get("line_items") or []
+            total = float(raw.get("total_price") or raw.get("total_line_items_price") or 0)
+            if not total and line_items:
+                total = sum(float(li.get("price") or 0) * int(li.get("quantity") or 1) for li in line_items)
             num_items = sum(int(li.get("quantity") or 1) for li in line_items)
             meta_dict = dict(event.metadata or {})
             meta_dict.setdefault("cart_total", total)
             meta_dict.setdefault("item_count", num_items)
+            if line_items:
+                first = line_items[0]
+                meta_dict.setdefault("product_id",    first.get("product_id") or first.get("id"))
+                meta_dict.setdefault("product_name",  first.get("title") or first.get("name"))
+                meta_dict.setdefault("product_price", float(first.get("price") or 0))
             object.__setattr__(event, "metadata", meta_dict)
         except Exception as exc:
             logger.debug("funnel enrich failed: %s", exc)
 
-        # Deterministic event_id — re-deliveries of the same checkout collapse
-        # in Meta's dedup window.
-        det_id = hashlib.sha256(f"ic_shopify_{token}".encode()).hexdigest()
+        # Deterministic event_id — re-deliveries collapse in dedup windows
+        det_id = hashlib.sha256(f"{event_id_prefix}{token}".encode()).hexdigest()
         object.__setattr__(event, "event_id", det_id)
 
-        # ── Meta CAPI InitiateCheckout ───────────────────────────────────
+        # ── Meta CAPI (AddToCart or InitiateCheckout) ─────────────────────
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
             try:
                 ok, err = meta_capi.send_pixel_event(
@@ -535,11 +576,11 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
                     test_event_code=settings.META_TEST_EVENT_CODE or None,
                 )
                 if not ok:
-                    logger.debug("funnel CAPI failed: %s", err)
+                    logger.debug("funnel CAPI failed (%s): %s", kind, err)
             except Exception as exc:
-                logger.debug("funnel meta send failed: %s", exc)
+                logger.debug("funnel meta send failed (%s): %s", kind, exc)
 
-        # ── GA4 begin_checkout ───────────────────────────────────────────
+        # ── GA4 add_to_cart / begin_checkout ──────────────────────────────
         if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
             try:
                 ga4.send_pixel_event(
@@ -548,7 +589,75 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
                     event=event,  # type: ignore[arg-type]
                 )
             except Exception as exc:
-                logger.debug("funnel ga4 send failed: %s", exc)
+                logger.debug("funnel ga4 send failed (%s): %s", kind, exc)
+
+        # ── TikTok AddToCart / InitiateCheckout ───────────────────────────
+        if c.get("tiktok_pixel_id") and c.get("tiktok_access_token"):
+            try:
+                tiktok_capi.send_pixel_event(
+                    pixel_code=c["tiktok_pixel_id"],
+                    access_token=c["tiktok_access_token"],
+                    event=event,  # type: ignore[arg-type]
+                )
+            except Exception as exc:
+                logger.debug("funnel tiktok send failed (%s): %s", kind, exc)
+
+        # ── Pinterest AddToCart / Checkout ────────────────────────────────
+        if (
+            c.get("pinterest_ad_account_id")
+            and c.get("pinterest_access_token")
+            and c.get("pinterest_tag_id")
+        ):
+            try:
+                from ..services import pinterest_capi
+                pinterest_capi.send_pixel_event(
+                    ad_account_id=c["pinterest_ad_account_id"],
+                    access_token=c["pinterest_access_token"],
+                    tag_id=c["pinterest_tag_id"],
+                    event=event,  # type: ignore[arg-type]
+                )
+            except Exception as exc:
+                logger.debug("funnel pinterest send failed (%s): %s", kind, exc)
+
+        # ── Google Ads Enhanced Conversion (cart_total + hashed email/phone)
+        # Carts have no customer attached, so Google Ads only fires on the
+        # checkout step (where Shopify includes email + phone in the payload).
+        if kind == "ic":
+            action_col = (
+                "google_ads_checkout_action_id" if kind == "ic"
+                else "google_ads_add_to_cart_action_id"
+            )
+            action_id = c.get(action_col)
+            if (
+                action_id
+                and c.get("google_ads_customer_id")
+                and c.get("google_ads_refresh_token")
+            ):
+                cust = getattr(event, "customer", None)
+                cust_email = cust.email if cust else None
+                cust_phone = cust.phone if cust else None
+                # Also accept email/phone directly on the Shopify payload
+                cust_email = cust_email or raw.get("email")
+                cust_phone = cust_phone or raw.get("phone") or raw.get("shipping_address", {}).get("phone")
+                meta_local = getattr(event, "metadata", {}) or {}
+                gclid = meta_local.get("gclid")
+                value = float(meta_local.get("cart_total") or 0)
+                if value > 0 and (gclid or cust_email or cust_phone):
+                    try:
+                        google_ads.send_conversion(
+                            customer_id=c["google_ads_customer_id"],
+                            conversion_action_id=action_id,
+                            value=value,
+                            currency="BRL",
+                            refresh_token=c["google_ads_refresh_token"],
+                            gclid=gclid,
+                            email=cust_email,
+                            phone=cust_phone,
+                            order_id=det_id,  # dedup key — same as Meta event_id
+                            manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+                        )
+                    except Exception as exc:
+                        logger.debug("funnel google_ads send failed (%s): %s", kind, exc)
 
     except Exception as exc:
         logger.warning("_dispatch_funnel_capi error for %s: %s", client_pixel_id, exc)
@@ -614,9 +723,10 @@ async def receive_webhook(
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
 
-    # Fire InitiateCheckout server-side via the Shopify `checkouts/create`
-    # webhook — backup for sessions where the browser pixel never runs.
-    if event.event_type.value == "checkout.started":
+    # Server-side mid-funnel: AddToCart on `carts/create` + InitiateCheckout
+    # on `checkouts/create|update`. Backup for sessions where the browser
+    # pixel never runs (adblock, in-app browsers, fast PIX redirects).
+    if event.event_type.value in ("cart.created", "checkout.started"):
         background_tasks.add_task(_dispatch_funnel_capi, client_id, event)
 
     # Fire Purchase CAPI + GA4 for paid orders (non-blocking, marks capi_sent)
