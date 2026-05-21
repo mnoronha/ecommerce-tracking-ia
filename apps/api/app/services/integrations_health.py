@@ -204,19 +204,26 @@ def check_tiktok(access_token: Optional[str]) -> dict:
 
 def check_pinterest(ad_account_id: Optional[str], access_token: Optional[str]) -> dict:
     """
-    Validates a Conversions API token by reading the ad account it's scoped to.
-    Uses /v5/ad_accounts/{id} (scope ads:read) instead of /v5/user_account
-    (scope user_accounts:read) — CAPI tokens carry the former, not the latter.
+    Validates a Conversions API token. These tokens are write-only (no ads:read
+    or user_accounts:read), so we can't validate by reading. Instead we POST an
+    empty event batch to the conversions endpoint and read the auth outcome:
+
+      401/403  → token rejected / wrong scopes  → expired
+      400      → token authenticated, payload invalid (expected) → healthy
+      200      → accepted → healthy
+
+    Sending data:[] never creates a real conversion.
     """
     if not (ad_account_id and access_token):
         return {"status": "unknown", "error": "no ad_account_id or token"}
     try:
-        r = httpx.get(
-            f"https://api.pinterest.com/v5/ad_accounts/{ad_account_id}",
-            headers={"Authorization": f"Bearer {access_token}"},
+        r = httpx.post(
+            f"https://api.pinterest.com/v5/ad_accounts/{ad_account_id}/events",
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+            json={"data": []},
             timeout=_TIMEOUT,
         )
-        if r.status_code == 200:
+        if r.status_code in (200, 400):
             return {"status": "healthy"}
         if r.status_code in (401, 403):
             return {"status": "expired", "error": r.text[:200]}
