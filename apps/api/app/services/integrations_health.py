@@ -38,32 +38,58 @@ _TIMEOUT = 8.0
 # ── individual probes ─────────────────────────────────────────────────────────
 
 def check_meta(access_token: Optional[str], pixel_id: Optional[str] = None) -> dict:
-    """Calls debug_token, then /me/adaccounts as a follow-up smoke test."""
+    """
+    Validates the Meta access token using `/me` — works without APP_SECRET
+    and without requiring the developer account that owns the app to have
+    completed Developer Registration. Falls through to `debug_token` only
+    when the app credentials are present and we want expiry data.
+    """
     if not access_token:
         return {"status": "unknown", "error": "no token configured"}
-    if not (settings.META_APP_ID and settings.META_APP_SECRET):
-        return {"status": "unknown", "error": "META_APP_ID/SECRET not set in env"}
     try:
-        r = httpx.get(
-            "https://graph.facebook.com/v19.0/debug_token",
-            params={
-                "input_token":  access_token,
-                "access_token": f"{settings.META_APP_ID}|{settings.META_APP_SECRET}",
-            },
+        me = httpx.get(
+            "https://graph.facebook.com/v19.0/me",
+            params={"access_token": access_token, "fields": "id"},
             timeout=_TIMEOUT,
         )
-        data = (r.json().get("data") or {})
-        if r.status_code != 200 or not data.get("is_valid"):
-            return {"status": "invalid", "error": data.get("error", {}).get("message") or r.text[:200]}
-        expires = int(data.get("expires_at") or 0)
-        now = time.time()
-        if expires and expires - now < 7 * 86400 and expires > now:
-            return {"status": "expiring_soon", "expires_at": expires}
-        if expires and expires <= now:
-            return {"status": "expired"}
-        return {"status": "healthy", "expires_at": expires or None}
+        body = me.json()
+        if me.status_code != 200 or not body.get("id"):
+            err = (body.get("error") or {}).get("message") or me.text[:200]
+            # Code 190 means token itself is rejected (expired/revoked/bad signature)
+            code = (body.get("error") or {}).get("code")
+            return {"status": "expired" if code == 190 else "invalid", "error": err}
     except Exception as exc:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
+
+    # Token works. Try debug_token for expiry info — only if APP credentials
+    # are configured AND the developer account is active. Failure here is
+    # informational only and doesn't downgrade the status.
+    if settings.META_APP_ID and settings.META_APP_SECRET:
+        try:
+            r = httpx.get(
+                "https://graph.facebook.com/v19.0/debug_token",
+                params={
+                    "input_token":  access_token,
+                    "access_token": f"{settings.META_APP_ID}|{settings.META_APP_SECRET}",
+                },
+                timeout=_TIMEOUT,
+            )
+            data = (r.json().get("data") or {})
+            if r.status_code == 200 and data.get("is_valid"):
+                expires = int(data.get("expires_at") or 0)
+                now = time.time()
+                if expires and expires - now < 7 * 86400 and expires > now:
+                    return {"status": "expiring_soon", "expires_at": expires}
+                if expires and expires <= now:
+                    return {"status": "expired"}
+                return {"status": "healthy", "expires_at": expires or None}
+            # debug_token failed — that's fine if /me passed. Mark healthy
+            # but signal we can't read expiry. Keeps the dashboard green
+            # when the only failure is the agency's dev-registration step.
+            return {"status": "healthy", "expires_at": None}
+        except Exception:
+            return {"status": "healthy", "expires_at": None}
+    return {"status": "healthy", "expires_at": None}
 
 
 def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -> dict:
