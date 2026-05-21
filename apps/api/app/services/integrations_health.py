@@ -107,23 +107,36 @@ def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -
         if not token:
             return {"status": "expired", "error": "refresh_token rejected"}
         clean_cid = customer_id.replace("-", "").replace(" ", "")
-        # listAccessibleCustomers is the cheapest auth-only probe — confirms
-        # the OAuth token + developer token pair without needing campaign access.
-        # Uses /v18 since /v17 is deprecated.
-        r = httpx.get(
-            "https://googleads.googleapis.com/v18/customers:listAccessibleCustomers",
-            headers={
-                "Authorization":   f"Bearer {token}",
-                "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
-                **({"login-customer-id": settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")}
-                   if settings.GOOGLE_ADS_MANAGER_ID else {}),
-            },
-            timeout=_TIMEOUT,
-        )
+        # Probe a customer-scoped endpoint that actually exists across
+        # Google Ads API versions. googleAds:search with a one-row query
+        # validates: OAuth token → developer token → customer access.
+        # We try the current versions in order; first non-404 wins.
+        headers = {
+            "Authorization":   f"Bearer {token}",
+            "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+            "Content-Type":    "application/json",
+        }
+        if settings.GOOGLE_ADS_MANAGER_ID:
+            headers["login-customer-id"] = settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")
+
+        r = None
+        for version in ("v19", "v18", "v17"):
+            r = httpx.post(
+                f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search",
+                headers=headers,
+                json={"query": "SELECT customer.id FROM customer LIMIT 1", "pageSize": 1},
+                timeout=_TIMEOUT,
+            )
+            if r.status_code != 404:
+                break
+        if r is None:
+            return {"status": "invalid", "error": "no version returned a response"}
         if r.status_code == 200:
             return {"status": "healthy"}
-        if r.status_code in (401, 403):
-            return {"status": "invalid", "error": r.text[:200]}
+        if r.status_code == 401:
+            return {"status": "expired", "error": "OAuth token rejected"}
+        if r.status_code == 403:
+            return {"status": "invalid", "error": "developer token or customer access denied: " + r.text[:200]}
         return {"status": "invalid", "error": f"HTTP {r.status_code}: {r.text[:200]}"}
     except Exception as exc:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
