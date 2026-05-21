@@ -203,12 +203,16 @@ def check_tiktok(access_token: Optional[str]) -> dict:
 
 
 def check_pinterest(ad_account_id: Optional[str], access_token: Optional[str]) -> dict:
-    """Hits /v5/user_account — cheapest authenticated endpoint."""
+    """
+    Validates a Conversions API token by reading the ad account it's scoped to.
+    Uses /v5/ad_accounts/{id} (scope ads:read) instead of /v5/user_account
+    (scope user_accounts:read) — CAPI tokens carry the former, not the latter.
+    """
     if not (ad_account_id and access_token):
         return {"status": "unknown", "error": "no ad_account_id or token"}
     try:
         r = httpx.get(
-            "https://api.pinterest.com/v5/user_account",
+            f"https://api.pinterest.com/v5/ad_accounts/{ad_account_id}",
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=_TIMEOUT,
         )
