@@ -92,8 +92,16 @@ def check_meta(access_token: Optional[str], pixel_id: Optional[str] = None) -> d
     return {"status": "healthy", "expires_at": None}
 
 
-def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -> dict:
-    """Refreshes the access token and lists accessible customers."""
+def check_google_ads(
+    customer_id: Optional[str],
+    refresh_token: Optional[str],
+    login_customer_id: Optional[str] = None,
+) -> dict:
+    """
+    Refreshes the access token and runs a 1-row query against the customer.
+    `login_customer_id` is the per-client MCC; falls back to the agency-wide
+    GOOGLE_ADS_MANAGER_ID env var.
+    """
     if not (customer_id and refresh_token):
         return {"status": "unknown", "error": "no customer_id or refresh_token"}
     if not (settings.GOOGLE_ADS_OAUTH_CLIENT_ID and settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET and settings.GOOGLE_ADS_DEVELOPER_TOKEN):
@@ -116,8 +124,9 @@ def check_google_ads(customer_id: Optional[str], refresh_token: Optional[str]) -
             "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
             "Content-Type":    "application/json",
         }
-        if settings.GOOGLE_ADS_MANAGER_ID:
-            headers["login-customer-id"] = settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")
+        mcc = login_customer_id or settings.GOOGLE_ADS_MANAGER_ID
+        if mcc:
+            headers["login-customer-id"] = mcc.replace("-", "")
 
         r = None
         for version in ("v21", "v20", "v19"):
@@ -258,7 +267,11 @@ def check_all(client: dict, persist: bool = True) -> dict:
     results: dict[str, dict] = {}
 
     results["meta"]       = check_meta(client.get("meta_access_token"), client.get("meta_pixel_id"))
-    results["google_ads"] = check_google_ads(client.get("google_ads_customer_id"), client.get("google_ads_refresh_token"))
+    results["google_ads"] = check_google_ads(
+        client.get("google_ads_customer_id"),
+        client.get("google_ads_refresh_token"),
+        client.get("google_ads_login_customer_id"),
+    )
     results["ga4"]        = check_ga4(client.get("ga4_measurement_id"), client.get("ga4_api_secret"))
     results["tiktok"]     = check_tiktok(client.get("tiktok_access_token"))
     results["pinterest"]  = check_pinterest(
@@ -316,7 +329,7 @@ def run_hourly_for_all_clients() -> None:
             sb.table("clients")
             .select(
                 "id, pixel_id, meta_access_token, meta_pixel_id, "
-                "google_ads_customer_id, google_ads_refresh_token, "
+                "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
                 "ga4_measurement_id, ga4_api_secret, "
                 "tiktok_access_token, "
                 "pinterest_ad_account_id, pinterest_access_token, "

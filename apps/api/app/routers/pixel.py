@@ -169,7 +169,7 @@ def _dispatch_pixel_google_ads(
     try:
         creds = (
             get_supabase().table("clients")
-            .select(f"google_ads_customer_id, google_ads_refresh_token, {action_column}")
+            .select(f"google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, {action_column}")
             .eq("pixel_id", client_pixel_id)
             .limit(1)
             .execute()
@@ -188,7 +188,7 @@ def _dispatch_pixel_google_ads(
             currency="BRL",
             refresh_token=c["google_ads_refresh_token"],
             order_id=event.event_id,
-            manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+            manager_id=c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None,
         )
     except Exception as exc:
         logger.warning("_dispatch_pixel_google_ads error for %s: %s", client_pixel_id, exc)

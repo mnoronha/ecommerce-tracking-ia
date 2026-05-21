@@ -249,7 +249,7 @@ def _dispatch_purchase_capi(
                 "meta_pixel_id, meta_access_token, "
                 "ga4_measurement_id, ga4_api_secret, "
                 "google_ads_customer_id, google_ads_conversion_action_id, "
-                "google_ads_refresh_token, "
+                "google_ads_refresh_token, google_ads_login_customer_id, "
                 "tiktok_pixel_id, tiktok_access_token, "
                 "pinterest_ad_account_id, pinterest_access_token, pinterest_tag_id, "
                 "value_based_bidding"
@@ -449,7 +449,8 @@ def _dispatch_purchase_capi(
                     email=email,
                     phone=phone,
                     order_id=str(event.order.id),  # type: ignore[union-attr]
-                    manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+                    # per-client MCC first, agency-wide fallback
+                    manager_id=c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None,
                     value_override=bid_value_override,
                 )
 
@@ -529,7 +530,7 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
             .select(
                 "meta_pixel_id, meta_access_token, "
                 "ga4_measurement_id, ga4_api_secret, "
-                "google_ads_customer_id, google_ads_refresh_token, "
+                "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
                 "google_ads_add_to_cart_action_id, google_ads_checkout_action_id, "
                 "tiktok_pixel_id, tiktok_access_token, "
                 "pinterest_ad_account_id, pinterest_access_token, pinterest_tag_id"
@@ -654,7 +655,7 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
                             email=cust_email,
                             phone=cust_phone,
                             order_id=det_id,  # dedup key — same as Meta event_id
-                            manager_id=settings.GOOGLE_ADS_MANAGER_ID or None,
+                            manager_id=c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None,
                         )
                     except Exception as exc:
                         logger.debug("funnel google_ads send failed (%s): %s", kind, exc)

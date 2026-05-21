@@ -36,18 +36,20 @@ async def google_introspect(pixel_id: str):
     sb = get_supabase()
     r = (
         sb.table("clients")
-        .select("google_ads_customer_id, google_ads_refresh_token")
+        .select("google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id")
         .eq("pixel_id", pixel_id).limit(1).execute()
     )
     if not (r and r.data):
         return {"error": "client not found"}
     c = r.data[0]
+    effective_mcc = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID
     out: dict = {
         "customer_id_raw": c.get("google_ads_customer_id"),
         "dev_token_set":   bool(settings.GOOGLE_ADS_DEVELOPER_TOKEN),
         "oauth_id_set":    bool(settings.GOOGLE_ADS_OAUTH_CLIENT_ID),
         "oauth_secret_set": bool(settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET),
-        "manager_id":      settings.GOOGLE_ADS_MANAGER_ID or None,
+        "login_customer_id_from_db": c.get("google_ads_login_customer_id"),
+        "manager_id_effective":      effective_mcc or None,
     }
     token = _get_access_token(
         settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
@@ -64,8 +66,8 @@ async def google_introspect(pixel_id: str):
         "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
         "Content-Type":    "application/json",
     }
-    if settings.GOOGLE_ADS_MANAGER_ID:
-        headers["login-customer-id"] = settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")
+    if effective_mcc:
+        headers["login-customer-id"] = effective_mcc.replace("-", "")
     attempts = []
     for version in ("v21", "v20", "v19", "v18"):
         url = f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search"
@@ -174,8 +176,8 @@ def _load_client(pixel_id: str) -> dict:
         sb.table("clients")
         .select(
             "id, pixel_id, meta_access_token, meta_pixel_id, meta_token_health, meta_token_expires_at, "
-            "google_ads_customer_id, google_ads_refresh_token, google_ads_token_health, "
-            "google_ads_token_checked_at, google_ads_token_error, "
+            "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
+            "google_ads_token_health, google_ads_token_checked_at, google_ads_token_error, "
             "ga4_measurement_id, ga4_api_secret, ga4_health, ga4_checked_at, ga4_error, "
             "tiktok_access_token, tiktok_token_health, tiktok_token_checked_at, tiktok_token_error, "
             "pinterest_ad_account_id, pinterest_access_token, pinterest_tag_id, "
@@ -271,6 +273,7 @@ async def probe_one(pixel_id: str, platform: str):
         result = integrations_health.check_google_ads(
             client.get("google_ads_customer_id"),
             client.get("google_ads_refresh_token"),
+            client.get("google_ads_login_customer_id"),
         )
     elif platform == "ga4":
         result = integrations_health.check_ga4(
