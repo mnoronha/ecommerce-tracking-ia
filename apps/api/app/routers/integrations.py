@@ -24,6 +24,64 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 _PLATFORM_KEYS = {"meta", "google_ads", "ga4", "tiktok", "pinterest", "shopify"}
 
 
+@router.get("/{pixel_id}/google/_introspect", summary="Diagnóstico Google Ads — token + URL + resposta")
+async def google_introspect(pixel_id: str):
+    """
+    Temporário. Mostra: se conseguimos um access_token a partir do refresh,
+    a URL exata que tentamos, e o status+corpo (truncado) de cada versão.
+    Isola "refresh inválido" de "URL/endpoint errado" de "developer token".
+    """
+    import httpx
+    from ..services.google_ads import _get_access_token
+    sb = get_supabase()
+    r = (
+        sb.table("clients")
+        .select("google_ads_customer_id, google_ads_refresh_token")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (r and r.data):
+        return {"error": "client not found"}
+    c = r.data[0]
+    out: dict = {
+        "customer_id_raw": c.get("google_ads_customer_id"),
+        "dev_token_set":   bool(settings.GOOGLE_ADS_DEVELOPER_TOKEN),
+        "oauth_id_set":    bool(settings.GOOGLE_ADS_OAUTH_CLIENT_ID),
+        "oauth_secret_set": bool(settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET),
+        "manager_id":      settings.GOOGLE_ADS_MANAGER_ID or None,
+    }
+    token = _get_access_token(
+        settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
+        settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET,
+        c.get("google_ads_refresh_token") or "",
+    )
+    out["access_token_obtained"] = bool(token)
+    if not token:
+        return out
+
+    clean_cid = (c.get("google_ads_customer_id") or "").replace("-", "").replace(" ", "")
+    headers = {
+        "Authorization":   f"Bearer {token}",
+        "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+        "Content-Type":    "application/json",
+    }
+    if settings.GOOGLE_ADS_MANAGER_ID:
+        headers["login-customer-id"] = settings.GOOGLE_ADS_MANAGER_ID.replace("-", "")
+    attempts = []
+    for version in ("v19", "v18", "v17"):
+        url = f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search"
+        try:
+            resp = httpx.post(url, headers=headers,
+                              json={"query": "SELECT customer.id FROM customer LIMIT 1"}, timeout=10)
+            attempts.append({"version": version, "status": resp.status_code,
+                             "body": resp.text[:250]})
+            if resp.status_code != 404:
+                break
+        except Exception as exc:
+            attempts.append({"version": version, "error": str(exc)[:200]})
+    out["attempts"] = attempts
+    return out
+
+
 @router.get("/{pixel_id}/meta/_introspect", summary="Diagnóstico Meta — quem é o dono do token")
 async def meta_introspect(pixel_id: str):
     """
