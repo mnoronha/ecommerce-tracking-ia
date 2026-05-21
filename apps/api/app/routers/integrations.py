@@ -24,6 +24,88 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 _PLATFORM_KEYS = {"meta", "google_ads", "ga4", "tiktok", "pinterest", "shopify"}
 
 
+@router.get("/{pixel_id}/google/_test_conversion", summary="Diagnóstico — valida upload de conversão (validateOnly)")
+async def google_test_conversion(pixel_id: str):
+    """
+    Temporário. Monta um uploadClickConversions REAL com validateOnly=true:
+    o Google valida auth + developer token + conversion action + formato do
+    payload (incluindo userIdentifiers/Enhanced Conversions) sem gravar
+    conversão fantasma. É o teste de envio de ponta a ponta.
+    """
+    import hashlib
+    import httpx
+    from datetime import datetime, timezone
+    from ..services.google_ads import _get_access_token, _sha256, _normalize_phone_e164
+
+    sb = get_supabase()
+    r = (
+        sb.table("clients")
+        .select("google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
+                "google_ads_conversion_action_id")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (r and r.data):
+        return {"error": "client not found"}
+    c = r.data[0]
+    action_id = c.get("google_ads_conversion_action_id")
+    if not (c.get("google_ads_customer_id") and c.get("google_ads_refresh_token") and action_id):
+        return {"error": "missing customer_id, refresh_token or conversion_action_id"}
+
+    token = _get_access_token(
+        settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
+        settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET,
+        c["google_ads_refresh_token"],
+    )
+    if not token:
+        return {"error": "could not obtain access token"}
+
+    clean_cid = c["google_ads_customer_id"].replace("-", "").replace(" ", "")
+    mcc = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID
+    headers = {
+        "Authorization":   f"Bearer {token}",
+        "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+        "Content-Type":    "application/json",
+    }
+    if mcc:
+        headers["login-customer-id"] = mcc.replace("-", "")
+
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S+00:00")
+    # Enhanced Conversion test payload — hashed sample identifiers, no gclid
+    conversion = {
+        "conversionAction":   f"customers/{clean_cid}/conversionActions/{action_id}",
+        "conversionDateTime": now,
+        "conversionValue":    1.0,
+        "currencyCode":       "BRL",
+        "orderId":            "healthcheck-" + hashlib.sha256(now.encode()).hexdigest()[:12],
+        "userIdentifiers": [
+            {"hashedEmail":       _sha256("healthcheck@example.com")},
+            {"hashedPhoneNumber": _sha256(_normalize_phone_e164("11999999999"))},
+        ],
+    }
+    payload = {"conversions": [conversion], "partialFailure": True, "validateOnly": True}
+
+    out: dict = {"login_customer_id_effective": mcc, "conversion_action_id": action_id}
+    for version in ("v21", "v20"):
+        try:
+            resp = httpx.post(
+                f"https://googleads.googleapis.com/{version}/customers/{clean_cid}:uploadClickConversions",
+                headers=headers, json=payload, timeout=15,
+            )
+            out["version"] = version
+            out["status"]  = resp.status_code
+            out["body"]    = resp.text[:600]
+            if resp.status_code != 404:
+                break
+        except Exception as exc:
+            out["error"] = str(exc)[:300]
+            break
+    out["interpretation"] = (
+        "OK — Google aceitou o payload (Enhanced Conversion válida)" if out.get("status") == 200
+        else " erro — ver body"
+    )
+    return out
+
+
 @router.get("/{pixel_id}/google/_introspect", summary="Diagnóstico Google Ads — token + URL + resposta")
 async def google_introspect(pixel_id: str):
     """
