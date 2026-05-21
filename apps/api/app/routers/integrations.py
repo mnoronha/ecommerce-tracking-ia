@@ -73,11 +73,21 @@ async def google_introspect(pixel_id: str):
             resp = httpx.post(url, headers=headers,
                               json={"query": "SELECT customer.id FROM customer LIMIT 1"}, timeout=10)
             attempts.append({"version": version, "status": resp.status_code,
-                             "body": resp.text[:250]})
+                             "requested_url": str(resp.request.url),
+                             "body": resp.text[:160]})
             if resp.status_code != 404:
                 break
         except Exception as exc:
             attempts.append({"version": version, "error": str(exc)[:200]})
+
+    # Also probe the token-only endpoint to confirm the access token is live
+    try:
+        ti = httpx.get("https://oauth2.googleapis.com/tokeninfo",
+                       params={"access_token": token}, timeout=10)
+        out["tokeninfo"] = {"status": ti.status_code, "body": ti.text[:250]}
+    except Exception as exc:
+        out["tokeninfo_error"] = str(exc)[:200]
+
     out["attempts"] = attempts
     return out
 
