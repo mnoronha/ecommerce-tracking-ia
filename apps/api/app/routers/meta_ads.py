@@ -173,6 +173,17 @@ async def get_roas(pixel_id: str, days: int = 30):
     total_margin_pct  = round(total_gross_profit / total_revenue * 100, 1) \
                         if any_cogs and total_gross_profit and total_revenue > 0 else None
 
+    # Paid-only aggregate — drops campaigns with zero spend (organic / POS /
+    # direct / email rows that would otherwise inflate ROAS to fantasy levels).
+    # This is the number that actually answers "did my ad money work?".
+    paid_rows         = [r for r in rows if r["spend"] > 0]
+    paid_revenue      = round(sum(r["revenue"] for r in paid_rows), 2)
+    paid_orders       = sum(r["orders"] for r in paid_rows)
+    paid_gross_profit = round(sum(r["gross_profit"] or 0 for r in paid_rows), 2) if any_cogs else None
+    paid_roas         = round(paid_revenue / total_spend, 2)        if total_spend > 0 else None
+    paid_cpa          = round(total_spend / paid_orders, 2)         if paid_orders > 0 and total_spend > 0 else None
+    paid_margin_roas  = round(paid_gross_profit / total_spend, 2)   if any_cogs and paid_gross_profit and total_spend > 0 else None
+
     return {
         "has_ads_credentials": has_ads_creds,
         "has_cogs":   any_cogs,
@@ -193,5 +204,18 @@ async def get_roas(pixel_id: str, days: int = 30):
             "meta_roas":          round(total_meta_revenue / total_spend, 2)
                                   if total_spend > 0 and total_meta_revenue > 0 else None,
             "cpa_diff_pct":       cpa_diff_pct_total,
+        },
+        # Use this block for the headline "did my ad spend pay off?" number.
+        # `totals.roas` mixes paid + organic and overstates performance when
+        # there's substantial direct / POS / orgânico revenue.
+        "paid_only": {
+            "revenue":      paid_revenue,
+            "orders":       paid_orders,
+            "spend":        total_spend,
+            "roas":         paid_roas,
+            "cpa":          paid_cpa,
+            "gross_profit": paid_gross_profit,
+            "margin_roas":  paid_margin_roas,
+            "campaigns":    len(paid_rows),
         },
     }

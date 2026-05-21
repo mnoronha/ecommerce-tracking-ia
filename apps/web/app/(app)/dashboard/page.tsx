@@ -138,6 +138,16 @@ interface RoasData {
     meta_roas:       number | null
     cpa_diff_pct:    number | null
   }
+  paid_only?: {
+    revenue:      number
+    orders:       number
+    spend:        number
+    roas:         number | null
+    cpa:          number | null
+    gross_profit: number | null
+    margin_roas:  number | null
+    campaigns:    number
+  }
 }
 
 type DrilldownKPI = 'revenue' | 'orders' | 'visitors' | 'avgOrderValue' | 'conversionRate' | 'profit'
@@ -673,17 +683,22 @@ export default function DashboardPage() {
       { data: events },
       { data: productEvents },
     ] = await Promise.all([
-      // Bug fix: only paid orders count as revenue
+      // Only paid orders with real value count as revenue.
+      // .gt('total_price', 0) drops the Shopify draft/abandoned-cart rows that
+      // come through orders/create with total_price=0 — those would otherwise
+      // inflate the order count and drag AOV down.
       supabase.from('orders')
         .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
+        .gt('total_price', 0)
         .gte('created_at', startDate.toISOString())
         .order('created_at', { ascending: false }),
       supabase.from('orders')
         .select('total_price')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
+        .gt('total_price', 0)
         .gte('created_at', prevStart.toISOString())
         .lt('created_at', startDate.toISOString()),
       // Bug fix: count unique visitors with events IN the period, not all-time
@@ -904,6 +919,7 @@ export default function DashboardPage() {
       .select('email, is_first_purchase, created_at')
       .eq('client_id', clientData.id)
       .eq('financial_status', 'paid')
+      .gt('total_price', 0)
       .gte('created_at', start90.toISOString())
 
     if (!allOrders90) return
@@ -1284,35 +1300,36 @@ export default function DashboardPage() {
                   </p>
                 )}
               </div>
-              {roasData.totals.roas != null && (
+              {roasData.paid_only?.roas != null && (
                 <div className="text-right">
-                  <p className="text-2xl font-bold text-indigo-400">{roasData.totals.roas.toFixed(2)}x</p>
-                  <p className="text-xs text-slate-500">ROAS total</p>
+                  <p className="text-2xl font-bold text-indigo-400">{roasData.paid_only.roas.toFixed(2)}x</p>
+                  <p className="text-xs text-slate-500">ROAS pago</p>
                 </div>
               )}
             </div>
 
-            {/* Summary strip — Real (server-side) vs Meta (Insights API) */}
-            {roasData.has_ads_credentials && roasData.totals.spend > 0 && (
+            {/* Summary strip — only paid traffic. Orgânico/POS/email is in
+                the Fontes UTM card below, separated on purpose. */}
+            {roasData.has_ads_credentials && roasData.totals.spend > 0 && roasData.paid_only && (
               <div className="border-b border-[#2a2f3e]">
-                <div className={`grid divide-x divide-[#2a2f3e] ${roasData.has_cogs ? 'grid-cols-5' : 'grid-cols-4'}`}>
+                <div className={`grid divide-x divide-[#2a2f3e] ${roasData.has_cogs && roasData.paid_only.gross_profit != null ? 'grid-cols-5' : 'grid-cols-4'}`}>
                   {[
-                    { label: 'Gasto',          value: fmt(roasData.totals.spend) },
-                    { label: 'Receita real',   value: fmt(roasData.totals.revenue),
+                    { label: 'Gasto',                value: fmt(roasData.paid_only.spend) },
+                    { label: 'Receita atribuída',    value: fmt(roasData.paid_only.revenue),
                       sub: roasData.totals.meta_revenue
                         ? `Meta diz: ${fmt(roasData.totals.meta_revenue)}`
                         : undefined },
-                    { label: 'ROAS real',      value: roasData.totals.roas != null ? `${roasData.totals.roas.toFixed(2)}x` : '—',
+                    { label: 'ROAS pago',            value: roasData.paid_only.roas != null ? `${roasData.paid_only.roas.toFixed(2)}x` : '—',
                       sub: roasData.totals.meta_roas != null
                         ? `Meta diz: ${roasData.totals.meta_roas.toFixed(2)}x`
                         : undefined },
-                    { label: 'CPA real',       value: roasData.totals.total_cpa != null ? fmt(roasData.totals.total_cpa) : '—',
+                    { label: 'CPA real',             value: roasData.paid_only.cpa != null ? fmt(roasData.paid_only.cpa) : '—',
                       sub: roasData.totals.meta_cpa != null
                         ? `Meta diz: ${fmt(roasData.totals.meta_cpa)}`
                         : undefined },
-                    ...(roasData.has_cogs && roasData.totals.gross_profit != null ? [{
+                    ...(roasData.has_cogs && roasData.paid_only.gross_profit != null ? [{
                       label: 'ROAS de Margem',
-                      value: roasData.totals.margin_roas != null ? `${roasData.totals.margin_roas.toFixed(2)}x` : '—',
+                      value: roasData.paid_only.margin_roas != null ? `${roasData.paid_only.margin_roas.toFixed(2)}x` : '—',
                       sub: roasData.totals.margin_pct != null
                         ? `Margem: ${roasData.totals.margin_pct.toFixed(1)}%`
                         : undefined,

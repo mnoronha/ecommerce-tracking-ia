@@ -11,6 +11,7 @@ interface LiveOrder {
   total_price: number
   currency: string
   utm_source: string | null
+  utm_medium: string | null
   utm_campaign: string | null
   platform_source: string | null
   is_first_purchase: boolean | null
@@ -44,16 +45,53 @@ function timeAgo(iso: string): string {
   return `${Math.floor(diff / 86400)}d`
 }
 
-function platformBadge(source: string | null) {
+function platformBadge(source: string | null, medium?: string | null) {
   if (!source) return { label: 'direto', cls: 'bg-slate-500/15 text-slate-300' }
   const s = source.toLowerCase()
-  if (['facebook','instagram','meta','fb'].includes(s))
-    return { label: 'meta',   cls: 'bg-blue-500/15 text-blue-300' }
-  if (s === 'google')
-    return { label: 'google', cls: 'bg-yellow-500/15 text-yellow-300' }
+  const m = (medium || '').toLowerCase()
+  if (['facebook','instagram','meta','fb','ig'].includes(s)) {
+    const isPaid = m.includes('paid') || m === 'cpc' || m === 'cpm'
+    return { label: isPaid ? 'meta ads' : 'instagram', cls: 'bg-blue-500/15 text-blue-300' }
+  }
+  if (s === 'google') {
+    if (m === 'organic') return { label: 'google free', cls: 'bg-emerald-500/15 text-emerald-300' }
+    return { label: 'google ads', cls: 'bg-yellow-500/15 text-yellow-300' }
+  }
   if (s === 'tiktok')
     return { label: 'tiktok', cls: 'bg-pink-500/15 text-pink-300' }
+  if (s === 'klaviyo' || m === 'email')
+    return { label: 'email',  cls: 'bg-purple-500/15 text-purple-300' }
+  if (s === 'pos')
+    return { label: 'loja física', cls: 'bg-orange-500/15 text-orange-300' }
+  if (s === 'direct')
+    return { label: 'direto', cls: 'bg-slate-500/15 text-slate-300' }
+  if (s === 'draft')
+    return { label: 'manual', cls: 'bg-zinc-500/15 text-zinc-300' }
+  if (s === 'whatsapp')
+    return { label: 'whatsapp', cls: 'bg-emerald-500/15 text-emerald-300' }
+  if (s === 'youtube')
+    return { label: 'youtube', cls: 'bg-red-500/15 text-red-300' }
+  if (s === 'linkedin')
+    return { label: 'linkedin', cls: 'bg-sky-500/15 text-sky-300' }
   return { label: s, cls: 'bg-indigo-500/15 text-indigo-300' }
+}
+
+// Human-friendly campaign subtitle for the live ticker. Falls back to the
+// medium when no explicit campaign is set, so POS/direct/orgânico still get
+// a readable label instead of "sem campanha".
+function campaignLabel(o: LiveOrder): string {
+  if (o.utm_campaign) return o.utm_campaign
+  const s = (o.utm_source || '').toLowerCase()
+  const m = (o.utm_medium || '').toLowerCase()
+  if (s === 'pos')                      return 'venda na loja física'
+  if (s === 'direct')                   return 'tráfego direto'
+  if (s === 'draft')                    return 'pedido manual (admin)'
+  if (s === 'google' && m === 'organic') return 'Google orgânico / Shopping'
+  if (s === 'klaviyo' || m === 'email') return 'campanha de email'
+  if (m === 'social')                   return `${s} orgânico`
+  if (m === 'organic')                  return `${s} orgânico`
+  if (m === 'paid_social')              return `${s} pago`
+  return 'sem campanha'
 }
 
 export default function LivePage() {
@@ -200,7 +238,7 @@ export default function LivePage() {
               Nenhum pedido nas últimas 24h
             </div>
           ) : feed.map(order => {
-            const badge   = platformBadge(order.utm_source || order.platform_source)
+            const badge   = platformBadge(order.utm_source || order.platform_source, order.utm_medium)
             const flashed = flashId === order.id
             return (
               <div
@@ -224,7 +262,7 @@ export default function LivePage() {
                     )}
                   </p>
                   <p className="text-xs text-slate-500 mt-0.5 truncate">
-                    {order.utm_campaign || 'sem campanha'}
+                    {campaignLabel(order)}
                     {order.platform_order_number && (
                       <span className="ml-2 text-slate-600">
                         #{order.platform_order_number}
