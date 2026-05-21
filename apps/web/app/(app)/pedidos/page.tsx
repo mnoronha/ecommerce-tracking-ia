@@ -81,12 +81,15 @@ export default function PedidosPage() {
     if (!clientId) return
     setLoading(true)
 
+    // .gt('total_price', 0) hides Shopify draft/abandoned-cart rows that come
+    // through orders/create with zero value — they're not real pedidos.
     let q = supabase.from('orders')
       .select(
         'id, platform_order_number, email, total_price, currency, financial_status, utm_source, utm_medium, utm_campaign, platform_source, created_at',
         { count: 'exact' }
       )
       .eq('client_id', clientId)
+      .gt('total_price', 0)
       .order('created_at', { ascending: false })
       .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
 
@@ -108,6 +111,7 @@ export default function PedidosPage() {
     let q = supabase.from('orders')
       .select('total_price')
       .eq('client_id', clientId)
+      .gt('total_price', 0)
     if (statusFilter !== 'all') q = (q as any).eq('financial_status', statusFilter)
     if (debSearch)              q = (q as any).ilike('email', `%${debSearch}%`)
     q.then(({ data }) => {

@@ -13,7 +13,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 type Step     = 1 | 2 | 3 | 4
 type Platform = 'shopify' | 'nuvemshop' | 'woocommerce'
-type AdsTab   = 'meta' | 'google' | 'tiktok'
+type AdsTab   = 'meta' | 'google' | 'tiktok' | 'pinterest'
+
+type ProbeResult = { status: string; error?: string | null } | null
 
 const STEP_LABELS: Record<Step, string> = {
   1: 'Loja',
@@ -67,7 +69,10 @@ function NewClientWizard() {
   const [metaForm,    setMetaForm]    = useState({ pixel_id: '', access_token: '', ad_account_id: '' })
   const [googleForm,  setGoogleForm]  = useState({ customer_id: '', aw_id: '' })
   const [tiktokForm,  setTiktokForm]  = useState({ pixel_id: '', access_token: '' })
+  const [pinterestForm, setPinterestForm] = useState({ ad_account_id: '', access_token: '', tag_id: '' })
   const [savingAds,   setSavingAds]   = useState(false)
+  const [probes,      setProbes]      = useState<Record<string, ProbeResult>>({})
+  const [probing,     setProbing]     = useState<string | null>(null)
 
   // Step 3
   const [installing,    setInstalling]    = useState(false)
@@ -77,6 +82,26 @@ function NewClientWizard() {
   function setM(k: string, v: string) { setMetaForm(f => ({ ...f, [k]: v })) }
   function setG(k: string, v: string) { setGoogleForm(f => ({ ...f, [k]: v })) }
   function setT(k: string, v: string) { setTiktokForm(f => ({ ...f, [k]: v })) }
+  function setP(k: string, v: string) { setPinterestForm(f => ({ ...f, [k]: v })) }
+
+  // Save current ads tab then live-probe the integration. Each Testar agora
+  // button calls this. The probe writes <platform>_health back so the
+  // dashboard health card updates immediately.
+  async function handleTestConnection(platform: 'meta' | 'google_ads' | 'tiktok' | 'pinterest') {
+    if (!pixelId) return
+    setProbing(platform)
+    setProbes(p => ({ ...p, [platform]: null }))
+    try {
+      await handleSaveAds(false)
+      const res = await fetch(`${API_URL}/integrations/${pixelId}/test/${platform}`, { method: 'POST' })
+      const data = await res.json()
+      setProbes(p => ({ ...p, [platform]: { status: data.status, error: data.error } }))
+    } catch (err: any) {
+      setProbes(p => ({ ...p, [platform]: { status: 'invalid', error: err?.message || 'falha de rede' } }))
+    } finally {
+      setProbing(null)
+    }
+  }
 
   // ── Step 1: create client ─────────────────────────────────────────────────
   async function handleCreateClient(e: React.FormEvent) {
@@ -131,6 +156,9 @@ function NewClientWizard() {
         google_ads_aw_id:       googleForm.aw_id       || null,
         tiktok_pixel_id:     tiktokForm.pixel_id     || null,
         tiktok_access_token: tiktokForm.access_token || null,
+        pinterest_ad_account_id: pinterestForm.ad_account_id || null,
+        pinterest_access_token:  pinterestForm.access_token  || null,
+        pinterest_tag_id:        pinterestForm.tag_id        || null,
       }).eq('id', clientDbId)
     } finally {
       setSavingAds(false)
@@ -318,13 +346,13 @@ function NewClientWizard() {
               </div>
               <p className="text-xs text-slate-500 mb-6">Opcional — configure depois nas Configurações se preferir.</p>
 
-              <div className="flex gap-1 bg-[#0f1117] rounded-lg p-1 border border-[#2a2f3e] mb-6">
-                {(['meta', 'google', 'tiktok'] as AdsTab[]).map(t => (
+              <div className="flex gap-1 bg-[#0f1117] rounded-lg p-1 border border-[#2a2f3e] mb-6 overflow-x-auto">
+                {(['meta', 'google', 'tiktok', 'pinterest'] as AdsTab[]).map(t => (
                   <button key={t} onClick={() => setAdsTab(t)}
-                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${
+                    className={`flex-1 min-w-[90px] py-2 rounded-lg text-xs font-medium transition-colors ${
                       adsTab === t ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                     }`}>
-                    {t === 'meta' ? 'Meta Ads' : t === 'google' ? 'Google Ads' : 'TikTok Ads'}
+                    {t === 'meta' ? 'Meta Ads' : t === 'google' ? 'Google Ads' : t === 'tiktok' ? 'TikTok Ads' : 'Pinterest'}
                   </button>
                 ))}
               </div>
@@ -367,6 +395,57 @@ function NewClientWizard() {
                       placeholder="token..." className={INPUT} /></div>
                 </div>
               )}
+
+              {adsTab === 'pinterest' && (
+                <div className="space-y-4">
+                  <div><label className={LABEL}>Ad Account ID</label>
+                    <input value={pinterestForm.ad_account_id} onChange={e => setP('ad_account_id', e.target.value)}
+                      placeholder="549XXXXXXXXXX" className={INPUT} /></div>
+                  <div><label className={LABEL}>Conversions API Access Token</label>
+                    <input type="password" value={pinterestForm.access_token} onChange={e => setP('access_token', e.target.value)}
+                      placeholder="pinit_AAAA..." className={INPUT} /></div>
+                  <div><label className={LABEL}>Tag ID <span className="text-slate-600 font-normal">(antigo "pixel")</span></label>
+                    <input value={pinterestForm.tag_id} onChange={e => setP('tag_id', e.target.value)}
+                      placeholder="2613XXXXXXXXX" className={INPUT} /></div>
+                  <p className="text-xs text-slate-600">Ads → Conversions → Conversions API → gere o token e copie o Tag ID.</p>
+                </div>
+              )}
+
+              {/* Testar conexão — salva os campos atuais e dispara probe live */}
+              <div className="mt-5 pt-5 border-t border-[#2a2f3e]">
+                {(() => {
+                  const platform = adsTab === 'meta' ? 'meta'
+                                  : adsTab === 'google' ? 'google_ads'
+                                  : adsTab === 'tiktok' ? 'tiktok'
+                                  : 'pinterest'
+                  const probe = probes[platform]
+                  const isProbing = probing === platform
+                  return (
+                    <div className="flex items-center justify-between gap-3">
+                      <button
+                        onClick={() => handleTestConnection(platform as any)}
+                        disabled={isProbing || !pixelId}
+                        className="px-4 py-2 rounded-lg bg-[#0f1117] hover:bg-[#252a3a] border border-[#2a2f3e] text-xs text-slate-300 flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {isProbing
+                          ? <><Loader2 size={12} className="animate-spin" /> Testando…</>
+                          : <><Zap size={12} /> Salvar e testar conexão</>}
+                      </button>
+                      {probe && (
+                        <div className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded ${
+                          probe.status === 'healthy'
+                            ? 'bg-emerald-500/10 text-emerald-400'
+                            : 'bg-red-500/10 text-red-400'
+                        }`}>
+                          {probe.status === 'healthy'
+                            ? <><CheckCircle size={12} /> Conectado</>
+                            : <><AlertTriangle size={12} /> {probe.error?.slice(0, 80) || probe.status}</>}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
             </div>
 
             <div className="flex gap-3">

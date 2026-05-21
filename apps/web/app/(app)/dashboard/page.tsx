@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
+import IntegrationsHealth from '@/components/IntegrationsHealth'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
@@ -1026,6 +1027,11 @@ export default function DashboardPage() {
       </div>
 
       <div className="p-6 space-y-6">
+
+        {/* Saúde das integrações — só aparece se algo precisar de atenção
+            ou se forçarmos via reload. Card ocupa pouco espaço quando tudo
+            está verde, então deixamos sempre visível. */}
+        {CLIENT_PIXEL_ID && <IntegrationsHealth pixelId={CLIENT_PIXEL_ID} />}
 
         {/* Pacing — month-to-date vs goal */}
         {pacing && pacing.monthly_revenue_goal && (
