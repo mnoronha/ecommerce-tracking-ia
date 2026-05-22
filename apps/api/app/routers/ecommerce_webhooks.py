@@ -24,6 +24,10 @@ ADAPTERS = {
     "woocommerce": WooCommerceAdapter(),
 }
 
+# Shopify source_name values that represent OFFLINE / manual sales — never sent
+# as ad conversions (POS = loja física, draft = pedido manual no admin).
+_OFFLINE_SOURCE_NAMES = {"pos", "shopify_draft_order"}
+
 
 async def _get_client_secret(client_id: str, platform: str) -> str:
     secret_column = {
@@ -264,6 +268,18 @@ def _dispatch_purchase_capi(
         if order and order.status and order.status.lower() != "paid":
             _record_capi_error(order_uuid, f"skipped: order financial_status is '{order.status}', not 'paid'")
             logger.info("skipping CAPI for non-paid order %s (status=%s)", order_uuid, order.status)
+            return
+
+        # Skip OFFLINE sales — POS (loja física) and manual draft orders are not
+        # digital conversions. Sending them to Meta/Google would let those
+        # platforms match the customer's email/phone to an ad view and falsely
+        # credit a balcony sale to a campaign — inflating ROAS and teaching the
+        # bidding algorithm to chase the wrong audience. They still count in the
+        # dashboard (store revenue), just never as ad conversions.
+        source_name = (event.metadata or {}).get("source_name") if hasattr(event, "metadata") else None
+        if (source_name or "").lower() in _OFFLINE_SOURCE_NAMES:
+            _record_capi_error(order_uuid, f"skipped: offline sale (source_name={source_name})")
+            logger.info("skipping ad-conversion for offline order %s (source=%s)", order_uuid, source_name)
             return
 
         creds_result = (
@@ -552,6 +568,11 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
         raw = event.raw_payload or {}
         token = raw.get("token") or raw.get("cart_token") or raw.get("id") or ""
         if not token:
+            return
+
+        # Defensive: never relay offline (POS / draft) funnel events as ad signals.
+        src = (raw.get("source_name") or (event.metadata or {}).get("source_name") or "").lower()
+        if src in _OFFLINE_SOURCE_NAMES:
             return
 
         creds_result = (

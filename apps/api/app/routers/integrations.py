@@ -52,11 +52,13 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
     orders = (
         sb.table("orders")
-        .select("id, platform_order_id, email, phone, total_price, currency, created_at, visitor_id")
+        .select("id, platform_order_id, email, phone, total_price, currency, created_at, visitor_id, utm_source")
         .eq("client_id", c["id"])
         .eq("financial_status", "paid")
         .gt("total_price", 0)
         .neq("google_sent", True)
+        # Offline sales (POS / manual draft) are never ad conversions.
+        .not_.in_("utm_source", ["pos", "draft"])
         .gte("created_at", cutoff)
         .order("created_at", desc=True)
         .limit(min(limit, 500))

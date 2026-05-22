@@ -113,6 +113,12 @@ def retry_failed_capi() -> None:
             .gt("total_price", 0)
             .gte("created_at", cutoff)
             .lt("capi_retry_count", _MAX_RETRIES)
+            # Never retry deliberately-skipped orders (offline POS / draft /
+            # zero-value). Their capi_last_error starts with "skipped:" and the
+            # reason is permanent — retrying would re-attempt forever or, worse,
+            # send a balcony sale to Meta as an ad conversion.
+            .not_.ilike("capi_last_error", "skipped:%")
+            .not_.ilike("capi_last_error", "capi_dead:%")
             .order("created_at")
             .limit(_BATCH_LIMIT)
             .execute()
