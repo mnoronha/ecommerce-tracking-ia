@@ -19,6 +19,8 @@
   var COOKIE_VISITOR    = '_etv';   // visitor ID  — 1st-party, 1 year
   var COOKIE_ATTR       = '_eta';   // UTM attribution — 30 days
   var COOKIE_GCLID      = '_etg';   // Google click ID — 90 days
+  var COOKIE_GBRAID     = '_etgb';  // Google iOS click ID (web→app) — 90 days
+  var COOKIE_WBRAID     = '_etwb';  // Google iOS click ID (app→web) — 90 days
   var COOKIE_FBP        = '_fbp';   // Meta browser ID — 90 days (Meta standard)
   var COOKIE_FBC        = '_fbc';   // Meta click ID  — 90 days (Meta standard)
   var COOKIE_TTCLID     = '_ettc';  // TikTok click ID — 90 days
@@ -155,15 +157,21 @@
     return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : null;
   }
 
-  // gclid — Google click ID (URL param, persisted 90 days)
-  function getGclid() {
-    var fresh = getQueryParam('gclid');
-    if (fresh) {
-      setCookie(COOKIE_GCLID, fresh, AD_ID_TTL_DAYS);
+  // Google click IDs — gclid (padrão) + gbraid/wbraid (iOS 14+). getQueryParam
+  // já decodifica; aqui validamos o comprimento pra descartar valores
+  // truncados/corrompidos (um click ID válido tem ~70-100 chars), evitando
+  // enviar lixo ao Google — o Enhanced Conversion (email/phone) cobre o resto.
+  function _captureClickId(param, cookieName) {
+    var fresh = getQueryParam(param);
+    if (fresh && fresh.length >= 20) {
+      setCookie(cookieName, fresh, AD_ID_TTL_DAYS);
       return fresh;
     }
-    return getCookie(COOKIE_GCLID) || null;
+    return getCookie(cookieName) || null;
   }
+  function getGclid()  { return _captureClickId('gclid',  COOKIE_GCLID);  }
+  function getGbraid() { return _captureClickId('gbraid', COOKIE_GBRAID); }
+  function getWbraid() { return _captureClickId('wbraid', COOKIE_WBRAID); }
 
   // _fbp — Meta browser ID. If Meta Pixel is on the page, the cookie already exists;
   // otherwise we generate one in Meta's documented format.
@@ -626,6 +634,8 @@
     var fbp    = getFbp();
     var fbc    = getFbc();
     var gclid  = getGclid();
+    var gbraid = getGbraid();
+    var wbraid = getWbraid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
     var fb_login = getFacebookLoginId();
@@ -635,6 +645,8 @@
     if (fbp)       attrs['_fbp']   = fbp;
     if (fbc)       attrs['_fbc']   = fbc;
     if (gclid)     attrs['_gclid'] = gclid;
+    if (gbraid)    attrs['_gbraid'] = gbraid;
+    if (wbraid)    attrs['_wbraid'] = wbraid;
     if (gcid)      attrs['_gcid']  = gcid;
     if (ttclid)    attrs['_ettc']  = ttclid;
     if (fb_login)  attrs['_fblogin'] = fb_login;

@@ -461,7 +461,10 @@ def _dispatch_purchase_capi(
             cust = getattr(event, "customer", None)
             email = cust.email if cust else None
             phone = cust.phone if cust else None
-            if gclid or email or phone:
+            ev_meta = event.metadata or {}
+            gbraid = ev_meta.get("gbraid")
+            wbraid = ev_meta.get("wbraid")
+            if gclid or gbraid or wbraid or email or phone:
                 g_ok, g_err, g_match = google_ads.send_conversion(
                     customer_id=c["google_ads_customer_id"],
                     conversion_action_id=c["google_ads_conversion_action_id"],
@@ -469,6 +472,8 @@ def _dispatch_purchase_capi(
                     currency=event.order.currency or "BRL",  # type: ignore[union-attr]
                     refresh_token=c["google_ads_refresh_token"],
                     gclid=gclid,
+                    gbraid=gbraid,
+                    wbraid=wbraid,
                     email=email,
                     phone=phone,
                     order_id=str(event.order.id),  # type: ignore[union-attr]

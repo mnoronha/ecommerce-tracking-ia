@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v3.5 + UTM cart-attribute relay
+  Ecommerce Tracking IA — Shopify Snippet  v3.6 + click-id robusto (gclid/gbraid/wbraid)
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -21,11 +21,13 @@
   - _fbc  (Meta click ID 90d)             — setado por fbclid
   - _ga   (GA4 client ID)
   - _gclid (Google click ID 90d)
+  - _gbraid / _wbraid (Google click IDs do iOS 14+ — sem eles, tráfego pago
+    de iPhone fica sem atribuição Google). Decodificados e validados.
   - _fblogin (Facebook Login ID)          — NEW: +8% EMQ
   - _dob  (Date of Birth YYYYMMDD)        — NEW: +6% EMQ
 
   Cart attributes injetados (note_attributes no webhook):
-  - _etv, _fbp, _fbc, _gcid, _gclid, _fblogin, _dob — atravessam gateways externos
+  - _etv, _fbp, _fbc, _gcid, _gclid, _gbraid, _wbraid, _fblogin, _dob — atravessam gateways externos
   - _utm_source, _utm_medium, _utm_campaign, _utm_content, _utm_term
     — preservam origem mesmo quando Shopify perde o landing_site
 
@@ -172,15 +174,25 @@
     return null;
   }
 
-  // ── Google click ID (gclid) ──────────────────────────────────────────────────
-  function getGclid() {
-    var gclid = (location.search.match(/[?&]gclid=([^&#]*)/) || [])[1];
-    if (gclid) {
-      setCookie('_gclid', gclid, 90);
-      return gclid;
-    }
-    return getCookie('_gclid') || null;
+  // ── Google click IDs (gclid + gbraid + wbraid) ───────────────────────────────
+  // gbraid/wbraid são os click IDs do iOS 14+ (quando o gclid não é setado).
+  // Sem capturá-los, todo o tráfego pago de iPhone fica sem atribuição Google.
+  function _decodeClickId(v) {
+    if (!v) return null;
+    try { v = decodeURIComponent(v); } catch (e) { /* já estava decoded */ }
+    // Um click ID válido é um token longo (~70-100 chars). Valores curtos são
+    // truncados/corrompidos — descartamos pra não enviar lixo ao Google
+    // (cai pro Enhanced Conversion via email/phone, que funciona).
+    return v && v.length >= 20 ? v : null;
   }
+  function _captureClickId(param, cookieName) {
+    var fresh = _decodeClickId((location.search.match(new RegExp('[?&]' + param + '=([^&#]*)')) || [])[1]);
+    if (fresh) { setCookie(cookieName, fresh, 90); return fresh; }
+    return getCookie(cookieName) || null;
+  }
+  function getGclid()  { return _captureClickId('gclid',  '_gclid');  }
+  function getGbraid() { return _captureClickId('gbraid', '_gbraid'); }
+  function getWbraid() { return _captureClickId('wbraid', '_wbraid'); }
 
   // ── Transport ────────────────────────────────────────────────────────────────
   function send(payload) {
@@ -296,6 +308,8 @@
       '_fbc':    meta.fbc || '',
       '_gcid':   getGaClientId() || '',
       '_gclid':  getGclid() || '',
+      '_gbraid': getGbraid() || '',
+      '_wbraid': getWbraid() || '',
       '_fblogin': getCookie('_fblogin') || '',
       '_dob':    getCookie('_dob') || '',
       '_utm_source':   utm.source   || '',

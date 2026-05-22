@@ -99,6 +99,8 @@ def send_conversion(
     currency:             str,
     refresh_token:        str,
     gclid:                Optional[str] = None,
+    gbraid:               Optional[str] = None,
+    wbraid:               Optional[str] = None,
     email:                Optional[str] = None,
     phone:                Optional[str] = None,
     order_id:             Optional[str] = None,
@@ -132,9 +134,15 @@ def send_conversion(
         logger.debug("google_ads: skipped — missing OAuth/customer credentials")
         return False, "missing OAuth/customer credentials", None
 
-    if not (gclid or email or phone):
-        logger.debug("google_ads: skipped — no gclid and no email/phone")
-        return False, "no gclid and no email/phone", None
+    # Drop obviously-truncated click IDs (valid ones are ~70-100 chars) so we
+    # never send garbage that Google rejects with "could not be decoded".
+    gclid  = gclid  if (gclid  and len(gclid)  >= 20) else None
+    gbraid = gbraid if (gbraid and len(gbraid) >= 20) else None
+    wbraid = wbraid if (wbraid and len(wbraid) >= 20) else None
+
+    if not (gclid or gbraid or wbraid or email or phone):
+        logger.debug("google_ads: skipped — no click id and no email/phone")
+        return False, "no click id and no email/phone", None
 
     access_token = _get_access_token(
         settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
@@ -163,25 +171,34 @@ def send_conversion(
     if phone_e164:
         identifiers.append({"hashedPhoneNumber": _sha256(phone_e164)})
 
-    def _build_conv(with_gclid: bool) -> dict:
+    # Exactly one click id per conversion; precedence gclid > gbraid > wbraid.
+    click_field, click_value = None, None
+    if gclid:
+        click_field, click_value = "gclid", gclid
+    elif gbraid:
+        click_field, click_value = "gbraid", gbraid
+    elif wbraid:
+        click_field, click_value = "wbraid", wbraid
+
+    def _build_conv(with_click: bool) -> dict:
         conv: dict = {
             "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
             "conversionDateTime": conv_time,
             "conversionValue":    bid_value,
             "currencyCode":       (currency or "BRL").upper(),
         }
-        if with_gclid and gclid:
-            conv["gclid"] = gclid
+        if with_click and click_field:
+            conv[click_field] = click_value
         if order_id:
             conv["orderId"] = str(order_id)
         if identifiers:
             conv["userIdentifiers"] = identifiers
         return conv
 
-    def _attempt(with_gclid: bool) -> tuple[bool, Optional[str]]:
+    def _attempt(with_click: bool) -> tuple[bool, Optional[str]]:
         """One upload with up to 3 retries on 5xx/network. Returns (ok, err)."""
-        payload = {"conversions": [_build_conv(with_gclid)], "partialFailure": True}
-        label = "gclid" if with_gclid else "enhanced_only"
+        payload = {"conversions": [_build_conv(with_click)], "partialFailure": True}
+        label = (click_field if with_click and click_field else "enhanced_only")
         delay = 1.0
         for attempt in range(3):
             try:
@@ -207,23 +224,23 @@ def send_conversion(
                 time.sleep(delay * (2 ** attempt))
         return False, "failed after 3 attempts"
 
-    # Try gclid first (click attribution), fall back to Enhanced Conversions
-    # (email/phone) if the gclid is invalid/foreign — a bad gclid otherwise
+    # Try click id first (direct attribution), fall back to Enhanced Conversions
+    # (email/phone) if the click id is invalid/foreign — a bad click id otherwise
     # rejects the whole conversion even when we have valid identifiers.
-    if gclid:
-        ok, err = _attempt(with_gclid=True)
+    if click_field:
+        ok, err = _attempt(with_click=True)
         if ok:
-            return True, None, "gclid"
+            return True, None, click_field
         if identifiers:
-            logger.info("google_ads: gclid failed (%s) — retrying enhanced-only order=%s",
-                        (err or "")[:80], order_id)
-            ok2, err2 = _attempt(with_gclid=False)
+            logger.info("google_ads: %s failed (%s) — retrying enhanced-only order=%s",
+                        click_field, (err or "")[:80], order_id)
+            ok2, err2 = _attempt(with_click=False)
             if ok2:
                 return True, None, "enhanced_only"
             return False, err2, "enhanced_only"
-        return False, err, "gclid"
+        return False, err, click_field
 
-    ok, err = _attempt(with_gclid=False)
+    ok, err = _attempt(with_click=False)
     if ok:
         return True, None, "enhanced_only"
     return False, err, "enhanced_only"
