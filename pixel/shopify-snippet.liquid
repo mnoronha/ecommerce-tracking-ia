@@ -48,7 +48,10 @@
 
   // ── Configuração ────────────────────────────────────────────────────────────
   var CLIENT_ID         = 'lk-sneakers';
-  var API_URL           = 'https://ecommerce-tracking-ia-production.up.railway.app';
+  // First-party tracking domain (CNAME → nossa infra). Evita bloqueio por
+  // adblock/ITP que atinge domínios de tracking conhecidos. Fallback para o
+  // domínio padrão se o first-party não estiver configurado para este cliente.
+  var API_URL           = 'https://track.lksneakers.com.br';
   // Meta Pixel oficial — deixa '' para desabilitar o lado browser
   var META_PIXEL_ID     = '1018779385487104';
   // Google Ads AW-ID para remarketing (deixe '' para desativar)
@@ -205,7 +208,9 @@
     }
     if (!sent) {
       try {
-        fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), keepalive:true}).catch(function(){});
+        // credentials:'include' so the first-party Set-Cookie (server-side) is
+        // accepted on the CNAME — survives Safari ITP unlike JS cookies.
+        fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload), keepalive:true, credentials:'include'}).catch(function(){});
         sent = true;
       } catch(e) {}
     }

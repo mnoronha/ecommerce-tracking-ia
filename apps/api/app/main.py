@@ -132,19 +132,30 @@ def _stop_scheduler() -> None:
     _scheduler.shutdown(wait=False)
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
-origins = (
-    [o.strip() for o in settings.CORS_ORIGINS.split(",")]
-    if settings.CORS_ORIGINS != "*"
-    else ["*"]
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# First-party cookie persistence needs credentialed cross-origin requests
+# (store page www.cliente.com → tracker track.cliente.com). With credentials,
+# the spec forbids "*" — the middleware must reflect the specific Origin. We
+# reflect any https origin via regex (the pixel endpoints are public and carry
+# no cookie-based auth, so reflecting origins is low-risk). Explicit origins
+# from CORS_ORIGINS are still honored.
+if settings.CORS_ORIGINS != "*":
+    explicit_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=explicit_origins,
+        allow_origin_regex=r"https://[^/]+",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://[^/]+",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # ── Static files (pixel tracker.js) ──────────────────────────────────────────
 _static_dir = Path(__file__).parent.parent / "static"

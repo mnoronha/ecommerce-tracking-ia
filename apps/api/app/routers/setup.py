@@ -112,13 +112,19 @@ def _delete_script_tag(shop_domain: str, access_token: str, tag_id: int) -> bool
     return False
 
 
-def _install_script_tag(shop_domain: str, access_token: str, pixel_id: str) -> dict:
+def _install_script_tag(shop_domain: str, access_token: str, pixel_id: str,
+                        base_url: Optional[str] = None) -> dict:
     """
     Install tracker.js via Shopify ScriptTag API — no theme editing needed.
     Removes stale tags from a previous pixel_id before creating the new one.
+
+    base_url: when the client has a verified first-party CNAME, the tracker is
+    loaded from it (e.g. https://track.cliente.com) so it isn't blocked by
+    adblock/ITP. tracker.js reads its api_url from its own <script src>, so the
+    events also flow through the first-party domain automatically.
     Returns {'status': 'created'|'exists'|'failed', 'id': ..., 'src': ...}
     """
-    api_base = _api_base()
+    api_base = (base_url or _api_base()).rstrip("/")
     tag_src  = f"{api_base}/static/tracker.js?client_id={pixel_id}"
 
     existing = _list_script_tags(shop_domain, access_token)
@@ -231,7 +237,8 @@ async def install_shopify(pixel_id: str):
     sb = get_supabase()
     result = (
         sb.table("clients")
-        .select("id, shopify_domain, shopify_access_token, ecommerce_platform")
+        .select("id, shopify_domain, shopify_access_token, ecommerce_platform, "
+                "tracking_cname, tracking_cname_verified")
         .eq("pixel_id", pixel_id)
         .eq("is_active", True)
         .maybe_single()
@@ -248,6 +255,13 @@ async def install_shopify(pixel_id: str):
 
     shop_domain  = c["shopify_domain"]
     access_token = c["shopify_access_token"]
+    # Verified first-party CNAME -> load the tracker from it (anti-adblock/ITP).
+    _cname = c.get("tracking_cname")
+    cname_base = (
+        f"https://{_cname}"
+        if _cname and c.get("tracking_cname_verified")
+        else None
+    )
     webhook_url  = f"{_api_base()}/webhook/shopify/{pixel_id}"
 
     # ── 1. Webhooks ───────────────────────────────────────────────────────────
@@ -271,12 +285,12 @@ async def install_shopify(pixel_id: str):
         logger.debug("webhooks_configured flag update failed: %s", exc)
 
     # ── 2. ScriptTag (pixel auto-install) ─────────────────────────────────────
-    script_tag = _install_script_tag(shop_domain, access_token, pixel_id)
+    script_tag = _install_script_tag(shop_domain, access_token, pixel_id, base_url=cname_base)
 
     return {
         "pixel_id":    pixel_id,
         "webhook_url": webhook_url,
-        "tracker_src": f"{_api_base()}/static/tracker.js?client_id={pixel_id}",
+        "tracker_src": f"{(cname_base or _api_base()).rstrip('/')}/static/tracker.js?client_id={pixel_id}",
         "webhooks": {
             "succeeded": webhooks_ok,
             "failed":    webhooks_fail,

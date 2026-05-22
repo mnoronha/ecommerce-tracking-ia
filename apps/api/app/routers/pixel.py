@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from ..config import settings
@@ -44,6 +45,33 @@ _PIXEL_EVENT_MAP: dict = {
     "checkout_completed": EventType.CHECKOUT_COMPLETED,
     "purchase":           EventType.CHECKOUT_COMPLETED,
 }
+
+
+# Our own infra hostnames — requests arriving on these are NOT first-party to
+# any client store, so we don't set first-party cookies for them.
+_INFRA_HOST_SUFFIXES = (".up.railway.app", "tracking.noroia.com.br")
+_FP_COOKIE_MAX_AGE   = 60 * 60 * 24 * 730  # 2 years
+
+
+def _first_party_cookie_domain(host: Optional[str]) -> Optional[str]:
+    """
+    Derive the cookie Domain for a first-party CNAME request.
+    track.lksneakers.com.br → .lksneakers.com.br
+    Returns None when the request is on our own infra (no first-party context).
+    """
+    if not host:
+        return None
+    host = host.split(":")[0].strip().lower()
+    if not host or host.replace(".", "").isdigit():  # ignore IPs
+        return None
+    if any(host == s or host.endswith(s) for s in _INFRA_HOST_SUFFIXES):
+        return None
+    labels = host.split(".")
+    if len(labels) < 3:
+        # already a root like loja.com — use it as-is (rare for a tracking host)
+        return "." + host
+    # Drop the first label (track) → registrable domain incl. 2-seg TLDs (com.br)
+    return "." + ".".join(labels[1:])
 
 
 def _parse_device(user_agent: Optional[str]) -> str:
@@ -292,7 +320,30 @@ async def receive_pixel_event(
                 "google_ads_checkout_action_id",
             )
 
-    return {"status": "ok", "event_id": event.event_id}
+    resp = JSONResponse({"status": "ok", "event_id": event.event_id})
+
+    # ── First-party cookie persistence (server-side Set-Cookie) ───────────────
+    # When the request arrives on a client's first-party CNAME, re-set the key
+    # identifiers as HTTP cookies on the registrable domain. HTTP-set cookies
+    # survive Safari ITP (which caps JS document.cookie to 7 days), so fbp/gclid/
+    # visitor persist for the full window → much better match/attribution.
+    cookie_domain = _first_party_cookie_domain(request.headers.get("host"))
+    if cookie_domain:
+        def _sc(name: str, value: Optional[str]) -> None:
+            if value:
+                resp.set_cookie(
+                    key=name, value=value, max_age=_FP_COOKIE_MAX_AGE,
+                    domain=cookie_domain, path="/", secure=True,
+                    httponly=False, samesite="lax",
+                )
+        _sc("_etv",   body.visitor_id)
+        _sc("_fbp",   body.fbp)
+        _sc("_fbc",   body.fbc)
+        _sc("_gclid", body.gclid)
+        _sc("_gcid",  body.ga_client_id)
+        _sc("_ettc",  body.ttclid)
+
+    return resp
 
 
 @router.get(

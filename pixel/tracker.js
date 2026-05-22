@@ -299,7 +299,10 @@
         method:    'POST',
         headers:   { 'Content-Type': 'application/json' },
         body:      JSON.stringify(payload),
-        keepalive: true
+        keepalive: true,
+        // credentials so the server-side first-party Set-Cookie is accepted
+        // on the CNAME (persists past Safari ITP's 7-day JS-cookie cap).
+        credentials: 'include'
       }).catch(function () {});
       return true;
     } catch (e) { return false; }
