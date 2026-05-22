@@ -23,6 +23,93 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 _PLATFORM_KEYS = {"meta", "google_ads", "ga4", "tiktok", "pinterest", "shopify"}
 
 
+@router.post("/{pixel_id}/google/backfill", summary="Reenviar conversões pagas recentes ao Google Ads")
+async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
+    """
+    Re-sends paid orders to Google Ads that were never delivered (e.g. while
+    the integration was misconfigured). Real send — recovers lost conversions
+    and populates orders.google_sent. orderId dedup prevents double counting.
+    Targets paid orders in the last `hours` where google_sent is not true.
+    """
+    from datetime import datetime, timezone, timedelta
+    from ..config import settings
+    from ..services import google_ads
+
+    sb = get_supabase()
+    cli = (
+        sb.table("clients")
+        .select("id, google_ads_customer_id, google_ads_refresh_token, "
+                "google_ads_login_customer_id, google_ads_conversion_action_id")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (cli and cli.data):
+        raise HTTPException(404, "Client not found")
+    c = cli.data[0]
+    if not (c.get("google_ads_customer_id") and c.get("google_ads_refresh_token")
+            and c.get("google_ads_conversion_action_id")):
+        raise HTTPException(400, "Google Ads not fully configured for this client")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    orders = (
+        sb.table("orders")
+        .select("id, platform_order_id, email, phone, total_price, currency, created_at, visitor_id")
+        .eq("client_id", c["id"])
+        .eq("financial_status", "paid")
+        .gt("total_price", 0)
+        .neq("google_sent", True)
+        .gte("created_at", cutoff)
+        .order("created_at", desc=True)
+        .limit(min(limit, 500))
+        .execute()
+    ).data or []
+
+    mcc = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None
+    sent = failed = skipped = 0
+    errors: list[str] = []
+    for o in orders:
+        email = o.get("email")
+        phone = o.get("phone")
+        gclid = None
+        if o.get("visitor_id"):
+            v = (sb.table("visitors").select("gclid").eq("id", o["visitor_id"]).limit(1).execute()).data
+            gclid = v[0].get("gclid") if v else None
+        if not (gclid or email or phone):
+            skipped += 1
+            continue
+        occurred = None
+        try:
+            occurred = datetime.fromisoformat(str(o["created_at"]).replace("Z", "+00:00"))
+        except Exception:
+            pass
+        ok, err, match = google_ads.send_conversion(
+            customer_id=c["google_ads_customer_id"],
+            conversion_action_id=c["google_ads_conversion_action_id"],
+            value=float(o.get("total_price") or 0),
+            currency=o.get("currency") or "BRL",
+            refresh_token=c["google_ads_refresh_token"],
+            gclid=gclid, email=email, phone=phone,
+            order_id=str(o["platform_order_id"]),
+            occurred_at=occurred,
+            manager_id=mcc,
+        )
+        upd = {"google_sent": ok, "google_match_type": match,
+               "google_last_error": None if ok else (err or "")[:500]}
+        if ok:
+            upd["google_sent_at"] = datetime.now(timezone.utc).isoformat()
+            sent += 1
+        else:
+            failed += 1
+            if err and len(errors) < 3:
+                errors.append(err[:200])
+        try:
+            sb.table("orders").update(upd).eq("id", o["id"]).execute()
+        except Exception:
+            pass
+
+    return {"scanned": len(orders), "sent": sent, "failed": failed,
+            "skipped_no_identifiers": skipped, "sample_errors": errors}
+
+
 def _load_client(pixel_id: str) -> dict:
     sb = get_supabase()
     r = (

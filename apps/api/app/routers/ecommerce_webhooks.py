@@ -201,6 +201,29 @@ def _record_capi_error(order_uuid: Optional[str], err: str) -> None:
         logger.debug("failed to persist capi_last_error: %s", exc)
 
 
+def _record_google_result(
+    order_uuid: Optional[str],
+    ok: bool,
+    err: Optional[str],
+    match_type: Optional[str],
+) -> None:
+    """Persist the Google Ads conversion outcome (mirrors capi_sent for Meta)."""
+    if not order_uuid:
+        return
+    update: dict = {
+        "google_sent":       bool(ok),
+        "google_match_type": match_type,
+        "google_last_error": None if ok else (err or "unknown")[:500],
+    }
+    if ok:
+        from datetime import datetime, timezone
+        update["google_sent_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        get_supabase().table("orders").update(update).eq("id", order_uuid).execute()
+    except Exception as exc:
+        logger.debug("failed to persist google conversion result: %s", exc)
+
+
 def _dispatch_purchase_capi(
     client_pixel_id: str,
     event: object,
@@ -439,7 +462,7 @@ def _dispatch_purchase_capi(
             email = cust.email if cust else None
             phone = cust.phone if cust else None
             if gclid or email or phone:
-                google_ads.send_conversion(
+                g_ok, g_err, g_match = google_ads.send_conversion(
                     customer_id=c["google_ads_customer_id"],
                     conversion_action_id=c["google_ads_conversion_action_id"],
                     value=float(event.order.total or 0),  # type: ignore[union-attr]
@@ -453,6 +476,7 @@ def _dispatch_purchase_capi(
                     manager_id=c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None,
                     value_override=bid_value_override,
                 )
+                _record_google_result(order_uuid, g_ok, g_err, g_match)
 
         # ── TikTok Events API ────────────────────────────────────────────
         if c.get("tiktok_pixel_id") and c.get("tiktok_access_token"):

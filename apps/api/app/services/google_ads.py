@@ -105,7 +105,7 @@ def send_conversion(
     occurred_at:          Optional[datetime] = None,
     manager_id:           Optional[str] = None,
     value_override:       Optional[float] = None,
-) -> bool:
+) -> tuple[bool, Optional[str], Optional[str]]:
     """
     Upload a conversion to Google Ads.
 
@@ -113,8 +113,7 @@ def send_conversion(
       1. gclid present  → Click conversion with GCLID + enhanced identifiers
       2. no gclid       → Enhanced Conversions for Leads (hashed email/phone only)
 
-    Either gclid OR (email/phone) is required — silently returns False when
-    neither is present, so the caller can keep this side-effect optional.
+    Either gclid OR (email/phone) is required.
 
     The conversion action must be configured in the Google Ads UI to accept
     enhanced conversions. order_id is included whenever provided so the upload
@@ -123,18 +122,19 @@ def send_conversion(
     SaaS model: OAuth app credentials (developer token, client id/secret) are
     shared across all clients in Railway env vars; refresh_token is per-client.
 
-    Returns True on success, False on any error (never raises).
+    Returns (success, error_message, match_type). match_type is 'gclid' or
+    'enhanced_only'. Never raises.
     """
     if not all([customer_id, conversion_action_id, refresh_token,
                 settings.GOOGLE_ADS_DEVELOPER_TOKEN,
                 settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
                 settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET]):
         logger.debug("google_ads: skipped — missing OAuth/customer credentials")
-        return False
+        return False, "missing OAuth/customer credentials", None
 
     if not (gclid or email or phone):
         logger.debug("google_ads: skipped — no gclid and no email/phone")
-        return False
+        return False, "no gclid and no email/phone", None
 
     access_token = _get_access_token(
         settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
@@ -142,7 +142,7 @@ def send_conversion(
         refresh_token,
     )
     if not access_token:
-        return False
+        return False, "could not obtain access token (refresh_token rejected?)", None
 
     clean_cid = customer_id.replace("-", "").replace(" ", "")
     conv_time = (occurred_at or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S+00:00")
@@ -195,16 +195,18 @@ def send_conversion(
             if resp.status_code == 200:
                 result = resp.json()
                 if result.get("partialFailureError"):
+                    err = str(result["partialFailureError"])[:300]
                     logger.warning("google_ads partial failure (%s) order=%s: %s",
-                                   match_label, order_id, result["partialFailureError"])
-                    return False
+                                   match_label, order_id, err)
+                    return False, err, match_label
                 logger.info("google_ads conversion sent (%s) — order=%s",
                             match_label, order_id)
-                return True
+                return True, None, match_label
             if 400 <= resp.status_code < 500:
-                logger.warning("google_ads HTTP %s (no retry, %s) order=%s: %s",
-                               resp.status_code, match_label, order_id, resp.text[:300])
-                return False
+                err = f"HTTP {resp.status_code}: {resp.text[:300]}"
+                logger.warning("google_ads %s (no retry, %s) order=%s",
+                               err, match_label, order_id)
+                return False, err, match_label
             logger.warning("google_ads HTTP %s attempt %d/3 (%s)",
                            resp.status_code, attempt + 1, match_label)
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
@@ -213,10 +215,10 @@ def send_conversion(
         except Exception as exc:
             logger.error("google_ads exception (%s) for order=%s: %s",
                          match_label, order_id, exc)
-            return False
+            return False, f"{type(exc).__name__}: {str(exc)[:200]}", match_label
         if attempt < 2:
             time.sleep(delay * (2 ** attempt))
 
     logger.error("google_ads failed after 3 attempts (%s) for order=%s",
                  match_label, order_id)
-    return False
+    return False, "failed after 3 attempts", match_label
