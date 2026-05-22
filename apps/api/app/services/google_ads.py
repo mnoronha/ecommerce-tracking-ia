@@ -156,69 +156,74 @@ def send_conversion(
     if manager_id:
         headers["login-customer-id"] = manager_id.replace("-", "")
 
-    conv: dict = {
-        "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
-        "conversionDateTime": conv_time,
-        "conversionValue":    bid_value,
-        "currencyCode":       (currency or "BRL").upper(),
-    }
-    if gclid:
-        conv["gclid"] = gclid
-    if order_id:
-        conv["orderId"] = str(order_id)
-
     identifiers = []
     if email:
         identifiers.append({"hashedEmail": _sha256(email)})
     phone_e164 = _normalize_phone_e164(phone)
     if phone_e164:
         identifiers.append({"hashedPhoneNumber": _sha256(phone_e164)})
-    if identifiers:
-        conv["userIdentifiers"] = identifiers
 
-    payload = {
-        "conversions":   [conv],
-        "partialFailure": True,
-    }
+    def _build_conv(with_gclid: bool) -> dict:
+        conv: dict = {
+            "conversionAction":   f"customers/{clean_cid}/conversionActions/{conversion_action_id}",
+            "conversionDateTime": conv_time,
+            "conversionValue":    bid_value,
+            "currencyCode":       (currency or "BRL").upper(),
+        }
+        if with_gclid and gclid:
+            conv["gclid"] = gclid
+        if order_id:
+            conv["orderId"] = str(order_id)
+        if identifiers:
+            conv["userIdentifiers"] = identifiers
+        return conv
 
-    match_label = "gclid" if gclid else "enhanced_only"
+    def _attempt(with_gclid: bool) -> tuple[bool, Optional[str]]:
+        """One upload with up to 3 retries on 5xx/network. Returns (ok, err)."""
+        payload = {"conversions": [_build_conv(with_gclid)], "partialFailure": True}
+        label = "gclid" if with_gclid else "enhanced_only"
+        delay = 1.0
+        for attempt in range(3):
+            try:
+                resp = httpx.post(
+                    f"{_ADS_API}/customers/{clean_cid}:uploadClickConversions",
+                    headers=headers, json=payload, timeout=15.0,
+                )
+                if resp.status_code == 200:
+                    result = resp.json()
+                    if result.get("partialFailureError"):
+                        return False, str(result["partialFailureError"])[:300]
+                    logger.info("google_ads conversion sent (%s) — order=%s", label, order_id)
+                    return True, None
+                if 400 <= resp.status_code < 500:
+                    return False, f"HTTP {resp.status_code}: {resp.text[:300]}"
+                logger.warning("google_ads HTTP %s attempt %d/3 (%s)",
+                               resp.status_code, attempt + 1, label)
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                logger.warning("google_ads network error %d/3 (%s): %s", attempt + 1, label, exc)
+            except Exception as exc:
+                return False, f"{type(exc).__name__}: {str(exc)[:200]}"
+            if attempt < 2:
+                time.sleep(delay * (2 ** attempt))
+        return False, "failed after 3 attempts"
 
-    delay = 1.0
-    for attempt in range(3):
-        try:
-            resp = httpx.post(
-                f"{_ADS_API}/customers/{clean_cid}:uploadClickConversions",
-                headers=headers,
-                json=payload,
-                timeout=15.0,
-            )
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get("partialFailureError"):
-                    err = str(result["partialFailureError"])[:300]
-                    logger.warning("google_ads partial failure (%s) order=%s: %s",
-                                   match_label, order_id, err)
-                    return False, err, match_label
-                logger.info("google_ads conversion sent (%s) — order=%s",
-                            match_label, order_id)
-                return True, None, match_label
-            if 400 <= resp.status_code < 500:
-                err = f"HTTP {resp.status_code}: {resp.text[:300]}"
-                logger.warning("google_ads %s (no retry, %s) order=%s",
-                               err, match_label, order_id)
-                return False, err, match_label
-            logger.warning("google_ads HTTP %s attempt %d/3 (%s)",
-                           resp.status_code, attempt + 1, match_label)
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.warning("google_ads network error attempt %d/3 (%s): %s",
-                           attempt + 1, match_label, exc)
-        except Exception as exc:
-            logger.error("google_ads exception (%s) for order=%s: %s",
-                         match_label, order_id, exc)
-            return False, f"{type(exc).__name__}: {str(exc)[:200]}", match_label
-        if attempt < 2:
-            time.sleep(delay * (2 ** attempt))
+    # Try gclid first (click attribution), fall back to Enhanced Conversions
+    # (email/phone) if the gclid is invalid/foreign — a bad gclid otherwise
+    # rejects the whole conversion even when we have valid identifiers.
+    if gclid:
+        ok, err = _attempt(with_gclid=True)
+        if ok:
+            return True, None, "gclid"
+        if identifiers:
+            logger.info("google_ads: gclid failed (%s) — retrying enhanced-only order=%s",
+                        (err or "")[:80], order_id)
+            ok2, err2 = _attempt(with_gclid=False)
+            if ok2:
+                return True, None, "enhanced_only"
+            return False, err2, "enhanced_only"
+        return False, err, "gclid"
 
-    logger.error("google_ads failed after 3 attempts (%s) for order=%s",
-                 match_label, order_id)
-    return False, "failed after 3 attempts", match_label
+    ok, err = _attempt(with_gclid=False)
+    if ok:
+        return True, None, "enhanced_only"
+    return False, err, "enhanced_only"
