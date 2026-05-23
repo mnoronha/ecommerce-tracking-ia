@@ -244,3 +244,73 @@ def send_conversion(
     if ok:
         return True, None, "enhanced_only"
     return False, err, "enhanced_only"
+
+
+def list_conversion_actions(
+    customer_id:  str,
+    refresh_token: str,
+    manager_id:   Optional[str] = None,
+) -> tuple[bool, Optional[str], list[dict]]:
+    """List every conversion action in the account (read-only diagnostic).
+
+    Use this to pick the correct conversion_action_id for server-side uploads.
+    The number to store is conversion_action.id — the same value the Google Ads
+    UI shows as `ctId` in a conversion action's detail URL, NOT the account-level
+    `ocid`/`ascid` (which is identical across all actions).
+
+    Returns (ok, error, actions) where each action is
+    {id, name, type, category, status, primary_for_goal}. Never raises.
+    """
+    if not all([customer_id, refresh_token,
+                settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+                settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
+                settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET]):
+        return False, "missing OAuth/customer credentials", []
+
+    access_token = _get_access_token(
+        settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
+        settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET,
+        refresh_token,
+    )
+    if not access_token:
+        return False, "could not obtain access token (refresh_token rejected?)", []
+
+    clean_cid = customer_id.replace("-", "").replace(" ", "")
+    headers = {
+        "Authorization":   f"Bearer {access_token}",
+        "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+        "Content-Type":    "application/json",
+    }
+    if manager_id:
+        headers["login-customer-id"] = manager_id.replace("-", "")
+
+    # No LIMIT/pageSize together (Google rejects mixing them — see notes).
+    query = (
+        "SELECT conversion_action.id, conversion_action.name, "
+        "conversion_action.type, conversion_action.category, "
+        "conversion_action.status, conversion_action.primary_for_goal "
+        "FROM conversion_action ORDER BY conversion_action.name"
+    )
+    try:
+        resp = httpx.post(
+            f"{_ADS_API}/customers/{clean_cid}/googleAds:search",
+            headers=headers, json={"query": query}, timeout=15.0,
+        )
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {str(exc)[:200]}", []
+
+    if resp.status_code != 200:
+        return False, f"HTTP {resp.status_code}: {resp.text[:300]}", []
+
+    actions: list[dict] = []
+    for row in resp.json().get("results", []):
+        ca = row.get("conversionAction", {})
+        actions.append({
+            "id":               ca.get("id"),
+            "name":             ca.get("name"),
+            "type":             ca.get("type"),
+            "category":         ca.get("category"),
+            "status":           ca.get("status"),
+            "primary_for_goal": ca.get("primaryForGoal"),
+        })
+    return True, None, actions

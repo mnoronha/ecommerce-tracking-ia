@@ -112,6 +112,54 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
             "skipped_no_identifiers": skipped, "sample_errors": errors}
 
 
+@router.get("/{pixel_id}/google/conversion-actions",
+            summary="Listar conversion actions do Google Ads (diagnóstico)")
+async def google_conversion_actions(pixel_id: str):
+    """
+    Read-only: lists every conversion action in the client's Google Ads account
+    (id, name, type, category, status). Use this to pick the correct
+    `conversion_action_id` — the value to store is `id`, which equals the UI
+    URL's `ctId`, NOT the account-level `ocid`/`ascid`.
+
+    `configured_id` echoes what's saved today and `configured_match` flags
+    whether it actually corresponds to a real conversion action (if false, the
+    saved id is wrong — likely the account ocid).
+    """
+    from ..config import settings
+    from ..services import google_ads
+
+    sb = get_supabase()
+    cli = (
+        sb.table("clients")
+        .select("google_ads_customer_id, google_ads_refresh_token, "
+                "google_ads_login_customer_id, google_ads_conversion_action_id")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (cli and cli.data):
+        raise HTTPException(404, "Client not found")
+    c = cli.data[0]
+    if not (c.get("google_ads_customer_id") and c.get("google_ads_refresh_token")):
+        raise HTTPException(400, "Google Ads not connected for this client")
+
+    mcc = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None
+    ok, err, actions = google_ads.list_conversion_actions(
+        customer_id=c["google_ads_customer_id"],
+        refresh_token=c["google_ads_refresh_token"],
+        manager_id=mcc,
+    )
+    if not ok:
+        raise HTTPException(502, f"Google Ads query failed: {err}")
+
+    configured = str(c.get("google_ads_conversion_action_id") or "")
+    return {
+        "customer_id":      c["google_ads_customer_id"],
+        "configured_id":    configured or None,
+        "configured_match": any(str(a.get("id")) == configured for a in actions) if configured else None,
+        "count":            len(actions),
+        "conversion_actions": actions,
+    }
+
+
 def _load_client(pixel_id: str) -> dict:
     sb = get_supabase()
     r = (
