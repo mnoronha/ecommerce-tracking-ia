@@ -95,7 +95,8 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
             manager_id=mcc,
         )
         upd = {"google_sent": ok, "google_match_type": match,
-               "google_last_error": None if ok else (err or "")[:500]}
+               # `err` may be a diagnostic note even when ok (click id rejected → enhanced).
+               "google_last_error": (err[:500] if err else None)}
         if ok:
             upd["google_sent_at"] = datetime.now(timezone.utc).isoformat()
             sent += 1

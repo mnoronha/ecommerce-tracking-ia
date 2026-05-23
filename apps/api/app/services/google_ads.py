@@ -236,7 +236,9 @@ def send_conversion(
                         click_field, (err or "")[:80], order_id)
             ok2, err2 = _attempt(with_click=False)
             if ok2:
-                return True, None, "enhanced_only"
+                # Sent, but lost click attribution. Surface why the click id was
+                # rejected so it's persisted (not just logged) for diagnosis.
+                return True, f"note: {click_field} rejected → {(err or '')[:400]}", "enhanced_only"
             return False, err2, "enhanced_only"
         return False, err, click_field
 

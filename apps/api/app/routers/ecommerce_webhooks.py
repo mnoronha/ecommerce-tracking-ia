@@ -217,7 +217,9 @@ def _record_google_result(
     update: dict = {
         "google_sent":       bool(ok),
         "google_match_type": match_type,
-        "google_last_error": None if ok else (err or "unknown")[:500],
+        # On success `err` may carry a diagnostic note (e.g. click id rejected,
+        # fell back to enhanced); persist it so the reason isn't only in logs.
+        "google_last_error": (err[:500] if err else None) if ok else (err or "unknown")[:500],
     }
     if ok:
         from datetime import datetime, timezone
