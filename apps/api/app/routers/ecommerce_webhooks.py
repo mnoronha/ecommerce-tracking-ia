@@ -480,6 +480,12 @@ def _dispatch_purchase_capi(
             email = cust.email if cust else None
             phone = cust.phone if cust else None
             ev_meta = event.metadata or {}
+            # Fall back to the gclid relayed on the order itself (Shopify cart
+            # note_attribute `_gclid`) when the visitor record has none. The
+            # order-carried value survives visitor-cookie linkage failures at
+            # webhook time, which is why visitor-only capture was stuck at ~32%
+            # of paid Google clicks.
+            gclid  = gclid or ev_meta.get("gclid")
             gbraid = ev_meta.get("gbraid")
             wbraid = ev_meta.get("wbraid")
             if gclid or gbraid or wbraid or email or phone:
