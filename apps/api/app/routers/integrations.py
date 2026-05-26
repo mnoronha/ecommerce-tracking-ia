@@ -58,7 +58,8 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
         .gt("total_price", 0)
         .neq("google_sent", True)
         # Offline sales (POS / manual draft) are never ad conversions.
-        .not_.in_("utm_source", ["pos", "draft"])
+        # or_() is required because .not_.in_() excludes NULL rows in SQL.
+        .or_("utm_source.is.null,utm_source.not.in.(pos,draft)")
         .gte("created_at", cutoff)
         .order("created_at", desc=True)
         .limit(min(limit, 500))
