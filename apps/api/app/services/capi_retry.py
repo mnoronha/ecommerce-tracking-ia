@@ -17,7 +17,7 @@ from typing import Optional
 
 from ..database import get_supabase
 from ..config import settings
-from . import meta_capi, ga4
+from . import meta_capi, ga4, tiktok_capi
 from ..models.events import NormalizedEvent, EventType, OrderData, CustomerData, Address
 
 logger = logging.getLogger(__name__)
@@ -235,6 +235,115 @@ def retry_failed_capi() -> None:
                 sb.table("orders").update({
                     "capi_retry_count": (order.get("capi_retry_count") or 0) + 1,
                     "capi_last_error":  str(exc)[:200],
+                }).eq("id", order["id"]).execute()
+            except Exception:
+                pass
+
+
+def retry_failed_tiktok() -> None:
+    """
+    Retry TikTok Events API Purchase events that failed at webhook time.
+    Mirrors retry_failed_capi but for the tiktok_sent / tiktok_last_error columns.
+    Runs every 30 minutes via APScheduler.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=_RETRY_WINDOW_HOURS)).isoformat()
+    sb = get_supabase()
+
+    try:
+        result = (
+            sb.table("orders")
+            .select(
+                "id, client_id, platform_order_id, platform_order_number, "
+                "platform_source, email, phone, first_name, last_name, "
+                "total_price, currency, financial_status, tiktok_retry_count, "
+                "visitor_id, predicted_ltv, browser_ip, browser_ua"
+            )
+            .eq("tiktok_sent", False)
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", cutoff)
+            .lt("tiktok_retry_count", _MAX_RETRIES)
+            .not_.ilike("tiktok_last_error", "skipped:%")
+            .not_.ilike("tiktok_last_error", "capi_dead:%")
+            .order("created_at")
+            .limit(_BATCH_LIMIT)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("tiktok_retry: query failed: %s", exc)
+        return
+
+    failed = result.data or []
+    if not failed:
+        return
+
+    logger.info("tiktok_retry: processing %d failed orders", len(failed))
+
+    for order in failed:
+        try:
+            client_row = (
+                sb.table("clients")
+                .select("pixel_id, tiktok_pixel_id, tiktok_access_token, value_based_bidding")
+                .eq("id", order["client_id"])
+                .limit(1)
+                .execute()
+            )
+            if not (client_row and client_row.data):
+                continue
+            c = client_row.data[0]
+            if not (c.get("tiktok_pixel_id") and c.get("tiktok_access_token")):
+                continue
+
+            visitor = None
+            if order.get("visitor_id"):
+                v_row = (
+                    sb.table("visitors")
+                    .select("ttclid")
+                    .eq("id", order["visitor_id"])
+                    .limit(1)
+                    .execute()
+                )
+                if v_row and v_row.data:
+                    visitor = v_row.data[0]
+
+            bid_override: Optional[float] = None
+            if c.get("value_based_bidding"):
+                val = order.get("predicted_ltv")
+                if val is not None:
+                    bid_override = float(val)
+
+            event = _build_event(order, visitor)
+
+            ok, err = tiktok_capi.send_purchase(
+                pixel_code=c["tiktok_pixel_id"],
+                access_token=c["tiktok_access_token"],
+                event=event,
+                ttclid=(visitor or {}).get("ttclid"),
+                value_override=bid_override,
+            )
+
+            next_count = (order.get("tiktok_retry_count") or 0) + 1
+            update: dict = {"tiktok_retry_count": next_count}
+            if ok:
+                update["tiktok_sent"]       = True
+                update["tiktok_sent_at"]    = datetime.now(timezone.utc).isoformat()
+                update["tiktok_last_error"] = None
+                logger.info("tiktok_retry: order %s recovered (attempt %d)",
+                            order["platform_order_id"], next_count)
+            else:
+                if next_count >= _MAX_RETRIES:
+                    update["tiktok_last_error"] = f"{_DEAD_PREFIX} {err}"[:500]
+                else:
+                    update["tiktok_last_error"] = (err or "unknown")[:500]
+
+            sb.table("orders").update(update).eq("id", order["id"]).execute()
+
+        except Exception as exc:
+            logger.warning("tiktok_retry: order %s failed: %s", order.get("id"), exc)
+            try:
+                sb.table("orders").update({
+                    "tiktok_retry_count": (order.get("tiktok_retry_count") or 0) + 1,
+                    "tiktok_last_error":  str(exc)[:200],
                 }).eq("id", order["id"]).execute()
             except Exception:
                 pass

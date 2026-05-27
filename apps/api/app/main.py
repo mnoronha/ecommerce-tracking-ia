@@ -10,8 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import alerts as alerts_router, attribution, audiences, cname, cogs, creatives, ecommerce_webhooks, insights, integrations, journey, live, meta_ads, pacing, pixel, setup
-from .services import alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
+from .routers import alerts as alerts_router, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, insights, integrations, journey, klaviyo_webhook, live, meta_ads, pacing, pixel, setup
+from .services import alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -125,6 +125,19 @@ _scheduler.add_job(
     minutes=30,
     id="alert_engine",
 )
+_scheduler.add_job(
+    capi_retry.retry_failed_tiktok,
+    "interval",
+    minutes=30,
+    id="tiktok_retry",
+)
+_scheduler.add_job(
+    spend_sync.run_daily_spend_sync,
+    "cron",
+    hour=6,
+    minute=0,
+    id="spend_sync_daily",
+)
 
 
 @app.on_event("startup")
@@ -184,6 +197,8 @@ app.include_router(journey.router)
 app.include_router(creatives.router)
 app.include_router(integrations.router)
 app.include_router(alerts_router.router)
+app.include_router(diagnostics.router)
+app.include_router(klaviyo_webhook.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────

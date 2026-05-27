@@ -205,6 +205,40 @@ def _record_capi_error(order_uuid: Optional[str], err: str) -> None:
         logger.debug("failed to persist capi_last_error: %s", exc)
 
 
+def _record_tiktok_result(order_uuid: Optional[str], ok: bool, err: Optional[str]) -> None:
+    """Persist TikTok Events API outcome on the order."""
+    if not order_uuid:
+        return
+    update: dict = {"tiktok_sent": bool(ok)}
+    if ok:
+        from datetime import datetime, timezone
+        update["tiktok_sent_at"]   = datetime.now(timezone.utc).isoformat()
+        update["tiktok_last_error"] = None
+    else:
+        update["tiktok_last_error"] = (err or "unknown")[:500]
+    try:
+        get_supabase().table("orders").update(update).eq("id", order_uuid).execute()
+    except Exception as exc:
+        logger.debug("failed to persist tiktok result: %s", exc)
+
+
+def _record_pinterest_result(order_uuid: Optional[str], ok: bool, err: Optional[str]) -> None:
+    """Persist Pinterest Conversions API outcome on the order."""
+    if not order_uuid:
+        return
+    update: dict = {"pinterest_sent": bool(ok)}
+    if ok:
+        from datetime import datetime, timezone
+        update["pinterest_sent_at"]   = datetime.now(timezone.utc).isoformat()
+        update["pinterest_last_error"] = None
+    else:
+        update["pinterest_last_error"] = (err or "unknown")[:500]
+    try:
+        get_supabase().table("orders").update(update).eq("id", order_uuid).execute()
+    except Exception as exc:
+        logger.debug("failed to persist pinterest result: %s", exc)
+
+
 def _record_google_result(
     order_uuid: Optional[str],
     ok: bool,
@@ -509,13 +543,14 @@ def _dispatch_purchase_capi(
 
         # ── TikTok Events API ────────────────────────────────────────────
         if c.get("tiktok_pixel_id") and c.get("tiktok_access_token"):
-            tiktok_capi.send_purchase(
+            tt_ok, tt_err = tiktok_capi.send_purchase(
                 pixel_code=c["tiktok_pixel_id"],
                 access_token=c["tiktok_access_token"],
                 event=event,  # type: ignore[arg-type]
                 ttclid=ttclid,
                 value_override=bid_value_override,
             )
+            _record_tiktok_result(order_uuid, tt_ok, tt_err)
 
         # ── Pinterest Conversions API ─────────────────────────────────────
         if (
@@ -523,13 +558,14 @@ def _dispatch_purchase_capi(
             and c.get("pinterest_access_token")
             and c.get("pinterest_tag_id")
         ):
-            pinterest_capi.send_purchase(
+            pin_ok, pin_err = pinterest_capi.send_purchase(
                 ad_account_id=c["pinterest_ad_account_id"],
                 access_token=c["pinterest_access_token"],
                 tag_id=c["pinterest_tag_id"],
                 event=event,  # type: ignore[arg-type]
                 value_override=bid_value_override,
             )
+            _record_pinterest_result(order_uuid, pin_ok, pin_err)
 
     except Exception as exc:
         err = f"{type(exc).__name__}: {str(exc)[:200]}"
