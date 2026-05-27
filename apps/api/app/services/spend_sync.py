@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _GOOGLE_ADS_API = "https://googleads.googleapis.com/v21"
 _TOKEN_URL      = "https://oauth2.googleapis.com/token"
 _TIKTOK_REPORT  = "https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/"
+_META_INSIGHTS  = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
 
 _token_cache: dict = {}
 
@@ -161,6 +162,54 @@ def _fetch_tiktok_spend(advertiser_id: str, access_token: str, target_date: date
         return None
 
 
+# ── Meta Ads spend ────────────────────────────────────────────────────────────
+
+def _fetch_meta_spend(ad_account_id: str, access_token: str, target_date: date) -> Optional[dict]:
+    """
+    Query Meta Marketing API for account-level spend on target_date.
+    Uses `level=account` so we get a single aggregated row.
+    """
+    clean_id  = ad_account_id.removeprefix("act_")
+    date_str  = target_date.isoformat()
+    url       = _META_INSIGHTS.format(account_id=clean_id)
+    try:
+        resp = httpx.get(
+            url,
+            params={
+                "fields":     "spend,impressions,clicks,actions",
+                "time_range": f'{{"since":"{date_str}","until":"{date_str}"}}',
+                "level":      "account",
+                "access_token": access_token,
+            },
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("meta_spend: HTTP %s for act_%s: %s", resp.status_code, clean_id, resp.text[:200])
+            return None
+        rows = resp.json().get("data") or []
+        if not rows:
+            return {"spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0}
+        row = rows[0]
+        # Count purchases from actions array
+        purchases = 0.0
+        for action in (row.get("actions") or []):
+            if action.get("action_type") in ("purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"):
+                try:
+                    purchases = float(action.get("value") or 0)
+                except (TypeError, ValueError):
+                    pass
+                break
+        return {
+            "spend":       round(float(row.get("spend") or 0), 2),
+            "impressions": int(row.get("impressions") or 0),
+            "clicks":      int(row.get("clicks") or 0),
+            "conversions": round(purchases, 2),
+        }
+    except Exception as exc:
+        logger.warning("meta_spend: fetch failed for act_%s: %s", clean_id, exc)
+        return None
+
+
 # ── Upsert helper ─────────────────────────────────────────────────────────────
 
 def _upsert_spend(client_id: str, channel: str, target_date: date, metrics: dict) -> None:
@@ -196,6 +245,7 @@ def run_daily_spend_sync() -> None:
             sb.table("clients")
             .select(
                 "id, pixel_id, "
+                "meta_ad_account_id, meta_access_token, "
                 "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
                 "tiktok_advertiser_id, tiktok_access_token"
             )
@@ -208,6 +258,17 @@ def run_daily_spend_sync() -> None:
 
     for c in (clients.data or []):
         pixel = c.get("pixel_id", c["id"])
+
+        # ── Meta Ads ──────────────────────────────────────────────────────
+        if c.get("meta_ad_account_id") and c.get("meta_access_token"):
+            metrics = _fetch_meta_spend(
+                ad_account_id = c["meta_ad_account_id"],
+                access_token  = c["meta_access_token"],
+                target_date   = yesterday,
+            )
+            if metrics is not None:
+                _upsert_spend(c["id"], "meta_ads", yesterday, metrics)
+                logger.info("spend_sync: meta_ads %s → R$%.2f", pixel, metrics["spend"])
 
         # ── Google Ads ────────────────────────────────────────────────────
         if c.get("google_ads_customer_id") and c.get("google_ads_refresh_token"):

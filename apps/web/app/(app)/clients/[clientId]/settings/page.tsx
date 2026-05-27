@@ -27,7 +27,9 @@ interface ClientRow {
   google_ads_refresh_token: string | null
   tiktok_pixel_id: string | null
   tiktok_access_token: string | null
+  tiktok_advertiser_id: string | null
   alert_email: string | null
+  webhook_secret: string | null
   slack_webhook_url: string | null
   is_active: boolean
   tracking_cname: string | null
@@ -187,10 +189,12 @@ export default function ClientSettingsPage() {
         google_ads_checkout_action_id:    form.google_ads_checkout_action_id || null,
         google_ads_aw_id:                 form.google_ads_aw_id || null,
         google_ads_refresh_token:         form.google_ads_refresh_token || null,
-        tiktok_pixel_id:                 form.tiktok_pixel_id   || null,
-        tiktok_access_token:             form.tiktok_access_token || null,
-        alert_email:                     form.alert_email      || null,
-        slack_webhook_url:               form.slack_webhook_url || null,
+        tiktok_pixel_id:                 form.tiktok_pixel_id      || null,
+        tiktok_access_token:             form.tiktok_access_token  || null,
+        tiktok_advertiser_id:            form.tiktok_advertiser_id || null,
+        alert_email:                     form.alert_email           || null,
+        slack_webhook_url:               form.slack_webhook_url     || null,
+        webhook_secret:                  form.webhook_secret        || null,
         is_active:                       form.is_active,
       })
       .eq('pixel_id', clientId)
@@ -495,6 +499,10 @@ export default function ClientSettingsPage() {
             <input type="password" value={form.tiktok_access_token || ''} onChange={e => set('tiktok_access_token', e.target.value)}
               placeholder="TikTok Events API token..." className={INPUT} />
           </Field>
+          <Field label="Advertiser ID" hint="ID da conta no TikTok Ads Manager — necessário para sincronizar gasto diário">
+            <input value={form.tiktok_advertiser_id || ''} onChange={e => set('tiktok_advertiser_id', e.target.value)}
+              placeholder="7012345678901234567" className={INPUT} />
+          </Field>
         </Section>
 
         <Section title="Alertas e notificações">
@@ -505,6 +513,22 @@ export default function ClientSettingsPage() {
           <Field label="Slack Webhook URL">
             <input value={form.slack_webhook_url || ''} onChange={e => set('slack_webhook_url', e.target.value)}
               placeholder="https://hooks.slack.com/services/..." className={INPUT} />
+          </Field>
+          <Field label="Webhook Secret" hint="segredo compartilhado para autenticar webhooks de Klaviyo, etc.">
+            <input
+              type="password"
+              value={form.webhook_secret || ''}
+              onChange={e => set('webhook_secret', e.target.value)}
+              placeholder={form.webhook_secret ? '••••••••••••••••' : 'meu-segredo-secreto'}
+              className={INPUT}
+            />
+            {form.webhook_secret && (
+              <p className="text-xs text-slate-500 mt-1.5">
+                URL Klaviyo: <code className="bg-[#0f1117] px-1 rounded text-slate-400">
+                  {process.env.NEXT_PUBLIC_API_URL || 'https://api.noroia.com'}/webhook/klaviyo/{clientId}
+                </code>
+              </p>
+            )}
           </Field>
         </Section>
 
