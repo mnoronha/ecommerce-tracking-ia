@@ -10,8 +10,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import attribution, audiences, cname, cogs, creatives, ecommerce_webhooks, insights, integrations, journey, live, meta_ads, pacing, pixel, setup
-from .services import alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
+from .routers import alerts as alerts_router, attribution, audiences, cname, cogs, creatives, ecommerce_webhooks, insights, integrations, journey, live, meta_ads, pacing, pixel, setup
+from .services import alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -119,6 +119,12 @@ _scheduler.add_job(
     minute=0,
     id="creative_intelligence",
 )
+_scheduler.add_job(
+    alert_engine.run_alert_engine,
+    "interval",
+    minutes=30,
+    id="alert_engine",
+)
 
 
 @app.on_event("startup")
@@ -177,6 +183,7 @@ app.include_router(pacing.router)
 app.include_router(journey.router)
 app.include_router(creatives.router)
 app.include_router(integrations.router)
+app.include_router(alerts_router.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
