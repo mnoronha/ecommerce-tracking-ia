@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
@@ -12,7 +12,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type DateRange = '7d' | '30d' | '90d'
+type DateRange = '1d' | '7d' | '30d' | '90d' | 'custom'
 
 interface KPIs {
   totalRevenue: number
@@ -645,7 +645,12 @@ export default function DashboardPage() {
   const [pacing, setPacing]             = useState<PacingData | null>(null)
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
+  const [clientName, setClientName]     = useState<string>('')
   const [dateRange, setDateRange]       = useState<DateRange>('30d')
+  const [fromDate, setFromDate]         = useState<string>('')
+  const [toDate, setToDate]             = useState<string>('')
+  const fromDateRef                     = useRef<string>('')
+  const toDateRef                       = useRef<string>('')
   const [device,   setDevice]           = useState<string>('all')
   const [country,  setCountry]          = useState<string>('all')
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
@@ -673,27 +678,43 @@ export default function DashboardPage() {
     }
 
     const clientId = clientData.id
-    const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
-    const startDate = new Date(); startDate.setDate(startDate.getDate() - days)
-    const prevStart = new Date(); prevStart.setDate(prevStart.getDate() - days * 2)
+
+    // Fetch client name for the header
+    const isUUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
+    supabase.from('clients').select('name').eq(isUUID2 ? 'id' : 'pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+      .then(({ data }) => { if (data?.name) setClientName(data.name) })
+
+    // Date range computation
+    const now = new Date()
+    let startDate: Date, endDate: Date
+    const _from = fromDateRef.current
+    const _to   = toDateRef.current
+    if (range === 'custom' && _from && _to) {
+      startDate = new Date(_from + 'T00:00:00')
+      endDate   = new Date(_to   + 'T23:59:59')
+    } else if (range === '1d') {
+      startDate = new Date(now); startDate.setDate(startDate.getDate() - 1); startDate.setHours(0, 0, 0, 0)
+      endDate   = new Date(startDate); endDate.setHours(23, 59, 59, 999)
+    } else {
+      const d = range === '7d' ? 7 : range === '30d' ? 30 : 90
+      startDate = new Date(); startDate.setDate(startDate.getDate() - d)
+      endDate   = now
+    }
+    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000))
+    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days)
 
     const [
       { data: orders },
       { data: ordersPrev },
-      { data: visitorEvents },
-      { data: events },
       { data: productEvents },
     ] = await Promise.all([
-      // Only paid orders with real value count as revenue.
-      // .gt('total_price', 0) drops the Shopify draft/abandoned-cart rows that
-      // come through orders/create with total_price=0 — those would otherwise
-      // inflate the order count and drag AOV down.
       supabase.from('orders')
         .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
         .gt('total_price', 0)
         .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .order('created_at', { ascending: false }),
       supabase.from('orders')
         .select('total_price')
@@ -702,44 +723,35 @@ export default function DashboardPage() {
         .gt('total_price', 0)
         .gte('created_at', prevStart.toISOString())
         .lt('created_at', startDate.toISOString()),
-      // Bug fix: count unique visitors with events IN the period, not all-time
-      supabase.from('tracking_events')
-        .select('visitor_id')
-        .eq('client_id', clientId)
-        .gte('created_at', startDate.toISOString())
-        .not('visitor_id', 'is', null),
-      supabase.from('tracking_events')
-        .select('event_type, visitor_id, device_type')
-        .eq('client_id', clientId)
-        .gte('created_at', startDate.toISOString()),
       supabase.from('tracking_events')
         .select('event_type, product_name')
         .eq('client_id', clientId)
         .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .not('product_name', 'is', null),
     ])
 
-    // Persist raw data for client-side filter recompute on device/country toggle
-    setAllOrdersRaw(orders || [])
-    setAllEventsRaw(events || [])
+    // Fetch funnel via API — bypasses PostgREST 1000-row limit + handles device filter server-side
+    let funnelJson: any = null
+    try {
+      const startStr = startDate.toISOString().split('T')[0]
+      const endStr   = endDate.toISOString().split('T')[0]
+      const dParam   = device !== 'all' ? `&device=${device}` : ''
+      const fRes = await fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${startStr}&end=${endStr}${dParam}`)
+      if (fRes.ok) funnelJson = await fRes.json()
+    } catch (_) {}
 
-    // Apply current filters
-    const filterOrder = (o: any) => {
-      if (country !== 'all' && o.shipping_country !== country) return false
-      return true
-    }
-    const filterEvent = (e: any) => {
-      if (device !== 'all' && e.device_type !== device) return false
-      return true
-    }
+    const totalVisitors = funnelJson?.unique_visitors ?? 0
+
+    setAllOrdersRaw(orders || [])
+    setAllEventsRaw([])
+
+    // Country filter applies to orders only (visitors don't have a known country until checkout)
+    const filterOrder = (o: any) => country === 'all' || o.shipping_country === country
 
     const allOrders  = (orders || []).filter(filterOrder)
-    const prevOrders = ordersPrev || []  // Period comparison ignores filter on purpose
-    const allEvents  = (events || []).filter(filterEvent)
+    const prevOrders = ordersPrev || []
     const prodEvents = (productEvents || [])
-    // Unique visitors with at least one event in the selected period (after filter)
-    const visitorEventsFiltered = (visitorEvents || []).filter(filterEvent)
-    const totalVisitors = new Set(visitorEventsFiltered.map(e => e.visitor_id)).size
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
     const totalRevenue   = allOrders.reduce((s, o) => s + (o.total_price || 0), 0)
@@ -785,25 +797,15 @@ export default function DashboardPage() {
     }
     setRevenueData(points)
 
-    // ── Conversion funnel ─────────────────────────────────────────────────────
-    // Count unique visitors per stage so the funnel reflects people, not events.
-    // Purchases must filter to financial_status='paid' — otherwise pending /
-    // voided / draft orders inflate it past the checkout count, producing the
-    // impossible "more sales than checkouts" funnel.
-    const uniq = (type: string) =>
-      new Set(allEvents.filter(e => e.event_type === type).map(e => e.visitor_id)).size
-    const pageviews     = uniq('pageview')
-    const productViewed = uniq('view_product')
-    const addToCart     = uniq('add_to_cart')
-    const checkout      = uniq('begin_checkout')
-    const purchases     = allOrders.filter((o: any) => o.financial_status === 'paid').length
-    const top           = pageviews || 1
+    // ── Conversion funnel (from API — COUNT DISTINCT via SQL, no row-limit issues)
+    const fd   = funnelJson?.funnel || {}
+    const fTop = fd.pageview || 1
     setFunnelSteps([
-      { label: 'Pageviews',         count: pageviews,     pct: 100 },
-      { label: 'Produto Visto',     count: productViewed, pct: (productViewed / top) * 100 },
-      { label: 'Add ao Carrinho',   count: addToCart,     pct: (addToCart / top) * 100 },
-      { label: 'Checkout Iniciado', count: checkout,      pct: (checkout / top) * 100 },
-      { label: 'Compras',           count: purchases,     pct: (purchases / top) * 100 },
+      { label: 'Pageviews',         count: fd.pageview       || 0, pct: 100 },
+      { label: 'Produto Visto',     count: fd.view_product   || 0, pct: ((fd.view_product   || 0) / fTop) * 100 },
+      { label: 'Add ao Carrinho',   count: fd.add_to_cart    || 0, pct: ((fd.add_to_cart    || 0) / fTop) * 100 },
+      { label: 'Checkout Iniciado', count: fd.begin_checkout || 0, pct: ((fd.begin_checkout || 0) / fTop) * 100 },
+      { label: 'Compras',           count: fd.purchase       || allOrders.length, pct: ((fd.purchase || allOrders.length) / fTop) * 100 },
     ])
 
     // ── Campaign attribution table ────────────────────────────────────────────
@@ -854,9 +856,19 @@ export default function DashboardPage() {
         .slice(0, 8)
     )
 
-    // ── Retention: novos vs recorrentes ──────────────────────────────────────
-    const newOrders       = allOrders.filter((o: any) => o.is_first_purchase === true).length
-    const returningOrders = allOrders.filter((o: any) => o.is_first_purchase === false).length
+    // ── Retention: novos vs recorrentes (via RPC — is_first_purchase coluna não confiável)
+    let newOrders = allOrders.length, returningOrders = 0
+    try {
+      const nrRes = await supabase.rpc('new_returning_stats', {
+        p_client_id: clientId,
+        p_start:     startDate.toISOString(),
+        p_end:       endDate.toISOString(),
+      })
+      if (nrRes.data) {
+        newOrders       = Number(nrRes.data.new_orders       ?? allOrders.length)
+        returningOrders = Number(nrRes.data.returning_orders ?? 0)
+      }
+    } catch (_) {}
     setRetention({ newOrders, returningOrders, total: allOrders.length })
 
     // ── Heatmap de vendas — 7 dias × 8 blocos de 3h ──────────────────────────
@@ -917,13 +929,20 @@ export default function DashboardPage() {
     const start90 = new Date(); start90.setDate(start90.getDate() - 90)
     const { data: allOrders90 } = await supabase
       .from('orders')
-      .select('email, is_first_purchase, created_at')
+      .select('email, created_at')
       .eq('client_id', clientData.id)
       .eq('financial_status', 'paid')
       .gt('total_price', 0)
       .gte('created_at', start90.toISOString())
 
     if (!allOrders90) return
+
+    // Email-first-order map — treats first order by each email as the "new buyer" event
+    const emailFirst: Record<string, string> = {}
+    allOrders90.forEach((o: any) => {
+      if (!o.email || !o.created_at) return
+      if (!emailFirst[o.email] || o.created_at < emailFirst[o.email]) emailFirst[o.email] = o.created_at
+    })
 
     // Build 3 monthly cohorts
     const months: CohortMonth[] = []
@@ -932,16 +951,15 @@ export default function DashboardPage() {
       const mEnd   = new Date(mStart); mEnd.setMonth(mEnd.getMonth() + 1)
       const label  = mStart.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
 
-      const newInMonth = allOrders90.filter(o =>
-        o.is_first_purchase === true &&
-        o.created_at >= mStart.toISOString() && o.created_at < mEnd.toISOString() &&
-        o.email
+      // New buyers = emails whose first-ever order was in this month
+      const newEmails = new Set(
+        Object.entries(emailFirst)
+          .filter(([_, d]) => d >= mStart.toISOString() && d < mEnd.toISOString())
+          .map(([email]) => email)
       )
-      const newEmails = new Set(newInMonth.map(o => o.email))
 
-      // How many of those emails also appear in non-first-purchase orders after mEnd?
-      const returned = allOrders90.filter(o =>
-        o.is_first_purchase === false &&
+      // Returned = those new buyers who placed any order after this month
+      const returned = allOrders90.filter((o: any) =>
         o.created_at >= mEnd.toISOString() &&
         o.email && newEmails.has(o.email)
       )
@@ -982,7 +1000,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="border-b border-[#2a2f3e] px-6 py-4 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-white">LK Sneakers</h1>
+          <h1 className="text-lg font-bold text-white">{clientName || CLIENT_PIXEL_ID}</h1>
           <p className="text-xs text-slate-500">Tracking Dashboard</p>
         </div>
         <div className="flex items-center gap-3">
@@ -1008,15 +1026,41 @@ export default function DashboardPage() {
               <option key={c as string} value={c as string}>{c as string}</option>
             ))}
           </select>
-          <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {(['7d', '30d', '90d'] as DateRange[]).map(r => (
-              <button key={r} onClick={() => setDateRange(r)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  dateRange === r ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}>
-                {r === '7d' ? '7 dias' : r === '30d' ? '30 dias' : '90 dias'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
+              {(['1d', '7d', '30d', '90d', 'custom'] as DateRange[]).map(r => (
+                <button key={r} onClick={() => setDateRange(r)}
+                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                    dateRange === r ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                  }`}>
+                  {r === '1d' ? 'Ontem' : r === '7d' ? '7d' : r === '30d' ? '30d' : r === '90d' ? '90d' : 'Custom'}
+                </button>
+              ))}
+            </div>
+            {dateRange === 'custom' && (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={e => { setFromDate(e.target.value); fromDateRef.current = e.target.value }}
+                  className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                />
+                <span className="text-slate-500 text-xs">–</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={e => { setToDate(e.target.value); toDateRef.current = e.target.value }}
+                  className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={() => loadData('custom')}
+                  disabled={!fromDate || !toDate}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-3 py-1 rounded-lg text-xs font-medium transition-colors"
+                >
+                  Aplicar
+                </button>
+              </div>
+            )}
           </div>
           <button onClick={() => loadData(dateRange)}
             className="flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors">
@@ -1375,9 +1419,19 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2 p-5 text-slate-500 text-sm">
                   <Loader2 size={14} className="animate-spin" /> Carregando…
                 </div>
-              ) : roasData.campaigns.length === 0 ? (
+              ) : (roasData.has_ads_credentials
+                    ? roasData.campaigns.filter(c => c.impressions > 0 || c.spend > 0)
+                    : roasData.campaigns).length === 0 ? (
                 <p className="p-5 text-slate-500 text-sm">Nenhuma campanha no período</p>
-              ) : (
+              ) : (() => {
+                // When Meta credentials are configured, show only rows that came from the
+                // Meta Ads API (impressions > 0 or spend > 0). This hides UTM ad-set/ad
+                // name rows that pollute the campaign view when UTMs are configured below
+                // campaign level. Without credentials we show all UTM rows.
+                const visibleCampaigns = roasData.has_ads_credentials
+                  ? roasData.campaigns.filter(c => c.impressions > 0 || c.spend > 0)
+                  : roasData.campaigns
+                return (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#2a2f3e]">
@@ -1390,7 +1444,7 @@ export default function DashboardPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {roasData.campaigns.map((c, i) => (
+                    {visibleCampaigns.map((c, i) => (
                       <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
                         <td className="px-4 py-3 max-w-[200px]">
                           <p className="text-slate-200 text-xs truncate">{c.campaign_name}</p>
@@ -1468,7 +1522,8 @@ export default function DashboardPage() {
                     ))}
                   </tbody>
                 </table>
-              )}
+                )
+              })()}
             </div>
           </div>
         )}
