@@ -240,7 +240,7 @@ export default function VisitantesPage() {
     const { data } = await supabase
       .from('tracking_events')
       .select('id, event_type, url, created_at, utm_source, product_name')
-      .eq('visitor_id', v.id)
+      .eq('visitor_id', v.visitor_id)
       .order('created_at', { ascending: false })
       .limit(60)
     setPanelEvents((data as TrackingEvent[]) || [])

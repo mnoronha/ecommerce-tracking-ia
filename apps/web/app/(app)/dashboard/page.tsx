@@ -656,6 +656,7 @@ export default function DashboardPage() {
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
+  const [productSort, setProductSort]   = useState<'purchases' | 'views'>('purchases')
 
   const params = useParams()
   const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
@@ -1269,8 +1270,18 @@ export default function DashboardPage() {
 
           {/* Product Performance */}
           <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#2a2f3e]">
+            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-300">Performance de Produtos</h2>
+              <div className="flex gap-1 bg-[#0f1117] rounded-lg p-0.5">
+                {(['purchases', 'views'] as const).map(s => (
+                  <button key={s} onClick={() => setProductSort(s)}
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                      productSort === s ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'
+                    }`}>
+                    {s === 'purchases' ? 'Vendas' : 'Visitas'}
+                  </button>
+                ))}
+              </div>
             </div>
             {products.length === 0 ? (
               <p className="p-5 text-slate-500 text-sm">Sem dados de produto no período</p>
@@ -1284,7 +1295,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {products.map((p, i) => (
+                  {[...products].sort((a, b) => productSort === 'purchases' ? b.purchases - a.purchases : b.views - a.views).map((p, i) => (
                     <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
                       <td className="px-4 py-3">
                         <p className="text-slate-200 truncate max-w-[180px] text-xs">{p.name}</p>
