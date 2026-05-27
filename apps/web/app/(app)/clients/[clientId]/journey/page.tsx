@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles, AlertTriangle } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
-type DateRange = 7 | 30 | 90
+type DatePreset = '1d' | '7d' | '30d' | '90d' | 'custom'
 type Lens = 'campaign' | 'product' | 'meta-attribution' | 'declared-source'
 
 interface DeclaredSourceRow {
@@ -102,12 +102,54 @@ function badge(platform: string) {
   return PLATFORM_BADGE[platform] || 'bg-indigo-500/15 text-indigo-300 border-indigo-500/25'
 }
 
+// A campaign name that looks like a raw UTM template or unresolved ID
+function isRawUTM(campaign: string): boolean {
+  if (!campaign || campaign === '—') return true
+  if (/^\d{10,20}$/.test(campaign)) return true                       // pure Meta ID
+  if (/^meta\s+paid/i.test(campaign)) return true                     // UTM template prefix
+  if (/^\d+$/.test(campaign) && campaign.length > 5) return true      // any long numeric
+  return false
+}
+
+function yesterdayStr(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+function buildQuery(preset: DatePreset, from: string, to: string): string {
+  if (preset === '1d') {
+    const y = yesterdayStr()
+    return `start=${y}&end=${y}`
+  }
+  if (preset === 'custom' && from && to) return `start=${from}&end=${to}`
+  const dMap: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90 }
+  return `days=${dMap[preset] ?? 30}`
+}
+
+function periodLabel(preset: DatePreset, from: string, to: string): string {
+  if (preset === '1d') return 'Ontem'
+  if (preset === 'custom' && from && to) {
+    const fmt2 = (s: string) => s.slice(5).replace('-', '/')
+    return `${fmt2(from)} → ${fmt2(to)}`
+  }
+  const dMap: Record<string, string> = { '7d': 'Últimos 7 dias', '30d': 'Últimos 30 dias', '90d': 'Últimos 90 dias' }
+  return dMap[preset] ?? 'Últimos 30 dias'
+}
+
 export default function JourneyPage() {
   const params  = useParams()
   const pixelId = params.clientId as string
 
   const [lens,    setLens]    = useState<Lens>('campaign')
-  const [days,    setDays]    = useState<DateRange>(30)
+  const [preset,  setPreset]  = useState<DatePreset>('30d')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate,   setToDate]   = useState('')
+  const [showCustom, setShowCustom] = useState(false)
+  const [loadKey, setLoadKey]   = useState(0)
+  const fromRef = useRef<HTMLInputElement>(null)
+  const toRef   = useRef<HTMLInputElement>(null)
+
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [products,  setProducts]  = useState<ProductRow[]>([])
   const [metaAttr, setMetaAttr] = useState<MetaAttrRow[]>([])
@@ -117,30 +159,39 @@ export default function JourneyPage() {
   const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [search,   setSearch]   = useState('')
+  const [showNamedOnly, setShowNamedOnly] = useState(false)
   const [resolving, setResolving] = useState(false)
   const [resolveMsg, setResolveMsg] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [matching, setMatching] = useState(false)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
 
+  const presetRef  = useRef(preset)
+  const fromDRef   = useRef(fromDate)
+  const toDRef     = useRef(toDate)
+  presetRef.current = preset
+  fromDRef.current  = fromDate
+  toDRef.current    = toDate
+
   const load = useCallback(async () => {
     setLoading(true)
+    const q = buildQuery(presetRef.current, fromDRef.current, toDRef.current)
     try {
       if (lens === 'campaign') {
-        const res = await fetch(`${API_URL}/journey/${pixelId}/by-campaign?days=${days}&top_products=10`)
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-campaign?${q}&top_products=10`)
         if (res.ok) setCampaigns((await res.json()).campaigns || [])
       } else if (lens === 'product') {
-        const res = await fetch(`${API_URL}/journey/${pixelId}/by-product?days=${days}&top_campaigns=10`)
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-product?${q}&top_campaigns=10`)
         if (res.ok) setProducts((await res.json()).products || [])
       } else if (lens === 'meta-attribution') {
-        const res = await fetch(`${API_URL}/journey/${pixelId}/by-meta-attribution?days=${days}`)
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-meta-attribution?${q}`)
         if (res.ok) {
           const data = await res.json()
           setMetaAttr(data.campaigns || [])
           setMetaTotals(data.totals || null)
         }
       } else {
-        const res = await fetch(`${API_URL}/journey/${pixelId}/by-declared-source?days=${days}`)
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-declared-source?${q}`)
         if (res.ok) {
           const data = await res.json()
           setDeclared(data.by_source || [])
@@ -150,9 +201,10 @@ export default function JourneyPage() {
     } finally {
       setLoading(false)
     }
-  }, [lens, days, pixelId])
+  }, [lens, pixelId])
 
-  useEffect(() => { load() }, [load])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load() }, [load, loadKey])
 
   async function handleResolveMeta() {
     setResolving(true); setResolveMsg(null)
@@ -186,6 +238,8 @@ export default function JourneyPage() {
 
   async function handleProbableMatch() {
     setMatching(true); setActionMsg(null)
+    const q = buildQuery(presetRef.current, fromDRef.current, toDRef.current)
+    const days = q.startsWith('days=') ? q.slice(5) : '30'
     try {
       const res = await fetch(`${API_URL}/journey/${pixelId}/probable-match?days=${days}`, { method: 'POST' })
       const data = await res.json()
@@ -198,6 +252,26 @@ export default function JourneyPage() {
     }
   }
 
+  function applyCustom() {
+    const from = fromRef.current?.value || ''
+    const to   = toRef.current?.value   || ''
+    if (!from || !to) return
+    setFromDate(from)
+    setToDate(to)
+    setShowCustom(false)
+    setLoadKey(k => k + 1)
+  }
+
+  function selectPreset(p: DatePreset) {
+    setPreset(p)
+    if (p !== 'custom') {
+      setShowCustom(false)
+      setLoadKey(k => k + 1)
+    } else {
+      setShowCustom(true)
+    }
+  }
+
   function toggle(key: string) {
     setExpanded(prev => {
       const next = new Set(prev)
@@ -207,11 +281,18 @@ export default function JourneyPage() {
     })
   }
 
-  const filteredCampaigns = search
-    ? campaigns.filter(c =>
-        c.campaign.toLowerCase().includes(search.toLowerCase()) ||
-        c.source.toLowerCase().includes(search.toLowerCase()))
-    : campaigns
+  // Count unresolved Meta campaign names in the campaign lens
+  const unresolvedCount = campaigns.filter(c => c.platform === 'meta' && isRawUTM(c.campaign)).length
+
+  const filteredCampaigns = (() => {
+    let list = campaigns
+    if (showNamedOnly) list = list.filter(c => !isRawUTM(c.campaign))
+    if (search) list = list.filter(c =>
+      c.campaign.toLowerCase().includes(search.toLowerCase()) ||
+      c.source.toLowerCase().includes(search.toLowerCase()))
+    return list
+  })()
+
   const filteredProducts = search
     ? products.filter(p =>
         p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -231,35 +312,64 @@ export default function JourneyPage() {
         ? declared.reduce((s, d) => s + d.declared_revenue, 0)
         : metaTotals?.meta_revenue || 0
 
+  const periodLbl = periodLabel(preset, fromDate, toDate)
+
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
       <div className="border-b border-[#2a2f3e] px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-white">Jornada — Campanha × Produto</h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Quem comprou o quê veio de onde
+            Quem comprou o quê veio de onde · <span className="text-slate-400">{periodLbl}</span>
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap justify-end">
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={lens === 'campaign' ? 'Buscar campanha…' : 'Buscar produto…'}
-            className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 w-48"
+            className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 w-44"
           />
+          {/* Date preset buttons */}
           <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {([7, 30, 90] as DateRange[]).map(r => (
-              <button key={r} onClick={() => setDays(r)}
+            {(['1d', '7d', '30d', '90d'] as DatePreset[]).map(p => (
+              <button key={p} onClick={() => selectPreset(p)}
                 className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  days === r ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                  preset === p && !showCustom ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}>
-                {r}d
+                {p === '1d' ? 'Ontem' : p}
               </button>
             ))}
+            <button onClick={() => selectPreset('custom')}
+              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                preset === 'custom' || showCustom ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}>
+              Custom
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Custom date picker row */}
+      {showCustom && (
+        <div className="border-b border-[#2a2f3e] px-6 py-3 flex items-center gap-3 bg-[#1a1f2e]/60">
+          <span className="text-xs text-slate-400">De</span>
+          <input ref={fromRef} type="date" defaultValue={fromDate}
+            className="bg-[#252a3a] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500" />
+          <span className="text-xs text-slate-400">até</span>
+          <input ref={toRef} type="date" defaultValue={toDate}
+            className="bg-[#252a3a] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500" />
+          <button onClick={applyCustom}
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition-colors">
+            Aplicar
+          </button>
+          <button onClick={() => setShowCustom(false)}
+            className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
+            Cancelar
+          </button>
+        </div>
+      )}
 
       {/* Lens toggle */}
       <div className="px-6 pt-6">
@@ -298,17 +408,36 @@ export default function JourneyPage() {
               <Sparkles size={14} />Como te conheceram
             </button>
           </div>
+
           {lens === 'campaign' || lens === 'product' ? (
-            <button
-              onClick={handleResolveMeta}
-              disabled={resolving}
-              title="Busca os nomes reais das campanhas no Meta Ads quando elas aparecem como ID numérico"
-              className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] text-slate-300 px-3 py-2 rounded-lg transition-colors"
-            >
-              {resolving
-                ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
-                : <><RefreshCw size={12} />Resolver nomes Meta</>}
-            </button>
+            <>
+              <button
+                onClick={handleResolveMeta}
+                disabled={resolving}
+                title="Busca os nomes reais das campanhas no Meta Ads quando elas aparecem como ID numérico"
+                className={`flex items-center gap-2 text-xs border px-3 py-2 rounded-lg transition-colors ${
+                  unresolvedCount > 0 && lens === 'campaign'
+                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+                    : 'bg-[#1a1f2e] hover:bg-[#252a3a] border-[#2a2f3e] text-slate-300'
+                }`}
+              >
+                {resolving
+                  ? <><Loader2 size={12} className="animate-spin" />Sincronizando...</>
+                  : <><RefreshCw size={12} />Resolver nomes Meta{unresolvedCount > 0 && lens === 'campaign' ? ` (${unresolvedCount})` : ''}</>}
+              </button>
+              {lens === 'campaign' && (
+                <button
+                  onClick={() => setShowNamedOnly(v => !v)}
+                  className={`text-xs px-3 py-2 rounded-lg border transition-colors ${
+                    showNamedOnly
+                      ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-300'
+                      : 'bg-[#1a1f2e] border-[#2a2f3e] text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {showNamedOnly ? 'Todas campanhas' : 'Apenas identificadas'}
+                </button>
+              )}
+            </>
           ) : lens === 'meta-attribution' ? (
             <>
               <button
@@ -333,6 +462,7 @@ export default function JourneyPage() {
               </button>
             </>
           ) : null}
+
           {resolveMsg && (lens === 'campaign' || lens === 'product') && (
             <span className="text-xs text-slate-400">{resolveMsg}</span>
           )}
@@ -340,8 +470,25 @@ export default function JourneyPage() {
             <span className="text-xs text-slate-400">{actionMsg}</span>
           )}
         </div>
+
+        {/* Unresolved banner */}
+        {lens === 'campaign' && unresolvedCount > 0 && !showNamedOnly && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-amber-300/80 bg-amber-500/5 border border-amber-500/20 rounded-lg px-4 py-2">
+            <AlertTriangle size={13} className="shrink-0 text-amber-400" />
+            <span>
+              <span className="font-medium text-amber-300">{unresolvedCount} campanha{unresolvedCount > 1 ? 's' : ''}</span> com ID não resolvido (aparecem como "meta paid…").
+              Clique <span className="font-medium">Resolver nomes Meta</span> para buscar os nomes reais no Meta Ads.
+            </span>
+          </div>
+        )}
+
         <p className="text-xs text-slate-500 mt-3">
           Receita total no período: <span className="text-emerald-400 font-semibold">{fmt(totalRevenue)}</span>
+          {showNamedOnly && lens === 'campaign' && campaigns.length > filteredCampaigns.length && (
+            <span className="ml-3 text-slate-600">
+              ({campaigns.length - filteredCampaigns.length} campanhas não identificadas ocultas)
+            </span>
+          )}
         </p>
       </div>
 
@@ -475,7 +622,7 @@ export default function JourneyPage() {
                         <th className="px-5 py-2.5 text-right font-medium">Respostas</th>
                         <th className="px-5 py-2.5 text-right font-medium">Receita declarada</th>
                         <th className="px-5 py-2.5 text-right font-medium">Match UTM</th>
-                        <th className="px-5 py-2.5 text-right font-medium">Miss UTM (rescate)</th>
+                        <th className="px-5 py-2.5 text-right font-medium">Miss UTM (resgate)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -518,10 +665,13 @@ export default function JourneyPage() {
         ) : lens === 'campaign' ? (
           <div className="space-y-2">
             {filteredCampaigns.length === 0 ? (
-              <p className="text-slate-500 text-sm text-center py-8">Sem dados no período</p>
+              <p className="text-slate-500 text-sm text-center py-8">
+                {showNamedOnly ? 'Nenhuma campanha identificada no período' : 'Sem dados no período'}
+              </p>
             ) : filteredCampaigns.map(c => {
               const key = `${c.source}|${c.medium}|${c.campaign}`
               const open = expanded.has(key)
+              const raw  = isRawUTM(c.campaign)
               return (
                 <div key={key} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
                   <button
@@ -533,8 +683,25 @@ export default function JourneyPage() {
                       {c.platform}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white font-medium truncate">{c.campaign}</p>
-                      <p className="text-xs text-slate-500 truncate">{c.source} · {c.medium}</p>
+                      {raw ? (
+                        <>
+                          <p className="text-sm text-amber-300/80 font-medium truncate flex items-center gap-1.5">
+                            <AlertTriangle size={12} className="text-amber-500 shrink-0" />
+                            <span className="font-mono text-xs">{c.campaign}</span>
+                          </p>
+                          <p className="text-xs text-slate-500 truncate">{c.source} · {c.medium} · ID não resolvido</p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm text-white font-medium truncate">{c.campaign}</p>
+                          <p className="text-xs text-slate-500 truncate">
+                            {c.source} · {c.medium}
+                            {c.campaign_id && (
+                              <span className="font-mono ml-2 text-slate-600">{c.campaign_id}</span>
+                            )}
+                          </p>
+                        </>
+                      )}
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-sm font-bold text-emerald-400">{fmt(c.revenue)}</p>
@@ -630,22 +797,29 @@ export default function JourneyPage() {
                       </p>
                       <table className="w-full text-sm">
                         <tbody>
-                          {p.top_campaigns.map((c, i) => (
-                            <tr key={`${p.product_id}-${i}`} className="border-t border-[#2a2f3e] last:border-0">
-                              <td className="px-5 py-2.5">
-                                <div className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${badge(c.platform)}`}>
-                                  {c.platform}
-                                </div>
-                              </td>
-                              <td className="px-5 py-2.5 text-slate-200 text-xs max-w-md truncate">
-                                {c.campaign}
-                                <span className="text-slate-600 ml-2">{c.source}</span>
-                              </td>
-                              <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{c.units} un.</td>
-                              <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{c.orders} pedidos</td>
-                              <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
-                            </tr>
-                          ))}
+                          {p.top_campaigns.map((c, i) => {
+                            const raw = isRawUTM(c.campaign)
+                            return (
+                              <tr key={`${p.product_id}-${i}`} className="border-t border-[#2a2f3e] last:border-0">
+                                <td className="px-5 py-2.5">
+                                  <div className={`inline-block px-2 py-0.5 rounded text-xs font-medium border ${badge(c.platform)}`}>
+                                    {c.platform}
+                                  </div>
+                                </td>
+                                <td className="px-5 py-2.5 text-xs max-w-md truncate">
+                                  {raw ? (
+                                    <span className="text-amber-300/70 font-mono">{c.campaign}</span>
+                                  ) : (
+                                    <span className="text-slate-200">{c.campaign}</span>
+                                  )}
+                                  <span className="text-slate-600 ml-2">{c.source}</span>
+                                </td>
+                                <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{c.units} un.</td>
+                                <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{c.orders} pedidos</td>
+                                <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>

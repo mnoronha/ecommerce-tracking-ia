@@ -60,23 +60,35 @@ def _platform_from_source(source: Optional[str]) -> str:
     return s
 
 
-def _fetch_paid_orders_with_items(client_uuid: str, days: int) -> list[dict]:
+def _fetch_paid_orders_with_items(
+    client_uuid: str,
+    days: int,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+) -> list[dict]:
     """Pull paid orders + their items in the window. Joined client-side because
     Supabase REST doesn't allow proper joins on aggregate. We fetch in two
     queries and stitch."""
     sb = get_supabase()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if start and end:
+        p_start = start + "T00:00:00+00:00"
+        p_end   = end   + "T23:59:59+00:00"
+    else:
+        p_start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        p_end   = None
 
-    orders = (
+    q = (
         sb.table("orders")
         .select("id, total_price, gross_profit, predicted_ltv, utm_source, utm_medium, utm_campaign, "
                 "utm_content, platform_source, shipping_country, created_at")
         .eq("client_id", client_uuid)
         .eq("financial_status", "paid")
         .gt("total_price", 0)
-        .gte("created_at", cutoff)
-        .execute()
-    ).data or []
+        .gte("created_at", p_start)
+    )
+    if p_end:
+        q = q.lte("created_at", p_end)
+    orders = q.execute().data or []
 
     if not orders:
         return []
@@ -108,15 +120,21 @@ def _fetch_paid_orders_with_items(client_uuid: str, days: int) -> list[dict]:
     summary="Top campaigns and the products they drove",
     tags=["journey"],
 )
-async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
+async def by_campaign(
+    pixel_id: str,
+    days: int = 30,
+    top_products: int = 5,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
     """
     Returns one row per campaign with:
       - revenue, profit, orders, units
       - top N products (by revenue) inside that campaign
-    Sorted by revenue desc.
+    Sorted by revenue desc. start/end (ISO date YYYY-MM-DD) override days.
     """
     client_uuid = _resolve(pixel_id)
-    orders = _fetch_paid_orders_with_items(client_uuid, days)
+    orders = _fetch_paid_orders_with_items(client_uuid, days, start, end)
     if not orders:
         return {"days": days, "campaigns": []}
 
@@ -172,14 +190,21 @@ async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
                 p["profit"] += line_profit
             b["units"]   += qty
 
-    # Resolve Meta campaign IDs → names if any UTM looks numeric
+    # Resolve Meta campaign IDs → names.
+    # Handles pure numeric IDs ("120210118442") and embedded IDs
+    # ("meta paid|120210118442") where the UTM template mixed a label with the id.
     name_map: dict[str, str] = {}
-    meta_ids = [
-        b["campaign"] for b in bucket.values()
-        if b["platform"] == "meta" and meta_campaigns.is_meta_id(b["campaign"])
-    ]
-    if meta_ids:
-        name_map = meta_campaigns.get_name_map(client_uuid, meta_ids)
+    raw_to_id: dict[str, str] = {}  # original campaign value → numeric id to look up
+    for b in bucket.values():
+        if b["platform"] == "meta":
+            numeric = meta_campaigns.extract_meta_id(b["campaign"])
+            if numeric:
+                raw_to_id[b["campaign"]] = numeric
+    if raw_to_id:
+        id_to_name = meta_campaigns.get_name_map(client_uuid, list(set(raw_to_id.values())))
+        for raw_val, numeric in raw_to_id.items():
+            if numeric in id_to_name:
+                name_map[raw_val] = id_to_name[numeric]
 
     # Finalize: sort products inside each campaign, slice top N, format
     campaigns = []
@@ -230,15 +255,21 @@ async def by_campaign(pixel_id: str, days: int = 30, top_products: int = 5):
     summary="Top products and the campaigns that drove their sales",
     tags=["journey"],
 )
-async def by_product(pixel_id: str, days: int = 30, top_campaigns: int = 5):
+async def by_product(
+    pixel_id: str,
+    days: int = 30,
+    top_campaigns: int = 5,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
     """
     Returns one row per product with:
       - units, revenue, profit, distinct_orders
       - top N campaigns that drove that product (by revenue)
-    Sorted by revenue desc.
+    Sorted by revenue desc. start/end (ISO date YYYY-MM-DD) override days.
     """
     client_uuid = _resolve(pixel_id)
-    orders = _fetch_paid_orders_with_items(client_uuid, days)
+    orders = _fetch_paid_orders_with_items(client_uuid, days, start, end)
     if not orders:
         return {"days": days, "products": []}
 
@@ -284,13 +315,20 @@ async def by_product(pixel_id: str, days: int = 30, top_campaigns: int = 5):
             c["revenue"] += line
             c["orders"].add(o["id"])
 
-    # Resolve Meta IDs at the campaign-level (collected across all products)
-    all_meta_ids: set[str] = set()
+    # Resolve Meta IDs at the campaign-level (handles embedded IDs too)
+    raw_to_id: dict[str, str] = {}
     for p in bucket.values():
         for c in p["_campaigns"].values():
-            if c["platform"] == "meta" and meta_campaigns.is_meta_id(c["campaign"]):
-                all_meta_ids.add(c["campaign"])
-    name_map = meta_campaigns.get_name_map(client_uuid, list(all_meta_ids)) if all_meta_ids else {}
+            if c["platform"] == "meta":
+                numeric = meta_campaigns.extract_meta_id(c["campaign"])
+                if numeric:
+                    raw_to_id[c["campaign"]] = numeric
+    name_map: dict[str, str] = {}
+    if raw_to_id:
+        id_to_name = meta_campaigns.get_name_map(client_uuid, list(set(raw_to_id.values())))
+        for raw_val, numeric in raw_to_id.items():
+            if numeric in id_to_name:
+                name_map[raw_val] = id_to_name[numeric]
 
     products = []
     for p in bucket.values():
@@ -325,23 +363,36 @@ async def by_product(pixel_id: str, days: int = 30, top_campaigns: int = 5):
     summary="Campaigns ranked by Meta-reported purchases (server-side reconciliation)",
     tags=["journey"],
 )
-async def by_meta_attribution(pixel_id: str, days: int = 30):
+async def by_meta_attribution(
+    pixel_id: str,
+    days: int = 30,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
     """
     Reads from `meta_ad_attributions` (synced daily). Aggregates by campaign
     so the UI can compare "Meta says X purchases / R$ Y" vs our server-side.
+    start/end (ISO date YYYY-MM-DD) override days.
     """
     client_uuid = _resolve(pixel_id)
     sb          = get_supabase()
-    cutoff      = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    if start and end:
+        p_start = start
+        p_end   = end
+    else:
+        p_start = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+        p_end   = None
 
-    rows = (
+    q = (
         sb.table("meta_ad_attributions")
         .select("campaign_id, campaign_name, ad_id, ad_name, "
                 "spend, impressions, clicks, purchases, purchase_value")
         .eq("client_id", client_uuid)
-        .gte("date", cutoff)
-        .execute()
-    ).data or []
+        .gte("date", p_start)
+    )
+    if p_end:
+        q = q.lte("date", p_end)
+    rows = q.execute().data or []
 
     # Roll up to campaign level
     campaigns: dict[str, dict] = {}
@@ -366,16 +417,19 @@ async def by_meta_attribution(pixel_id: str, days: int = 30):
         c["ads_count"]      += 1
 
     # Cross with our server-side numbers from orders
-    orders_cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    server_rows = (
+    o_start = (start + "T00:00:00+00:00") if start else (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    o_end   = (end   + "T23:59:59+00:00") if end   else None
+    sq = (
         sb.table("orders")
         .select("utm_campaign, total_price")
         .eq("client_id", client_uuid)
         .eq("financial_status", "paid")
         .gt("total_price", 0)
-        .gte("created_at", orders_cutoff)
-        .execute()
-    ).data or []
+        .gte("created_at", o_start)
+    )
+    if o_end:
+        sq = sq.lte("created_at", o_end)
+    server_rows = sq.execute().data or []
 
     # Build server-side map keyed by campaign_id (when utm is numeric)
     server_by_campaign: dict[str, dict] = {}
@@ -585,7 +639,12 @@ async def submit_survey_response(pixel_id: str, body: SurveyResponseBody):
     summary="Aggregate orders by buyer-declared source, with UTM cross-check",
     tags=["journey"],
 )
-async def by_declared_source(pixel_id: str, days: int = 30):
+async def by_declared_source(
+    pixel_id: str,
+    days: int = 30,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
     """
     For each declared source bucket, returns:
       - declared_orders / declared_revenue (orders that reported this source)
@@ -593,19 +652,26 @@ async def by_declared_source(pixel_id: str, days: int = 30):
       - utm_miss_orders / utm_miss_revenue (declared but no matching utm)
 
     A high utm_miss share is the value the survey unlocks — those are sales
-    we could not have attributed any other way.
+    we could not have attributed any other way. start/end override days.
     """
     client_uuid = _resolve(pixel_id)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if start and end:
+        p_start = start + "T00:00:00+00:00"
+        p_end   = end   + "T23:59:59+00:00"
+    else:
+        p_start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        p_end   = None
     sb = get_supabase()
 
-    surveys = (
+    sq = (
         sb.table("post_purchase_surveys")
         .select("source_declared, order_id, created_at")
         .eq("client_id", client_uuid)
-        .gte("created_at", cutoff)
-        .execute()
-    ).data or []
+        .gte("created_at", p_start)
+    )
+    if p_end:
+        sq = sq.lte("created_at", p_end)
+    surveys = sq.execute().data or []
     if not surveys:
         return {"days": days, "by_source": [], "total_responses": 0}
 

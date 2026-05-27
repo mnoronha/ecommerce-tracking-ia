@@ -22,11 +22,26 @@ logger = logging.getLogger(__name__)
 
 _GRAPH = "https://graph.facebook.com/v19.0"
 _NUMERIC_ID = re.compile(r"^\d+$")
+_EMBEDDED_ID = re.compile(r"(\d{10,20})")
 
 
 def is_meta_id(value: str) -> bool:
     """Heuristic: Meta IDs are pure numerics with 12-19 digits."""
     return bool(value) and bool(_NUMERIC_ID.match(value)) and 10 <= len(value) <= 20
+
+
+def extract_meta_id(value: str) -> Optional[str]:
+    """
+    Extract a Meta numeric ID from a UTM string that may have a human prefix.
+    Handles pure IDs ("120210118442") and embedded IDs ("meta paid|120210118442").
+    Returns None when no qualifying numeric sequence is found.
+    """
+    if not value:
+        return None
+    if is_meta_id(value):
+        return value
+    m = _EMBEDDED_ID.search(value)
+    return m.group(1) if m else None
 
 
 def _paginate(url: str, params: dict) -> list[dict]:
