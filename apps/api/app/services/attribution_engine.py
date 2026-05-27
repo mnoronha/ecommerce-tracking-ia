@@ -345,35 +345,39 @@ def recompute_for_client(client_uuid: str, days: int = 90) -> dict:
 
 # ── Summary aggregation ───────────────────────────────────────────────────────
 
-def get_summary(client_uuid: str, model: str = 'last_click', days: int = 30) -> dict:
+def get_summary(
+    client_uuid: str,
+    model: str = 'last_click',
+    days: int = 30,
+    start: str | None = None,
+    end:   str | None = None,
+) -> dict:
     """
     Aggregate attribution data for the dashboard.
-
-    Returns:
-      {
-        model: 'last_click',
-        days:  30,
-        total_revenue: 12345.67,
-        by_platform: [{platform, revenue, conversions, share_pct}, ...],
-        by_source:   [{source, medium, campaign, revenue, conversions}, ...],
-      }
+    If start+end (ISO date strings) are provided they take precedence over days.
     """
     if model not in ALL_MODELS:
         return {'error': f'invalid model: {model}'}
 
     sb = get_supabase()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    if start and end:
+        p_start = start + "T00:00:00+00:00"
+        p_end   = end   + "T23:59:59+00:00"
+    else:
+        p_start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        p_end   = None
 
     # Fetch all attributions for this client + model + period
-    resp = (
+    q = (
         sb.table('order_attributions')
         .select('platform, source, medium, campaign, attributed_revenue, credit, order_id')
         .eq('client_id', client_uuid)
         .eq('model', model)
-        .gte('computed_at', cutoff)
-        .limit(20000)
-        .execute()
+        .gte('computed_at', p_start)
     )
+    if p_end:
+        q = q.lte('computed_at', p_end)
+    resp = q.limit(20000).execute()
     rows = resp.data or []
 
     total_revenue = round(sum(float(r.get('attributed_revenue') or 0) for r in rows), 2)
@@ -422,6 +426,8 @@ def get_summary(client_uuid: str, model: str = 'last_click', days: int = 30) -> 
     return {
         'model':         model,
         'days':          days,
+        'start':         start,
+        'end':           end,
         'total_revenue': total_revenue,
         'by_platform':   by_platform,
         'by_source':     by_source,

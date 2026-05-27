@@ -42,13 +42,16 @@ async def recompute(pixel_id: str, background_tasks: BackgroundTasks, days: int 
 @router.get("/{pixel_id}/summary")
 async def summary(
     pixel_id: str,
-    model: str = Query("last_click", regex="^(last_click|first_click|linear|time_decay|position_based)$"),
-    days:  int = Query(30, ge=1, le=365),
+    model: str  = Query("last_click", regex="^(last_click|first_click|linear|time_decay|position_based)$"),
+    days:  int  = Query(30, ge=1, le=365),
+    start: str  = Query(None),
+    end:   str  = Query(None),
 ):
     """
     Return aggregated attribution by platform + source for the dashboard panel.
+    start/end are ISO date strings (YYYY-MM-DD); if provided they override days.
     """
     cuuid = _resolve_client_uuid(pixel_id)
     if not cuuid:
         raise HTTPException(404, f"Client not found: {pixel_id}")
-    return attribution_engine.get_summary(cuuid, model=model, days=days)
+    return attribution_engine.get_summary(cuuid, model=model, days=days, start=start, end=end)
