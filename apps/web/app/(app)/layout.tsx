@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, Users, LogOut } from 'lucide-react'
+import { BarChart2, Users, LogOut, Bell } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 
@@ -10,7 +10,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router   = useRouter()
 
-  const isClientsRoot = pathname === '/clients' || pathname === '/clients/new'
+  const isClientsRoot = pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas'
 
   async function handleSignOut() {
     const supabase = createSupabaseBrowserClient()
@@ -32,6 +32,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-4">
             <Link href="/clients" className={`text-xs transition-colors ${pathname === '/clients' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
               <Users size={14} className="inline mr-1" />Clientes
+            </Link>
+            <Link href="/alertas" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/alertas' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
+              <Bell size={13} />Alertas
             </Link>
             <button onClick={handleSignOut} className="text-xs text-slate-500 hover:text-white transition-colors flex items-center gap-1">
               <LogOut size={13} />Sair

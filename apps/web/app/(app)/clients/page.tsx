@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
-import { Plus, Settings, BarChart2, ShoppingBag, Users, Zap } from 'lucide-react'
+import { Plus, Settings, BarChart2, ShoppingBag, Users, Zap, Bell } from 'lucide-react'
 import { PLANS, type PlanId } from '@/lib/plans'
 
 interface Client {
@@ -15,6 +15,12 @@ interface Client {
   created_at: string
 }
 
+interface AlertCount {
+  client_id: string
+  critical: number
+  warning: number
+}
+
 async function getClients(): Promise<Client[]> {
   const supabase = await createSupabaseServerClient()
   const { data, error } = await supabase
@@ -26,6 +32,23 @@ async function getClients(): Promise<Client[]> {
     return []
   }
   return data || []
+}
+
+async function getAlertCounts(clientIds: string[]): Promise<Record<string, AlertCount>> {
+  if (clientIds.length === 0) return {}
+  const supabase = await createSupabaseServerClient()
+  const { data } = await supabase
+    .from('alerts')
+    .select('client_id, severity')
+    .in('client_id', clientIds)
+    .is('resolved_at', null)
+  const counts: Record<string, AlertCount> = {}
+  for (const row of data || []) {
+    if (!counts[row.client_id]) counts[row.client_id] = { client_id: row.client_id, critical: 0, warning: 0 }
+    if (row.severity === 'critical') counts[row.client_id].critical++
+    else if (row.severity === 'warning') counts[row.client_id].warning++
+  }
+  return counts
 }
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -64,6 +87,7 @@ export default async function ClientsPage() {
   if (!user) redirect('/login')
 
   const [clients, agencyPlan] = await Promise.all([getClients(), getAgencyPlan(user.id)])
+  const alertCounts = await getAlertCounts(clients.map(c => c.id))
 
   const planInfo = agencyPlan ? PLANS.find(p => p.id === agencyPlan.plan) : null
 
@@ -118,7 +142,7 @@ export default async function ClientsPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {clients.map(c => (
-            <ClientCard key={c.id} client={c} />
+            <ClientCard key={c.id} client={c} alerts={alertCounts[c.id]} />
           ))}
         </div>
       )}
@@ -126,14 +150,20 @@ export default async function ClientsPage() {
   )
 }
 
-function ClientCard({ client }: { client: Client }) {
+function ClientCard({ client, alerts }: { client: Client; alerts?: AlertCount }) {
   const integrations = [
     client.meta_pixel_id       && 'Meta',
     client.ga4_measurement_id  && 'GA4',
   ].filter(Boolean)
 
+  const hasCritical = (alerts?.critical ?? 0) > 0
+  const hasWarning  = (alerts?.warning  ?? 0) > 0
+  const totalAlerts = (alerts?.critical ?? 0) + (alerts?.warning ?? 0)
+
   return (
-    <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-4 flex flex-col gap-4">
+    <div className={`bg-[#1a1f2e] border rounded-xl p-4 flex flex-col gap-4 ${
+      hasCritical ? 'border-red-500/40' : hasWarning ? 'border-yellow-500/30' : 'border-[#2a2f3e]'
+    }`}>
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -142,13 +172,29 @@ function ClientCard({ client }: { client: Client }) {
           </div>
           <p className="text-xs text-slate-500 mt-0.5">{PLATFORM_LABEL[client.ecommerce_platform] || client.ecommerce_platform}</p>
         </div>
-        <Link
-          href={`/clients/${client.pixel_id}/settings`}
-          className="text-slate-500 hover:text-white transition-colors"
-          title="Configurações"
-        >
-          <Settings size={15} />
-        </Link>
+        <div className="flex items-center gap-2">
+          {totalAlerts > 0 && (
+            <Link
+              href={`/clients/${client.pixel_id}/alertas`}
+              className={`flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full transition-colors ${
+                hasCritical
+                  ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
+                  : 'bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25'
+              }`}
+              title={`${totalAlerts} alerta${totalAlerts > 1 ? 's' : ''} aberto${totalAlerts > 1 ? 's' : ''}`}
+            >
+              <Bell size={10} />
+              {totalAlerts}
+            </Link>
+          )}
+          <Link
+            href={`/clients/${client.pixel_id}/settings`}
+            className="text-slate-500 hover:text-white transition-colors"
+            title="Configurações"
+          >
+            <Settings size={15} />
+          </Link>
+        </div>
       </div>
 
       {integrations.length > 0 && (

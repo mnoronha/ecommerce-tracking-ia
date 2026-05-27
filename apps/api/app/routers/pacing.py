@@ -40,6 +40,25 @@ async def get_pacing(pixel_id: str):
 
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_key = month_start.date().isoformat()  # YYYY-MM-01
+
+    # Prefer goals table (set via Metas page); fall back to legacy clients column
+    try:
+        goal_row = (
+            sb.table("goals")
+            .select("revenue_goal, roas_goal")
+            .eq("client_id", c["id"])
+            .eq("month", month_key)
+            .limit(1)
+            .execute()
+        ).data
+        if goal_row:
+            if goal_row[0].get("revenue_goal"):
+                c["monthly_revenue_goal"] = goal_row[0]["revenue_goal"]
+            if goal_row[0].get("roas_goal"):
+                c["target_roas"] = goal_row[0]["roas_goal"]
+    except Exception as exc:
+        logger.debug("pacing: goals table lookup failed: %s", exc)
     days_in_month = calendar.monthrange(now.year, now.month)[1]
     day_of_month  = now.day
     fraction_done = day_of_month / days_in_month
