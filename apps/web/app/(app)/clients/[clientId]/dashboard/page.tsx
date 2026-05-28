@@ -688,31 +688,26 @@ export default function DashboardPage() {
   const params = useParams()
   const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
 
+  // Cache clientId so we don't hit Supabase on every filter change
+  const clientIdRef = useRef<string | null>(null)
+
   const loadData = useCallback(async (range: DateRange) => {
     setLoading(true)
 
-    // Check if CLIENT_PIXEL_ID is a UUID (client ID) or a pixel_id
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
-    console.log('[loadData] CLIENT_PIXEL_ID:', CLIENT_PIXEL_ID, 'isUUID:', isUUID)
-    const { data: clientData, error: clientError } = isUUID
-      ? await supabase.from('clients').select('id').eq('id', CLIENT_PIXEL_ID).limit(1).single()
-      : await supabase.from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
-
-    console.log('[loadData] clientData:', clientData, 'error:', clientError)
-    if (!clientData) {
-      console.log('[loadData] No client data found')
-      setLoading(false)
-      return
+    // ── Resolve clientId (cached after first call) ────────────────────────────
+    let clientId = clientIdRef.current
+    if (!clientId) {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
+      const { data: clientData } = isUUID
+        ? await supabase.from('clients').select('id, name').eq('id', CLIENT_PIXEL_ID).limit(1).single()
+        : await supabase.from('clients').select('id, name').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+      if (!clientData) { setLoading(false); return }
+      clientId = clientData.id
+      clientIdRef.current = clientId
+      if (clientData.name) setClientName(clientData.name)
     }
 
-    const clientId = clientData.id
-
-    // Fetch client name for the header
-    const isUUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
-    supabase.from('clients').select('name').eq(isUUID2 ? 'id' : 'pixel_id', CLIENT_PIXEL_ID).limit(1).single()
-      .then(({ data }) => { if (data?.name) setClientName(data.name) })
-
-    // Date range computation
+    // ── Date range computation ────────────────────────────────────────────────
     const now = new Date()
     let startDate: Date, endDate: Date
     const _from = fromDateRef.current
@@ -728,13 +723,23 @@ export default function DashboardPage() {
       startDate = new Date(); startDate.setDate(startDate.getDate() - d)
       endDate   = now
     }
-    const days = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000))
+    const days      = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / 86400000))
     const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days)
 
+    const startStr     = startDate.toISOString().split('T')[0]
+    const endStr       = endDate.toISOString().split('T')[0]
+    const prevEndStr   = new Date(startDate.getTime() - 1).toISOString().split('T')[0]
+    const prevStartStr = prevStart.toISOString().split('T')[0]
+    const dParam       = device !== 'all' ? `&device=${device}` : ''
+
+    // ── Single parallel batch — orders + events + funnel + retention RPC ─────
     const [
       { data: orders },
       { data: ordersPrev },
       { data: productEvents },
+      fRes,
+      pfRes,
+      nrResult,
     ] = await Promise.all([
       supabase.from('orders')
         .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
@@ -756,26 +761,21 @@ export default function DashboardPage() {
         .eq('client_id', clientId)
         .gte('created_at', startDate.toISOString())
         .lte('created_at', endDate.toISOString())
-        .not('product_name', 'is', null),
+        .not('product_name', 'is', null)
+        .limit(2000),
+      fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${startStr}&end=${endStr}${dParam}`).catch(() => null),
+      fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${prevStartStr}&end=${prevEndStr}${dParam}`).catch(() => null),
+      Promise.resolve(supabase.rpc('new_returning_stats', {
+        p_client_id: clientId,
+        p_start:     startDate.toISOString(),
+        p_end:       endDate.toISOString(),
+      })).catch(() => ({ data: null })),
     ])
-
-    // Fetch funnel for current + previous period in parallel
-    const startStr    = startDate.toISOString().split('T')[0]
-    const endStr      = endDate.toISOString().split('T')[0]
-    const prevEndStr  = new Date(startDate.getTime() - 1).toISOString().split('T')[0]
-    const prevStartStr = prevStart.toISOString().split('T')[0]
-    const dParam      = device !== 'all' ? `&device=${device}` : ''
 
     let funnelJson: any = null
     let prevFunnelJson: any = null
-    try {
-      const [fRes, pfRes] = await Promise.all([
-        fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${startStr}&end=${endStr}${dParam}`),
-        fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${prevStartStr}&end=${prevEndStr}${dParam}`),
-      ])
-      if (fRes.ok)  funnelJson     = await fRes.json()
-      if (pfRes.ok) prevFunnelJson = await pfRes.json()
-    } catch (_) {}
+    try { if ((fRes as any)?.ok)  funnelJson     = await (fRes  as Response).json() } catch (_) {}
+    try { if ((pfRes as any)?.ok) prevFunnelJson = await (pfRes as Response).json() } catch (_) {}
 
     const totalVisitors = funnelJson?.unique_visitors     ?? 0
     const prevVisitors  = prevFunnelJson?.unique_visitors ?? 0
@@ -899,17 +899,13 @@ export default function DashboardPage() {
         .slice(0, 8)
     )
 
-    // ── Retention: novos vs recorrentes (via RPC — is_first_purchase coluna não confiável)
+    // ── Retention: novos vs recorrentes (resultado já veio no batch paralelo)
     let newOrders = allOrders.length, returningOrders = 0
     try {
-      const nrRes = await supabase.rpc('new_returning_stats', {
-        p_client_id: clientId,
-        p_start:     startDate.toISOString(),
-        p_end:       endDate.toISOString(),
-      })
-      if (nrRes.data) {
-        newOrders       = Number(nrRes.data.new_orders       ?? allOrders.length)
-        returningOrders = Number(nrRes.data.returning_orders ?? 0)
+      const nrData = (nrResult as any)?.data
+      if (nrData) {
+        newOrders       = Number(nrData.new_orders       ?? allOrders.length)
+        returningOrders = Number(nrData.returning_orders ?? 0)
       }
     } catch (_) {}
     setRetention({ newOrders, returningOrders, total: allOrders.length })
@@ -964,16 +960,22 @@ export default function DashboardPage() {
 
   const loadCohort = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
-    const { data: clientData } = await supabase
-      .from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
-    if (!clientData) return
+    // Use cached clientId; fall back to a lookup only if not yet available
+    let cohortClientId = clientIdRef.current
+    if (!cohortClientId) {
+      const { data: clientData } = await supabase
+        .from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+      if (!clientData) return
+      cohortClientId = clientData.id
+      clientIdRef.current = cohortClientId
+    }
 
     // Fetch 90d of orders with is_first_purchase + email
     const start90 = new Date(); start90.setDate(start90.getDate() - 90)
     const { data: allOrders90 } = await supabase
       .from('orders')
       .select('email, created_at')
-      .eq('client_id', clientData.id)
+      .eq('client_id', cohortClientId)
       .eq('financial_status', 'paid')
       .gt('total_price', 0)
       .gte('created_at', start90.toISOString())
