@@ -6,19 +6,17 @@ import Link from 'next/link'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import {
   ArrowLeft, ArrowRight, Check, Loader2, Copy, CheckCircle,
-  Sparkles, Zap, ShoppingBag, AlertTriangle, ChevronDown, ChevronRight,
+  Sparkles, Zap, ShoppingBag, AlertTriangle, Bell,
 } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
-type Step     = 1 | 2 | 3 | 4
+type Step     = 1 | 2 | 3 | 4 | 5
 type Platform = 'shopify' | 'nuvemshop' | 'woocommerce'
 type AdsTab   = 'meta' | 'google' | 'tiktok' | 'pinterest' | 'ga4'
 
 type ProbeResult = { status: string; error?: string | null } | null
 
-// Readable pixel_id from the store name (lk-sneakers vs random UUID).
-// Falls back to a short random suffix to dodge collisions.
 function slugify(name: string): string {
   const base = name
     .toLowerCase()
@@ -35,7 +33,8 @@ const STEP_LABELS: Record<Step, string> = {
   1: 'Loja',
   2: 'Anúncios',
   3: 'Instalação',
-  4: 'Pronto!',
+  4: 'Notificações',
+  5: 'Pronto!',
 }
 
 const INPUT = 'w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none focus:border-indigo-500 transition-colors'
@@ -73,48 +72,49 @@ function NewClientWizard() {
   const [storeName, setStoreName] = useState('')
   const [domain,    setDomain]    = useState('')
   const [apiToken,  setApiToken]  = useState('')
-  const [apiSecret, setApiSecret] = useState('')  // Shopify API secret key — assina os webhooks (HMAC)
+  const [apiSecret, setApiSecret] = useState('')
 
   // Created client
   const [pixelId,    setPixelId]    = useState('')
   const [clientDbId, setClientDbId] = useState('')
 
   // Step 2
-  const [adsTab,      setAdsTab]      = useState<AdsTab>('meta')
-  const [metaForm,    setMetaForm]    = useState({ pixel_id: '', access_token: '', ad_account_id: '' })
-  const [googleForm,  setGoogleForm]  = useState({ customer_id: '', aw_id: '', conversion_action_id: '', login_customer_id: '' })
-  const [tiktokForm,  setTiktokForm]  = useState({ pixel_id: '', access_token: '' })
+  const [adsTab,        setAdsTab]        = useState<AdsTab>('meta')
+  const [metaForm,      setMetaForm]      = useState({ pixel_id: '', access_token: '', ad_account_id: '' })
+  const [googleForm,    setGoogleForm]    = useState({ customer_id: '', aw_id: '', conversion_action_id: '', login_customer_id: '' })
+  const [tiktokForm,    setTiktokForm]    = useState({ pixel_id: '', access_token: '' })
   const [pinterestForm, setPinterestForm] = useState({ ad_account_id: '', access_token: '', tag_id: '' })
-  const [ga4Form,     setGa4Form]     = useState({ measurement_id: '', api_secret: '' })
-  const [savingAds,   setSavingAds]   = useState(false)
-  const [probes,      setProbes]      = useState<Record<string, ProbeResult>>({})
-  const [probing,     setProbing]     = useState<string | null>(null)
+  const [ga4Form,       setGa4Form]       = useState({ measurement_id: '', api_secret: '' })
+  const [savingAds,     setSavingAds]     = useState(false)
+  const [probes,        setProbes]        = useState<Record<string, ProbeResult>>({})
+  const [probing,       setProbing]       = useState<string | null>(null)
 
   // Step 3
   const [installing,    setInstalling]    = useState(false)
   const [installResult, setInstallResult] = useState<InstallResult | null>(null)
-  const [showSnippet,   setShowSnippet]   = useState(false)
 
-  function setM(k: string, v: string) { setMetaForm(f => ({ ...f, [k]: v })) }
-  function setG(k: string, v: string) { setGoogleForm(f => ({ ...f, [k]: v })) }
-  function setT(k: string, v: string) { setTiktokForm(f => ({ ...f, [k]: v })) }
-  function setP(k: string, v: string) { setPinterestForm(f => ({ ...f, [k]: v })) }
-  function setGA(k: string, v: string) { setGa4Form(f => ({ ...f, [k]: v })) }
+  // Step 4
+  const [alertEmail,   setAlertEmail]   = useState('')
+  const [slackWebhook, setSlackWebhook] = useState('')
+  const [savingNotif,  setSavingNotif]  = useState(false)
 
-  // Save current ads tab then live-probe the integration. Each Testar agora
-  // button calls this. The probe writes <platform>_health back so the
-  // dashboard health card updates immediately.
+  function setM(k: string, v: string)  { setMetaForm(f      => ({ ...f, [k]: v })) }
+  function setG(k: string, v: string)  { setGoogleForm(f    => ({ ...f, [k]: v })) }
+  function setT(k: string, v: string)  { setTiktokForm(f    => ({ ...f, [k]: v })) }
+  function setP(k: string, v: string)  { setPinterestForm(f => ({ ...f, [k]: v })) }
+  function setGA(k: string, v: string) { setGa4Form(f       => ({ ...f, [k]: v })) }
+
   async function handleTestConnection(platform: 'meta' | 'google_ads' | 'tiktok' | 'pinterest' | 'ga4') {
     if (!pixelId) return
     setProbing(platform)
     setProbes(p => ({ ...p, [platform]: null }))
     try {
       await handleSaveAds(false)
-      const res = await fetch(`${API_URL}/integrations/${pixelId}/test/${platform}`, { method: 'POST' })
+      const res  = await fetch(`${API_URL}/integrations/${pixelId}/test/${platform}`, { method: 'POST' })
       const data = await res.json()
       setProbes(p => ({ ...p, [platform]: { status: data.status, error: data.error } }))
-    } catch (err: any) {
-      setProbes(p => ({ ...p, [platform]: { status: 'invalid', error: err?.message || 'falha de rede' } }))
+    } catch (err: unknown) {
+      setProbes(p => ({ ...p, [platform]: { status: 'invalid', error: (err as Error)?.message || 'falha de rede' } }))
     } finally {
       setProbing(null)
     }
@@ -138,13 +138,11 @@ function NewClientWizard() {
       const payload: Record<string, string | boolean> = {
         name: storeName, ecommerce_platform: platform, agency_id: mem.agency_id, is_active: true,
       }
-      if (slug) payload.pixel_id = slug   // readable id; DB default UUID if empty
+      if (slug) payload.pixel_id = slug
       if (domain) {
         if (platform === 'shopify') {
           payload.shopify_domain = domain.replace(/^https?:\/\//, '')
-          if (apiToken)  payload.shopify_access_token  = apiToken
-          // API secret key signs Shopify webhooks (HMAC) — without it, a new
-          // client's webhooks fail signature validation in production.
+          if (apiToken)  payload.shopify_access_token   = apiToken
           if (apiSecret) payload.shopify_webhook_secret = apiSecret
         } else if (platform === 'nuvemshop') {
           payload.nuvemshop_store_id = domain
@@ -197,17 +195,32 @@ function NewClientWizard() {
     setInstalling(true)
     setInstallResult(null)
     try {
-      const res = await fetch(`${API_URL}/setup/shopify/${pixelId}/install`, { method: 'POST' })
+      const res  = await fetch(`${API_URL}/setup/shopify/${pixelId}/install`, { method: 'POST' })
       const json: InstallResult = await res.json()
       setInstallResult(json)
     } catch {
       setInstallResult({
-        webhooks:   { succeeded: 0, failed: 1, total: 9 },
-        script_tag: { status: 'failed', error: 'Erro de rede — tente novamente.' },
+        webhooks:    { succeeded: 0, failed: 1, total: 9 },
+        script_tag:  { status: 'failed', error: 'Erro de rede — tente novamente.' },
         tracker_src: `${API_URL}/static/tracker.js?client_id=${pixelId}`,
       })
     } finally {
       setInstalling(false)
+    }
+  }
+
+  // ── Step 4: save notifications config (optional) ─────────────────────────
+  async function handleSaveNotifications(andContinue = true) {
+    setSavingNotif(true)
+    try {
+      const sb = createSupabaseBrowserClient()
+      await sb.from('clients').update({
+        alert_email:       alertEmail   || null,
+        slack_webhook_url: slackWebhook || null,
+      }).eq('id', clientDbId)
+    } finally {
+      setSavingNotif(false)
+      if (andContinue) setStep(5)
     }
   }
 
@@ -216,9 +229,9 @@ function NewClientWizard() {
   async
 ></script>`
 
-  const pixelOk      = installResult?.script_tag?.status !== 'failed'
-  const webhooksOk   = (installResult?.webhooks?.failed ?? 1) === 0
-  const installOk    = pixelOk && webhooksOk
+  const pixelOk    = installResult?.script_tag?.status !== 'failed'
+  const webhooksOk = (installResult?.webhooks?.failed ?? 1) === 0
+  const installOk  = pixelOk && webhooksOk
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -234,7 +247,7 @@ function NewClientWizard() {
               {isFresh ? 'Bem-vindo! Configure sua loja' : 'Adicionar nova loja'}
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              {STEP_LABELS[step]} · etapa {step} de 4
+              {STEP_LABELS[step]} · etapa {step} de 5
             </p>
           </div>
         </div>
@@ -248,7 +261,7 @@ function NewClientWizard() {
       {/* Progress */}
       <div className="px-6 py-5 max-w-2xl mx-auto">
         <div className="flex items-center">
-          {([1, 2, 3, 4] as Step[]).map((s, i) => {
+          {([1, 2, 3, 4, 5] as Step[]).map((s, i) => {
             const done   = step > s
             const active = step === s
             return (
@@ -265,7 +278,7 @@ function NewClientWizard() {
                     {STEP_LABELS[s]}
                   </span>
                 </div>
-                {i < 3 && (
+                {i < 4 && (
                   <div className={`flex-1 h-px mx-3 transition-colors ${done ? 'bg-emerald-500/40' : 'bg-[#2a2f3e]'}`} />
                 )}
               </div>
@@ -420,7 +433,7 @@ function NewClientWizard() {
                       placeholder="1500331104" className={INPUT} />
                     <p className="mt-1 text-xs text-slate-600">Google Ads → Goals → Conversions → sua ação → o número no fim da URL.</p>
                   </div>
-                  <div><label className={LABEL}>MCC / Manager ID <span className="text-slate-600 font-normal">(opcional — só se a conta é gerenciada por uma MCC diferente da padrão)</span></label>
+                  <div><label className={LABEL}>MCC / Manager ID <span className="text-slate-600 font-normal">(opcional)</span></label>
                     <input value={googleForm.login_customer_id} onChange={e => setG('login_customer_id', e.target.value)}
                       placeholder="985-863-8484" className={INPUT} /></div>
                   <div><label className={LABEL}>AW-ID <span className="text-slate-600 font-normal">(remarketing, opcional)</span></label>
@@ -469,20 +482,20 @@ function NewClientWizard() {
                 </div>
               )}
 
-              {/* Testar conexão — salva os campos atuais e dispara probe live */}
+              {/* Testar conexão */}
               <div className="mt-5 pt-5 border-t border-[#2a2f3e]">
                 {(() => {
-                  const platform = adsTab === 'meta' ? 'meta'
-                                  : adsTab === 'google' ? 'google_ads'
-                                  : adsTab === 'tiktok' ? 'tiktok'
-                                  : adsTab === 'ga4' ? 'ga4'
-                                  : 'pinterest'
-                  const probe = probes[platform]
-                  const isProbing = probing === platform
+                  const plat = adsTab === 'meta' ? 'meta'
+                             : adsTab === 'google' ? 'google_ads'
+                             : adsTab === 'tiktok' ? 'tiktok'
+                             : adsTab === 'ga4' ? 'ga4'
+                             : 'pinterest'
+                  const probe     = probes[plat]
+                  const isProbing = probing === plat
                   return (
                     <div className="flex items-center justify-between gap-3">
                       <button
-                        onClick={() => handleTestConnection(platform as any)}
+                        onClick={() => handleTestConnection(plat as 'meta' | 'google_ads' | 'tiktok' | 'pinterest' | 'ga4')}
                         disabled={isProbing || !pixelId}
                         className="px-4 py-2 rounded-lg bg-[#0f1117] hover:bg-[#252a3a] border border-[#2a2f3e] text-xs text-slate-300 flex items-center gap-2 disabled:opacity-50"
                       >
@@ -557,7 +570,6 @@ function NewClientWizard() {
                         : <><Zap size={16} /> Instalar tudo automaticamente</>}
                     </button>
                   ) : (
-                    /* Non-Shopify: show manual webhook URL + snippet */
                     <div className="space-y-4">
                       <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-xl p-4">
                         <div className="flex items-center justify-between mb-1.5">
@@ -581,9 +593,7 @@ function NewClientWizard() {
                   )}
                 </>
               ) : (
-                /* Install result */
                 <div className="space-y-4">
-                  {/* Webhooks result */}
                   <div className={`rounded-xl p-4 border flex items-start gap-3 ${
                     webhooksOk ? 'bg-emerald-500/8 border-emerald-500/25' : 'bg-yellow-500/8 border-yellow-500/25'
                   }`}>
@@ -602,7 +612,6 @@ function NewClientWizard() {
                     </div>
                   </div>
 
-                  {/* ScriptTag result */}
                   {installResult.script_tag.status !== 'failed' ? (
                     <div className="rounded-xl p-4 border bg-emerald-500/8 border-emerald-500/25 flex items-start gap-3">
                       <CheckCircle size={16} className="text-emerald-400 shrink-0 mt-0.5" />
@@ -645,7 +654,7 @@ function NewClientWizard() {
                     </button>
                     <button onClick={() => setStep(4)}
                       className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl text-sm flex items-center justify-center gap-2">
-                      <ArrowRight size={14} /> {installOk ? 'Ir para o dashboard' : 'Continuar assim mesmo'}
+                      <ArrowRight size={14} /> {installOk ? 'Continuar' : 'Continuar assim mesmo'}
                     </button>
                   </div>
                 </div>
@@ -663,8 +672,91 @@ function NewClientWizard() {
           </>
         )}
 
-        {/* ──────────────────────────────────────── STEP 4: Pronto! */}
+        {/* ──────────────────────────────────────── STEP 4: Notificações */}
         {step === 4 && (
+          <>
+            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-2xl p-8">
+              <div className="flex items-center gap-2 mb-2">
+                <Bell size={18} className="text-indigo-400" />
+                <h2 className="text-base font-semibold text-white">Alertas & Notificações</h2>
+              </div>
+              <p className="text-xs text-slate-500 mb-6">
+                Opcional — você será avisado quando o ROAS cair, o tracking parar ou o CPA superar a meta.
+              </p>
+
+              <div className="space-y-5">
+                <div>
+                  <label className={LABEL}>E-mail para alertas</label>
+                  <input
+                    type="email"
+                    value={alertEmail}
+                    onChange={e => setAlertEmail(e.target.value)}
+                    placeholder="gestor@agencia.com.br"
+                    className={INPUT}
+                  />
+                  <p className="text-xs text-slate-600 mt-1.5">
+                    Recebe relatório semanal IA e alertas de anomalias críticas.
+                  </p>
+                </div>
+
+                <div>
+                  <label className={LABEL}>
+                    Slack Webhook URL
+                    <span className="text-slate-600 font-normal ml-1">(opcional)</span>
+                  </label>
+                  <input
+                    value={slackWebhook}
+                    onChange={e => setSlackWebhook(e.target.value)}
+                    placeholder="https://hooks.slack.com/services/..."
+                    className={INPUT}
+                  />
+                  <p className="text-xs text-slate-600 mt-1.5">
+                    Slack → Apps → Incoming Webhooks → Add to Slack → copie a URL.
+                  </p>
+                </div>
+
+                <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-xl p-4">
+                  <p className="text-xs font-medium text-slate-400 mb-3">Alertas configurados automaticamente:</p>
+                  <ul className="space-y-1.5 text-xs text-slate-500">
+                    {[
+                      { color: 'bg-yellow-400',  text: 'ROAS abaixo da meta configurada' },
+                      { color: 'bg-red-400',     text: 'Tracking parado por mais de 24h' },
+                      { color: 'bg-orange-400',  text: 'CPA acima da meta (+ margem de 20%)' },
+                      { color: 'bg-red-500',     text: 'Token Meta expirando em menos de 7 dias' },
+                    ].map(({ color, text }) => (
+                      <li key={text} className="flex items-center gap-2">
+                        <span className={`w-1.5 h-1.5 rounded-full ${color} shrink-0`} />
+                        {text}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setStep(3)}
+                className="flex-1 py-3 border border-[#2a2f3e] text-slate-400 hover:text-white rounded-xl text-sm transition-colors">
+                Voltar
+              </button>
+              <button
+                onClick={() => handleSaveNotifications(true)}
+                disabled={savingNotif}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2"
+              >
+                {savingNotif
+                  ? <><Loader2 size={14} className="animate-spin" /> Salvando…</>
+                  : <><ArrowRight size={14} /> Salvar e continuar</>}
+              </button>
+            </div>
+            <button onClick={() => setStep(5)} className="w-full text-xs text-slate-600 hover:text-slate-400 py-1.5 transition-colors">
+              Pular — configurar depois
+            </button>
+          </>
+        )}
+
+        {/* ──────────────────────────────────────── STEP 5: Pronto! */}
+        {step === 5 && (
           <div className="text-center py-4 space-y-7">
             <div className="w-20 h-20 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto">
               <CheckCircle size={40} className="text-emerald-400" />
@@ -680,7 +772,6 @@ function NewClientWizard() {
               </p>
             </div>
 
-            {/* What was set up */}
             <div className="grid grid-cols-2 gap-3 max-w-sm mx-auto text-left">
               <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-4">
                 <p className="text-xs text-slate-500 mb-1">Pixel ID</p>
@@ -700,6 +791,10 @@ function NewClientWizard() {
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors">
                 <ArrowRight size={14} /> Abrir dashboard
               </button>
+              <Link href={`/clients/${pixelId}/onboarding`}
+                className="w-full bg-[#1a1f2e] hover:bg-[#252b3b] border border-indigo-500/30 text-indigo-300 hover:text-white py-3 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors">
+                <CheckCircle size={14} /> Ver checklist de integração
+              </Link>
               <div className="grid grid-cols-2 gap-3">
                 <Link href={`/clients/${pixelId}/settings`}
                   className="text-sm text-slate-400 hover:text-white bg-[#1a1f2e] border border-[#2a2f3e] py-2.5 rounded-xl text-center transition-colors">

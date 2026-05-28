@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
-import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle, Send, Zap } from 'lucide-react'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 interface ClientRow {
   id: string
@@ -61,6 +63,10 @@ export default function ClientSettingsPage() {
   const [cnameSecret, setCnameSecret] = useState<string | null>(null)
   const [cnameVerifying, setCnameVerifying] = useState(false)
   const [cnameMsg, setCnameMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [testingSlack, setTestingSlack] = useState(false)
+  const [slackTestMsg, setSlackTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [testingEmail, setTestingEmail] = useState(false)
+  const [emailTestMsg, setEmailTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
     const supabase = createSupabaseBrowserClient()
@@ -163,6 +169,44 @@ export default function ClientSettingsPage() {
       meta_token_expires_at: null,
       meta_token_health:     'unknown',
     }))
+  }
+
+  async function testSlack() {
+    setTestingSlack(true)
+    setSlackTestMsg(null)
+    try {
+      const res  = await fetch(`${API_URL}/insights/${clientId}/test-alert`, { method: 'POST' })
+      const json = await res.json()
+      setSlackTestMsg(json.status === 'ok'
+        ? { ok: true,  text: 'Mensagem enviada! Verifique o canal Slack.' }
+        : { ok: false, text: 'Falha ao enviar. Verifique a URL do webhook.' })
+    } catch {
+      setSlackTestMsg({ ok: false, text: 'Erro de conexão.' })
+    } finally {
+      setTestingSlack(false)
+    }
+  }
+
+  async function testEmail() {
+    setTestingEmail(true)
+    setEmailTestMsg(null)
+    try {
+      const res  = await fetch(`${API_URL}/insights/${clientId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: form.alert_email }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setEmailTestMsg({ ok: false, text: json.detail || `Erro ${res.status}` })
+      } else {
+        setEmailTestMsg({ ok: true, text: `Relatório enviado para ${json.email}` })
+      }
+    } catch {
+      setEmailTestMsg({ ok: false, text: 'Erro de conexão.' })
+    } finally {
+      setTestingEmail(false)
+    }
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -269,6 +313,9 @@ export default function ClientSettingsPage() {
           {!oauthError.startsWith('google_oauth_') && !oauthError.startsWith('meta_oauth_') && `Erro: ${oauthError}`}
         </div>
       )}
+
+      {/* Integration health summary */}
+      <IntegrationHealth form={form} />
 
       <form onSubmit={handleSave} className="space-y-6">
         <Section title="Dados básicos">
@@ -507,12 +554,52 @@ export default function ClientSettingsPage() {
 
         <Section title="Alertas e notificações">
           <Field label="Email para relatórios semanais">
-            <input type="email" value={form.alert_email || ''} onChange={e => set('alert_email', e.target.value)}
-              placeholder="marketing@empresa.com" className={INPUT} />
+            <div className="space-y-2">
+              <input type="email" value={form.alert_email || ''} onChange={e => set('alert_email', e.target.value)}
+                placeholder="marketing@empresa.com" className={INPUT} />
+              {form.alert_email && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={testEmail}
+                    disabled={testingEmail}
+                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-[#0f1117] border border-[#2a2f3e] hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {testingEmail ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                    Enviar relatório teste
+                  </button>
+                  {emailTestMsg && (
+                    <span className={`text-xs ${emailTestMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {emailTestMsg.ok ? '✓' : '✗'} {emailTestMsg.text}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </Field>
           <Field label="Slack Webhook URL">
-            <input value={form.slack_webhook_url || ''} onChange={e => set('slack_webhook_url', e.target.value)}
-              placeholder="https://hooks.slack.com/services/..." className={INPUT} />
+            <div className="space-y-2">
+              <input value={form.slack_webhook_url || ''} onChange={e => set('slack_webhook_url', e.target.value)}
+                placeholder="https://hooks.slack.com/services/..." className={INPUT} />
+              {form.slack_webhook_url && (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={testSlack}
+                    disabled={testingSlack}
+                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-[#0f1117] border border-[#2a2f3e] hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    {testingSlack ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
+                    Testar webhook
+                  </button>
+                  {slackTestMsg && (
+                    <span className={`text-xs ${slackTestMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {slackTestMsg.ok ? '✓' : '✗'} {slackTestMsg.text}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </Field>
           <Field label="Webhook Secret" hint="segredo compartilhado para autenticar webhooks de Klaviyo, etc.">
             <input
@@ -553,6 +640,88 @@ export default function ClientSettingsPage() {
           </button>
         </div>
       </form>
+    </div>
+  )
+}
+
+type HealthStatus = 'ok' | 'warning' | 'error' | 'inactive'
+
+function healthDot(status: HealthStatus) {
+  const colors: Record<HealthStatus, string> = {
+    ok:       'bg-emerald-400',
+    warning:  'bg-yellow-400',
+    error:    'bg-red-400',
+    inactive: 'bg-slate-600',
+  }
+  return <span className={`w-2 h-2 rounded-full shrink-0 ${colors[status]}`} />
+}
+
+function IntegrationHealth({ form }: { form: Partial<ClientRow> }) {
+  const daysUntilExpiry = form.meta_token_expires_at
+    ? Math.ceil((new Date(form.meta_token_expires_at).getTime() - Date.now()) / 86_400_000)
+    : null
+
+  const metaStatus: HealthStatus = !form.meta_access_token ? 'inactive'
+    : form.meta_token_health === 'expired' ? 'error'
+    : form.meta_token_health === 'expiring_soon' || (daysUntilExpiry != null && daysUntilExpiry <= 7) ? 'warning'
+    : 'ok'
+
+  const metaLabel = !form.meta_access_token ? 'não conectado'
+    : metaStatus === 'error' ? 'token expirado'
+    : daysUntilExpiry != null && daysUntilExpiry <= 30 ? `expira em ${daysUntilExpiry}d`
+    : 'conectado'
+
+  const items: { label: string; status: HealthStatus; detail: string }[] = [
+    {
+      label:  'Meta CAPI',
+      status: metaStatus,
+      detail: metaLabel,
+    },
+    {
+      label:  'Google Ads',
+      status: form.google_ads_refresh_token ? 'ok' : 'inactive',
+      detail: form.google_ads_refresh_token ? 'conectado via OAuth' : 'não conectado',
+    },
+    {
+      label:  'GA4',
+      status: (form.ga4_measurement_id && form.ga4_api_secret) ? 'ok' : 'inactive',
+      detail: form.ga4_measurement_id ? form.ga4_measurement_id : 'não configurado',
+    },
+    {
+      label:  'TikTok',
+      status: (form.tiktok_pixel_id && form.tiktok_access_token) ? 'ok' : 'inactive',
+      detail: form.tiktok_pixel_id ? form.tiktok_pixel_id : 'não configurado',
+    },
+    {
+      label:  'CNAME',
+      status: form.tracking_cname_verified ? 'ok' : form.tracking_cname ? 'warning' : 'inactive',
+      detail: form.tracking_cname_verified ? form.tracking_cname || 'verificado'
+        : form.tracking_cname ? 'aguardando verificação'
+        : 'não configurado',
+    },
+  ]
+
+  const hasIssue = items.some(i => i.status === 'error' || i.status === 'warning')
+
+  return (
+    <div className={`bg-[#1a1f2e] border rounded-xl p-4 mb-2 ${hasIssue ? 'border-yellow-500/30' : 'border-[#2a2f3e]'}`}>
+      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Saúde das integrações</p>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {items.map(({ label, status, detail }) => (
+          <div key={label} className="flex items-start gap-2">
+            <div className="mt-1">{healthDot(status)}</div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-300">{label}</p>
+              <p className={`text-xs truncate ${
+                status === 'error'   ? 'text-red-400'
+                : status === 'warning' ? 'text-yellow-400'
+                : status === 'ok'    ? 'text-emerald-400'
+                : 'text-slate-600'
+              }`}>{detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

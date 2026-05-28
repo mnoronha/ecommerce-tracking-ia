@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Bell, AlertTriangle, AlertCircle, Info, CheckCircle, RefreshCw, Loader2 } from 'lucide-react'
+import { Bell, AlertTriangle, AlertCircle, Info, CheckCircle, RefreshCw, Loader2, Settings2, ChevronDown, ChevronUp, X } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -15,6 +15,17 @@ type Alert = {
   created_at: string
   resolved_at: string | null
   alert_rule_id: string | null
+}
+
+type Rule = {
+  id: string
+  name: string
+  rule_key: string
+  severity: 'critical' | 'warning' | 'info'
+  enabled: boolean
+  throttle_minutes: number
+  config: Record<string, unknown>
+  client_id: string | null
 }
 
 const SEV_STYLE: Record<string, string> = {
@@ -47,11 +58,13 @@ export default function AlertasPage() {
   const pixelId = params.clientId as string
 
   const [alerts,          setAlerts]          = useState<Alert[]>([])
+  const [rules,           setRules]           = useState<Rule[]>([])
   const [loading,         setLoading]         = useState(true)
   const [includeResolved, setIncludeResolved] = useState(false)
   const [running,         setRunning]         = useState(false)
   const [runResult,       setRunResult]       = useState<{ rules: number; new: number; resolved: number } | null>(null)
   const [error,           setError]           = useState<string | null>(null)
+  const [showRules,       setShowRules]       = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -73,7 +86,15 @@ export default function AlertasPage() {
     setLoading(false)
   }, [pixelId, includeResolved])
 
+  const loadRules = useCallback(async () => {
+    try {
+      const res  = await fetch(`${API_URL}/alerts/rules/${pixelId}`)
+      if (res.ok) setRules((await res.json()).rules || [])
+    } catch (_) {}
+  }, [pixelId])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadRules() }, [loadRules])
 
   async function runEngine() {
     setRunning(true)
@@ -84,6 +105,24 @@ export default function AlertasPage() {
     } catch (_) {}
     setRunning(false)
     load()
+  }
+
+  async function resolveAlert(alertId: string) {
+    try {
+      await fetch(`${API_URL}/alerts/${alertId}/resolve`, { method: 'POST' })
+      load()
+    } catch (_) {}
+  }
+
+  async function toggleRule(ruleId: string, enabled: boolean) {
+    try {
+      await fetch(`${API_URL}/alerts/rules/${ruleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      setRules(prev => prev.map(r => r.id === ruleId ? { ...r, enabled } : r))
+    } catch (_) {}
   }
 
   const open     = alerts.filter(a => !a.resolved_at)
@@ -165,7 +204,9 @@ export default function AlertasPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {open.map(a => <AlertCard key={a.id} alert={a} />)}
+              {open.map(a => (
+                <AlertCard key={a.id} alert={a} onResolve={() => resolveAlert(a.id)} />
+              ))}
             </div>
           )}
 
@@ -180,15 +221,47 @@ export default function AlertasPage() {
               </div>
             </div>
           )}
+
+          {/* Rules panel */}
+          {rules.length > 0 && (
+            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+              <button
+                onClick={() => setShowRules(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Settings2 size={14} className="text-slate-400" />
+                  <span className="text-sm font-medium text-slate-300">Regras de alerta</span>
+                  <span className="text-xs text-slate-600">({rules.filter(r => r.enabled).length}/{rules.length} ativas)</span>
+                </div>
+                {showRules ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+              </button>
+              {showRules && (
+                <div className="divide-y divide-[#2a2f3e] border-t border-[#2a2f3e]">
+                  {rules.map(rule => (
+                    <RuleRow key={rule.id} rule={rule} onToggle={enabled => toggleRule(rule.id, enabled)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
   )
 }
 
-function AlertCard({ alert: a }: { alert: Alert }) {
-  const [expanded, setExpanded] = useState(false)
+function AlertCard({ alert: a, onResolve }: { alert: Alert; onResolve?: () => void }) {
+  const [expanded,  setExpanded]  = useState(false)
+  const [resolving, setResolving] = useState(false)
   const Icon = SEV_ICON[a.severity] || Info
+
+  async function handleResolve() {
+    if (!onResolve) return
+    setResolving(true)
+    await onResolve()
+    setResolving(false)
+  }
 
   return (
     <div className={`rounded-xl border p-4 ${SEV_STYLE[a.severity] || SEV_STYLE.info}`}>
@@ -201,8 +274,18 @@ function AlertCard({ alert: a }: { alert: Alert }) {
               <span className={`text-xs px-2 py-0.5 rounded font-medium ${SEV_BADGE[a.severity] || SEV_BADGE.info}`}>
                 {a.severity === 'critical' ? 'Crítico' : a.severity === 'warning' ? 'Atenção' : 'Info'}
               </span>
-              {a.resolved_at && (
+              {a.resolved_at ? (
                 <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Resolvido</span>
+              ) : onResolve && (
+                <button
+                  onClick={handleResolve}
+                  disabled={resolving}
+                  className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-slate-500/15 text-slate-400 hover:bg-emerald-500/15 hover:text-emerald-400 transition-colors disabled:opacity-50"
+                  title="Marcar como resolvido"
+                >
+                  {resolving ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+                  Resolver
+                </button>
               )}
             </div>
           </div>
@@ -232,6 +315,42 @@ function AlertCard({ alert: a }: { alert: Alert }) {
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+const RULE_LABEL: Record<string, string> = {
+  meta_token_expiring:   'Token Meta expirando',
+  integration_unhealthy: 'Integração com falha',
+  roas_below_goal:       'ROAS abaixo da meta',
+  budget_overspent:      'Orçamento estourado',
+  tracking_stopped:      'Tracking parado',
+  cpa_over_target:       'CPA acima da meta',
+}
+
+function RuleRow({ rule, onToggle }: { rule: Rule; onToggle: (v: boolean) => void }) {
+  return (
+    <div className="flex items-center justify-between px-5 py-3 gap-4">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-slate-300">{RULE_LABEL[rule.rule_key] || rule.name}</p>
+        <p className="text-xs text-slate-600 mt-0.5">
+          {rule.severity === 'critical' ? 'Crítico' : rule.severity === 'warning' ? 'Atenção' : 'Info'}
+          {rule.throttle_minutes > 0 && ` · throttle ${rule.throttle_minutes}min`}
+          {rule.client_id ? ' · específica deste cliente' : ' · para todos os clientes'}
+        </p>
+      </div>
+      <button
+        onClick={() => onToggle(!rule.enabled)}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+          rule.enabled ? 'bg-indigo-600' : 'bg-slate-700'
+        }`}
+      >
+        <span
+          className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+            rule.enabled ? 'translate-x-4' : 'translate-x-1'
+          }`}
+        />
+      </button>
     </div>
   )
 }

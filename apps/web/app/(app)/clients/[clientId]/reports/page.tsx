@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Sparkles, Loader2, BarChart2, Lightbulb,
-  AlertTriangle, RefreshCw, Download, FileText,
+  AlertTriangle, RefreshCw, Download, FileText, Send, CheckCircle,
 } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -84,6 +84,9 @@ export default function ReportsPage() {
   const [insights,    setInsights]    = useState<Insight[]>([])
   const [loading,     setLoading]     = useState(true)
   const [generating,  setGenerating]  = useState(false)
+  const [sending,     setSending]     = useState(false)
+  const [sentTo,      setSentTo]      = useState<string | null>(null)
+  const [sendError,   setSendError]   = useState<string | null>(null)
   const [typeFilter,  setTypeFilter]  = useState<InsightType>('all')
   const [sevFilter,   setSevFilter]   = useState<Severity>('all')
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set())
@@ -121,6 +124,25 @@ export default function ReportsPage() {
       await load(true)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  async function sendReport() {
+    setSending(true)
+    setSentTo(null)
+    setSendError(null)
+    try {
+      const res  = await fetch(`${API_URL}/insights/${clientId}/report`, { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) {
+        setSendError(json.detail || `Erro ${res.status}`)
+      } else {
+        setSentTo(json.email)
+      }
+    } catch (e: unknown) {
+      setSendError(e instanceof Error ? e.message : 'Erro ao enviar')
+    } finally {
+      setSending(false)
     }
   }
 
@@ -172,6 +194,16 @@ export default function ReportsPage() {
             </button>
           )}
           <button
+            onClick={sendReport}
+            disabled={sending || generating}
+            className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252b3b] border border-[#2a2f3e] disabled:opacity-50 text-slate-300 px-3 py-2 rounded-lg font-medium"
+            title="Gera análise IA e envia por email (usa alert_email do cliente)"
+          >
+            {sending
+              ? <><Loader2 size={12} className="animate-spin" /> Enviando…</>
+              : <><Send size={12} /> Enviar relatório</>}
+          </button>
+          <button
             onClick={generate}
             disabled={generating}
             className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-medium"
@@ -184,6 +216,21 @@ export default function ReportsPage() {
       </div>
 
       <div className="p-6 space-y-5 max-w-4xl">
+
+        {/* Report send result */}
+        {sentTo && (
+          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-lg px-4 py-2.5">
+            <CheckCircle size={13} />
+            Relatório enviado para <strong className="font-semibold">{sentTo}</strong>. Pode levar alguns minutos para chegar.
+          </div>
+        )}
+        {sendError && (
+          <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg px-4 py-2.5">
+            <AlertTriangle size={13} />
+            {sendError}
+          </div>
+        )}
+
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">

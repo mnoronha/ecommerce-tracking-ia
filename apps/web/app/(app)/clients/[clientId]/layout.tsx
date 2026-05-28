@@ -2,12 +2,21 @@
 
 import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const params   = useParams()
   const clientId = params.clientId as string
+
+  const [clientName, setClientName] = useState<string>(clientId)
+  useEffect(() => {
+    createSupabaseBrowserClient()
+      .from('clients').select('name').eq('pixel_id', clientId).limit(1).single()
+      .then(({ data }) => { if (data?.name) setClientName(data.name) })
+  }, [clientId])
 
   const NAV = [
     { href: `/clients/${clientId}/dashboard`,   label: 'Dashboard',  icon: LayoutDashboard },
@@ -37,7 +46,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </Link>
           <div className="flex items-center gap-2">
             <BarChart2 size={16} className="text-indigo-400 shrink-0" />
-            <span className="text-sm font-bold text-white truncate">{clientId}</span>
+            <span className="text-sm font-bold text-white truncate" title={clientId}>{clientName}</span>
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1">

@@ -5,31 +5,37 @@ import Link from 'next/link'
 import { useParams, useSearchParams, useRouter } from 'next/navigation'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import {
-  CheckCircle, Circle, Loader2, ArrowRight, Copy,
-  AlertCircle, Sparkles, ExternalLink,
+  CheckCircle, Loader2, ArrowRight, Copy,
+  AlertCircle, Sparkles, Target,
 } from 'lucide-react'
 
 interface ClientRow {
-  id:                       string
-  name:                     string
-  pixel_id:                 string
-  ecommerce_platform:       string
-  shopify_domain:           string | null
-  shopify_access_token:     string | null
-  webhooks_configured:      boolean | null
-  meta_access_token:        string | null
-  meta_pixel_id:            string | null
-  meta_ad_account_id:       string | null
-  ga4_measurement_id:       string | null
-  ga4_api_secret:           string | null
-  google_ads_customer_id:   string | null
-  google_ads_refresh_token: string | null
-  google_ads_aw_id:         string | null
+  id:                              string
+  name:                            string
+  pixel_id:                        string
+  agency_id:                       string
+  ecommerce_platform:              string
+  shopify_domain:                  string | null
+  shopify_access_token:            string | null
+  webhooks_configured:             boolean | null
+  meta_access_token:               string | null
+  meta_pixel_id:                   string | null
+  meta_ad_account_id:              string | null
+  ga4_measurement_id:              string | null
+  ga4_api_secret:                  string | null
+  google_ads_customer_id:          string | null
+  google_ads_refresh_token:        string | null
+  google_ads_aw_id:                string | null
   google_ads_conversion_action_id: string | null
-  onboarding_completed:     boolean | null
+  onboarding_completed:            boolean | null
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+
+function currentMonthDate(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`
+}
 
 export default function OnboardingPage() {
   const params       = useParams()
@@ -37,19 +43,24 @@ export default function OnboardingPage() {
   const router       = useRouter()
   const clientId     = params.clientId as string
 
-  const [client,  setClient]  = useState<ClientRow | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [client,          setClient]          = useState<ClientRow | null>(null)
+  const [loading,         setLoading]         = useState(true)
   const [registeringHooks, setRegisteringHooks] = useState(false)
-  const [pixelOk, setPixelOk] = useState<boolean | null>(null)
-  const [checkingPixel, setCheckingPixel] = useState(false)
-  const [ga4Form, setGa4Form] = useState({ measurement_id: '', api_secret: '' })
-  const [savingGa4, setSavingGa4] = useState(false)
-  const [adsForm, setAdsForm] = useState({ customer_id: '', conversion_action_id: '', aw_id: '' })
-  const [savingAds, setSavingAds] = useState(false)
+  const [pixelOk,         setPixelOk]         = useState<boolean | null>(null)
+  const [checkingPixel,   setCheckingPixel]   = useState(false)
+  const [ga4Form,         setGa4Form]         = useState({ measurement_id: '', api_secret: '' })
+  const [savingGa4,       setSavingGa4]       = useState(false)
+  const [adsForm,         setAdsForm]         = useState({ customer_id: '', conversion_action_id: '', aw_id: '' })
+  const [savingAds,       setSavingAds]       = useState(false)
+
+  // Step 6 — Goals
+  const [goalsForm,   setGoalsForm]   = useState({ revenue_goal: '', roas_goal: '', cpa_target: '' })
+  const [goalsLoaded, setGoalsLoaded] = useState(false)
+  const [savingGoals, setSavingGoals] = useState(false)
 
   const loadClient = useCallback(async () => {
-    const supabase = createSupabaseBrowserClient()
-    const { data } = await supabase
+    const supabase  = createSupabaseBrowserClient()
+    const { data }  = await supabase
       .from('clients')
       .select('*')
       .eq('pixel_id', clientId)
@@ -58,33 +69,46 @@ export default function OnboardingPage() {
       setClient(data)
       setGa4Form({
         measurement_id: data.ga4_measurement_id || '',
-        api_secret:     data.ga4_api_secret || '',
+        api_secret:     data.ga4_api_secret     || '',
       })
       setAdsForm({
-        customer_id:          data.google_ads_customer_id || '',
+        customer_id:          data.google_ads_customer_id          || '',
         conversion_action_id: data.google_ads_conversion_action_id || '',
-        aw_id:                data.google_ads_aw_id || '',
+        aw_id:                data.google_ads_aw_id                || '',
       })
+
+      // Load goals for current month
+      const month = currentMonthDate()
+      const { data: goal } = await supabase
+        .from('goals')
+        .select('revenue_goal, roas_goal, cpa_target')
+        .eq('client_id', data.id)
+        .eq('month', month)
+        .maybeSingle()
+      if (goal) {
+        setGoalsForm({
+          revenue_goal: goal.revenue_goal ? String(goal.revenue_goal) : '',
+          roas_goal:    goal.roas_goal    ? String(goal.roas_goal)    : '',
+          cpa_target:   goal.cpa_target   ? String(goal.cpa_target)   : '',
+        })
+        setGoalsLoaded(!!(goal.revenue_goal || goal.roas_goal || goal.cpa_target))
+      }
     }
     setLoading(false)
   }, [clientId])
 
   useEffect(() => { loadClient() }, [loadClient])
 
-  // Reload when returning from OAuth (?connected= or ?error=)
   useEffect(() => {
-    if (searchParams.get('connected')) {
-      loadClient()
-    }
+    if (searchParams.get('connected')) loadClient()
   }, [searchParams, loadClient])
 
-  // Check pixel health by polling tracking_events
   const checkPixel = useCallback(async () => {
     if (!client) return
     setCheckingPixel(true)
-    const supabase = createSupabaseBrowserClient()
+    const supabase   = createSupabaseBrowserClient()
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-    const { count } = await supabase
+    const { count }  = await supabase
       .from('tracking_events')
       .select('id', { count: 'exact', head: true })
       .eq('client_id', client.id)
@@ -108,7 +132,7 @@ export default function OnboardingPage() {
     const supabase = createSupabaseBrowserClient()
     await supabase.from('clients').update({
       ga4_measurement_id: ga4Form.measurement_id || null,
-      ga4_api_secret:     ga4Form.api_secret || null,
+      ga4_api_secret:     ga4Form.api_secret     || null,
     }).eq('pixel_id', clientId)
     await loadClient()
     setSavingGa4(false)
@@ -118,12 +142,29 @@ export default function OnboardingPage() {
     setSavingAds(true)
     const supabase = createSupabaseBrowserClient()
     await supabase.from('clients').update({
-      google_ads_customer_id:          adsForm.customer_id || null,
+      google_ads_customer_id:          adsForm.customer_id          || null,
       google_ads_conversion_action_id: adsForm.conversion_action_id || null,
-      google_ads_aw_id:                adsForm.aw_id || null,
+      google_ads_aw_id:                adsForm.aw_id                || null,
     }).eq('pixel_id', clientId)
     await loadClient()
     setSavingAds(false)
+  }
+
+  async function saveGoals() {
+    if (!client) return
+    setSavingGoals(true)
+    const supabase = createSupabaseBrowserClient()
+    const month    = currentMonthDate()
+    await supabase.from('goals').upsert({
+      client_id:    client.id,
+      agency_id:    client.agency_id,
+      month,
+      revenue_goal: goalsForm.revenue_goal ? Number(goalsForm.revenue_goal) : null,
+      roas_goal:    goalsForm.roas_goal    ? Number(goalsForm.roas_goal)    : null,
+      cpa_target:   goalsForm.cpa_target   ? Number(goalsForm.cpa_target)   : null,
+    }, { onConflict: 'client_id,month' })
+    setGoalsLoaded(!!(goalsForm.revenue_goal || goalsForm.roas_goal || goalsForm.cpa_target))
+    setSavingGoals(false)
   }
 
   async function finalize() {
@@ -142,18 +183,20 @@ export default function OnboardingPage() {
     <div className="p-6 text-slate-400">Cliente não encontrado.</div>
   )
 
-  // Compute step completion
-  const stepsBasic    = !!(client.name && client.shopify_domain && client.shopify_access_token)
-  const stepsHooks    = !!client.webhooks_configured
-  const stepsMeta     = !!(client.meta_access_token && client.meta_pixel_id)
-  const stepsGoogle   = !!(client.google_ads_refresh_token && client.google_ads_customer_id && client.google_ads_conversion_action_id)
-  const stepsGa4      = !!(client.ga4_measurement_id && client.ga4_api_secret)
-  const stepsPixel    = pixelOk === true
+  const stepsBasic  = !!(client.name && client.shopify_domain && client.shopify_access_token)
+  const stepsHooks  = !!client.webhooks_configured
+  const stepsMeta   = !!(client.meta_access_token && client.meta_pixel_id)
+  const stepsGoogle = !!(client.google_ads_refresh_token && client.google_ads_customer_id && client.google_ads_conversion_action_id)
+  const stepsGa4    = !!(client.ga4_measurement_id && client.ga4_api_secret)
+  const stepsPixel  = pixelOk === true
+  const stepsGoals  = goalsLoaded
 
-  const requiredDone = stepsBasic && stepsHooks && stepsMeta && stepsPixel
+  const requiredDone  = stepsBasic && stepsHooks && stepsMeta && stepsPixel
   const totalRequired = 4
   const doneRequired  = [stepsBasic, stepsHooks, stepsMeta, stepsPixel].filter(Boolean).length
   const progress      = Math.round((doneRequired / totalRequired) * 100)
+
+  const INPUT_SM = 'bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500'
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200 p-6">
@@ -268,25 +311,24 @@ export default function OnboardingPage() {
                 Conectar Google Ads
               </a>
             )}
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
               <input
                 value={adsForm.customer_id}
                 onChange={e => setAdsForm(f => ({ ...f, customer_id: e.target.value }))}
                 placeholder="Customer ID (XXX-XXX-XXXX)"
-                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                className={INPUT_SM}
               />
               <input
                 value={adsForm.conversion_action_id}
                 onChange={e => setAdsForm(f => ({ ...f, conversion_action_id: e.target.value }))}
                 placeholder="Conversion ID (Compra)"
-                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                className={INPUT_SM}
               />
               <input
                 value={adsForm.aw_id}
                 onChange={e => setAdsForm(f => ({ ...f, aw_id: e.target.value }))}
                 placeholder="AW-XXXXXXXXXX"
-                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                className={INPUT_SM}
               />
             </div>
             <button
@@ -316,14 +358,14 @@ export default function OnboardingPage() {
                 value={ga4Form.measurement_id}
                 onChange={e => setGa4Form(f => ({ ...f, measurement_id: e.target.value }))}
                 placeholder="G-XXXXXXXXXX"
-                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                className={INPUT_SM}
               />
               <input
                 type="password"
                 value={ga4Form.api_secret}
                 onChange={e => setGa4Form(f => ({ ...f, api_secret: e.target.value }))}
                 placeholder="API Secret"
-                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
+                className={INPUT_SM}
               />
             </div>
             <button
@@ -345,8 +387,9 @@ export default function OnboardingPage() {
           required
         >
           <div className="space-y-3">
-            <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg p-3 text-xs font-mono text-slate-400 overflow-x-auto">
-              <p>{`{% render 'et-tracker' %}`}</p>
+            <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg p-3 text-xs font-mono text-slate-400 overflow-x-auto flex items-center justify-between gap-2">
+              <span>{`{% render 'et-tracker' %}`}</span>
+              <CopyBtn text={`{% render 'et-tracker' %}`} />
             </div>
             <p className="text-xs text-slate-500">
               Snippet completo em <code className="bg-[#0f1117] px-1 rounded">pixel/shopify-snippet.liquid</code>.
@@ -379,6 +422,69 @@ export default function OnboardingPage() {
           </div>
         </StepCard>
 
+        {/* Step 6 — Metas do mês (optional) */}
+        <StepCard
+          step={6}
+          title="Metas do mês"
+          description="Configure as metas de receita, ROAS e CPA para ativar alertas automáticos e acompanhar o progresso"
+          done={stepsGoals}
+          optional
+        >
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Receita (R$)</label>
+                <input
+                  type="number"
+                  value={goalsForm.revenue_goal}
+                  onChange={e => setGoalsForm(f => ({ ...f, revenue_goal: e.target.value }))}
+                  placeholder="50000"
+                  className={INPUT_SM + ' w-full'}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">ROAS mínimo</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  value={goalsForm.roas_goal}
+                  onChange={e => setGoalsForm(f => ({ ...f, roas_goal: e.target.value }))}
+                  placeholder="3.0"
+                  className={INPUT_SM + ' w-full'}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">CPA máximo (R$)</label>
+                <input
+                  type="number"
+                  value={goalsForm.cpa_target}
+                  onChange={e => setGoalsForm(f => ({ ...f, cpa_target: e.target.value }))}
+                  placeholder="120"
+                  className={INPUT_SM + ' w-full'}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={saveGoals}
+                disabled={savingGoals}
+                className="px-3 py-1.5 bg-[#1a1f2e] hover:bg-[#252b3b] border border-[#2a2f3e] text-slate-300 text-xs rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Target size={11} />
+                {savingGoals ? 'Salvando…' : 'Salvar metas'}
+              </button>
+              {stepsGoals && (
+                <span className="text-xs text-emerald-400 flex items-center gap-1">
+                  <CheckCircle size={11} /> Metas definidas
+                </span>
+              )}
+              <Link href={`/clients/${clientId}/metas`} className="text-xs text-slate-500 hover:text-white ml-auto transition-colors">
+                Ver página completa de metas →
+              </Link>
+            </div>
+          </div>
+        </StepCard>
+
         {/* Finalize */}
         <div className="mt-8 flex items-center justify-between gap-3">
           <Link
@@ -402,6 +508,18 @@ export default function OnboardingPage() {
 }
 
 // ── Helper components ─────────────────────────────────────────────────────────
+
+function CopyBtn({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors shrink-0"
+    >
+      {copied ? <><CheckCircle size={12} className="text-emerald-400" /> Copiado!</> : <><Copy size={12} /> Copiar</>}
+    </button>
+  )
+}
 
 function Banner({ kind, children }: { kind: 'success' | 'error', children: React.ReactNode }) {
   const colors = kind === 'success'
