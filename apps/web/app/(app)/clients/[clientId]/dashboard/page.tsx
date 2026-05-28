@@ -19,8 +19,11 @@ interface KPIs {
   totalOrders: number
   totalVisitors: number
   avgOrderValue: number
-  revenueChange: number
-  ordersChange: number
+  revenueChange:       number
+  ordersChange:        number
+  visitorsChange:      number
+  avgOrderValueChange: number
+  conversionRateChange: number
   conversionRate: number
   totalProfit:   number | null
   marginPct:     number | null
@@ -184,12 +187,32 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function KPICard({ title, value, icon: Icon, change, color, hint, onClick }: {
+function SparkleLine({ data, positive }: { data: number[]; positive: boolean }) {
+  if (data.length < 2) return null
+  const max = Math.max(...data, 0.01)
+  const w = 100, h = 28
+  const pts = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w
+    const y = h - 4 - (v / max) * (h - 8)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  const color = positive ? '#34d399' : '#f87171'
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-7 mt-1" preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5"
+        strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+    </svg>
+  )
+}
+
+function KPICard({ title, value, icon: Icon, change, color, hint, spark, onClick }: {
   title: string; value: string; icon: React.ElementType
   change?: number; color: string; hint?: string
+  spark?: number[]
   onClick?: () => void
 }) {
   const Tag: any = onClick ? 'button' : 'div'
+  const positive  = (change ?? 0) >= 0
   return (
     <Tag
       onClick={onClick}
@@ -203,11 +226,15 @@ function KPICard({ title, value, icon: Icon, change, color, hint, onClick }: {
       </div>
       <div className="text-2xl font-bold text-white mb-1">{value}</div>
       {change !== undefined && (
-        <div className={`text-xs ${change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-          {change >= 0 ? '+' : ''}{change.toFixed(1)}% vs período anterior
+        <div className={`flex items-center gap-1 text-xs font-medium ${positive ? 'text-emerald-400' : 'text-red-400'}`}>
+          <span>{positive ? '▲' : '▼'}</span>
+          <span>{Math.abs(change).toFixed(1)}% vs anterior</span>
         </div>
       )}
-      {hint && <div className="text-xs text-slate-500">{hint}</div>}
+      {hint && <div className="text-xs text-slate-500 mt-0.5">{hint}</div>}
+      {spark && spark.length >= 2 && (
+        <SparkleLine data={spark} positive={positive} />
+      )}
     </Tag>
   )
 }
@@ -732,17 +759,26 @@ export default function DashboardPage() {
         .not('product_name', 'is', null),
     ])
 
-    // Fetch funnel via API — bypasses PostgREST 1000-row limit + handles device filter server-side
+    // Fetch funnel for current + previous period in parallel
+    const startStr    = startDate.toISOString().split('T')[0]
+    const endStr      = endDate.toISOString().split('T')[0]
+    const prevEndStr  = new Date(startDate.getTime() - 1).toISOString().split('T')[0]
+    const prevStartStr = prevStart.toISOString().split('T')[0]
+    const dParam      = device !== 'all' ? `&device=${device}` : ''
+
     let funnelJson: any = null
+    let prevFunnelJson: any = null
     try {
-      const startStr = startDate.toISOString().split('T')[0]
-      const endStr   = endDate.toISOString().split('T')[0]
-      const dParam   = device !== 'all' ? `&device=${device}` : ''
-      const fRes = await fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${startStr}&end=${endStr}${dParam}`)
-      if (fRes.ok) funnelJson = await fRes.json()
+      const [fRes, pfRes] = await Promise.all([
+        fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${startStr}&end=${endStr}${dParam}`),
+        fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${prevStartStr}&end=${prevEndStr}${dParam}`),
+      ])
+      if (fRes.ok)  funnelJson     = await fRes.json()
+      if (pfRes.ok) prevFunnelJson = await pfRes.json()
     } catch (_) {}
 
-    const totalVisitors = funnelJson?.unique_visitors ?? 0
+    const totalVisitors = funnelJson?.unique_visitors     ?? 0
+    const prevVisitors  = prevFunnelJson?.unique_visitors ?? 0
 
     setAllOrdersRaw(orders || [])
     setAllEventsRaw([])
@@ -755,9 +791,8 @@ export default function DashboardPage() {
     const prodEvents = (productEvents || [])
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
-    const totalRevenue   = allOrders.reduce((s, o) => s + (o.total_price || 0), 0)
-    const prevRevenue    = prevOrders.reduce((s, o) => s + (o.total_price || 0), 0)
-    const avgOrderValue  = allOrders.length ? totalRevenue / allOrders.length : 0
+    const totalRevenue  = allOrders.reduce((s, o) => s + (o.total_price || 0), 0)
+    const avgOrderValue = allOrders.length ? totalRevenue / allOrders.length : 0
     const conversionRate = totalVisitors > 0 ? (allOrders.length / totalVisitors) * 100 : 0
 
     // Margin (only counted for orders that have COGS — partial coverage = honest reporting)
@@ -770,10 +805,17 @@ export default function DashboardPage() {
       ? (totalProfit / revenueWithMargin) * 100
       : null
 
+    const prevRevenue        = prevOrders.reduce((s, o: any) => s + (o.total_price || 0), 0)
+    const prevAvgOrderValue  = prevOrders.length ? prevRevenue / prevOrders.length : 0
+    const prevConversionRate = prevVisitors > 0 ? (prevOrders.length / prevVisitors) * 100 : 0
+
     setKpis({
       totalRevenue, totalOrders: allOrders.length, totalVisitors, avgOrderValue,
-      revenueChange: prevRevenue ? ((totalRevenue - prevRevenue) / prevRevenue) * 100 : 0,
-      ordersChange:  prevOrders.length ? ((allOrders.length - prevOrders.length) / prevOrders.length) * 100 : 0,
+      revenueChange:       prevRevenue        > 0 ? ((totalRevenue            - prevRevenue)        / prevRevenue)        * 100 : 0,
+      ordersChange:        prevOrders.length  > 0 ? ((allOrders.length        - prevOrders.length)  / prevOrders.length)  * 100 : 0,
+      visitorsChange:      prevVisitors       > 0 ? ((totalVisitors           - prevVisitors)        / prevVisitors)       * 100 : 0,
+      avgOrderValueChange: prevAvgOrderValue  > 0 ? ((avgOrderValue           - prevAvgOrderValue)   / prevAvgOrderValue)  * 100 : 0,
+      conversionRateChange: prevConversionRate > 0 ? ((conversionRate         - prevConversionRate)  / prevConversionRate) * 100 : 0,
       conversionRate,
       totalProfit,
       marginPct,
@@ -1087,6 +1129,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <KPICard title="Receita"      value={kpis ? fmt(kpis.totalRevenue) : '—'}
             icon={TrendingUp} change={kpis?.revenueChange}
+            spark={revenueData.map(p => p.revenue)}
             color="bg-emerald-500/10 text-emerald-400"
             onClick={() => setDrilldown('revenue')} />
           {kpis?.totalProfit != null && (
@@ -1101,17 +1144,19 @@ export default function DashboardPage() {
           )}
           <KPICard title="Pedidos"      value={kpis ? kpis.totalOrders.toString() : '—'}
             icon={ShoppingBag} change={kpis?.ordersChange}
+            spark={revenueData.map(p => p.orders)}
             color="bg-blue-500/10 text-blue-400"
             onClick={() => setDrilldown('orders')} />
           <KPICard title="Visitantes"   value={kpis ? kpis.totalVisitors.toString() : '—'}
-            icon={Users}
+            icon={Users} change={kpis?.visitorsChange}
             color="bg-purple-500/10 text-purple-400" />
           <KPICard title="Ticket Médio" value={kpis ? fmt(kpis.avgOrderValue) : '—'}
-            icon={Activity}
+            icon={Activity} change={kpis?.avgOrderValueChange}
+            spark={revenueData.map(p => p.orders > 0 ? p.revenue / p.orders : 0)}
             color="bg-orange-500/10 text-orange-400"
             onClick={() => setDrilldown('avgOrderValue')} />
           <KPICard title="Conversão"    value={kpis ? kpis.conversionRate.toFixed(1) + '%' : '—'}
-            icon={Percent}
+            icon={Percent} change={kpis?.conversionRateChange}
             color="bg-pink-500/10 text-pink-400" />
         </div>
 
