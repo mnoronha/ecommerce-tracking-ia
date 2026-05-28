@@ -5,7 +5,6 @@ Docs: https://developers.facebook.com/docs/marketing-api/insights
 """
 
 import logging
-from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -38,18 +37,17 @@ def _pick_action(actions: list[dict], action_types: tuple[str, ...]) -> Optional
 def fetch_campaign_insights(
     account_id: str,
     access_token: str,
-    days: int = 30,
+    since: str,
+    until: str,
 ) -> list[dict]:
     """
     Busca métricas de campanhas no período (spend, impressions, clicks, reach).
     account_id: sem o prefixo "act_" — adicionado internamente.
+    since/until: datas no formato YYYY-MM-DD (ambas inclusivas).
     Retorna lista de dicts ou [] em caso de erro.
     """
     # Remove prefixo "act_" se o usuário já incluiu
     clean_id = account_id.removeprefix("act_")
-
-    since = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
-    until = datetime.utcnow().strftime("%Y-%m-%d")
 
     try:
         resp = httpx.get(

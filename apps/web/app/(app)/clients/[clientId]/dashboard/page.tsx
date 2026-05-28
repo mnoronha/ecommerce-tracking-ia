@@ -913,7 +913,7 @@ export default function DashboardPage() {
   const loadRoas = useCallback(async (range: DateRange) => {
     setRoasLoading(true)
     try {
-      const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
+      const days = range === '1d' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : 90
       const res  = await fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/roas?days=${days}`)
       if (res.ok) setRoasData(await res.json())
     } catch (_) {}

@@ -54,13 +54,27 @@ async def get_roas(pixel_id: str, days: int = 30):
     client_uuid  = c["id"]
     has_ads_creds = bool(c.get("meta_ad_account_id") and c.get("meta_access_token"))
 
+    # ── Calcular intervalo de datas ───────────────────────────────────────────
+    today = datetime.utcnow().date()
+    if days <= 1:
+        # "Ontem" — só o dia anterior completo
+        d_since = today - timedelta(days=1)
+        d_until = d_since
+    else:
+        # Últimos N dias de calendário (incluindo hoje)
+        d_since = today - timedelta(days=days - 1)
+        d_until = today
+
+    start_date = f"{d_since}T00:00:00"
+    end_date   = f"{d_until}T23:59:59.999999"
+
     # ── Pedidos no período agrupados por utm_campaign ─────────────────────────
-    start_date = (datetime.utcnow() - timedelta(days=days)).isoformat()
     orders_result = (
         sb.table("orders")
         .select("utm_campaign, utm_source, utm_medium, total_price, gross_profit, financial_status")
         .eq("client_id", client_uuid)
         .gte("created_at", start_date)
+        .lte("created_at", end_date)
         .execute()
     )
     orders = orders_result.data or []
@@ -89,7 +103,8 @@ async def get_roas(pixel_id: str, days: int = 30):
         ads_rows = meta_ads_svc.fetch_campaign_insights(
             account_id=c["meta_ad_account_id"],
             access_token=c["meta_access_token"],
-            days=days,
+            since=str(d_since),
+            until=str(d_until),
         )
 
     # Mapa por nome de campanha (lowercase para matching tolerante)
