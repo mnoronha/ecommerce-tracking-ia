@@ -27,7 +27,11 @@ class Settings(BaseSettings):
     # ── CORS ─────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "*"
 
-    # ── SMTP (relatório semanal) ──────────────────────────────────────────
+    # ── Resend (email preferido — fallback: SMTP) ─────────────────────────
+    RESEND_API_KEY: str = ""
+    RESEND_FROM:    str = ""  # e.g. relatorios@noroia.com
+
+    # ── SMTP (relatório semanal — fallback se Resend não configurado) ─────
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
     SMTP_USER: str = ""

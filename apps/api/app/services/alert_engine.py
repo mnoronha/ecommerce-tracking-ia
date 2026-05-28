@@ -31,6 +31,8 @@ import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+import httpx
+
 from ..database import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -256,25 +258,140 @@ def _eval_budget_overspent(rule: dict, client: dict) -> list[dict]:
     return findings
 
 
+def _eval_tracking_stopped(rule: dict, client: dict) -> list[dict]:
+    """No tracking_event for the client in the last threshold_hours."""
+    threshold_hours = int((rule.get("config") or {}).get("threshold_hours", 24))
+    try:
+        rows = (
+            get_supabase()
+            .table("tracking_events")
+            .select("created_at")
+            .eq("client_id", client["id"])
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_tracking_stopped(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if not rows:
+        return []  # brand-new client — no baseline to compare against
+
+    last_iso = rows[0]["created_at"]
+    if isinstance(last_iso, str):
+        last_dt = datetime.fromisoformat(last_iso.replace("Z", "+00:00"))
+    else:
+        last_dt = last_iso
+
+    hours_since = (_now() - last_dt).total_seconds() / 3600
+    if hours_since <= threshold_hours:
+        return []
+
+    pixel    = client.get("pixel_id") or "unknown"
+    severity = "critical" if hours_since > 48 else "warning"
+    return [{
+        "fingerprint": f"tracking_stopped:{client['id']}",
+        "title":       f"Tracking parado — {pixel}",
+        "message":     f"Nenhum evento de tracking nas últimas {int(hours_since)}h. Verifique o snippet/CAPI.",
+        "severity":    severity,
+        "data":        {"last_event_at": last_iso, "hours_since": round(hours_since, 1)},
+    }]
+
+
+def _eval_cpa_over_target(rule: dict, client: dict) -> list[dict]:
+    """CPA MTD vs goals.cpa_target with tolerance_pct margin."""
+    try:
+        goal_row = (
+            get_supabase()
+            .table("goals")
+            .select("cpa_target")
+            .eq("client_id", client["id"])
+            .eq("month", _month_start())
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.debug("_eval_cpa_over_target load goal(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if not (goal_row and goal_row.data):
+        return []
+    cpa_target = goal_row.data[0].get("cpa_target")
+    if not cpa_target or float(cpa_target) <= 0:
+        return []
+
+    try:
+        start = _month_start()
+        order_rows = (
+            get_supabase()
+            .table("orders")
+            .select("utm_source")
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gte("created_at", start)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_cpa_over_target load orders(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    online_orders = [
+        r for r in order_rows
+        if (r.get("utm_source") or "").lower() not in ("pos", "offline", "draft_order")
+    ]
+    if not online_orders:
+        return []
+
+    spend = _spend_mtd(client["id"], "meta_ads")
+    if spend <= 0:
+        return []
+
+    cpa           = spend / len(online_orders)
+    tolerance_pct = float((rule.get("config") or {}).get("tolerance_pct", 20))
+    ceiling       = float(cpa_target) * (1.0 + tolerance_pct / 100.0)
+    if cpa <= ceiling:
+        return []
+
+    pixel    = client.get("pixel_id") or "unknown"
+    over_pct = (cpa / float(cpa_target) - 1.0) * 100.0
+    return [{
+        "fingerprint": f"cpa_over_target:{client['id']}:{_month_start()}",
+        "title":       f"CPA acima da meta — {pixel}",
+        "message": (
+            f"CPA MTD R$ {cpa:,.2f} vs meta R$ {float(cpa_target):,.2f} ({over_pct:+.0f}%). "
+            f"{len(online_orders)} pedido(s) / R$ {spend:,.2f} investido."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": "critical" if cpa > float(cpa_target) * 1.5 else "warning",
+        "data": {
+            "cpa": cpa, "cpa_target": float(cpa_target),
+            "orders": len(online_orders), "spend": spend,
+            "over_pct": over_pct, "month": _month_start(),
+        },
+    }]
+
+
 _EVALUATORS = {
     "meta_token_expiring":   _eval_meta_token_expiring,
     "integration_unhealthy": _eval_integration_unhealthy,
     "roas_below_goal":       _eval_roas_below_goal,
     "budget_overspent":      _eval_budget_overspent,
+    "tracking_stopped":      _eval_tracking_stopped,
+    "cpa_over_target":       _eval_cpa_over_target,
 }
 
 
 # ── upsert + auto-resolve ────────────────────────────────────────────────────
 
-def _upsert_findings(rule: dict, agency_id: str, findings: list[dict]) -> int:
+def _upsert_findings(rule: dict, agency_id: str, findings: list[dict]) -> list[dict]:
     """
-    Insert new alerts for findings without an open row. Update touch existing
-    rows so created_at survives (we don't touch). Returns number of new alerts.
+    Insert new alerts for findings without an open row. Returns the list of
+    newly inserted findings (for downstream Slack notifications).
     """
     if not findings:
-        return 0
+        return []
 
-    sb = get_supabase()
+    sb  = get_supabase()
     fps = [f["fingerprint"] for f in findings]
 
     try:
@@ -287,10 +404,10 @@ def _upsert_findings(rule: dict, agency_id: str, findings: list[dict]) -> int:
         ).data or []
     except Exception as exc:
         logger.warning("alert_engine: failed to load existing alerts: %s", exc)
-        return 0
+        return []
 
-    open_fps = {r["fingerprint"] for r in existing}
-    inserted = 0
+    open_fps    = {r["fingerprint"] for r in existing}
+    new_findings: list[dict] = []
     for f in findings:
         if f["fingerprint"] in open_fps:
             continue  # already open — keep the original created_at
@@ -307,10 +424,26 @@ def _upsert_findings(rule: dict, agency_id: str, findings: list[dict]) -> int:
                 "data":          f.get("data") or {},
                 "is_resolved":   False,
             }).execute()
-            inserted += 1
+            new_findings.append(f)
         except Exception as exc:
             logger.warning("alert_engine insert failed (%s): %s", f["fingerprint"], exc)
-    return inserted
+    return new_findings
+
+
+def _notify_slack(new_findings: list[dict], clients_by_id: dict) -> None:
+    """Send Slack message for each newly created alert if the client has a webhook."""
+    for f in new_findings:
+        client  = clients_by_id.get(f.get("client_id") or "")
+        webhook = (client or {}).get("slack_webhook_url")
+        if not webhook:
+            continue
+        severity = f.get("severity", "warning")
+        emoji    = ":red_circle:" if severity == "critical" else ":large_yellow_circle:"
+        text     = f"{emoji} *{f['title']}*\n{f['message']}"
+        try:
+            httpx.post(webhook, json={"text": text}, timeout=5.0)
+        except Exception as exc:
+            logger.debug("alert_engine slack notify failed: %s", exc)
 
 
 def _auto_resolve(rule: dict, current_fps: set[str]) -> int:
@@ -353,7 +486,7 @@ def _clients_for_rule(rule: dict) -> list[dict]:
     """
     sb = get_supabase()
     cols = (
-        "id, pixel_id, agency_id, "
+        "id, pixel_id, agency_id, slack_webhook_url, "
         "meta_token_expires_at, "
         + ", ".join(_INTEGRATION_HEALTH_COLS.values())
     )
@@ -396,7 +529,8 @@ def run_alert_engine() -> dict:
             logger.debug("alert_engine: no evaluator for rule_key=%s", rule["rule_key"])
             continue
 
-        clients = _clients_for_rule(rule)
+        clients        = _clients_for_rule(rule)
+        clients_by_id  = {c["id"]: c for c in clients}
         all_findings: list[dict] = []
         for client in clients:
             try:
@@ -410,15 +544,16 @@ def run_alert_engine() -> dict:
                     rule["rule_key"], client.get("pixel_id"), exc,
                 )
 
-        new = _upsert_findings(rule, rule["agency_id"], all_findings)
-        resolved = _auto_resolve(rule, {f["fingerprint"] for f in all_findings})
-        total_new += new
+        new_findings = _upsert_findings(rule, rule["agency_id"], all_findings)
+        resolved     = _auto_resolve(rule, {f["fingerprint"] for f in all_findings})
+        _notify_slack(new_findings, clients_by_id)
+        total_new      += len(new_findings)
         total_resolved += resolved
         rules_evaluated += 1
-        if new or resolved:
+        if new_findings or resolved:
             logger.info(
                 "alert_engine: rule=%s clients=%d findings=%d new=%d resolved=%d",
-                rule["rule_key"], len(clients), len(all_findings), new, resolved,
+                rule["rule_key"], len(clients), len(all_findings), len(new_findings), resolved,
             )
 
     return {"rules": rules_evaluated, "new": total_new, "resolved": total_resolved}

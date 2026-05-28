@@ -15,7 +15,7 @@ from typing import Optional
 import httpx
 
 from ..database import get_supabase
-from . import smtp as email_service
+from . import resend as email_service
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +308,44 @@ def _send_client_weekly_report(client_id: str, pixel_id: str, client_name: str, 
     alert_critical = [a for a in open_alerts if a.get("severity") == "critical"]
     alert_warning  = [a for a in open_alerts if a.get("severity") == "warning"]
 
+    # ── Top campaigns (30d) ───────────────────────────────────────────────
+    camp_q = (
+        sb.table("orders")
+        .select("utm_source, utm_campaign, total_price")
+        .eq("client_id", client_id)
+        .eq("financial_status", "paid")
+        .gt("total_price", 0)
+        .gte("created_at", month_start.isoformat())
+        .execute()
+    )
+    camp_map: dict[str, dict] = {}
+    for o in (camp_q.data or []):
+        src   = (o.get("utm_source") or "Direto").capitalize()
+        camp  = o.get("utm_campaign") or "—"
+        key   = f"{src} · {camp}"
+        if key not in camp_map:
+            camp_map[key] = {"orders": 0, "revenue": 0.0}
+        camp_map[key]["orders"]  += 1
+        camp_map[key]["revenue"] += float(o.get("total_price") or 0)
+    top_campaigns = sorted(camp_map.items(), key=lambda x: x[1]["revenue"], reverse=True)[:5]
+
+    # ── Latest Claude AI insight ───────────────────────────────────────────
+    ai_content: str | None = None
+    try:
+        ai_q = (
+            sb.table("ai_insights")
+            .select("title, content")
+            .eq("client_id", client_id)
+            .eq("type", "weekly_report")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if ai_q.data:
+            ai_content = ai_q.data[0].get("content")
+    except Exception:
+        pass
+
     # ── Build HTML ────────────────────────────────────────────────────────────
     def fmt_brl(val: float) -> str:
         return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -425,6 +463,12 @@ def _send_client_weekly_report(client_id: str, pixel_id: str, client_name: str, 
       {daily_table_rows}
     </table>'''}
 
+    <!-- Top campaigns -->
+    {_top_campaigns_html(top_campaigns, fmt_brl)}
+
+    <!-- AI analysis -->
+    {_ai_section_html(ai_content)}
+
   </div>
 
   <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:16px">
@@ -436,6 +480,85 @@ def _send_client_weekly_report(client_id: str, pixel_id: str, client_name: str, 
     subject = f"📊 Semana {week_start.strftime('%d/%m')}–{now.strftime('%d/%m')}: {fmt_brl(week_revenue)} · {client_name}"
     email_service.send_email(to=to_email, subject=subject, html_body=html_body)
     logger.info("weekly report sent to %s for %s", to_email, pixel_id)
+
+
+# ── HTML helpers ──────────────────────────────────────────────────────────────
+
+def _top_campaigns_html(top_campaigns: list, fmt_brl) -> str:
+    if not top_campaigns:
+        return ""
+    rows = "".join(
+        f'<tr style="border-bottom:1px solid #f3f4f6">'
+        f'<td style="padding:8px 0;color:#374151;font-size:12px;max-width:240px;word-break:break-word">{k}</td>'
+        f'<td style="padding:8px 0;text-align:right;font-size:12px;color:#6b7280">{v["orders"]}x</td>'
+        f'<td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600">{fmt_brl(v["revenue"])}</td>'
+        f'</tr>'
+        for k, v in top_campaigns
+    )
+    return f"""
+    <div style="margin-top:20px">
+      <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:13px">Top campanhas — mês atual</p>
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="border-bottom:2px solid #e5e7eb">
+          <th style="padding:6px 0;text-align:left;font-size:11px;color:#9ca3af;font-weight:500">Campanha</th>
+          <th style="padding:6px 0;text-align:right;font-size:11px;color:#9ca3af;font-weight:500">Pedidos</th>
+          <th style="padding:6px 0;text-align:right;font-size:11px;color:#9ca3af;font-weight:500">Receita</th>
+        </tr>
+        {rows}
+      </table>
+    </div>"""
+
+
+def _ai_section_html(content: Optional[str]) -> str:
+    if not content:
+        return ""
+    # Limit length and convert newlines to <br>
+    safe = content[:2000].replace("<", "&lt;").replace(">", "&gt;").replace("\n\n", "</p><p style=\"margin:8px 0 0\">").replace("\n", "<br>")
+    return f"""
+    <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:6px;padding:16px;margin-top:20px">
+      <p style="margin:0 0 10px;font-weight:600;color:#5b21b6;font-size:13px">✦ Análise IA</p>
+      <p style="margin:0;color:#374151;font-size:13px;line-height:1.6">{safe}</p>
+    </div>"""
+
+
+# ── On-demand report ──────────────────────────────────────────────────────────
+
+def send_report_now(client_id: str, pixel_id: str, to_email: str, generate_ai: bool = True) -> bool:
+    """
+    Generates fresh Claude insights (if generate_ai=True and none in last 6h),
+    then sends the weekly report email immediately.
+    Returns True if email was sent successfully.
+    """
+    if generate_ai:
+        try:
+            from . import ai_analyst
+            from datetime import timezone
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+            recent = (
+                get_supabase()
+                .table("ai_insights")
+                .select("id", count="exact", head=True)
+                .eq("client_id", client_id)
+                .eq("type", "weekly_report")
+                .gte("created_at", cutoff)
+                .execute()
+            )
+            if not (recent.count and recent.count > 0):
+                logger.info("send_report_now: generating fresh insights for %s", pixel_id)
+                ai_analyst.generate_insights(client_id)
+        except Exception as exc:
+            logger.warning("send_report_now: insights generation failed for %s: %s", pixel_id, exc)
+
+    client_name = pixel_id
+    try:
+        row = get_supabase().table("clients").select("name").eq("id", client_id).limit(1).execute()
+        if row.data:
+            client_name = row.data[0].get("name") or pixel_id
+    except Exception:
+        pass
+
+    _send_client_weekly_report(client_id, pixel_id, client_name, to_email)
+    return True
 
 
 # ── Manual trigger (for testing) ─────────────────────────────────────────────

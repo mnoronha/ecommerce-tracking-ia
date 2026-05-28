@@ -5,6 +5,7 @@ Insights router — gera e serve análises de IA para o dashboard.
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from pydantic import BaseModel
 
 from ..database import get_supabase
 from ..services import ai_analyst, alerts
@@ -168,6 +169,50 @@ async def test_alert(pixel_id: str):
 
     ok = alerts.send_test_alert(pixel_id, webhook_url)
     return {"status": "ok" if ok else "error", "pixel_id": pixel_id}
+
+
+class ReportRequest(BaseModel):
+    email: str | None = None  # override alert_email if provided
+
+
+@router.post("/{pixel_id}/report", summary="Gera insights + envia relatório por email")
+async def send_report(pixel_id: str, body: ReportRequest | None = None, background_tasks: BackgroundTasks = None):
+    """
+    Generates fresh Claude insights (if none in last 6h) and sends the weekly
+    report email. Uses the client's alert_email unless overridden in the body.
+    """
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+
+    # Resolve target email
+    to_email = (body.email if body else None)
+    if not to_email:
+        row = get_supabase().table("clients").select("alert_email").eq("id", client_uuid).limit(1).execute()
+        if row.data:
+            to_email = row.data[0].get("alert_email")
+
+    if not to_email:
+        raise HTTPException(
+            status_code=422,
+            detail="Nenhum email configurado. Adicione alert_email no cliente ou passe email no body.",
+        )
+
+    email_snapshot = to_email
+
+    def _run():
+        try:
+            alerts.send_report_now(client_uuid, pixel_id, email_snapshot, generate_ai=True)
+            logger.info("report sent for %s → %s", pixel_id, email_snapshot)
+        except Exception as exc:
+            logger.error("report failed for %s: %s", pixel_id, exc)
+
+    if background_tasks:
+        background_tasks.add_task(_run)
+        return {"status": "queued", "email": email_snapshot, "pixel_id": pixel_id}
+
+    _run()
+    return {"status": "sent", "email": email_snapshot, "pixel_id": pixel_id}
 
 
 @router.patch("/{pixel_id}/{insight_id}/read")
