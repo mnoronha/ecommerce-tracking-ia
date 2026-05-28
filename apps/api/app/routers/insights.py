@@ -215,6 +215,135 @@ async def send_report(pixel_id: str, body: ReportRequest | None = None, backgrou
     return {"status": "sent", "email": email_snapshot, "pixel_id": pixel_id}
 
 
+@router.get("/{pixel_id}/campaign-products")
+async def get_campaign_products(
+    pixel_id: str,
+    start: str,
+    end: str,
+):
+    """
+    O que cada campanha/influencer vendeu — produtos agrupados por utm_campaign.
+
+    Usa order_items (dados server-side, mais confiáveis) quando disponível.
+    Fallback para tracking_events purchase events quando não há order_items.
+
+    Parâmetros:
+      start — YYYY-MM-DD
+      end   — YYYY-MM-DD
+    """
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+
+    sb = get_supabase()
+    p_start = start + "T00:00:00+00:00"
+    p_end   = end   + "T23:59:59+00:00"
+
+    # ── Tentativa 1: orders → order_items (server-side, mais confiável) ───────
+    orders_res = (
+        sb.table("orders")
+        .select("id, utm_campaign, utm_source, utm_medium, order_items(name, quantity, unit_price, line_total)")
+        .eq("client_id", client_uuid)
+        .eq("financial_status", "paid")
+        .gt("total_price", 0)
+        .gte("created_at", p_start)
+        .lte("created_at", p_end)
+        .execute()
+    )
+    orders = orders_res.data or []
+    has_items = any(o.get("order_items") for o in orders)
+
+    if has_items:
+        campaign_map: dict[str, dict] = {}
+        for order in orders:
+            campaign = order.get("utm_campaign") or "(sem campanha)"
+            if campaign not in campaign_map:
+                campaign_map[campaign] = {
+                    "campaign": campaign,
+                    "source":   order.get("utm_source"),
+                    "medium":   order.get("utm_medium"),
+                    "orders":   0,
+                    "revenue":  0.0,
+                    "products": {},
+                }
+            c = campaign_map[campaign]
+            c["orders"] += 1
+            for item in (order.get("order_items") or []):
+                name = item.get("name") or "Produto sem nome"
+                qty  = int(item.get("quantity") or 1)
+                rev  = float(item.get("line_total") or 0)
+                c["revenue"] += rev
+                if name not in c["products"]:
+                    c["products"][name] = {"name": name, "qty": 0, "revenue": 0.0}
+                c["products"][name]["qty"]     += qty
+                c["products"][name]["revenue"] += rev
+
+        rows = []
+        for c in sorted(campaign_map.values(), key=lambda x: x["revenue"], reverse=True):
+            top_products = sorted(c["products"].values(), key=lambda p: p["revenue"], reverse=True)[:15]
+            rows.append({
+                "campaign":    c["campaign"],
+                "source":      c["source"],
+                "medium":      c["medium"],
+                "orders":      c["orders"],
+                "revenue":     round(c["revenue"], 2),
+                "products":    [{"name": p["name"], "qty": p["qty"], "revenue": round(p["revenue"], 2)} for p in top_products],
+                "data_source": "order_items",
+            })
+        return {"campaigns": rows, "data_source": "order_items", "total_campaigns": len(rows)}
+
+    # ── Fallback: tracking_events purchase (pixel + CAPI) ────────────────────
+    events_res = (
+        sb.table("tracking_events")
+        .select("utm_campaign, utm_source, utm_medium, product_name, product_quantity, product_price")
+        .eq("client_id", client_uuid)
+        .eq("event_type", "purchase")
+        .not_("product_name", "is", None)
+        .gte("created_at", p_start)
+        .lte("created_at", p_end)
+        .limit(5000)
+        .execute()
+    )
+    events = events_res.data or []
+
+    campaign_map2: dict[str, dict] = {}
+    for ev in events:
+        campaign = ev.get("utm_campaign") or "(sem campanha)"
+        if campaign not in campaign_map2:
+            campaign_map2[campaign] = {
+                "campaign": campaign,
+                "source":   ev.get("utm_source"),
+                "medium":   ev.get("utm_medium"),
+                "orders":   0,
+                "revenue":  0.0,
+                "products": {},
+            }
+        c = campaign_map2[campaign]
+        c["orders"] += 1
+        name = ev.get("product_name") or "Produto sem nome"
+        qty  = int(ev.get("product_quantity") or 1)
+        rev  = float(ev.get("product_price") or 0) * qty
+        c["revenue"] += rev
+        if name not in c["products"]:
+            c["products"][name] = {"name": name, "qty": 0, "revenue": 0.0}
+        c["products"][name]["qty"]     += qty
+        c["products"][name]["revenue"] += rev
+
+    rows2 = []
+    for c in sorted(campaign_map2.values(), key=lambda x: x["revenue"], reverse=True):
+        top_products = sorted(c["products"].values(), key=lambda p: p["revenue"], reverse=True)[:15]
+        rows2.append({
+            "campaign":    c["campaign"],
+            "source":      c["source"],
+            "medium":      c["medium"],
+            "orders":      c["orders"],
+            "revenue":     round(c["revenue"], 2),
+            "products":    [{"name": p["name"], "qty": p["qty"], "revenue": round(p["revenue"], 2)} for p in top_products],
+            "data_source": "tracking_events",
+        })
+    return {"campaigns": rows2, "data_source": "tracking_events", "total_campaigns": len(rows2)}
+
+
 @router.patch("/{pixel_id}/{insight_id}/read")
 async def mark_as_read(pixel_id: str, insight_id: str):
     """Marca um insight como lido."""

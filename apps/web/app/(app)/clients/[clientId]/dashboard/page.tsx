@@ -156,6 +156,17 @@ interface RoasData {
 
 type DrilldownKPI = 'revenue' | 'orders' | 'visitors' | 'avgOrderValue' | 'conversionRate' | 'profit'
 
+interface CampaignProductItem { name: string; qty: number; revenue: number }
+interface CampaignProductRow {
+  campaign: string
+  source: string | null
+  medium: string | null
+  orders: number
+  revenue: number
+  products: CampaignProductItem[]
+  data_source: 'order_items' | 'tracking_events'
+}
+
 interface PacingData {
   mtd_revenue:              number
   mtd_orders:               number
@@ -683,7 +694,10 @@ export default function DashboardPage() {
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
-  const [productSort, setProductSort]   = useState<'purchases' | 'views'>('purchases')
+  const [productSort, setProductSort]         = useState<'purchases' | 'views'>('purchases')
+  const [campaignProducts, setCampaignProducts] = useState<CampaignProductRow[]>([])
+  const [cpLoading, setCpLoading]               = useState(false)
+  const [cpExpanded, setCpExpanded]             = useState<Set<string>>(new Set())
 
   const params = useParams()
   const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
@@ -1032,11 +1046,41 @@ export default function DashboardPage() {
     } catch (_) {}
   }, [])
 
+  const loadCampaignProducts = useCallback(async (range: DateRange) => {
+    setCpLoading(true)
+    try {
+      const now = new Date()
+      let startStr: string, endStr: string
+      const _from = fromDateRef.current
+      const _to   = toDateRef.current
+      if (range === 'custom' && _from && _to) {
+        startStr = _from; endStr = _to
+      } else if (range === '1d') {
+        const y = new Date(now); y.setDate(y.getDate() - 1)
+        startStr = endStr = y.toISOString().split('T')[0]
+      } else {
+        const d = range === '7d' ? 7 : range === '30d' ? 30 : 90
+        const s = new Date(now); s.setDate(s.getDate() - d)
+        startStr = s.toISOString().split('T')[0]
+        endStr   = now.toISOString().split('T')[0]
+      }
+      const res = await fetch(
+        `${API_URL}/insights/${CLIENT_PIXEL_ID}/campaign-products?start=${startStr}&end=${endStr}`
+      )
+      if (res.ok) {
+        const json = await res.json()
+        setCampaignProducts(json.campaigns || [])
+      }
+    } catch (_) {}
+    setCpLoading(false)
+  }, [CLIENT_PIXEL_ID])
+
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
   useEffect(() => { loadRoas(dateRange) }, [dateRange, loadRoas])
   useEffect(() => { loadCohort() }, [loadCohort])
   useEffect(() => { loadPacing() }, [loadPacing])
+  useEffect(() => { loadCampaignProducts(dateRange) }, [dateRange, loadCampaignProducts])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1256,6 +1300,132 @@ export default function DashboardPage() {
             </table>
           </div>
         </div>
+
+        {/* Produtos por Campanha / Anúncio */}
+        {(cpLoading || campaignProducts.length > 0) && (
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-300">O que cada anúncio vendeu</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Produtos por campanha/influencer — clique para expandir</p>
+              </div>
+              {cpLoading && <Loader2 size={14} className="animate-spin text-slate-500" />}
+            </div>
+
+            {campaignProducts.length === 0 && !cpLoading ? (
+              <p className="p-5 text-slate-500 text-sm">Nenhum dado no período</p>
+            ) : (
+              <div className="divide-y divide-[#2a2f3e]">
+                {campaignProducts.map((row) => {
+                  const isOpen = cpExpanded.has(row.campaign)
+                  const toggle = () => setCpExpanded(prev => {
+                    const next = new Set(prev)
+                    isOpen ? next.delete(row.campaign) : next.add(row.campaign)
+                    return next
+                  })
+                  const srcColor =
+                    ['facebook','instagram','meta'].includes(row.source || '')
+                      ? 'bg-blue-500/10 text-blue-400'
+                      : row.source === 'google' ? 'bg-red-500/10 text-red-400'
+                      : 'bg-slate-500/10 text-slate-400'
+
+                  return (
+                    <div key={row.campaign}>
+                      {/* Campaign header row */}
+                      <button
+                        onClick={toggle}
+                        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-[#252a3a] transition-colors text-left"
+                      >
+                        <span className={`shrink-0 text-xs transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}>▶</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-slate-200 truncate font-medium">{row.campaign}</p>
+                          {row.source && (
+                            <span className={`text-xs px-1.5 py-0.5 rounded mt-0.5 inline-block ${srcColor}`}>
+                              {row.source}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-6 shrink-0 text-right">
+                          <div>
+                            <p className="text-xs text-slate-500">Pedidos</p>
+                            <p className="text-sm font-semibold text-slate-200">{row.orders}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Receita</p>
+                            <p className="text-sm font-semibold text-emerald-400">{fmt(row.revenue)}</p>
+                          </div>
+                          <div className="w-16">
+                            <div className="h-1.5 bg-[#0f1117] rounded-full overflow-hidden mt-3">
+                              <div
+                                className="h-full bg-indigo-500 rounded-full"
+                                style={{
+                                  width: `${campaignProducts[0]?.revenue
+                                    ? Math.min((row.revenue / campaignProducts[0].revenue) * 100, 100)
+                                    : 0}%`
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+
+                      {/* Expanded: product breakdown */}
+                      {isOpen && (
+                        <div className="bg-[#0f1117] border-t border-[#2a2f3e]">
+                          {row.products.length === 0 ? (
+                            <p className="px-8 py-3 text-xs text-slate-500">Sem detalhe de produto disponível</p>
+                          ) : (
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="border-b border-[#2a2f3e]">
+                                  <th className="text-left px-8 py-2 text-slate-600 font-medium uppercase tracking-wider">Produto</th>
+                                  <th className="text-center px-4 py-2 text-slate-600 font-medium uppercase tracking-wider">Qtd</th>
+                                  <th className="text-right px-5 py-2 text-slate-600 font-medium uppercase tracking-wider">Receita</th>
+                                  <th className="text-right px-5 py-2 text-slate-600 font-medium uppercase tracking-wider">% da campanha</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {row.products.map((p) => (
+                                  <tr key={p.name} className="border-b border-[#2a2f3e]/50 last:border-0">
+                                    <td className="px-8 py-2.5 text-slate-300 max-w-[280px]">
+                                      <p className="truncate">{p.name}</p>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-center text-slate-400">×{p.qty}</td>
+                                    <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">
+                                      {fmt(p.revenue)}
+                                    </td>
+                                    <td className="px-5 py-2.5 text-right">
+                                      <div className="flex items-center justify-end gap-2">
+                                        <div className="w-16 h-1 bg-[#1a1f2e] rounded-full overflow-hidden">
+                                          <div
+                                            className="h-full bg-indigo-400 rounded-full"
+                                            style={{ width: `${row.revenue > 0 ? Math.min((p.revenue / row.revenue) * 100, 100) : 0}%` }}
+                                          />
+                                        </div>
+                                        <span className="text-slate-500 w-8 text-right">
+                                          {row.revenue > 0 ? ((p.revenue / row.revenue) * 100).toFixed(0) : 0}%
+                                        </span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                          {row.data_source === 'tracking_events' && (
+                            <p className="px-8 py-2 text-xs text-slate-600 border-t border-[#2a2f3e]">
+                              Fonte: eventos de pixel (configure CMV para dados por order_items)
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Novos vs Recorrentes */}
         {retention && retention.total > 0 && (
