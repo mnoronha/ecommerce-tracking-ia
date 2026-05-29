@@ -6,6 +6,7 @@ import { type PlanId, planGates } from './plans'
 
 export interface AgencyPlan {
   planId: PlanId
+  clientName: string
   trialEndsAt: string | null
   ordersLimit: number | null
   clientLimit: number
@@ -15,6 +16,7 @@ export interface AgencyPlan {
 
 const DEFAULT: AgencyPlan = {
   planId: 'rastreador',
+  clientName: '',
   trialEndsAt: null,
   ordersLimit: 2000,
   clientLimit: 1,
@@ -22,34 +24,40 @@ const DEFAULT: AgencyPlan = {
   isTrialing: false,
 }
 
+// Module-level cache keyed by pixelId — survives re-renders, resets on full page reload.
+const _cache = new Map<string, AgencyPlan>()
+
 export function useAgencyPlan(pixelId?: string): { plan: AgencyPlan; loading: boolean } {
-  const [plan, setPlan]     = useState<AgencyPlan>(DEFAULT)
-  const [loading, setLoading] = useState(true)
+  const cached  = pixelId ? _cache.get(pixelId) : undefined
+  const [plan,    setPlan]    = useState<AgencyPlan>(cached ?? DEFAULT)
+  const [loading, setLoading] = useState(!cached)
 
   useEffect(() => {
     if (!pixelId) { setLoading(false); return }
-    const supabase = createSupabaseBrowserClient()
+    if (_cache.has(pixelId)) { setPlan(_cache.get(pixelId)!); setLoading(false); return }
 
-    supabase
+    createSupabaseBrowserClient()
       .from('clients')
-      .select('agency_id, agencies(plan, trial_ends_at, orders_limit, client_limit)')
+      // Single query: name + agency plan in one round-trip
+      .select('name, agencies(plan, trial_ends_at, orders_limit, client_limit)')
       .eq('pixel_id', pixelId)
       .limit(1)
       .single()
       .then(({ data }) => {
-        const agency = (data as any)?.agencies as any
-        if (agency) {
-          const planId = (agency.plan ?? 'rastreador') as PlanId
-          const trialEndsAt = agency.trial_ends_at ?? null
-          setPlan({
-            planId,
-            trialEndsAt,
-            ordersLimit:  agency.orders_limit ?? 2000,
-            clientLimit:  agency.client_limit ?? 1,
-            gates:        planGates(planId),
-            isTrialing:   trialEndsAt ? new Date(trialEndsAt) > new Date() : false,
-          })
+        const agency  = (data as any)?.agencies as any
+        const planId  = (agency?.plan ?? 'rastreador') as PlanId
+        const trialEndsAt = agency?.trial_ends_at ?? null
+        const result: AgencyPlan = {
+          planId,
+          clientName:  (data as any)?.name ?? pixelId,
+          trialEndsAt,
+          ordersLimit: agency?.orders_limit ?? 2000,
+          clientLimit: agency?.client_limit ?? 1,
+          gates:       planGates(planId),
+          isTrialing:  trialEndsAt ? new Date(trialEndsAt) > new Date() : false,
         }
+        _cache.set(pixelId, result)
+        setPlan(result)
         setLoading(false)
       })
   }, [pixelId])

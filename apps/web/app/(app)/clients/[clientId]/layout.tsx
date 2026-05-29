@@ -2,8 +2,6 @@
 
 import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
-import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
 import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity } from 'lucide-react'
@@ -13,14 +11,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const params   = useParams()
   const clientId = params.clientId as string
 
-  const [clientName, setClientName] = useState<string>(clientId)
   const { plan } = useAgencyPlan(clientId)
-
-  useEffect(() => {
-    createSupabaseBrowserClient()
-      .from('clients').select('name').eq('pixel_id', clientId).limit(1).single()
-      .then(({ data }) => { if (data?.name) setClientName(data.name) })
-  }, [clientId])
+  const clientName = plan.clientName || clientId
 
   const NAV = [
     { href: `/clients/${clientId}/dashboard`,   label: 'Dashboard',       icon: LayoutDashboard, gate: null },
