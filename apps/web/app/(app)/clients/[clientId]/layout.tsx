@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
+import { useAgencyPlan } from '@/lib/use-agency-plan'
+import { PlanLockBadge } from '@/components/plan-gate'
 import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
@@ -12,6 +14,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const clientId = params.clientId as string
 
   const [clientName, setClientName] = useState<string>(clientId)
+  const { plan } = useAgencyPlan(clientId)
+
   useEffect(() => {
     createSupabaseBrowserClient()
       .from('clients').select('name').eq('pixel_id', clientId).limit(1).single()
@@ -19,21 +23,21 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   }, [clientId])
 
   const NAV = [
-    { href: `/clients/${clientId}/dashboard`,   label: 'Dashboard',  icon: LayoutDashboard },
-    { href: `/clients/${clientId}/live`,        label: 'Ao vivo',    icon: Radio },
-    { href: `/clients/${clientId}/visitantes`,  label: 'Visitantes', icon: Users },
-    { href: `/clients/${clientId}/pedidos`,     label: 'Pedidos',    icon: ShoppingBag },
-    { href: `/clients/${clientId}/audiencias`,  label: 'Audiências', icon: Layers },
-    { href: `/clients/${clientId}/attribution`, label: 'Atribuição', icon: TrendingUp },
-    { href: `/clients/${clientId}/journey`,     label: 'Jornada', icon: GitBranch },
-    { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA', icon: Sparkles },
-    { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',  icon: FileText },
-    { href: `/clients/${clientId}/metas`,        label: 'Metas',          icon: Target },
-    { href: `/clients/${clientId}/alertas`,      label: 'Alertas',        icon: Bell },
-    { href: `/clients/${clientId}/diagnostics`, label: 'Diagnóstico',    icon: Activity },
-    { href: `/clients/${clientId}/cogs`,        label: 'Custos & Margem', icon: DollarSign },
-    { href: `/clients/${clientId}/settings`,    label: 'Configurações', icon: Settings },
-    { href: `/clients/${clientId}/users`,       label: 'Usuários',      icon: UserCog },
+    { href: `/clients/${clientId}/dashboard`,   label: 'Dashboard',       icon: LayoutDashboard, gate: null },
+    { href: `/clients/${clientId}/live`,        label: 'Ao vivo',         icon: Radio,           gate: null },
+    { href: `/clients/${clientId}/visitantes`,  label: 'Visitantes',      icon: Users,           gate: null },
+    { href: `/clients/${clientId}/pedidos`,     label: 'Pedidos',         icon: ShoppingBag,     gate: null },
+    { href: `/clients/${clientId}/audiencias`,  label: 'Audiências',      icon: Layers,          gate: null },
+    { href: `/clients/${clientId}/attribution`, label: 'Atribuição',      icon: TrendingUp,      gate: null },
+    { href: `/clients/${clientId}/journey`,     label: 'Jornada',         icon: GitBranch,       gate: null },
+    { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA',  icon: Sparkles,        gate: 'creative_intelligence' },
+    { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',   icon: FileText,        gate: 'ai_insights' },
+    { href: `/clients/${clientId}/metas`,       label: 'Metas',           icon: Target,          gate: null },
+    { href: `/clients/${clientId}/alertas`,     label: 'Alertas',         icon: Bell,            gate: null },
+    { href: `/clients/${clientId}/diagnostics`, label: 'Diagnóstico',     icon: Activity,        gate: null },
+    { href: `/clients/${clientId}/cogs`,        label: 'Custos & Margem', icon: DollarSign,      gate: null },
+    { href: `/clients/${clientId}/settings`,    label: 'Configurações',   icon: Settings,        gate: null },
+    { href: `/clients/${clientId}/users`,       label: 'Usuários',        icon: UserCog,         gate: null },
   ]
 
   return (
@@ -51,7 +55,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {NAV.map(item => {
-            const active = pathname === item.href
+            const active  = pathname === item.href
+            const locked  = item.gate ? !(plan.gates[item.gate] ?? true) : false
             return (
               <Link
                 key={item.href}
@@ -59,15 +64,33 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
                 className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                   active
                     ? 'bg-indigo-600/20 text-indigo-400 font-medium'
-                    : 'text-slate-400 hover:text-white hover:bg-[#1a1f2e]'
+                    : locked
+                      ? 'text-slate-600 hover:text-slate-400 hover:bg-[#1a1f2e]'
+                      : 'text-slate-400 hover:text-white hover:bg-[#1a1f2e]'
                 }`}
               >
                 <item.icon size={15} />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                <PlanLockBadge show={locked} />
               </Link>
             )
           })}
         </nav>
+
+        {/* Plan badge at bottom */}
+        <div className="p-3 border-t border-[#2a2f3e]">
+          <Link
+            href="/billing"
+            className="flex items-center justify-between px-3 py-2 rounded-lg bg-[#1a1f2e] hover:bg-[#252a3a] transition-colors group"
+          >
+            <span className="text-xs text-slate-500 group-hover:text-slate-300 transition-colors capitalize">
+              Plano {plan.planId}
+            </span>
+            {plan.isTrialing && (
+              <span className="text-xs text-indigo-400 font-medium">Trial</span>
+            )}
+          </Link>
+        </div>
       </aside>
       <main className="flex-1 overflow-auto">{children}</main>
     </div>

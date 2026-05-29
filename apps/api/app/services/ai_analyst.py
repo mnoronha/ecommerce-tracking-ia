@@ -336,6 +336,99 @@ def _save_insights(client_uuid: str, insights: list[dict]) -> int:
     return saved
 
 
+# ── Daily lightweight analysis ────────────────────────────────────────────────
+
+_DAILY_SYSTEM_PROMPT = """Você é um analista de e-commerce focado em alertas diários de performance.
+
+Analise os dados e retorne EXATAMENTE um JSON (sem markdown, sem texto extra):
+
+{
+  "insights": [
+    {
+      "type": "recommendation|anomaly|pattern",
+      "severity": "info|warning|critical",
+      "title": "Título curto (max 80 chars)",
+      "content": "Análise concisa com 1-2 parágrafos e números específicos",
+      "recommendation": "Ação concreta para fazer HOJE",
+      "data": {}
+    }
+  ]
+}
+
+Regras:
+- Gere 2 a 3 insights curtos e acionáveis
+- Foque em anomalias nas últimas 24-48h e oportunidades imediatas
+- NÃO gere weekly_report — apenas recommendation, anomaly ou pattern
+- Use números reais dos dados
+- Responda em português brasileiro"""
+
+
+def generate_daily_insights(client_uuid: str) -> dict:
+    """
+    Análise diária leve — gera 2-3 recomendações/anomalias usando Claude Haiku.
+    Pula se já foram gerados insights nas últimas 20h (evita duplicatas diárias).
+    """
+    if not settings.ANTHROPIC_API_KEY:
+        raise ValueError("ANTHROPIC_API_KEY não configurada")
+
+    if _was_recently_generated(client_uuid, "recommendation", hours=20):
+        logger.debug("daily insights skipped for %s — already generated in last 20h", client_uuid)
+        return {"insights_generated": 0, "insights_saved": 0, "skipped": True}
+
+    store_name = _get_client_name(client_uuid)
+    metrics = _collect_metrics(client_uuid)
+
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    prompt = f"""Dados diários da loja {store_name}:
+
+{json.dumps(metrics, ensure_ascii=False, indent=2)}
+
+Analise os dados e gere insights diários focando em:
+1. Anomalias nas últimas 24-48h (quedas ou picos)
+2. Uma recomendação imediata de alto impacto
+3. Padrão relevante para agir hoje"""
+
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+        system=_DAILY_SYSTEM_PROMPT,
+    )
+
+    raw = message.content[0].text.strip()
+    for fence in ("```json", "```"):
+        if raw.startswith(fence):
+            raw = raw[len(fence):]
+            break
+    if raw.endswith("```"):
+        raw = raw[:-3]
+
+    try:
+        parsed = json.loads(raw.strip())
+        insights = parsed.get("insights", [])
+    except json.JSONDecodeError as exc:
+        logger.error("Claude Haiku returned invalid JSON: %s — raw[:200]=%s", exc, raw[:200])
+        return {"insights_generated": 0, "insights_saved": 0, "error": str(exc)}
+
+    saved = _save_insights(client_uuid, insights)
+    logger.info("Daily insights for %s: generated=%d saved=%d", store_name, len(insights), saved)
+    return {"insights_generated": len(insights), "insights_saved": saved}
+
+
+def run_daily_insights_all_clients() -> None:
+    """Cron entry point — roda às 07:30 UTC (04:30 BRT) para todos os clientes ativos."""
+    try:
+        sb = get_supabase()
+        clients = sb.table("clients").select("id, pixel_id").execute()
+        for row in (clients.data or []):
+            try:
+                generate_daily_insights(row["id"])
+            except Exception as exc:
+                logger.error("daily insights failed for %s: %s", row.get("pixel_id"), exc)
+    except Exception as exc:
+        logger.error("run_daily_insights_all_clients: %s", exc)
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 def generate_insights(client_uuid: str) -> dict:

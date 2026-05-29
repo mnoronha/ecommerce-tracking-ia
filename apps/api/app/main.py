@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .limiter import limiter
 from .routers import alerts as alerts_router, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, insights, integrations, journey, klaviyo_webhook, live, meta_ads, pacing, pixel, setup
-from .services import alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization, spend_sync
+from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -137,6 +137,13 @@ _scheduler.add_job(
     hour=6,
     minute=0,
     id="spend_sync_daily",
+)
+_scheduler.add_job(
+    ai_analyst.run_daily_insights_all_clients,
+    "cron",
+    hour=7,
+    minute=30,  # 07:30 UTC = 04:30 BRT — antes do início do dia comercial
+    id="daily_ai_insights",
 )
 
 

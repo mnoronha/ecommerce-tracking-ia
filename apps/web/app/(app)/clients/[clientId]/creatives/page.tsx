@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { Loader2, RefreshCw, Sparkles, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react'
+import { useAgencyPlan } from '@/lib/use-agency-plan'
+import { PlanGate } from '@/components/plan-gate'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -47,6 +49,7 @@ const fmt = (n: number) =>
 export default function CreativesPage() {
   const params  = useParams()
   const pixelId = params.clientId as string
+  const { plan } = useAgencyPlan(pixelId)
 
   const [days, setDays] = useState<7 | 30 | 90>(30)
   const [creatives, setCreatives] = useState<CreativeRow[]>([])
@@ -170,7 +173,8 @@ export default function CreativesPage() {
         </div>
       )}
 
-      {/* Analysis card */}
+      {/* Analysis card — Creative Intelligence (Predição plan) */}
+      <PlanGate feature="creative_intelligence" planId={plan.planId}>
       {analysis && (
         <div className="mx-6 mt-6 bg-gradient-to-br from-indigo-500/10 to-violet-500/5 border border-indigo-500/30 rounded-2xl p-5">
           <div className="flex items-start gap-3 mb-3">
@@ -217,6 +221,7 @@ export default function CreativesPage() {
           )}
         </div>
       )}
+      </PlanGate>
 
       {/* KPIs */}
       <div className="px-6 pt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
