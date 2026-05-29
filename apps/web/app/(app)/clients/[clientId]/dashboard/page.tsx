@@ -188,8 +188,18 @@ interface PacingData {
 const fmt = (n: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
 
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+// Locale-independent YYYY-MM-DD key in local timezone
+function toDateKey(iso: string): string {
+  const d = new Date(iso)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${dd}`
+}
+// Display formatter for the chart X-axis: YYYY-MM-DD → "DD/MM"
+const fmtDateAxis = (key: string) => key.slice(8, 10) + '/' + key.slice(5, 7)
+
+const fmtDate = toDateKey
 
 const pct = (n: number, total: number) =>
   total > 0 ? ((n / total) * 100).toFixed(0) + '%' : '—'
@@ -375,7 +385,7 @@ function KPIDrilldownModal({
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3e" />
-                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10 }} />
+                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 10 }} tickFormatter={fmtDateAxis} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 10 }} />
                 <Tooltip
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
@@ -677,8 +687,6 @@ export default function DashboardPage() {
   const [generating, setGenerating]     = useState(false)
   const [retention, setRetention]       = useState<RetentionData | null>(null)
   const [heatmap, setHeatmap]           = useState<number[][]>([])
-  const [roasData, setRoasData]         = useState<RoasData | null>(null)
-  const [roasLoading, setRoasLoading]   = useState(false)
   const [cohortData, setCohortData]     = useState<CohortMonth[]>([])
   const [pacing, setPacing]             = useState<PacingData | null>(null)
   const [loading, setLoading]           = useState(true)
@@ -695,9 +703,6 @@ export default function DashboardPage() {
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
   const [productSort, setProductSort]         = useState<'purchases' | 'views'>('purchases')
-  const [campaignProducts, setCampaignProducts] = useState<CampaignProductRow[]>([])
-  const [cpLoading, setCpLoading]               = useState(false)
-  const [cpExpanded, setCpExpanded]             = useState<Set<string>>(new Set())
 
   const params = useParams()
   const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
@@ -972,15 +977,6 @@ export default function DashboardPage() {
     }
   }, [loadInsights])
 
-  const loadRoas = useCallback(async (range: DateRange) => {
-    setRoasLoading(true)
-    try {
-      const days = range === '1d' ? 1 : range === '7d' ? 7 : range === '30d' ? 30 : 90
-      const res  = await fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/roas?days=${days}`)
-      if (res.ok) setRoasData(await res.json())
-    } catch (_) {}
-    setRoasLoading(false)
-  }, [])
 
   const loadCohort = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
@@ -1056,41 +1052,10 @@ export default function DashboardPage() {
     } catch (_) {}
   }, [])
 
-  const loadCampaignProducts = useCallback(async (range: DateRange) => {
-    setCpLoading(true)
-    try {
-      const now = new Date()
-      let startStr: string, endStr: string
-      const _from = fromDateRef.current
-      const _to   = toDateRef.current
-      if (range === 'custom' && _from && _to) {
-        startStr = _from; endStr = _to
-      } else if (range === '1d') {
-        const y = new Date(now); y.setDate(y.getDate() - 1)
-        startStr = endStr = y.toISOString().split('T')[0]
-      } else {
-        const d = range === '7d' ? 7 : range === '30d' ? 30 : 90
-        const s = new Date(now); s.setDate(s.getDate() - d)
-        startStr = s.toISOString().split('T')[0]
-        endStr   = now.toISOString().split('T')[0]
-      }
-      const res = await fetch(
-        `${API_URL}/insights/${CLIENT_PIXEL_ID}/campaign-products?start=${startStr}&end=${endStr}`
-      )
-      if (res.ok) {
-        const json = await res.json()
-        setCampaignProducts(json.campaigns || [])
-      }
-    } catch (_) {}
-    setCpLoading(false)
-  }, [CLIENT_PIXEL_ID])
-
   useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
-  useEffect(() => { loadRoas(dateRange) }, [dateRange, loadRoas])
   useEffect(() => { loadCohort() }, [loadCohort])
   useEffect(() => { loadPacing() }, [loadPacing])
-  useEffect(() => { loadCampaignProducts(dateRange) }, [dateRange, loadCampaignProducts])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1238,7 +1203,7 @@ export default function DashboardPage() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3e" />
-                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} />
+                <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={fmtDateAxis} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={v => `R$${v}`} />
                 <Tooltip
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
@@ -1317,132 +1282,6 @@ export default function DashboardPage() {
             </table>
           </div>
         </div>
-
-        {/* Produtos por Campanha / Anúncio */}
-        {(cpLoading || campaignProducts.length > 0) && (
-          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-300">O que cada anúncio vendeu</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Produtos por campanha/influencer — clique para expandir</p>
-              </div>
-              {cpLoading && <Loader2 size={14} className="animate-spin text-slate-500" />}
-            </div>
-
-            {campaignProducts.length === 0 && !cpLoading ? (
-              <p className="p-5 text-slate-500 text-sm">Nenhum dado no período</p>
-            ) : (
-              <div className="divide-y divide-[#2a2f3e]">
-                {campaignProducts.map((row) => {
-                  const isOpen = cpExpanded.has(row.campaign)
-                  const toggle = () => setCpExpanded(prev => {
-                    const next = new Set(prev)
-                    isOpen ? next.delete(row.campaign) : next.add(row.campaign)
-                    return next
-                  })
-                  const srcColor =
-                    ['facebook','instagram','meta'].includes(row.source || '')
-                      ? 'bg-blue-500/10 text-blue-400'
-                      : row.source === 'google' ? 'bg-red-500/10 text-red-400'
-                      : 'bg-slate-500/10 text-slate-400'
-
-                  return (
-                    <div key={row.campaign}>
-                      {/* Campaign header row */}
-                      <button
-                        onClick={toggle}
-                        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-[#252a3a] transition-colors text-left"
-                      >
-                        <span className={`shrink-0 text-xs transition-transform duration-200 ${isOpen ? 'rotate-90' : ''}`}>▶</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm text-slate-200 truncate font-medium">{row.campaign}</p>
-                          {row.source && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded mt-0.5 inline-block ${srcColor}`}>
-                              {row.source}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-6 shrink-0 text-right">
-                          <div>
-                            <p className="text-xs text-slate-500">Pedidos</p>
-                            <p className="text-sm font-semibold text-slate-200">{row.orders}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-500">Receita</p>
-                            <p className="text-sm font-semibold text-emerald-400">{fmt(row.revenue)}</p>
-                          </div>
-                          <div className="w-16">
-                            <div className="h-1.5 bg-[#0f1117] rounded-full overflow-hidden mt-3">
-                              <div
-                                className="h-full bg-indigo-500 rounded-full"
-                                style={{
-                                  width: `${campaignProducts[0]?.revenue
-                                    ? Math.min((row.revenue / campaignProducts[0].revenue) * 100, 100)
-                                    : 0}%`
-                                }}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-
-                      {/* Expanded: product breakdown */}
-                      {isOpen && (
-                        <div className="bg-[#0f1117] border-t border-[#2a2f3e]">
-                          {row.products.length === 0 ? (
-                            <p className="px-8 py-3 text-xs text-slate-500">Sem detalhe de produto disponível</p>
-                          ) : (
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="border-b border-[#2a2f3e]">
-                                  <th className="text-left px-8 py-2 text-slate-600 font-medium uppercase tracking-wider">Produto</th>
-                                  <th className="text-center px-4 py-2 text-slate-600 font-medium uppercase tracking-wider">Qtd</th>
-                                  <th className="text-right px-5 py-2 text-slate-600 font-medium uppercase tracking-wider">Receita</th>
-                                  <th className="text-right px-5 py-2 text-slate-600 font-medium uppercase tracking-wider">% da campanha</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {row.products.map((p) => (
-                                  <tr key={p.name} className="border-b border-[#2a2f3e]/50 last:border-0">
-                                    <td className="px-8 py-2.5 text-slate-300 max-w-[280px]">
-                                      <p className="truncate">{p.name}</p>
-                                    </td>
-                                    <td className="px-4 py-2.5 text-center text-slate-400">×{p.qty}</td>
-                                    <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">
-                                      {fmt(p.revenue)}
-                                    </td>
-                                    <td className="px-5 py-2.5 text-right">
-                                      <div className="flex items-center justify-end gap-2">
-                                        <div className="w-16 h-1 bg-[#1a1f2e] rounded-full overflow-hidden">
-                                          <div
-                                            className="h-full bg-indigo-400 rounded-full"
-                                            style={{ width: `${row.revenue > 0 ? Math.min((p.revenue / row.revenue) * 100, 100) : 0}%` }}
-                                          />
-                                        </div>
-                                        <span className="text-slate-500 w-8 text-right">
-                                          {row.revenue > 0 ? ((p.revenue / row.revenue) * 100).toFixed(0) : 0}%
-                                        </span>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                          {row.data_source === 'tracking_events' && (
-                            <p className="px-8 py-2 text-xs text-slate-600 border-t border-[#2a2f3e]">
-                              Fonte: eventos de pixel (configure CMV para dados por order_items)
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Novos vs Recorrentes */}
         {retention && retention.total > 0 && (
@@ -1582,201 +1421,6 @@ export default function DashboardPage() {
 
         {/* Heatmap de vendas */}
         {heatmap.length > 0 && <SalesHeatmap grid={heatmap} />}
-
-        {/* Meta Ads ROAS */}
-        {roasData && (
-          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-300">Meta Ads — ROAS por Campanha</h2>
-                {!roasData.has_ads_credentials && (
-                  <p className="text-xs text-yellow-500 mt-0.5">
-                    Configure <code className="bg-yellow-500/10 px-1 rounded">meta_ad_account_id</code> no cliente para ver gasto e ROAS
-                  </p>
-                )}
-                {roasData.has_ads_credentials && roasData.totals.spend === 0 && (
-                  <p className="text-xs text-orange-400 mt-0.5">
-                    Sem dados de gasto — verifique se o token Meta está válido (Configurações → Integrações)
-                  </p>
-                )}
-              </div>
-              {roasData.paid_only?.roas != null && (
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-indigo-400">{roasData.paid_only.roas.toFixed(2)}x</p>
-                  <p className="text-xs text-slate-500">ROAS pago</p>
-                </div>
-              )}
-            </div>
-
-            {/* Summary strip — only paid traffic. Orgânico/POS/email is in
-                the Fontes UTM card below, separated on purpose. */}
-            {roasData.has_ads_credentials && roasData.totals.spend > 0 && roasData.paid_only && (
-              <div className="border-b border-[#2a2f3e]">
-                <div className={`grid divide-x divide-[#2a2f3e] ${roasData.has_cogs && roasData.paid_only.gross_profit != null ? 'grid-cols-5' : 'grid-cols-4'}`}>
-                  {[
-                    { label: 'Gasto',                value: fmt(roasData.paid_only.spend) },
-                    { label: 'Receita atribuída',    value: fmt(roasData.paid_only.revenue),
-                      sub: roasData.totals.meta_revenue
-                        ? `Meta diz: ${fmt(roasData.totals.meta_revenue)}`
-                        : undefined },
-                    { label: 'ROAS pago',            value: roasData.paid_only.roas != null ? `${roasData.paid_only.roas.toFixed(2)}x` : '—',
-                      sub: roasData.totals.meta_roas != null
-                        ? `Meta diz: ${roasData.totals.meta_roas.toFixed(2)}x`
-                        : undefined },
-                    { label: 'CPA real',             value: roasData.paid_only.cpa != null ? fmt(roasData.paid_only.cpa) : '—',
-                      sub: roasData.totals.meta_cpa != null
-                        ? `Meta diz: ${fmt(roasData.totals.meta_cpa)}`
-                        : undefined },
-                    ...(roasData.has_cogs && roasData.paid_only.gross_profit != null ? [{
-                      label: 'ROAS de Margem',
-                      value: roasData.paid_only.margin_roas != null ? `${roasData.paid_only.margin_roas.toFixed(2)}x` : '—',
-                      sub: roasData.totals.margin_pct != null
-                        ? `Margem: ${roasData.totals.margin_pct.toFixed(1)}%`
-                        : undefined,
-                    }] : []),
-                  ].map(s => (
-                    <div key={s.label} className="px-5 py-3 text-center">
-                      <p className="text-xs text-slate-500">{s.label}</p>
-                      <p className="text-sm font-bold text-white mt-0.5">{s.value}</p>
-                      {s.sub && <p className="text-xs text-slate-500 mt-0.5">{s.sub}</p>}
-                    </div>
-                  ))}
-                </div>
-                {roasData.totals.cpa_diff_pct != null && Math.abs(roasData.totals.cpa_diff_pct) >= 5 && (
-                  <div className={`px-5 py-2 text-xs ${
-                    roasData.totals.cpa_diff_pct > 0
-                      ? 'bg-yellow-500/5 text-yellow-300'
-                      : 'bg-emerald-500/5 text-emerald-300'
-                  }`}>
-                    {roasData.totals.cpa_diff_pct > 0 ? (
-                      <>
-                        ⚠ Meta está <strong>subestimando</strong> seu CPA em <strong>{roasData.totals.cpa_diff_pct.toFixed(0)}%</strong>.
-                        O CPA real é {Math.abs(roasData.totals.cpa_diff_pct).toFixed(0)}% maior do que o painel do Meta mostra.
-                      </>
-                    ) : (
-                      <>
-                        ✓ Meta está reportando CPA {Math.abs(roasData.totals.cpa_diff_pct).toFixed(0)}% acima do real
-                        ({roasData.totals.meta_purchases} compras vs {roasData.totals.orders} no servidor).
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="overflow-x-auto">
-              {roasLoading ? (
-                <div className="flex items-center gap-2 p-5 text-slate-500 text-sm">
-                  <Loader2 size={14} className="animate-spin" /> Carregando…
-                </div>
-              ) : (roasData.has_ads_credentials
-                    ? roasData.campaigns.filter(c => c.impressions > 0 || c.spend > 0)
-                    : roasData.campaigns).length === 0 ? (
-                <p className="p-5 text-slate-500 text-sm">Nenhuma campanha no período</p>
-              ) : (() => {
-                // When Meta credentials are configured, show only rows that came from the
-                // Meta Ads API (impressions > 0 or spend > 0). This hides UTM ad-set/ad
-                // name rows that pollute the campaign view when UTMs are configured below
-                // campaign level. Without credentials we show all UTM rows.
-                const visibleCampaigns = roasData.has_ads_credentials
-                  ? roasData.campaigns.filter(c => c.impressions > 0 || c.spend > 0)
-                  : roasData.campaigns
-                return (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#2a2f3e]">
-                      {['Campanha', 'Pedidos', 'Receita',
-                        ...(roasData.has_cogs ? ['Lucro Bruto', 'ROAS Margem'] : []),
-                        ...(roasData.has_ads_credentials ? ['Gasto', 'ROAS', 'CPA real', 'CPA Meta', 'Diff', 'Clicks'] : [])
-                      ].map(h => (
-                        <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleCampaigns.map((c, i) => (
-                      <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
-                        <td className="px-4 py-3 max-w-[200px]">
-                          <p className="text-slate-200 text-xs truncate">{c.campaign_name}</p>
-                          {c.utm_source && (
-                            <span className={`text-xs px-1.5 py-0.5 rounded mt-0.5 inline-block ${
-                              ['facebook','instagram','meta'].includes(c.utm_source)
-                                ? 'bg-blue-500/10 text-blue-400'
-                                : c.utm_source === 'google' ? 'bg-red-500/10 text-red-400'
-                                : 'bg-slate-500/10 text-slate-400'
-                            }`}>{c.utm_source}</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-slate-200 font-medium">
-                          {c.orders}
-                          {c.purchases_diff !== 0 && c.meta_purchases > 0 && (
-                            <span className="text-xs text-slate-500 ml-1" title="Meta reportou">
-                              (Meta: {c.meta_purchases})
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
-                        {roasData.has_cogs && (
-                          <>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {c.gross_profit != null
-                                ? <span className="text-teal-400 font-medium">{fmt(c.gross_profit)}</span>
-                                : <span className="text-slate-600">—</span>}
-                              {c.margin_pct != null && (
-                                <span className="text-xs text-slate-500 ml-1">{c.margin_pct.toFixed(0)}%</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {c.margin_roas != null ? (
-                                <span className={`font-bold ${c.margin_roas >= 2 ? 'text-teal-400' : c.margin_roas >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>
-                                  {c.margin_roas.toFixed(2)}x
-                                </span>
-                              ) : <span className="text-slate-600">—</span>}
-                            </td>
-                          </>
-                        )}
-                        {roasData.has_ads_credentials && (
-                          <>
-                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                              {c.spend > 0 ? fmt(c.spend) : <span className="text-slate-600">—</span>}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {c.roas != null ? (
-                                <span className={`font-bold ${c.roas >= 3 ? 'text-emerald-400' : c.roas >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
-                                  {c.roas.toFixed(2)}x
-                                </span>
-                              ) : <span className="text-slate-600">—</span>}
-                            </td>
-                            <td className="px-4 py-3 text-slate-300 whitespace-nowrap">
-                              {c.cpa != null ? fmt(c.cpa) : <span className="text-slate-600">—</span>}
-                            </td>
-                            <td className="px-4 py-3 text-slate-500 whitespace-nowrap text-xs">
-                              {c.meta_cpa != null ? fmt(c.meta_cpa) : <span className="text-slate-600">—</span>}
-                            </td>
-                            <td className="px-4 py-3 whitespace-nowrap">
-                              {c.cpa_diff_pct != null ? (
-                                <span className={`text-xs font-medium ${
-                                  Math.abs(c.cpa_diff_pct) < 10 ? 'text-slate-400' :
-                                  c.cpa_diff_pct > 0 ? 'text-yellow-400' : 'text-emerald-400'
-                                }`}>
-                                  {c.cpa_diff_pct > 0 ? '+' : ''}{c.cpa_diff_pct.toFixed(0)}%
-                                </span>
-                              ) : <span className="text-slate-600 text-xs">—</span>}
-                            </td>
-                            <td className="px-4 py-3 text-slate-400">
-                              {c.clicks > 0 ? c.clicks.toLocaleString('pt-BR') : <span className="text-slate-600">—</span>}
-                            </td>
-                          </>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                )
-              })()}
-            </div>
-          </div>
-        )}
 
         {/* Cohort Retention */}
         {cohortData.length > 0 && cohortData.some(c => c.newBuyers > 0) && (
