@@ -60,6 +60,8 @@ def _infer_platform(source: Optional[str], medium: Optional[str], gclid_present:
         return 'organic'
     if 'shopify' in s:
         return 'shopify'
+    if s == 'pos' or s == 'in_store' or 'pos' in s.split():
+        return 'pos'
     return 'other'
 
 
@@ -212,6 +214,17 @@ def attribute_order(order: dict, visitor: Optional[dict]) -> int:
             'campaign': order.get('utm_campaign'),
         }]
 
+    # ── Fallback POS: platform_source = 'pos' → sempre Loja Física ─────────
+    # Vendas presenciais não têm UTM. Mesmo sem journey, atribuímos a 'pos'
+    # para que apareçam como "Loja Física" no painel, não como "direct".
+    if not journey and order.get('platform_source') == 'pos':
+        journey = [{
+            'ts':       order.get('created_at'),
+            'source':   'pos',
+            'medium':   'in_store',
+            'campaign': None,
+        }]
+
     # ── Fallback 2: attribution_cookies (recent visitor session) ────────────
     # We persist a rolling list of UTM-tagged visits keyed by visitor_cookie
     # and email. Use the most recent matching cookie to recover attribution
@@ -307,7 +320,7 @@ def recompute_for_client(client_uuid: str, days: int = 90) -> dict:
     orders_resp = (
         sb.table('orders')
         .select('id, client_id, visitor_id, total_price, created_at, '
-                'utm_source, utm_medium, utm_campaign, utm_content, email')
+                'utm_source, utm_medium, utm_campaign, utm_content, email, platform_source')
         .eq('client_id', client_uuid)
         .eq('financial_status', 'paid')
         .gte('created_at', cutoff)

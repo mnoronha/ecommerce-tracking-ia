@@ -59,7 +59,12 @@ const PLATFORM_COLORS: Record<string, string> = {
   direct:    'bg-slate-500/20 text-slate-300 border-slate-500/30',
   email:     'bg-purple-500/20 text-purple-300 border-purple-500/30',
   shopify:   'bg-green-500/20 text-green-300 border-green-500/30',
+  pos:       'bg-orange-500/20 text-orange-300 border-orange-500/30',
   other:     'bg-slate-500/20 text-slate-400 border-slate-500/30',
+}
+
+const PLATFORM_LABEL: Record<string, string> = {
+  pos: 'Loja Física',
 }
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -70,6 +75,7 @@ const SOURCE_BADGE: Record<string, string> = {
   tiktok:    'bg-pink-500/10 text-pink-400',
   email:     'bg-purple-500/10 text-purple-400',
   organic:   'bg-emerald-500/10 text-emerald-400',
+  pos:       'bg-orange-500/10 text-orange-400',
 }
 
 function isNumericId(s: string | null): boolean {
@@ -264,7 +270,7 @@ export default function AttributionPage() {
                     <div className="flex items-center justify-between text-sm mb-1.5">
                       <div className="flex items-center gap-2">
                         <span className={`text-xs px-2 py-0.5 rounded border ${PLATFORM_COLORS[p.platform] || PLATFORM_COLORS.other}`}>
-                          {p.platform}
+                          {PLATFORM_LABEL[p.platform] ?? p.platform}
                         </span>
                         <span className="text-slate-500 text-xs">
                           {p.orders} pedido{p.orders !== 1 ? 's' : ''} · {p.conversions.toFixed(1)} créditos
@@ -308,9 +314,9 @@ export default function AttributionPage() {
                     <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
                       <td className="px-5 py-2.5">
                         <span className={`text-xs px-2 py-0.5 rounded font-medium ${SOURCE_BADGE[s.source.toLowerCase()] || 'bg-slate-500/10 text-slate-400'}`}>
-                          {s.source}
+                          {s.source === 'pos' ? 'Loja Física' : s.source}
                         </span>
-                        {s.medium && <span className="text-slate-500 text-xs ml-2">/ {s.medium}</span>}
+                        {s.medium && s.medium !== 'in_store' && <span className="text-slate-500 text-xs ml-2">/ {s.medium}</span>}
                       </td>
                       <td className="px-5 py-2.5 text-xs max-w-[220px]">
                         {isNumericId(s.campaign) ? (
