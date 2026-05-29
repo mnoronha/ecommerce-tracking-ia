@@ -1,14 +1,12 @@
 """
-Meta Ads ROAS endpoint.
+Meta Ads endpoints.
 
-Combina gasto de campanhas (Meta Ads API) com receita dos pedidos (banco local)
-para calcular ROAS, CPA e outras métricas por campanha.
-
-GET /meta-ads/{pixel_id}/roas?days=30
+GET /meta-ads/{pixel_id}/roas?days=30    — ROAS por campanha (Meta API + pedidos)
+GET /meta-ads/{pixel_id}/overview?days=30 — Dashboard completo (meta_ad_attributions)
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException
 
@@ -243,4 +241,293 @@ async def get_roas(pixel_id: str, days: int = 30):
             "margin_roas":  paid_margin_roas,
             "campaigns":    len(paid_rows),
         },
+    }
+
+
+@router.get(
+    "/meta-ads/{pixel_id}/overview",
+    summary="Dashboard Meta Ads completo — usa meta_ad_attributions (sync diário)",
+    tags=["meta_ads"],
+)
+async def get_overview(pixel_id: str, days: int = 30):
+    """
+    Retorna KPIs, séries diárias, breakdown campanha→adset→anúncio e funil.
+    Fonte principal: meta_ad_attributions (sem chamada live à Meta API).
+    Período anterior (mesma duração) incluído para calcular % Δ.
+    """
+    sb = get_supabase()
+
+    creds = (
+        sb.table("clients")
+        .select("id, meta_pixel_id, meta_ad_account_id, meta_access_token")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not (creds and creds.data):
+        raise HTTPException(status_code=404, detail="Client not found or inactive")
+    c         = creds.data[0]
+    client_id = c["id"]
+
+    today     = datetime.now(timezone.utc).date()
+    d_end     = today
+    d_start   = today - timedelta(days=days - 1)
+    d_prev_end   = d_start - timedelta(days=1)
+    d_prev_start = d_prev_end - timedelta(days=days - 1)
+
+    def _agg_rows(rows: list) -> dict:
+        spend  = sum(float(r.get("spend") or 0)        for r in rows)
+        impr   = sum(int(r.get("impressions") or 0)    for r in rows)
+        clicks = sum(int(r.get("clicks") or 0)         for r in rows)
+        purch  = sum(int(r.get("purchases") or 0)      for r in rows)
+        rev    = sum(float(r.get("purchase_value") or 0) for r in rows)
+        ctr    = round(clicks / impr * 100, 2)  if impr  > 0 else None
+        cpm    = round(spend  / impr * 1000, 2) if impr  > 0 else None
+        cpc    = round(spend  / clicks, 2)      if clicks > 0 else None
+        roas   = round(rev   / spend, 2)        if spend > 0 else None
+        cpa    = round(spend / purch, 2)        if purch > 0 else None
+        ticket = round(rev / purch, 2)          if purch > 0 else None
+        return {
+            "spend": round(spend, 2), "impressions": impr, "clicks": clicks,
+            "purchases": purch, "revenue": round(rev, 2),
+            "ctr": ctr, "cpm": cpm, "cpc": cpc,
+            "roas": roas, "cpa": cpa, "avg_ticket": ticket,
+        }
+
+    def _delta(curr: float | None, prev: float | None) -> float | None:
+        if curr is None or prev is None or prev == 0:
+            return None
+        return round((curr - prev) / prev * 100, 1)
+
+    # ── Fetch attribution rows ─────────────────────────────────────────────
+    def _fetch(d_from, d_to):
+        return (
+            sb.table("meta_ad_attributions")
+            .select("campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
+                    "date,spend,impressions,clicks,purchases,purchase_value")
+            .eq("client_id", client_id)
+            .gte("date", str(d_from))
+            .lte("date", str(d_to))
+            .limit(10000)
+            .execute()
+        ).data or []
+
+    curr_rows = _fetch(d_start, d_end)
+    prev_rows = _fetch(d_prev_start, d_prev_end)
+
+    curr_totals = _agg_rows(curr_rows)
+    prev_totals = _agg_rows(prev_rows)
+
+    # % Δ for each KPI
+    deltas = {k: _delta(curr_totals.get(k), prev_totals.get(k)) for k in curr_totals}
+
+    # ── Daily time series ──────────────────────────────────────────────────
+    daily_map: dict = {}
+    for r in curr_rows:
+        d = str(r["date"])
+        if d not in daily_map:
+            daily_map[d] = {"date": d, "spend": 0.0, "purchases": 0, "revenue": 0.0, "impressions": 0, "clicks": 0}
+        daily_map[d]["spend"]       += float(r.get("spend") or 0)
+        daily_map[d]["purchases"]   += int(r.get("purchases") or 0)
+        daily_map[d]["revenue"]     += float(r.get("purchase_value") or 0)
+        daily_map[d]["impressions"] += int(r.get("impressions") or 0)
+        daily_map[d]["clicks"]      += int(r.get("clicks") or 0)
+
+    daily = []
+    for i in range(days):
+        d = str(d_start + timedelta(days=i))
+        day = daily_map.get(d, {"date": d, "spend": 0.0, "purchases": 0, "revenue": 0.0, "impressions": 0, "clicks": 0})
+        day["roas"] = round(day["revenue"] / day["spend"], 2) if day["spend"] > 0 else None
+        day["cpc"]  = round(day["spend"] / day["clicks"], 2)  if day["clicks"] > 0 else None
+        day["spend"]   = round(day["spend"], 2)
+        day["revenue"] = round(day["revenue"], 2)
+        daily.append(day)
+
+    # ── Campaign hierarchy ─────────────────────────────────────────────────
+    camp_map: dict = {}
+    prev_camp_rev: dict = {}
+    for r in prev_rows:
+        cid_  = r.get("campaign_id") or ""
+        prev_camp_rev.setdefault(cid_, {"spend": 0.0, "purchases": 0, "revenue": 0.0})
+        prev_camp_rev[cid_]["spend"]     += float(r.get("spend") or 0)
+        prev_camp_rev[cid_]["purchases"] += int(r.get("purchases") or 0)
+        prev_camp_rev[cid_]["revenue"]   += float(r.get("purchase_value") or 0)
+
+    for r in curr_rows:
+        cid_  = r.get("campaign_id") or ""
+        asid  = r.get("adset_id") or ""
+        ad_id = r.get("ad_id") or ""
+
+        # Campaign level
+        c_ = camp_map.setdefault(cid_, {
+            "campaign_id": cid_, "campaign_name": r.get("campaign_name") or cid_,
+            "_totals": {"spend": 0.0, "impressions": 0, "clicks": 0, "purchases": 0, "revenue": 0.0},
+            "_adsets": {},
+        })
+        for k in ("spend", "impressions", "clicks", "purchases"):
+            c_["_totals"][k] += float(r.get(k) or 0) if k == "spend" else int(r.get(k) or 0)
+        c_["_totals"]["revenue"] += float(r.get("purchase_value") or 0)
+
+        # Adset level
+        a_ = c_["_adsets"].setdefault(asid, {
+            "adset_id": asid, "adset_name": r.get("adset_name") or asid,
+            "_totals": {"spend": 0.0, "impressions": 0, "clicks": 0, "purchases": 0, "revenue": 0.0},
+            "_ads": {},
+        })
+        for k in ("spend", "impressions", "clicks", "purchases"):
+            a_["_totals"][k] += float(r.get(k) or 0) if k == "spend" else int(r.get(k) or 0)
+        a_["_totals"]["revenue"] += float(r.get("purchase_value") or 0)
+
+        # Ad level
+        ad_ = a_["_ads"].setdefault(ad_id, {
+            "ad_id": ad_id, "ad_name": r.get("ad_name") or ad_id,
+            "_totals": {"spend": 0.0, "impressions": 0, "clicks": 0, "purchases": 0, "revenue": 0.0},
+        })
+        for k in ("spend", "impressions", "clicks", "purchases"):
+            ad_["_totals"][k] += float(r.get(k) or 0) if k == "spend" else int(r.get(k) or 0)
+        ad_["_totals"]["revenue"] += float(r.get("purchase_value") or 0)
+
+    def _finalize(totals: dict, prev_spend: float | None = None, prev_rev: float | None = None) -> dict:
+        t = totals
+        sp = t["spend"]
+        rv = t["revenue"]
+        pu = t["purchases"]
+        im = t["impressions"]
+        cl = t["clicks"]
+        roas = round(rv / sp, 2) if sp > 0 else None
+        prev_roas = round(prev_rev / prev_spend, 2) if (prev_spend and prev_rev is not None and prev_spend > 0) else None
+        return {
+            "spend":       round(sp, 2),
+            "revenue":     round(rv, 2),
+            "purchases":   pu,
+            "impressions": im,
+            "clicks":      cl,
+            "roas":        roas,
+            "cpa":         round(sp / pu, 2) if pu > 0 else None,
+            "ctr":         round(cl / im * 100, 2) if im > 0 else None,
+            "cpc":         round(sp / cl, 2) if cl > 0 else None,
+            "roas_delta":  _delta(roas, prev_roas),
+            "spend_delta": _delta(sp, prev_spend),
+        }
+
+    # Fetch ad_creatives for image_url lookup
+    creative_rows = (
+        sb.table("ad_creatives")
+        .select("ad_id, image_url, effective_status")
+        .eq("client_id", client_id)
+        .execute()
+    ).data or []
+    creative_map = {r["ad_id"]: r for r in creative_rows if r.get("ad_id")}
+
+    # Fetch server-side orders for reconciliation
+    order_rows = (
+        sb.table("orders")
+        .select("utm_campaign, total_price")
+        .eq("client_id", client_id)
+        .eq("financial_status", "paid")
+        .gt("total_price", 0)
+        .gte("created_at", f"{d_start}T00:00:00+00:00")
+        .lte("created_at", f"{d_end}T23:59:59+00:00")
+        .limit(5000)
+        .execute()
+    ).data or []
+
+    from ..services import meta_campaigns
+    server_by_campaign: dict = {}
+    for o in order_rows:
+        cam = (o.get("utm_campaign") or "").strip()
+        if not cam:
+            continue
+        server_by_campaign.setdefault(cam, {"orders": 0, "revenue": 0.0})
+        server_by_campaign[cam]["orders"]  += 1
+        server_by_campaign[cam]["revenue"] += float(o.get("total_price") or 0)
+
+    campaigns_out = []
+    for cid_, c_ in camp_map.items():
+        prev_c = prev_camp_rev.get(cid_, {})
+        t = _finalize(c_["_totals"], prev_c.get("spend"), prev_c.get("revenue"))
+
+        # Server-side reconciliation — numeric campaign_id match
+        srv = server_by_campaign.get(cid_, {"orders": 0, "revenue": 0.0})
+        t["server_orders"]  = srv["orders"]
+        t["server_revenue"] = round(srv["revenue"], 2)
+
+        adsets_out = []
+        for asid_, a_ in c_["_adsets"].items():
+            at = _finalize(a_["_totals"])
+            ads_out = []
+            for ad_id_, ad_ in a_["_ads"].items():
+                adt = _finalize(ad_["_totals"])
+                cr = creative_map.get(ad_id_, {})
+                ads_out.append({
+                    "ad_id":    ad_id_,
+                    "ad_name":  ad_["ad_name"],
+                    "image_url": cr.get("image_url"),
+                    "status":    cr.get("effective_status"),
+                    **adt,
+                })
+            ads_out.sort(key=lambda x: x["spend"], reverse=True)
+            adsets_out.append({
+                "adset_id":   asid_,
+                "adset_name": a_["adset_name"],
+                "ads":        ads_out,
+                **at,
+            })
+        adsets_out.sort(key=lambda x: x["spend"], reverse=True)
+        campaigns_out.append({
+            "campaign_id":   cid_,
+            "campaign_name": c_["campaign_name"],
+            "adsets":        adsets_out,
+            **t,
+        })
+    campaigns_out.sort(key=lambda x: x["spend"], reverse=True)
+
+    # ── Funnel from tracking_events ────────────────────────────────────────
+    funnel_start = f"{d_start}T00:00:00+00:00"
+    funnel_end   = f"{d_end}T23:59:59+00:00"
+    funnel_curr = {
+        et: (
+            sb.table("tracking_events")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client_id)
+            .eq("event_type", et)
+            .gte("created_at", funnel_start)
+            .lte("created_at", funnel_end)
+            .execute()
+        ).count or 0
+        for et in ("pageview", "view_product", "add_to_cart", "begin_checkout")
+    }
+    funnel_curr["purchases"] = curr_totals["purchases"]
+
+    prev_funnel_start = f"{d_prev_start}T00:00:00+00:00"
+    prev_funnel_end   = f"{d_prev_end}T23:59:59+00:00"
+    funnel_prev = {
+        et: (
+            sb.table("tracking_events")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client_id)
+            .eq("event_type", et)
+            .gte("created_at", prev_funnel_start)
+            .lte("created_at", prev_funnel_end)
+            .execute()
+        ).count or 0
+        for et in ("pageview", "add_to_cart", "begin_checkout")
+    }
+    funnel_prev["purchases"] = prev_totals["purchases"]
+
+    return {
+        "days":       days,
+        "start":      str(d_start),
+        "end":        str(d_end),
+        "prev_start": str(d_prev_start),
+        "prev_end":   str(d_prev_end),
+        "has_data":   bool(curr_rows),
+        "totals":     curr_totals,
+        "prev_totals": prev_totals,
+        "deltas":     deltas,
+        "campaigns":  campaigns_out,
+        "daily":      daily,
+        "funnel":     funnel_curr,
+        "funnel_prev": funnel_prev,
     }
