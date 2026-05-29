@@ -434,22 +434,44 @@ async def get_overview(pixel_id: str, days: int = 30):
     ).data or []
 
     from ..services import meta_campaigns
-    server_by_campaign: dict = {}
+    # Build server lookup by ALL utm_campaign values (ID numérico, nome exato, nome lower)
+    server_by_key: dict = {}
     for o in order_rows:
         cam = (o.get("utm_campaign") or "").strip()
         if not cam:
             continue
-        server_by_campaign.setdefault(cam, {"orders": 0, "revenue": 0.0})
-        server_by_campaign[cam]["orders"]  += 1
-        server_by_campaign[cam]["revenue"] += float(o.get("total_price") or 0)
+        e = server_by_key.setdefault(cam, {"orders": 0, "revenue": 0.0})
+        e["orders"]  += 1
+        e["revenue"] += float(o.get("total_price") or 0)
+
+    def _srv_lookup(campaign_id: str, campaign_name: str) -> dict:
+        """Tenta match por ID numérico, ID parcial, nome exato e nome lowercase."""
+        empty = {"orders": 0, "revenue": 0.0}
+        # 1. ID exato
+        hit = server_by_key.get(campaign_id)
+        if hit: return hit
+        # 2. Nome exato
+        hit = server_by_key.get(campaign_name)
+        if hit: return hit
+        # 3. Nome lowercase
+        name_lower = campaign_name.lower()
+        for k, v in server_by_key.items():
+            if k.lower() == name_lower:
+                return v
+        # 4. ID parcial — alguns pedidos têm IDs truncados (12 dígitos vs 18)
+        if campaign_id.isdigit() and len(campaign_id) >= 12:
+            for k, v in server_by_key.items():
+                if k.isdigit() and (k.startswith(campaign_id[:12]) or campaign_id.startswith(k[:12])):
+                    return v
+        return empty
 
     campaigns_out = []
     for cid_, c_ in camp_map.items():
         prev_c = prev_camp_rev.get(cid_, {})
         t = _finalize(c_["_totals"], prev_c.get("spend"), prev_c.get("revenue"))
 
-        # Server-side reconciliation — numeric campaign_id match
-        srv = server_by_campaign.get(cid_, {"orders": 0, "revenue": 0.0})
+        # Server-side reconciliation — multi-strategy lookup
+        srv = _srv_lookup(cid_, c_["campaign_name"])
         t["server_orders"]  = srv["orders"]
         t["server_revenue"] = round(srv["revenue"], 2)
 

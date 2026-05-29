@@ -214,8 +214,10 @@ function CampaignRowComp({ row }: { row: CampaignRow }) {
         </td>
         <td className="px-3 py-3 text-right text-sm tabular-nums">
           <span className="text-emerald-400 font-semibold">{fmt(row.revenue)}</span>
-          {row.server_revenue > 0 && Math.abs(row.server_revenue - row.revenue) > 50 && (
-            <p className="text-xs text-teal-400/70">{fmt(row.server_revenue)} real</p>
+          {row.server_revenue > 0 && (
+            <p className={`text-xs mt-0.5 ${Math.abs(row.server_revenue - row.revenue) > 50 ? 'text-teal-400' : 'text-slate-500'}`}>
+              {fmt(row.server_revenue)} real
+            </p>
           )}
         </td>
         <td className="px-3 py-3 text-right tabular-nums">
