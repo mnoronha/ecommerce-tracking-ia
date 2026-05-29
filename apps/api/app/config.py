@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     SMTP_PASS: str = ""
     SMTP_FROM: str = ""  # defaults to SMTP_USER if empty
 
+    # ── Notificação da agência ────────────────────────────────────────────
+    # Destino interno para relatórios retidos pelo gate de negatividade
+    # (mês ruim não vai direto pro cliente — a agência revisa antes).
+    AGENCY_NOTIFY_EMAIL: str = ""
+
     # ── Meta CAPI ────────────────────────────────────────────────────────────
     # Código de teste do Events Manager — remover após validação
     META_TEST_EVENT_CODE: str = ""

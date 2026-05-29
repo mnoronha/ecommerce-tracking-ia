@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .limiter import limiter
 from .routers import alerts as alerts_router, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, live, meta_ads, pacing, pixel, setup
-from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, sessionization, spend_sync
+from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, reports, sessionization, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -33,12 +33,20 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 _scheduler = BackgroundScheduler()
 _scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
 _scheduler.add_job(
-    alerts.send_weekly_reports,
+    reports.send_weekly_reports,
     "cron",
     day_of_week="mon",
-    hour=8,
+    hour=11,  # 11 UTC = 08:00 BRT
     minute=0,
     id="weekly_reports",
+)
+_scheduler.add_job(
+    reports.send_monthly_reports,
+    "cron",
+    day=1,
+    hour=11,  # 11 UTC = 08:00 BRT — 1º dia do mês, sobre o mês anterior fechado
+    minute=0,
+    id="monthly_reports",
 )
 _scheduler.add_job(
     meta_audiences.run_audience_sync_all_clients,

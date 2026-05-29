@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from ..database import get_supabase
-from ..services import ai_analyst, alerts
+from ..services import ai_analyst, alerts, reports
 from ..services.writer import resolve_client_uuid
 
 logger = logging.getLogger(__name__)
@@ -172,18 +172,29 @@ async def test_alert(pixel_id: str):
 
 
 class ReportRequest(BaseModel):
-    email: str | None = None  # override alert_email if provided
+    email: str | None = None          # override alert_email if provided
+    report_type: str = "weekly"       # "weekly" | "monthly"
+    force: bool = False               # monthly only — bypass the negativity gate
 
 
 @router.post("/{pixel_id}/report", summary="Gera insights + envia relatório por email")
 async def send_report(pixel_id: str, body: ReportRequest | None = None, background_tasks: BackgroundTasks = None):
     """
-    Generates fresh Claude insights (if none in last 6h) and sends the weekly
+    Generates fresh Claude insights (if none recent) and sends the requested
     report email. Uses the client's alert_email unless overridden in the body.
+
+    report_type: "weekly" (objective digest) or "monthly" (complete report).
+    For monthly, a clearly negative month is held for agency review unless
+    force=True; in that case the response reports held=True.
     """
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:
         raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+
+    report_type = (body.report_type if body else "weekly") or "weekly"
+    if report_type not in ("weekly", "monthly"):
+        raise HTTPException(status_code=400, detail="report_type deve ser 'weekly' ou 'monthly'")
+    force = bool(body.force) if body else False
 
     # Resolve target email
     to_email = (body.email if body else None)
@@ -202,17 +213,23 @@ async def send_report(pixel_id: str, body: ReportRequest | None = None, backgrou
 
     def _run():
         try:
-            alerts.send_report_now(client_uuid, pixel_id, email_snapshot, generate_ai=True)
-            logger.info("report sent for %s → %s", pixel_id, email_snapshot)
+            res = reports.send_report_now(
+                client_uuid, pixel_id, email_snapshot,
+                report_type=report_type, generate_ai=True, force=force,
+            )
+            logger.info("%s report for %s → %s (held=%s)", report_type, pixel_id, res.get("sent_to"), res.get("held"))
         except Exception as exc:
             logger.error("report failed for %s: %s", pixel_id, exc)
 
     if background_tasks:
         background_tasks.add_task(_run)
-        return {"status": "queued", "email": email_snapshot, "pixel_id": pixel_id}
+        return {"status": "queued", "email": email_snapshot, "report_type": report_type, "pixel_id": pixel_id}
 
-    _run()
-    return {"status": "sent", "email": email_snapshot, "pixel_id": pixel_id}
+    res = reports.send_report_now(
+        client_uuid, pixel_id, email_snapshot,
+        report_type=report_type, generate_ai=True, force=force,
+    )
+    return {"status": "sent", "report_type": report_type, "pixel_id": pixel_id, **res}
 
 
 @router.get("/{pixel_id}/campaign-products")

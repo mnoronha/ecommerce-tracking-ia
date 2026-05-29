@@ -13,8 +13,9 @@ import { supabase } from '@/lib/supabase'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
-type InsightType = 'all' | 'weekly_report' | 'recommendation' | 'anomaly' | 'pattern'
+type InsightType = 'all' | 'weekly_report' | 'monthly_report' | 'recommendation' | 'anomaly' | 'pattern'
 type Severity    = 'all' | 'info' | 'warning' | 'critical'
+type ReportType  = 'weekly' | 'monthly'
 
 interface Insight {
   id:         string
@@ -29,6 +30,7 @@ interface Insight {
 
 const TYPE_LABELS: Record<string, string> = {
   weekly_report:  'Relatório Semanal',
+  monthly_report: 'Relatório Mensal',
   recommendation: 'Recomendação',
   anomaly:        'Anomalia',
   pattern:        'Padrão',
@@ -36,6 +38,7 @@ const TYPE_LABELS: Record<string, string> = {
 
 const TYPE_ICON: Record<string, React.ElementType> = {
   weekly_report:  BarChart2,
+  monthly_report: BarChart2,
   recommendation: Lightbulb,
   anomaly:        AlertTriangle,
   pattern:        Sparkles,
@@ -43,6 +46,7 @@ const TYPE_ICON: Record<string, React.ElementType> = {
 
 const TYPE_COLOR: Record<string, string> = {
   weekly_report:  'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+  monthly_report: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
   recommendation: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
   anomaly:        'bg-yellow-500/15 text-yellow-300 border-yellow-500/30',
   pattern:        'bg-purple-500/15 text-purple-300 border-purple-500/30',
@@ -88,8 +92,9 @@ export default function ReportsPage() {
   const [insights,    setInsights]    = useState<Insight[]>([])
   const [loading,     setLoading]     = useState(true)
   const [generating,  setGenerating]  = useState(false)
-  const [sending,     setSending]     = useState(false)
+  const [sending,     setSending]     = useState<ReportType | null>(null)
   const [sentTo,      setSentTo]      = useState<string | null>(null)
+  const [sentHeld,    setSentHeld]    = useState(false)
   const [sendError,   setSendError]   = useState<string | null>(null)
   const [alertEmail,  setAlertEmail]  = useState('')
   const [emailInput,  setEmailInput]  = useState('')
@@ -135,22 +140,31 @@ export default function ReportsPage() {
     }
   }
 
-  async function sendReport() {
-    setSending(true)
+  async function sendReport(reportType: ReportType, force = false) {
+    setSending(reportType)
     setSentTo(null)
+    setSentHeld(false)
     setSendError(null)
     try {
-      const res  = await fetch(`${API_URL}/insights/${clientId}/report`, { method: 'POST' })
+      const res  = await fetch(`${API_URL}/insights/${clientId}/report`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ report_type: reportType, force }),
+      })
       const json = await res.json()
       if (!res.ok) {
         setSendError(json.detail || `Erro ${res.status}`)
-      } else {
+      } else if (json.status === 'queued') {
+        // Background send — no held verdict yet
         setSentTo(json.email)
+      } else {
+        setSentHeld(Boolean(json.held))
+        setSentTo(json.sent_to || json.email)
       }
     } catch (e: unknown) {
       setSendError(e instanceof Error ? e.message : 'Erro ao enviar')
     } finally {
-      setSending(false)
+      setSending(null)
     }
   }
 
@@ -227,14 +241,24 @@ export default function ReportsPage() {
             </button>
           )}
           <button
-            onClick={sendReport}
-            disabled={sending || generating}
+            onClick={() => sendReport('weekly')}
+            disabled={sending !== null || generating}
             className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252b3b] border border-[#2a2f3e] disabled:opacity-50 text-slate-300 px-3 py-2 rounded-lg font-medium"
-            title="Gera análise IA e envia por email (usa alert_email do cliente)"
+            title="Gera análise IA e envia o resumo semanal por email (usa alert_email do cliente)"
           >
-            {sending
+            {sending === 'weekly'
               ? <><Loader2 size={12} className="animate-spin" /> Enviando…</>
-              : <><Send size={12} /> Enviar relatório</>}
+              : <><Send size={12} /> Enviar semanal</>}
+          </button>
+          <button
+            onClick={() => sendReport('monthly')}
+            disabled={sending !== null || generating}
+            className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252b3b] border border-[#2a2f3e] disabled:opacity-50 text-slate-300 px-3 py-2 rounded-lg font-medium"
+            title="Gera análise mensal completa. Se o mês for muito negativo, o envio é retido e a agência é notificada."
+          >
+            {sending === 'monthly'
+              ? <><Loader2 size={12} className="animate-spin" /> Enviando…</>
+              : <><Send size={12} /> Enviar mensal</>}
           </button>
           <button
             onClick={generate}
@@ -251,10 +275,16 @@ export default function ReportsPage() {
       <div className="p-6 space-y-5 max-w-4xl">
 
         {/* Report send result */}
-        {sentTo && (
+        {sentTo && !sentHeld && (
           <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-lg px-4 py-2.5">
             <CheckCircle size={13} />
             Relatório enviado para <strong className="font-semibold">{sentTo}</strong>. Pode levar alguns minutos para chegar.
+          </div>
+        )}
+        {sentTo && sentHeld && (
+          <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 text-xs rounded-lg px-4 py-2.5">
+            <AlertTriangle size={13} />
+            Mês sinalizado como negativo — <strong className="font-semibold">não enviado ao cliente</strong>. Encaminhado para revisão da agência ({sentTo}).
           </div>
         )}
         {sendError && (
@@ -267,12 +297,18 @@ export default function ReportsPage() {
         {/* Agendamento */}
         <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
           <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm font-semibold text-white mb-0.5">Relatório semanal automático</p>
+            <div className="max-w-md">
+              <p className="text-sm font-semibold text-white mb-0.5">Relatórios automáticos</p>
               <p className="text-xs text-slate-500">
-                Toda <span className="text-slate-400 font-medium">segunda-feira às 8h</span> (horário de Brasília) o sistema gera automaticamente
-                um relatório com KPIs, análise IA e alertas e envia para o email abaixo.
+                <span className="text-slate-400 font-medium">Semanal</span> — toda segunda-feira às 8h (Brasília): resumo objetivo com
+                receita da semana, KPIs essenciais, progresso da meta e alertas.
               </p>
+              <p className="text-xs text-slate-500 mt-1">
+                <span className="text-slate-400 font-medium">Mensal</span> — todo dia 1º às 8h: relatório completo do mês anterior
+                (faturamento, canais Meta/Google, produtos, retenção e análise IA). Se o mês for muito negativo,
+                o envio é retido e a agência é notificada antes.
+              </p>
+              <p className="text-xs text-slate-500 mt-1">Ambos vão para o email abaixo.</p>
             </div>
             <form onSubmit={saveAlertEmail} className="flex items-center gap-2 shrink-0">
               <input
@@ -302,7 +338,7 @@ export default function ReportsPage() {
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {(['all', 'weekly_report', 'recommendation', 'anomaly', 'pattern'] as InsightType[]).map(t => (
+            {(['all', 'weekly_report', 'monthly_report', 'recommendation', 'anomaly', 'pattern'] as InsightType[]).map(t => (
               <button
                 key={t}
                 onClick={() => setTypeFilter(t)}

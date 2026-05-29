@@ -429,6 +429,88 @@ def run_daily_insights_all_clients() -> None:
         logger.error("run_daily_insights_all_clients: %s", exc)
 
 
+# ── Monthly deep analysis ──────────────────────────────────────────────────────
+
+_MONTHLY_SYSTEM_PROMPT = """Você é um analista sênior de e-commerce escrevendo o relatório MENSAL
+que será lido pelo dono da loja (cliente da agência).
+
+Retorne EXATAMENTE um JSON (sem markdown, sem texto extra):
+
+{
+  "insights": [
+    {
+      "type": "monthly_report",
+      "severity": "info|warning|critical",
+      "title": "Título do mês (max 80 chars)",
+      "content": "Análise estratégica completa em 4-6 parágrafos: visão geral do mês, desempenho por canal, retenção/LTV, o que funcionou e o que ajustar no próximo mês. Use números reais.",
+      "recommendation": "As 2-3 prioridades para o próximo mês",
+      "data": {}
+    }
+  ]
+}
+
+Regras:
+- Gere EXATAMENTE 1 insight do tipo 'monthly_report'
+- SEMPRE comece destacando os pontos positivos do mês, mesmo que o resultado geral tenha sido fraco — encontre o que funcionou (um canal eficiente, recompra, um produto, melhora de ticket)
+- Seja honesto sobre os problemas, mas com tom construtivo e propositivo (foco em solução, não em culpa)
+- Use os números reais dos dados (receita, ROAS por canal, cohort de recompra, top produtos)
+- Responda em português brasileiro"""
+
+
+def generate_monthly_insights(client_uuid: str) -> dict:
+    """
+    Análise mensal aprofundada (Claude Sonnet) — gera 1 insight 'monthly_report'.
+    Consumida pelo relatório mensal (services.reports). Sempre destaca o positivo.
+    """
+    if not settings.ANTHROPIC_API_KEY:
+        raise ValueError("ANTHROPIC_API_KEY não configurada")
+
+    store_name = _get_client_name(client_uuid)
+    metrics = _collect_metrics(client_uuid)
+
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    prompt = f"""Dados da loja {store_name} (janela de 30 dias e cohorts):
+
+{json.dumps(metrics, ensure_ascii=False, indent=2)}
+
+Escreva o relatório mensal estratégico cobrindo:
+1. Pontos positivos do mês (sempre começar por aqui)
+2. Visão geral de faturamento e tendência
+3. Eficiência por canal (use budget_intel_por_canal) com recomendação de budget
+4. Retenção e LTV (use cohort_retencao)
+5. As 2-3 prioridades para o próximo mês"""
+
+    message = client.messages.create(
+        model=settings.ANTHROPIC_MODEL,
+        max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+        system=_MONTHLY_SYSTEM_PROMPT,
+    )
+
+    raw = message.content[0].text.strip()
+    for fence in ("```json", "```"):
+        if raw.startswith(fence):
+            raw = raw[len(fence):]
+            break
+    if raw.endswith("```"):
+        raw = raw[:-3]
+
+    try:
+        parsed = json.loads(raw.strip())
+        insights = parsed.get("insights", [])
+    except json.JSONDecodeError as exc:
+        logger.error("Monthly Claude returned invalid JSON: %s — raw[:200]=%s", exc, raw[:200])
+        return {"insights_generated": 0, "insights_saved": 0, "error": str(exc)}
+
+    # Force type to monthly_report regardless of what Claude returned
+    for ins in insights:
+        ins["type"] = "monthly_report"
+
+    saved = _save_insights(client_uuid, insights)
+    logger.info("Monthly insights for %s: generated=%d saved=%d", store_name, len(insights), saved)
+    return {"insights_generated": len(insights), "insights_saved": saved}
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 def generate_insights(client_uuid: str) -> dict:
