@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanGate } from '@/components/plan-gate'
+import { supabase } from '@/lib/supabase'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -90,6 +91,10 @@ export default function ReportsPage() {
   const [sending,     setSending]     = useState(false)
   const [sentTo,      setSentTo]      = useState<string | null>(null)
   const [sendError,   setSendError]   = useState<string | null>(null)
+  const [alertEmail,  setAlertEmail]  = useState('')
+  const [emailInput,  setEmailInput]  = useState('')
+  const [savingEmail, setSavingEmail] = useState(false)
+  const [emailSaved,  setEmailSaved]  = useState(false)
   const [typeFilter,  setTypeFilter]  = useState<InsightType>('all')
   const [sevFilter,   setSevFilter]   = useState<Severity>('all')
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set())
@@ -160,6 +165,27 @@ export default function ReportsPage() {
   async function markRead(id: string) {
     setInsights(prev => prev.map(i => i.id === id ? { ...i, is_read: true } : i))
     await fetch(`${API_URL}/insights/${clientId}/${id}/read`, { method: 'PATCH' })
+  }
+
+  // Load alert_email on mount
+  useEffect(() => {
+    supabase.from('clients').select('alert_email').eq('pixel_id', clientId).single()
+      .then(({ data }) => {
+        const email = data?.alert_email ?? ''
+        setAlertEmail(email)
+        setEmailInput(email)
+      })
+  }, [clientId])
+
+  async function saveAlertEmail(e: React.FormEvent) {
+    e.preventDefault()
+    setSavingEmail(true)
+    setEmailSaved(false)
+    await supabase.from('clients').update({ alert_email: emailInput || null }).eq('pixel_id', clientId)
+    setAlertEmail(emailInput)
+    setSavingEmail(false)
+    setEmailSaved(true)
+    setTimeout(() => setEmailSaved(false), 3000)
   }
 
   const unread = insights.filter(i => !i.is_read).length
@@ -237,6 +263,41 @@ export default function ReportsPage() {
             {sendError}
           </div>
         )}
+
+        {/* Agendamento */}
+        <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm font-semibold text-white mb-0.5">Relatório semanal automático</p>
+              <p className="text-xs text-slate-500">
+                Toda <span className="text-slate-400 font-medium">segunda-feira às 8h</span> (horário de Brasília) o sistema gera automaticamente
+                um relatório com KPIs, análise IA e alertas e envia para o email abaixo.
+              </p>
+            </div>
+            <form onSubmit={saveAlertEmail} className="flex items-center gap-2 shrink-0">
+              <input
+                type="email"
+                value={emailInput}
+                onChange={e => setEmailInput(e.target.value)}
+                placeholder="email@empresa.com"
+                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500 w-56"
+              />
+              <button
+                type="submit"
+                disabled={savingEmail || emailInput === alertEmail}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors"
+              >
+                {savingEmail ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
+                {emailSaved ? 'Salvo!' : 'Salvar'}
+              </button>
+            </form>
+          </div>
+          {alertEmail && (
+            <p className="text-xs text-slate-600 mt-2">
+              Enviando atualmente para: <span className="text-slate-400">{alertEmail}</span>
+            </p>
+          )}
+        </div>
 
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-3">

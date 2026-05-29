@@ -7,7 +7,7 @@ import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Targ
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 type DatePreset = '1d' | '7d' | '30d' | '90d' | 'custom'
-type Lens = 'campaign' | 'product' | 'meta-attribution' | 'declared-source'
+type Lens = 'campaign' | 'product' | 'meta-attribution' | 'declared-source' | 'ad'
 
 interface DeclaredSourceRow {
   source_declared:    string
@@ -62,6 +62,22 @@ interface ProductRow {
   orders:        number
   top_campaigns: CampaignInProduct[]
 }
+interface AdRow {
+  ad_id:        string
+  ad_name:      string
+  campaign:     string
+  platform:     string
+  source:       string
+  image_url:    string | null
+  status:       string | null
+  orders:       number
+  revenue:      number
+  profit:       number | null
+  units:        number
+  avg_ticket:   number
+  top_products: Array<{ product_id: string; name: string; sku: string | null; units: number; revenue: number }>
+}
+
 interface MetaAttrRow {
   campaign_id:    string
   campaign_name:  string
@@ -154,6 +170,7 @@ export default function JourneyPage() {
   const [products,  setProducts]  = useState<ProductRow[]>([])
   const [metaAttr, setMetaAttr] = useState<MetaAttrRow[]>([])
   const [metaTotals, setMetaTotals] = useState<MetaAttrTotals | null>(null)
+  const [ads, setAds] = useState<AdRow[]>([])
   const [declared, setDeclared] = useState<DeclaredSourceRow[]>([])
   const [declaredTotal, setDeclaredTotal] = useState(0)
   const [loading,  setLoading]  = useState(true)
@@ -190,6 +207,9 @@ export default function JourneyPage() {
           setMetaAttr(data.campaigns || [])
           setMetaTotals(data.totals || null)
         }
+      } else if (lens === 'ad') {
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-ad?${q}&top_products=5`)
+        if (res.ok) setAds((await res.json()).ads || [])
       } else {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-declared-source?${q}`)
         if (res.ok) {
@@ -310,7 +330,9 @@ export default function JourneyPage() {
       ? products.reduce((s, p) => s + p.revenue, 0)
       : lens === 'declared-source'
         ? declared.reduce((s, d) => s + d.declared_revenue, 0)
-        : metaTotals?.meta_revenue || 0
+        : lens === 'ad'
+          ? ads.reduce((s, a) => s + a.revenue, 0)
+          : metaTotals?.meta_revenue || 0
 
   const periodLbl = periodLabel(preset, fromDate, toDate)
 
@@ -406,6 +428,14 @@ export default function JourneyPage() {
               }`}
             >
               <Sparkles size={14} />Como te conheceram
+            </button>
+            <button
+              onClick={() => { setLens('ad'); setExpanded(new Set()) }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                lens === 'ad' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Megaphone size={14} />Por anúncio
             </button>
           </div>
 
@@ -661,6 +691,83 @@ export default function JourneyPage() {
               a receita que <em>só</em> o survey capturou — pedidos onde o cliente declarou uma fonte (ex: TikTok) mas não tinha UTM/fbclid
               correspondente. Esse é o valor que rebalanceia o orçamento — fontes invisíveis aparecem aqui.
             </p>
+          </div>
+        ) : lens === 'ad' ? (
+          <div className="space-y-2">
+            {ads.length === 0 ? (
+              <p className="text-slate-500 text-sm text-center py-8">
+                Sem dados de anúncio no período. Certifique-se que os pedidos têm <code className="text-slate-400">ad_id</code> preenchido.
+              </p>
+            ) : ads.map(a => {
+              const open = expanded.has(a.ad_id)
+              const noAd = a.ad_id === '—'
+              return (
+                <div key={a.ad_id} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => toggle(a.ad_id)}
+                    className="w-full px-5 py-3.5 flex items-center gap-4 hover:bg-[#252a3a] transition-colors text-left"
+                  >
+                    {open ? <ChevronDown size={14} className="text-slate-500 shrink-0" /> : <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+                    {a.image_url ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={a.image_url} alt="" className="w-10 h-10 rounded object-cover shrink-0" />
+                    ) : (
+                      <div className="w-10 h-10 rounded bg-[#0f1117] shrink-0 flex items-center justify-center">
+                        <Megaphone size={14} className="text-slate-600" />
+                      </div>
+                    )}
+                    <div className={`px-2 py-0.5 rounded text-xs font-medium border ${badge(a.platform)} shrink-0`}>
+                      {a.platform}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">
+                        {noAd ? <span className="text-slate-500 italic">Sem ad_id</span> : a.ad_name}
+                      </p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {a.campaign !== '—' ? a.campaign : a.source}
+                        {a.status && <span className={`ml-2 text-[10px] ${a.status === 'ACTIVE' ? 'text-emerald-500' : 'text-slate-600'}`}>{a.status}</span>}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-emerald-400">{fmt(a.revenue)}</p>
+                      <p className="text-xs text-slate-500">{a.orders} pedidos · {a.units} un.</p>
+                    </div>
+                  </button>
+
+                  {open && (
+                    <div className="border-t border-[#2a2f3e] bg-[#0f1117]">
+                      <div className="px-5 py-3 grid grid-cols-4 gap-4">
+                        <Mini label="Pedidos"      value={a.orders.toString()} />
+                        <Mini label="Receita"      value={fmt(a.revenue)} accent="emerald" />
+                        <Mini label="Ticket médio" value={fmt(a.avg_ticket)} />
+                        <Mini label="Margem"       value={a.profit != null ? fmt(a.profit) : '—'} accent="teal" />
+                      </div>
+                      {a.top_products.length > 0 && (
+                        <div className="border-t border-[#2a2f3e]">
+                          <p className="px-5 pt-3 text-xs uppercase tracking-wider text-slate-500 font-medium">
+                            Produtos vendidos por este anúncio
+                          </p>
+                          <table className="w-full text-sm">
+                            <tbody>
+                              {a.top_products.map(p => (
+                                <tr key={p.product_id} className="border-t border-[#2a2f3e] last:border-0">
+                                  <td className="px-5 py-2.5 text-slate-200 text-xs max-w-md truncate">
+                                    {p.name}
+                                    {p.sku && <span className="text-slate-600 ml-2 font-mono">{p.sku}</span>}
+                                  </td>
+                                  <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{p.units} un.</td>
+                                  <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(p.revenue)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         ) : lens === 'campaign' ? (
           <div className="space-y-2">

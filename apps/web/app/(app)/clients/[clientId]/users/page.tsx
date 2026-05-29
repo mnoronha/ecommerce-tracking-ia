@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
+import { supabase } from '@/lib/supabase'
 import { ArrowLeft, UserPlus, Trash2, Loader2, Mail, ShieldCheck, Eye } from 'lucide-react'
 
 interface Member {
@@ -30,7 +30,7 @@ export default function ClientUsersPage() {
   const [success,   setSuccess]   = useState('')
 
   const load = useCallback(async () => {
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton from @/lib/supabase
 
     const { data: clientData } = await supabase
       .from('clients').select('id').eq('pixel_id', clientId).single()
@@ -56,7 +56,7 @@ export default function ClientUsersPage() {
     setError('')
     setSuccess('')
 
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton from @/lib/supabase
 
     // Check if user exists in auth
     const { data: { user: currentUser } } = await supabase.auth.getUser()
@@ -83,7 +83,7 @@ export default function ClientUsersPage() {
 
   async function handleRemove(memberId: string) {
     if (!confirm('Remover acesso deste usuário?')) return
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton from @/lib/supabase
     await supabase.from('client_members').delete().eq('id', memberId)
     load()
   }

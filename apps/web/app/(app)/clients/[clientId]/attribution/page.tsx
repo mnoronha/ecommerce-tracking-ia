@@ -72,6 +72,10 @@ const SOURCE_BADGE: Record<string, string> = {
   organic:   'bg-emerald-500/10 text-emerald-400',
 }
 
+function isNumericId(s: string | null): boolean {
+  return !!s && /^\d{8,}$/.test(s.trim())
+}
+
 function periodLabel(preset: DatePreset, fromDate: string, toDate: string): string {
   if (preset === '1d') return 'Ontem'
   if (preset === 'custom' && fromDate && toDate) return `${fromDate} → ${toDate}`
@@ -308,8 +312,14 @@ export default function AttributionPage() {
                         </span>
                         {s.medium && <span className="text-slate-500 text-xs ml-2">/ {s.medium}</span>}
                       </td>
-                      <td className="px-5 py-2.5 text-slate-400 text-xs max-w-[220px]">
-                        <p className="truncate">{s.campaign || <span className="text-slate-600">—</span>}</p>
+                      <td className="px-5 py-2.5 text-xs max-w-[220px]">
+                        {isNumericId(s.campaign) ? (
+                          <p className="truncate font-mono text-amber-400/70" title="ID numérico — clique em Recalcular para resolver o nome">
+                            {s.campaign}
+                          </p>
+                        ) : (
+                          <p className="truncate text-slate-400">{s.campaign || <span className="text-slate-600">—</span>}</p>
+                        )}
                       </td>
                       <td className="px-5 py-2.5 text-right text-slate-300 tabular-nums">{s.conversions.toFixed(2)}</td>
                       <td className="px-5 py-2.5 text-right text-emerald-400 font-medium tabular-nums">{fmtBRL(s.revenue)}</td>

@@ -107,16 +107,26 @@ async def get_roas(pixel_id: str, days: int = 30):
             until=str(d_until),
         )
 
-    # Mapa por nome de campanha (lowercase para matching tolerante)
-    spend_map: dict[str, dict] = {r["campaign_name"].lower(): r for r in ads_rows}
+    # Dois mapas para matching tolerante: por nome E por campaign_id numérico.
+    # Muitos pedidos chegam com utm_campaign = ID numérico do Meta (ex: "120210118442410224")
+    # em vez do nome, então o matching por nome sozinho falha e o ROAS fica zerado.
+    spend_map_name: dict[str, dict] = {r["campaign_name"].lower(): r for r in ads_rows}
+    spend_map_id:   dict[str, dict] = {r["campaign_id"]: r for r in ads_rows if r.get("campaign_id")}
+
+    def _lookup_ads(utm_key: str) -> dict:
+        """Tenta ID primeiro (quando utm_campaign é numérico), depois por nome."""
+        if utm_key.isdigit():
+            return spend_map_id.get(utm_key) or spend_map_name.get(utm_key.lower(), {})
+        return spend_map_name.get(utm_key.lower()) or spend_map_id.get(utm_key, {})
 
     # ── Merge ─────────────────────────────────────────────────────────────────
+    # União de chaves: utm_campaign da nossa base + campaign_name da API Meta
     all_names = set(campaign_map.keys()) | {r["campaign_name"] for r in ads_rows}
     rows = []
     any_cogs = any(v.get("has_cogs") for v in campaign_map.values())
     for name in all_names:
         rev_data       = campaign_map.get(name, {"revenue": 0.0, "gross_profit": 0.0, "orders": 0, "has_cogs": False})
-        ads            = spend_map.get(name.lower(), {})
+        ads            = _lookup_ads(name)
         spend          = ads.get("spend", 0.0)
         revenue        = rev_data["revenue"]
         gross_profit   = rev_data.get("gross_profit") or 0.0

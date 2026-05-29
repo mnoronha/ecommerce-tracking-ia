@@ -736,3 +736,127 @@ async def by_declared_source(
     rows.sort(key=lambda r: r["declared_revenue"], reverse=True)
 
     return {"days": days, "by_source": rows, "total_responses": len(surveys)}
+
+
+@router.get(
+    "/journey/{pixel_id}/by-ad",
+    summary="Atribuição por anúncio — conversões + produtos vendidos por ad_id",
+    tags=["journey"],
+)
+async def by_ad(
+    pixel_id:     str,
+    days:         int = 30,
+    top_products: int = 5,
+    start:        Optional[str] = None,
+    end:          Optional[str] = None,
+):
+    """
+    Agrupa pedidos pelo ad_id (campo do pedido). Cruza com ad_creatives para
+    nome do anúncio e com order_items para os produtos vendidos por cada ad.
+    Útil para ver "anúncio influencer X vendeu qual produto?" e quantas conversões.
+    """
+    client_uuid = _resolve(pixel_id)
+    orders = _fetch_paid_orders_with_items(client_uuid, days, start, end)
+    if not orders:
+        return {"days": days, "ads": []}
+
+    sb = get_supabase()
+
+    # Fetch ad creatives for name resolution
+    creative_rows = (
+        sb.table("ad_creatives")
+        .select("ad_id, ad_name, campaign_id, effective_status, image_url")
+        .eq("client_id", client_uuid)
+        .execute()
+    ).data or []
+    creative_map: dict[str, dict] = {c["ad_id"]: c for c in creative_rows if c.get("ad_id")}
+
+    bucket: dict[str, dict] = {}
+    for o in orders:
+        ad_id    = o.get("ad_id") or "—"
+        source   = o.get("utm_source")   or "direto"
+        campaign = o.get("utm_campaign") or "—"
+        platform = _platform_from_source(source)
+
+        if ad_id not in bucket:
+            creative = creative_map.get(ad_id, {})
+            bucket[ad_id] = {
+                "ad_id":       ad_id,
+                "ad_name":     creative.get("ad_name") or ad_id,
+                "campaign":    campaign,
+                "platform":    platform,
+                "source":      source,
+                "image_url":   creative.get("image_url"),
+                "status":      creative.get("effective_status"),
+                "orders":      0,
+                "revenue":     0.0,
+                "profit":      0.0,
+                "units":       0,
+                "_products":   {},
+            }
+        b = bucket[ad_id]
+        b["orders"]  += 1
+        b["revenue"] += float(o.get("total_price") or 0)
+        if o.get("gross_profit") is not None:
+            b["profit"] += float(o["gross_profit"])
+
+        for it in o.get("_items") or []:
+            pid  = it.get("platform_product_id") or it.get("sku") or "unknown"
+            qty  = int(it.get("quantity") or 1)
+            line = float(it.get("line_total") or 0)
+            p = b["_products"].setdefault(pid, {
+                "product_id": pid,
+                "name":       it.get("name") or "—",
+                "sku":        it.get("sku"),
+                "units":      0,
+                "revenue":    0.0,
+            })
+            p["units"]   += qty
+            p["revenue"] += line
+            b["units"]   += qty
+
+    # Resolve Meta campaign names for numeric IDs
+    raw_to_id: dict[str, str] = {}
+    for b in bucket.values():
+        if b["platform"] == "meta":
+            numeric = meta_campaigns.extract_meta_id(b["campaign"])
+            if numeric:
+                raw_to_id[b["campaign"]] = numeric
+    name_map: dict[str, str] = {}
+    if raw_to_id:
+        id_to_name = meta_campaigns.get_name_map(client_uuid, list(set(raw_to_id.values())))
+        for raw_val, numeric in raw_to_id.items():
+            if numeric in id_to_name:
+                name_map[raw_val] = id_to_name[numeric]
+
+    ads = []
+    for b in bucket.values():
+        prods = sorted(b["_products"].values(), key=lambda p: p["revenue"], reverse=True)[:top_products]
+        ads.append({
+            "ad_id":       b["ad_id"],
+            "ad_name":     b["ad_name"],
+            "campaign":    name_map.get(b["campaign"], b["campaign"]),
+            "platform":    b["platform"],
+            "source":      b["source"],
+            "image_url":   b["image_url"],
+            "status":      b["status"],
+            "orders":      b["orders"],
+            "revenue":     round(b["revenue"], 2),
+            "profit":      round(b["profit"], 2) if b["profit"] else None,
+            "units":       b["units"],
+            "avg_ticket":  round(b["revenue"] / b["orders"], 2) if b["orders"] else 0,
+            "top_products": [
+                {
+                    "product_id": p["product_id"],
+                    "name":       p["name"],
+                    "sku":        p["sku"],
+                    "units":      p["units"],
+                    "revenue":    round(p["revenue"], 2),
+                }
+                for p in prods
+            ],
+        })
+    ads.sort(key=lambda a: a["revenue"], reverse=True)
+    # Move "—" (no ad_id) to the end
+    ads = [a for a in ads if a["ad_id"] != "—"] + [a for a in ads if a["ad_id"] == "—"]
+    return {"days": days, "ads": ads, "total_orders": sum(a["orders"] for a in ads)}
