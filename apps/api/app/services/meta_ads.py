@@ -11,7 +11,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_ADS_URL = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
+_ADS_URL     = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
+_ACCOUNT_URL = "https://graph.facebook.com/v19.0/act_{account_id}"
 
 
 def _pick_action(actions: list[dict], action_types: tuple[str, ...]) -> Optional[float]:
@@ -111,3 +112,39 @@ def fetch_campaign_insights(
     except Exception as exc:
         logger.error("meta_ads insights error: %s", exc)
         return []
+
+
+def fetch_account_balance(account_id: str, access_token: str) -> dict:
+    """
+    Busca saldo da conta Meta Ads (relevante para contas pre-pagas).
+    Retorna dict com: balance (float BRL), currency, is_prepaid, raw.
+    """
+    clean_id = account_id.removeprefix("act_")
+    try:
+        resp = httpx.get(
+            _ACCOUNT_URL.format(account_id=clean_id),
+            params={
+                "fields": "balance,currency,funding_source_details,spend_cap,amount_spent",
+                "access_token": access_token,
+            },
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("meta_ads balance HTTP %s: %s", resp.status_code, resp.text[:200])
+            return {"error": f"HTTP {resp.status_code}"}
+        data = resp.json()
+        balance_raw   = float(data.get("balance") or 0) / 100.0  # Meta retorna em centavos
+        currency      = data.get("currency", "BRL")
+        funding       = data.get("funding_source_details") or {}
+        is_prepaid    = funding.get("type") in ("PREPAY_ACCOUNT", 1, "1")
+        return {
+            "balance":    balance_raw,
+            "currency":   currency,
+            "is_prepaid": is_prepaid,
+            "raw":        data,
+        }
+    except httpx.TimeoutException:
+        return {"error": "timeout"}
+    except Exception as exc:
+        logger.error("meta_ads balance error: %s", exc)
+        return {"error": str(exc)}

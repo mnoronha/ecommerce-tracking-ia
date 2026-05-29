@@ -371,13 +371,483 @@ def _eval_cpa_over_target(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+# ── New evaluators ────────────────────────────────────────────────────────────
+
+def _eval_revenue_drop(rule: dict, client: dict) -> list[dict]:
+    """Receita 24h caiu X% vs média dos 7 dias anteriores (geral + por canal)."""
+    threshold_warning  = float((rule.get("config") or {}).get("drop_warning_pct",  15))
+    threshold_critical = float((rule.get("config") or {}).get("drop_critical_pct", 30))
+    channel_filter     = (rule.get("config") or {}).get("channel")  # e.g. "facebook" or None
+
+    sb = get_supabase()
+    now = _now()
+    t24h = now - timedelta(hours=24)
+    t7d  = now - timedelta(days=8)
+    t7d_end = now - timedelta(hours=24)
+
+    def _sum(rows): return sum(float(r["total_price"]) for r in rows)
+
+    try:
+        def _q(start, end):
+            q = (
+                sb.table("orders")
+                .select("total_price, utm_source")
+                .eq("client_id", client["id"])
+                .eq("financial_status", "paid")
+                .gt("total_price", 0)
+                .gte("created_at", start.isoformat())
+                .lt("created_at", end.isoformat())
+            )
+            rows = q.execute().data or []
+            if channel_filter:
+                rows = [r for r in rows if (r.get("utm_source") or "").lower() == channel_filter.lower()]
+            return [r for r in rows if (r.get("utm_source") or "").lower() not in ("pos", "draft_order")]
+
+        recent   = _q(t24h, now)
+        baseline = _q(t7d, t7d_end)
+    except Exception as exc:
+        logger.debug("_eval_revenue_drop(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    baseline_avg = _sum(baseline) / 7.0 if baseline else 0
+    if baseline_avg <= 0:
+        return []
+
+    recent_rev = _sum(recent)
+    drop = (baseline_avg - recent_rev) / baseline_avg
+    if drop < threshold_warning / 100:
+        return []
+
+    pixel  = client.get("pixel_id") or "unknown"
+    label  = f" [{channel_filter}]" if channel_filter else ""
+    sev    = "critical" if drop >= threshold_critical / 100 else "warning"
+    return [{
+        "fingerprint": f"revenue_drop:{client['id']}:{channel_filter or 'all'}:{now.date().isoformat()}",
+        "title":       f"Queda de faturamento{label} — {pixel}",
+        "message":     (
+            f"Receita 24h{label}: R$ {recent_rev:,.0f} vs média 7d R$ {baseline_avg:,.0f}/dia "
+            f"(queda de {drop * 100:.0f}%)"
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": sev,
+        "data":     {"recent_rev": recent_rev, "baseline_avg": baseline_avg,
+                     "drop_pct": round(drop * 100, 1), "channel": channel_filter},
+    }]
+
+
+def _eval_views_drop(rule: dict, client: dict) -> list[dict]:
+    """Pageviews das últimas 2h caíram X% vs média das últimas 7 dias no mesmo horário."""
+    threshold = float((rule.get("config") or {}).get("drop_pct", 60))
+    window_h  = 2
+
+    sb  = get_supabase()
+    now = _now()
+    t2h = now - timedelta(hours=window_h)
+
+    try:
+        # Últimas 2h
+        recent_ct = (
+            sb.table("tracking_events")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .eq("event_type", "pageview")
+            .gte("created_at", t2h.isoformat())
+            .execute()
+        ).count or 0
+
+        # Mesmo janela de 2h nos últimos 7 dias (média)
+        baseline_counts: list[int] = []
+        for days_ago in range(1, 8):
+            start = now - timedelta(days=days_ago, hours=0)
+            end   = start + timedelta(hours=window_h)
+            ct = (
+                sb.table("tracking_events")
+                .select("id", count="exact", head=True)
+                .eq("client_id", client["id"])
+                .eq("event_type", "pageview")
+                .gte("created_at", (start - timedelta(hours=window_h)).isoformat())
+                .lt("created_at", end.isoformat())
+                .execute()
+            ).count or 0
+            baseline_counts.append(ct)
+    except Exception as exc:
+        logger.debug("_eval_views_drop(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    baseline_avg = sum(baseline_counts) / len(baseline_counts) if baseline_counts else 0
+    if baseline_avg < 10:  # pouco tráfego — não alerta
+        return []
+
+    drop = (baseline_avg - recent_ct) / baseline_avg
+    if drop < threshold / 100:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"views_drop:{client['id']}:{now.strftime('%Y%m%d%H')}",
+        "title":       f"Queda brusca de views — {pixel}",
+        "message":     (
+            f"Pageviews nas últimas {window_h}h: {recent_ct} vs média 7d "
+            f"{baseline_avg:.0f}/intervalo (queda {drop * 100:.0f}%). Verifique o snippet."
+        ),
+        "severity": "critical" if drop >= 0.80 else "warning",
+        "data":     {"recent": recent_ct, "baseline_avg": round(baseline_avg, 1),
+                     "drop_pct": round(drop * 100, 1)},
+    }]
+
+
+def _eval_zero_sales(rule: dict, client: dict) -> list[dict]:
+    """Zero vendas pagas em X horas dentro do horário comercial (8h-22h BRT)."""
+    threshold_hours = float((rule.get("config") or {}).get("threshold_hours", 8))
+    # Só dispara em horário comercial (UTC-3 = 08:00-22:00 BRT → 11:00-01:00 UTC)
+    hour_utc = _now().hour
+    if not (11 <= hour_utc <= 24 or hour_utc <= 1):
+        return []
+
+    sb  = get_supabase()
+    cutoff = (_now() - timedelta(hours=threshold_hours)).isoformat()
+    try:
+        rows = (
+            sb.table("orders")
+            .select("id")
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", cutoff)
+            .not_.or_("utm_source.eq.pos,platform_source.eq.pos")
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_zero_sales(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if rows:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"zero_sales:{client['id']}:{_now().date().isoformat()}",
+        "title":       f"Sem vendas há {int(threshold_hours)}h — {pixel}",
+        "message":     (
+            f"Nenhum pedido pago online nas últimas {int(threshold_hours)}h em horário comercial. "
+            f"Verifique campanhas, estoque e funcionamento do checkout."
+        ),
+        "severity": "critical",
+        "data":     {"threshold_hours": threshold_hours},
+    }]
+
+
+def _eval_checkout_drop(rule: dict, client: dict) -> list[dict]:
+    """begin_checkout das últimas 2h caiu X% vs média 7d no mesmo horário."""
+    threshold = float((rule.get("config") or {}).get("drop_pct", 70))
+    window_h  = 2
+
+    sb  = get_supabase()
+    now = _now()
+    t2h = now - timedelta(hours=window_h)
+
+    try:
+        recent_ct = (
+            sb.table("tracking_events")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .eq("event_type", "begin_checkout")
+            .gte("created_at", t2h.isoformat())
+            .execute()
+        ).count or 0
+
+        baseline_counts: list[int] = []
+        for days_ago in range(1, 8):
+            s = now - timedelta(days=days_ago, hours=0)
+            ct = (
+                sb.table("tracking_events")
+                .select("id", count="exact", head=True)
+                .eq("client_id", client["id"])
+                .eq("event_type", "begin_checkout")
+                .gte("created_at", (s - timedelta(hours=window_h)).isoformat())
+                .lt("created_at", s.isoformat())
+                .execute()
+            ).count or 0
+            baseline_counts.append(ct)
+    except Exception as exc:
+        logger.debug("_eval_checkout_drop(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    baseline_avg = sum(baseline_counts) / len(baseline_counts) if baseline_counts else 0
+    if baseline_avg < 3:
+        return []
+
+    drop = (baseline_avg - recent_ct) / baseline_avg
+    if drop < threshold / 100:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"checkout_drop:{client['id']}:{now.strftime('%Y%m%d%H')}",
+        "title":       f"Queda de checkouts iniciados — {pixel}",
+        "message":     (
+            f"begin_checkout nas últimas {window_h}h: {recent_ct} vs média 7d "
+            f"{baseline_avg:.0f}/intervalo (queda {drop * 100:.0f}%). Possível problema no checkout."
+        ),
+        "severity": "warning",
+        "data":     {"recent": recent_ct, "baseline_avg": round(baseline_avg, 1),
+                     "drop_pct": round(drop * 100, 1)},
+    }]
+
+
+def _eval_low_balance_meta(rule: dict, client: dict) -> list[dict]:
+    """Saldo Meta Ads abaixo do threshold (apenas clientes pre-pagos)."""
+    if not client.get("meta_prepaid"):
+        return []
+    account_id   = client.get("meta_ad_account_id")
+    access_token = client.get("meta_access_token")
+    if not (account_id and access_token):
+        return []
+
+    threshold = float(
+        (rule.get("config") or {}).get("threshold_brl")
+        or client.get("meta_balance_threshold")
+        or 200
+    )
+
+    try:
+        from . import meta_ads as meta_ads_svc
+        result = meta_ads_svc.fetch_account_balance(account_id, access_token)
+        if result.get("error"):
+            return []
+        balance = float(result.get("balance") or 0)
+    except Exception as exc:
+        logger.debug("_eval_low_balance_meta(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if balance > threshold:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    sev   = "critical" if balance < threshold * 0.5 else "warning"
+    return [{
+        "fingerprint": f"low_balance_meta:{client['id']}:{_now().date().isoformat()}",
+        "title":       f"Saldo Meta Ads baixo — {pixel}",
+        "message":     (
+            f"Saldo restante: R$ {balance:,.2f} (alerta em R$ {threshold:,.2f}). "
+            f"Adicione crédito para evitar interrupção das campanhas."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": sev,
+        "data":     {"balance": balance, "threshold": threshold, "currency": result.get("currency")},
+    }]
+
+
+def _eval_low_balance_google(rule: dict, client: dict) -> list[dict]:
+    """Saldo Google Ads baixo — estima com base no burn rate diário vs orçamento mensal."""
+    if not client.get("google_prepaid"):
+        return []
+
+    threshold = float(
+        (rule.get("config") or {}).get("threshold_days_remaining", 3)
+    )
+    sb = get_supabase()
+    now = _now()
+
+    try:
+        # Gasto dos últimos 7 dias em Google
+        rows = (
+            sb.table("ad_spend")
+            .select("spend")
+            .eq("client_id", client["id"])
+            .eq("channel", "google_ads")
+            .gte("date", (now.date() - timedelta(days=7)).isoformat())
+            .execute()
+        ).data or []
+        if not rows:
+            return []
+
+        daily_burn = sum(float(r["spend"]) for r in rows) / 7.0
+
+        # Orçamento mensal Google configurado
+        budget_row = (
+            sb.table("budgets")
+            .select("amount")
+            .eq("client_id", client["id"])
+            .eq("channel", "google_ads")
+            .eq("month", _month_start())
+            .limit(1)
+            .execute()
+        ).data or []
+
+        if not budget_row or daily_burn <= 0:
+            return []
+
+        monthly_budget = float(budget_row[0]["amount"])
+        # Gasto MTD
+        mtd_rows = (
+            sb.table("ad_spend")
+            .select("spend")
+            .eq("client_id", client["id"])
+            .eq("channel", "google_ads")
+            .gte("date", _month_start())
+            .execute()
+        ).data or []
+        mtd_spend     = sum(float(r["spend"]) for r in mtd_rows)
+        remaining_brl = monthly_budget - mtd_spend
+        days_left     = remaining_brl / daily_burn if daily_burn > 0 else 999
+    except Exception as exc:
+        logger.debug("_eval_low_balance_google(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if days_left > threshold:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    google_threshold = float(client.get("google_balance_threshold") or 200)
+    sev = "critical" if remaining_brl < google_threshold * 0.5 or days_left < 1 else "warning"
+    return [{
+        "fingerprint": f"low_balance_google:{client['id']}:{_now().date().isoformat()}",
+        "title":       f"Saldo Google Ads baixo — {pixel}",
+        "message":     (
+            f"Saldo estimado: R$ {remaining_brl:,.0f} ({days_left:.1f} dias ao ritmo atual "
+            f"de R$ {daily_burn:,.0f}/dia). Revise o orçamento."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": sev,
+        "data":     {"remaining_brl": round(remaining_brl, 2), "daily_burn": round(daily_burn, 2),
+                     "days_remaining": round(days_left, 1)},
+    }]
+
+
+def _eval_google_conversion_drop(rule: dict, client: dict) -> list[dict]:
+    """Queda no número de conversões enviadas ao Google vs baseline 7d."""
+    threshold = float((rule.get("config") or {}).get("drop_pct", 50))
+
+    sb  = get_supabase()
+    now = _now()
+    t24h = now - timedelta(hours=24)
+    t7d  = now - timedelta(days=8)
+    t7d_end = now - timedelta(hours=24)
+
+    try:
+        recent = (
+            sb.table("orders")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .eq("google_sent", True)
+            .gte("created_at", t24h.isoformat())
+            .execute()
+        ).count or 0
+
+        baseline_rows = (
+            sb.table("orders")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .eq("google_sent", True)
+            .gte("created_at", t7d.isoformat())
+            .lt("created_at", t7d_end.isoformat())
+            .execute()
+        ).count or 0
+
+        baseline_avg = baseline_rows / 7.0
+    except Exception as exc:
+        logger.debug("_eval_google_conversion_drop(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if baseline_avg < 1:
+        return []
+
+    drop = (baseline_avg - recent) / baseline_avg
+    if drop < threshold / 100:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"google_conv_drop:{client['id']}:{now.date().isoformat()}",
+        "title":       f"Queda de conversões Google — {pixel}",
+        "message":     (
+            f"Conversões enviadas ao Google nas últimas 24h: {recent} vs média 7d "
+            f"{baseline_avg:.1f}/dia (queda {drop * 100:.0f}%). Verifique o webhook."
+        ),
+        "severity": "warning",
+        "data":     {"recent": recent, "baseline_avg": round(baseline_avg, 1),
+                     "drop_pct": round(drop * 100, 1)},
+    }]
+
+
+def _eval_high_ticket_anomaly(rule: dict, client: dict) -> list[dict]:
+    """Pedido com valor > X vezes o ticket médio dos últimos 30d."""
+    multiple = float((rule.get("config") or {}).get("multiple", 5))
+    min_value = float((rule.get("config") or {}).get("min_value", 1000))
+
+    sb  = get_supabase()
+    now = _now()
+    t30d = now - timedelta(days=30)
+    t1h  = now - timedelta(hours=1)
+
+    try:
+        baseline_rows = (
+            sb.table("orders")
+            .select("total_price")
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", t30d.isoformat())
+            .lt("created_at", t1h.isoformat())
+            .execute()
+        ).data or []
+
+        if len(baseline_rows) < 5:
+            return []
+
+        avg_ticket = sum(float(r["total_price"]) for r in baseline_rows) / len(baseline_rows)
+        threshold_value = max(avg_ticket * multiple, min_value)
+
+        recent_big = (
+            sb.table("orders")
+            .select("id, platform_order_id, total_price, email")
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", threshold_value)
+            .gte("created_at", t1h.isoformat())
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_high_ticket_anomaly(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    findings = []
+    pixel = client.get("pixel_id") or "unknown"
+    for o in recent_big:
+        val = float(o["total_price"])
+        findings.append({
+            "fingerprint": f"high_ticket:{o['id']}",
+            "title":       f"Pedido de alto valor — {pixel}",
+            "message":     (
+                f"Pedido #{o.get('platform_order_id', '?')} de R$ {val:,.0f} "
+                f"({val / avg_ticket:.1f}× ticket médio R$ {avg_ticket:,.0f})."
+            ).replace(",", "_").replace(".", ",").replace("_", "."),
+            "severity": "info",
+            "data":     {"order_id": o["id"], "value": val, "avg_ticket": round(avg_ticket, 2),
+                         "multiple": round(val / avg_ticket, 1)},
+        })
+    return findings
+
+
 _EVALUATORS = {
-    "meta_token_expiring":   _eval_meta_token_expiring,
-    "integration_unhealthy": _eval_integration_unhealthy,
-    "roas_below_goal":       _eval_roas_below_goal,
-    "budget_overspent":      _eval_budget_overspent,
-    "tracking_stopped":      _eval_tracking_stopped,
-    "cpa_over_target":       _eval_cpa_over_target,
+    "meta_token_expiring":      _eval_meta_token_expiring,
+    "integration_unhealthy":    _eval_integration_unhealthy,
+    "roas_below_goal":          _eval_roas_below_goal,
+    "budget_overspent":         _eval_budget_overspent,
+    "tracking_stopped":         _eval_tracking_stopped,
+    "cpa_over_target":          _eval_cpa_over_target,
+    # New evaluators
+    "revenue_drop":             _eval_revenue_drop,
+    "views_drop":               _eval_views_drop,
+    "zero_sales":               _eval_zero_sales,
+    "checkout_drop":            _eval_checkout_drop,
+    "low_balance_meta":         _eval_low_balance_meta,
+    "low_balance_google":       _eval_low_balance_google,
+    "google_conversion_drop":   _eval_google_conversion_drop,
+    "high_ticket_anomaly":      _eval_high_ticket_anomaly,
 }
 
 
@@ -487,7 +957,8 @@ def _clients_for_rule(rule: dict) -> list[dict]:
     sb = get_supabase()
     cols = (
         "id, pixel_id, agency_id, slack_webhook_url, "
-        "meta_token_expires_at, "
+        "meta_token_expires_at, meta_ad_account_id, meta_access_token, "
+        "meta_prepaid, google_prepaid, meta_balance_threshold, google_balance_threshold, "
         + ", ".join(_INTEGRATION_HEALTH_COLS.values())
     )
     if rule.get("client_id"):

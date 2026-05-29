@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
-import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
+import { supabase } from '@/lib/supabase'
 import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle, Send, Zap } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -37,6 +37,10 @@ interface ClientRow {
   tracking_cname: string | null
   tracking_cname_verified: boolean | null
   tracking_cname_secret: string | null
+  meta_prepaid: boolean
+  google_prepaid: boolean
+  meta_balance_threshold: number | null
+  google_balance_threshold: number | null
 }
 
 const INPUT = 'w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-indigo-500'
@@ -69,7 +73,7 @@ export default function ClientSettingsPage() {
   const [emailTestMsg, setEmailTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton
     const { data } = await supabase
       .from('clients')
       .select('*')
@@ -86,7 +90,7 @@ export default function ClientSettingsPage() {
   }
 
   async function handleDisconnectGoogle() {
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton
     await supabase
       .from('clients')
       .update({ google_ads_refresh_token: null })
@@ -154,7 +158,7 @@ export default function ClientSettingsPage() {
   }
 
   async function handleDisconnectMeta() {
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton
     await supabase
       .from('clients')
       .update({
@@ -215,7 +219,7 @@ export default function ClientSettingsPage() {
     setError('')
     setSaved(false)
 
-    const supabase = createSupabaseBrowserClient()
+    // supabase singleton
     const { error: updateError } = await supabase
       .from('clients')
       .update({
@@ -240,6 +244,10 @@ export default function ClientSettingsPage() {
         slack_webhook_url:               form.slack_webhook_url     || null,
         webhook_secret:                  form.webhook_secret        || null,
         is_active:                       form.is_active,
+        meta_prepaid:                    form.meta_prepaid          ?? false,
+        google_prepaid:                  form.google_prepaid        ?? false,
+        meta_balance_threshold:          form.meta_balance_threshold ?? 200,
+        google_balance_threshold:        form.google_balance_threshold ?? 200,
       })
       .eq('pixel_id', clientId)
 
@@ -577,6 +585,58 @@ export default function ClientSettingsPage() {
               )}
             </div>
           </Field>
+          {/* Pre-paid balance alerts */}
+          <Field label="Conta Pré-Paga Meta Ads"
+            hint="Ativa alerta de saldo baixo quando o crédito da conta Meta estiver abaixo do limite">
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.meta_prepaid ?? false}
+                  onChange={e => set('meta_prepaid', e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-600 bg-[#0f1117] text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm text-slate-300">Cliente usa conta pré-paga Meta Ads</span>
+              </label>
+              {form.meta_prepaid && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Alerta quando saldo &lt; R$</label>
+                  <input
+                    type="number" min="0" step="50"
+                    value={form.meta_balance_threshold ?? 200}
+                    onChange={e => set('meta_balance_threshold', e.target.value)}
+                    className={INPUT + ' w-40'}
+                  />
+                </div>
+              )}
+            </div>
+          </Field>
+          <Field label="Conta Pré-Paga Google Ads"
+            hint="Ativa alerta quando o orçamento mensal restante for inferior ao burn rate de X dias">
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.google_prepaid ?? false}
+                  onChange={e => set('google_prepaid', e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-600 bg-[#0f1117] text-indigo-600 focus:ring-indigo-500"
+                />
+                <span className="text-sm text-slate-300">Cliente usa conta pré-paga Google Ads</span>
+              </label>
+              {form.google_prepaid && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Alerta quando restar menos de R$</label>
+                  <input
+                    type="number" min="0" step="50"
+                    value={form.google_balance_threshold ?? 200}
+                    onChange={e => set('google_balance_threshold', e.target.value)}
+                    className={INPUT + ' w-40'}
+                  />
+                </div>
+              )}
+            </div>
+          </Field>
+
           <Field label="Slack Webhook URL">
             <div className="space-y-2">
               <input value={form.slack_webhook_url || ''} onChange={e => set('slack_webhook_url', e.target.value)}
