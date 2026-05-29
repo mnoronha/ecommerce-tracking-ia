@@ -20,8 +20,8 @@ interface Visitor {
   total_orders: number
   total_revenue: number | null
   retargeting_score: number | null
+  first_seen_at: string | null
   last_seen_at: string | null
-  created_at: string
 }
 
 interface TrackingEvent {
@@ -200,7 +200,7 @@ export default function VisitantesPage() {
 
     let q = supabase.from('visitors')
       .select(
-        'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, retargeting_score, last_seen_at, created_at',
+        'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, retargeting_score, first_seen_at, last_seen_at',
         { count: 'exact' }
       )
       .eq('client_id', clientId)
@@ -209,24 +209,7 @@ export default function VisitantesPage() {
 
     if (debSearch) q = (q as any).ilike('email', `%${debSearch}%`)
 
-    q.then(({ data, count, error }) => {
-      if (error) {
-        // retargeting_score column may not exist yet — retry without it
-        supabase.from('visitors')
-          .select(
-            'id, visitor_id, email, phone, first_utm_source, first_utm_medium, first_utm_campaign, first_platform, total_pageviews, total_orders, total_revenue, last_seen_at, created_at',
-            { count: 'exact' }
-          )
-          .eq('client_id', clientId!)
-          .order('last_seen_at', { ascending: false, nullsFirst: false })
-          .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
-          .then(({ data: d2, count: c2 }) => {
-            setVisitors((d2 as Visitor[]) || [])
-            setTotal(c2 || 0)
-            setLoading(false)
-          })
-        return
-      }
+    q.then(({ data, count }) => {
       setVisitors((data as Visitor[]) || [])
       setTotal(count || 0)
       setLoading(false)
@@ -342,7 +325,7 @@ export default function VisitantesPage() {
                     )}
                   </td>
                   <td className="px-4 py-3 text-slate-400 text-xs whitespace-nowrap">
-                    {fmtDt(v.last_seen_at || v.created_at)}
+                    {fmtDt(v.last_seen_at || v.first_seen_at)}
                   </td>
                 </tr>
               ))}

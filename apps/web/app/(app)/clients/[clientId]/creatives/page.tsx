@@ -226,7 +226,7 @@ export default function CreativesPage() {
       {/* KPIs */}
       <div className="px-6 pt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi label="Total de criativos" value={creatives.length.toString()} />
-        <Kpi label="Spend" value={fmt(totalSpend)} />
+        <Kpi label="Investimento" value={fmt(totalSpend)} />
         <Kpi label="Receita Meta" value={fmt(totalRevenue)} accent="emerald" />
         <Kpi label="ROAS médio" value={totalSpend > 0 ? (totalRevenue / totalSpend).toFixed(2) + 'x' : '—'} accent="teal" />
       </div>
@@ -262,12 +262,12 @@ export default function CreativesPage() {
             {sorted.map(c => (
               <div key={c.ad_id} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
                 {c.image_url ? (
-                  <div className="aspect-square bg-[#0f1117] flex items-center justify-center">
+                  <div className="h-52 bg-[#0f1117] overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={c.image_url} alt={c.ad_name || ''} className="max-w-full max-h-full object-contain" />
+                    <img src={c.image_url} alt={c.ad_name || ''} className="w-full h-full object-cover" />
                   </div>
                 ) : (
-                  <div className="aspect-square bg-[#0f1117] flex items-center justify-center text-slate-700 text-xs">sem imagem</div>
+                  <div className="h-52 bg-[#0f1117] flex items-center justify-center text-slate-700 text-xs">sem imagem</div>
                 )}
                 <div className="p-3">
                   <p className="text-xs font-medium text-white truncate" title={c.ad_name || ''}>
@@ -277,7 +277,7 @@ export default function CreativesPage() {
                     <p className="text-xs text-slate-400 mt-1 line-clamp-2">{c.headline}</p>
                   )}
                   <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-[#2a2f3e]">
-                    <Stat label="Spend" value={fmt(c.spend)} />
+                    <Stat label="Invest." value={fmt(c.spend)} />
                     <Stat label="ROAS"  value={c.roas != null ? c.roas.toFixed(2) + 'x' : '—'} accent={c.roas && c.roas >= 2 ? 'emerald' : c.roas && c.roas < 1 ? 'rose' : undefined} />
                     <Stat label="CTR"   value={c.ctr  != null ? c.ctr.toFixed(2)  + '%' : '—'} />
                   </div>

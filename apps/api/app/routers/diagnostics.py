@@ -113,19 +113,19 @@ async def get_diagnostics(pixel_id: str):
     vis_total = vis_total_q.count or 0
 
     fbp_q = (
-        sb.table("tracking_events")
+        sb.table("visitors")
         .select("id", count="exact", head=True)
         .eq("client_id", cid)
-        .gte("created_at", t30d)
-        .not_.is_("properties->>fbp", "null")
+        .gte("first_seen_at", t30d)
+        .not_.is_("fbp", "null")
         .execute()
     )
     fbc_q = (
-        sb.table("tracking_events")
+        sb.table("visitors")
         .select("id", count="exact", head=True)
         .eq("client_id", cid)
-        .gte("created_at", t30d)
-        .not_.is_("properties->>fbc", "null")
+        .gte("first_seen_at", t30d)
+        .not_.is_("fbc", "null")
         .execute()
     )
     gclid_q = (
@@ -188,9 +188,9 @@ async def get_diagnostics(pixel_id: str):
         "identifiers": {
             "visitors_30d":     vis_total,
             "fbp_count":        fbp_count,
-            "fbp_pct":          pct(fbp_count,    ev_total_30d),
+            "fbp_pct":          pct(fbp_count,    vis_total),
             "fbc_count":        fbc_count,
-            "fbc_pct":          pct(fbc_count,    ev_total_30d),
+            "fbc_pct":          pct(fbc_count,    vis_total),
             "gclid_visitors":   gclid_count,
             "gclid_pct":        pct(gclid_count,  vis_total),
             "ttclid_visitors":  ttclid_count,

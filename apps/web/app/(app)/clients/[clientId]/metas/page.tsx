@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
+import { supabase } from '@/lib/supabase'
 import {
   Target, DollarSign, Save, Loader2, CheckCircle,
   AlertCircle, TrendingUp, Copy, ChevronDown, ChevronUp,
@@ -89,9 +89,8 @@ function Msg({ msg }: { msg: { ok: boolean; text: string } }) {
 }
 
 export default function MetasPage() {
-  const params   = useParams()
-  const pixelId  = params.clientId as string
-  const supabase = createSupabaseBrowserClient()
+  const params  = useParams()
+  const pixelId = params.clientId as string
 
   const [clientUUID, setClientUUID] = useState<string | null>(null)
   const [agencyId,   setAgencyId]   = useState<string | null>(null)

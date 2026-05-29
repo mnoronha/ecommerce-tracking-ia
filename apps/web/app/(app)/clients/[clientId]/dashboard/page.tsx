@@ -746,13 +746,13 @@ export default function DashboardPage() {
     const prevStartStr = prevStart.toISOString().split('T')[0]
     const dParam       = device !== 'all' ? `&device=${device}` : ''
 
-    // ── Single parallel batch — orders + events + funnel + retention RPC ─────
+    // ── Single parallel batch — all Supabase direct, no Railway hops ────────
     const [
       { data: orders },
       { data: ordersPrev },
       { data: productEvents },
-      fRes,
-      pfRes,
+      funnelResult,
+      prevFunnelResult,
       nrResult,
     ] = await Promise.all([
       supabase.from('orders')
@@ -762,14 +762,16 @@ export default function DashboardPage() {
         .gt('total_price', 0)
         .gte('created_at', startDate.toISOString())
         .lte('created_at', endDate.toISOString())
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false })
+        .limit(5000),
       supabase.from('orders')
         .select('total_price')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
         .gt('total_price', 0)
         .gte('created_at', prevStart.toISOString())
-        .lt('created_at', startDate.toISOString()),
+        .lt('created_at', startDate.toISOString())
+        .limit(5000),
       supabase.from('tracking_events')
         .select('event_type, product_name')
         .eq('client_id', clientId)
@@ -777,8 +779,18 @@ export default function DashboardPage() {
         .lte('created_at', endDate.toISOString())
         .not('product_name', 'is', null)
         .limit(2000),
-      fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${startStr}&end=${endStr}${dParam}`).catch(() => null),
-      fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/funnel?start=${prevStartStr}&end=${prevEndStr}${dParam}`).catch(() => null),
+      Promise.resolve(supabase.rpc('funnel_stats', {
+        p_client_id: clientId,
+        p_start:     startDate.toISOString(),
+        p_end:       endDate.toISOString(),
+        p_device:    device !== 'all' ? device : null,
+      })).catch(() => ({ data: null })),
+      Promise.resolve(supabase.rpc('funnel_stats', {
+        p_client_id: clientId,
+        p_start:     prevStart.toISOString(),
+        p_end:       new Date(startDate.getTime() - 1).toISOString(),
+        p_device:    device !== 'all' ? device : null,
+      })).catch(() => ({ data: null })),
       Promise.resolve(supabase.rpc('new_returning_stats', {
         p_client_id: clientId,
         p_start:     startDate.toISOString(),
@@ -786,10 +798,8 @@ export default function DashboardPage() {
       })).catch(() => ({ data: null })),
     ])
 
-    let funnelJson: any = null
-    let prevFunnelJson: any = null
-    try { if ((fRes as any)?.ok)  funnelJson     = await (fRes  as Response).json() } catch (_) {}
-    try { if ((pfRes as any)?.ok) prevFunnelJson = await (pfRes as Response).json() } catch (_) {}
+    const funnelJson     = (funnelResult     as any)?.data ?? null
+    const prevFunnelJson = (prevFunnelResult as any)?.data ?? null
 
     const totalVisitors = funnelJson?.unique_visitors     ?? 0
     const prevVisitors  = prevFunnelJson?.unique_visitors ?? 0
@@ -854,8 +864,8 @@ export default function DashboardPage() {
     }
     setRevenueData(points)
 
-    // ── Conversion funnel (from API — COUNT DISTINCT via SQL, no row-limit issues)
-    const fd   = funnelJson?.funnel || {}
+    // ── Conversion funnel — Supabase RPC funnel_stats returns fields directly
+    const fd   = funnelJson || {}
     const fTop = fd.pageview || 1
     setFunnelSteps([
       { label: 'Pageviews',         count: fd.pageview       || 0, pct: 100 },
@@ -1209,9 +1219,16 @@ export default function DashboardPage() {
         {/* Revenue + Funnel */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
-            <h2 className="text-sm font-semibold text-slate-300 mb-4">
-              Receita — {dateRange === '7d' ? 'últimos 7 dias' : dateRange === '30d' ? 'últimos 30 dias' : 'últimos 90 dias'}
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-slate-300">
+                Receita — {dateRange === '1d' ? 'ontem' : dateRange === '7d' ? 'últimos 7 dias' : dateRange === '30d' ? 'últimos 30 dias' : 'últimos 90 dias'}
+              </h2>
+              {dateRange === '90d' && revenueData.filter(p => p.revenue > 0).length < 45 && (
+                <span className="text-xs text-slate-500">
+                  Rastreamento desde {revenueData.find(p => p.revenue > 0)?.date ?? 'Abr/26'}
+                </span>
+              )}
+            </div>
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={revenueData}>
                 <defs>
@@ -1575,6 +1592,11 @@ export default function DashboardPage() {
                 {!roasData.has_ads_credentials && (
                   <p className="text-xs text-yellow-500 mt-0.5">
                     Configure <code className="bg-yellow-500/10 px-1 rounded">meta_ad_account_id</code> no cliente para ver gasto e ROAS
+                  </p>
+                )}
+                {roasData.has_ads_credentials && roasData.totals.spend === 0 && (
+                  <p className="text-xs text-orange-400 mt-0.5">
+                    Sem dados de gasto — verifique se o token Meta está válido (Configurações → Integrações)
                   </p>
                 )}
               </div>
