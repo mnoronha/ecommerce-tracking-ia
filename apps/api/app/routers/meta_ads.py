@@ -433,7 +433,6 @@ async def get_overview(pixel_id: str, days: int = 30):
         .execute()
     ).data or []
 
-    from ..services import meta_campaigns
     # Build server lookup by ALL utm_campaign values (ID numérico, nome exato, nome lower)
     server_by_key: dict = {}
     for o in order_rows:
@@ -505,37 +504,45 @@ async def get_overview(pixel_id: str, days: int = 30):
         })
     campaigns_out.sort(key=lambda x: x["spend"], reverse=True)
 
-    # ── Funnel from tracking_events ────────────────────────────────────────
+    # ── Funnel from tracking_events (single query per period) ─────────────
     funnel_start = f"{d_start}T00:00:00+00:00"
     funnel_end   = f"{d_end}T23:59:59+00:00"
-    funnel_curr = {
-        et: (
+
+    def _funnel_counts(start_ts: str, end_ts: str) -> dict:
+        rows = (
             sb.table("tracking_events")
-            .select("id", count="exact", head=True)
+            .select("event_type")
             .eq("client_id", client_id)
-            .eq("event_type", et)
-            .gte("created_at", funnel_start)
-            .lte("created_at", funnel_end)
+            .in_("event_type", ["pageview", "view_product", "add_to_cart", "begin_checkout"])
+            .gte("created_at", start_ts)
+            .lte("created_at", end_ts)
+            .limit(100000)
             .execute()
-        ).count or 0
-        for et in ("pageview", "view_product", "add_to_cart", "begin_checkout")
-    }
+        ).data or []
+        counts: dict[str, int] = {}
+        for r in rows:
+            et = r.get("event_type") or ""
+            counts[et] = counts.get(et, 0) + 1
+        return counts
+
+    try:
+        funnel_raw = _funnel_counts(funnel_start, funnel_end)
+    except Exception:
+        funnel_raw = {}
+
+    funnel_curr = {et: funnel_raw.get(et, 0)
+                   for et in ("pageview", "view_product", "add_to_cart", "begin_checkout")}
     funnel_curr["purchases"] = curr_totals["purchases"]
 
     prev_funnel_start = f"{d_prev_start}T00:00:00+00:00"
     prev_funnel_end   = f"{d_prev_end}T23:59:59+00:00"
-    funnel_prev = {
-        et: (
-            sb.table("tracking_events")
-            .select("id", count="exact", head=True)
-            .eq("client_id", client_id)
-            .eq("event_type", et)
-            .gte("created_at", prev_funnel_start)
-            .lte("created_at", prev_funnel_end)
-            .execute()
-        ).count or 0
-        for et in ("pageview", "add_to_cart", "begin_checkout")
-    }
+    try:
+        prev_funnel_raw = _funnel_counts(prev_funnel_start, prev_funnel_end)
+    except Exception:
+        prev_funnel_raw = {}
+
+    funnel_prev = {et: prev_funnel_raw.get(et, 0)
+                   for et in ("pageview", "add_to_cart", "begin_checkout")}
     funnel_prev["purchases"] = prev_totals["purchases"]
 
     return {

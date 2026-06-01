@@ -243,7 +243,13 @@ export default function MetaAdsPage() {
   const params  = useParams()
   const pixelId = params.clientId as string
 
-  const [preset,   setPreset]   = useState<Preset>('30d')
+  const [preset,   setPreset]   = useState<Preset>(() => {
+    if (typeof window !== 'undefined') {
+      const v = window.localStorage.getItem('dash_period')
+      if (v === '7d' || v === '30d' || v === '90d') return v as Preset
+    }
+    return '7d'
+  })
   const [data,     setData]     = useState<OverviewData | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [syncing,  setSyncing]  = useState(false)
@@ -315,7 +321,7 @@ export default function MetaAdsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
             {(['7d', '30d', '90d'] as Preset[]).map(p => (
-              <button key={p} onClick={() => setPreset(p)}
+              <button key={p} onClick={() => { setPreset(p); try { localStorage.setItem('dash_period', p) } catch(_){} }}
                 className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
                   preset === p ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
                 }`}>{p}</button>

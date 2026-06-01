@@ -142,10 +142,22 @@ def render_monthly_html(context: dict) -> str:
             helpers=_make_helpers(),
             partials=compiled_partials,
         )
-        return html
+        html_str = str(html) if not isinstance(html, str) else html
+        logger.info("report_renderer: rendered %d chars of HTML", len(html_str))
+        return html_str
     except Exception as exc:
-        logger.error("template render failed: %s", exc)
-        return f"<html><body><p>Erro ao renderizar template: {exc}</p></body></html>"
+        logger.error("template render failed: %s", exc, exc_info=True)
+        # Fallback: minimal HTML with key data
+        name    = context.get("cliente", {}).get("nome", "")
+        mes     = context.get("mes_label", "")
+        rev     = context.get("revenue_fmt", "")
+        return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{{font-family:Arial;padding:40px}} h1{{color:#1e1b4b}} table{{border-collapse:collapse;width:100%}} td,th{{border:1px solid #ccc;padding:8px}}</style>
+</head><body>
+<h1>Relatório Mensal — {name}</h1><h2>{mes}</h2>
+<p>Faturamento: <strong>{rev}</strong></p>
+<p><em>Template completo indisponível: {exc}</em></p>
+</body></html>"""
 
 
 def render_to_pdf(context: dict) -> Optional[bytes]:

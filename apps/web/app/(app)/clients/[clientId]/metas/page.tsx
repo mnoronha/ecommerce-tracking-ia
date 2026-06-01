@@ -8,6 +8,8 @@ import {
   AlertCircle, TrendingUp, Copy, ChevronDown, ChevronUp,
 } from 'lucide-react'
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+
 const CHANNELS = [
   { value: 'meta_ads',    label: 'Meta Ads' },
   { value: 'google_ads',  label: 'Google Ads' },
@@ -235,25 +237,31 @@ export default function MetasPage() {
 
   async function saveGoals(e: React.FormEvent) {
     e.preventDefault()
-    if (!clientUUID || !agencyId) return
     setSavingGoal(true); setGoalMsg(null)
-    const payload = {
-      agency_id:        agencyId,
-      client_id:        clientUUID,
-      month:            currentMonth,
-      leads_goal:       leadsGoal   ? Number(leadsGoal)   : null,
-      conversions_goal: convsGoal   ? Number(convsGoal)   : null,
-      revenue_goal:     revenueGoal ? Number(revenueGoal) : null,
-      roas_goal:        roasGoal    ? Number(roasGoal)    : null,
-      cpa_target:       cpaTarget   ? Number(cpaTarget)   : null,
+    try {
+      const res = await fetch(`${API_URL}/goals/${pixelId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          month:            currentMonth,
+          leads_goal:       leadsGoal   ? Number(leadsGoal)   : null,
+          conversions_goal: convsGoal   ? Number(convsGoal)   : null,
+          revenue_goal:     revenueGoal ? Number(revenueGoal) : null,
+          roas_goal:        roasGoal    ? Number(roasGoal)    : null,
+          cpa_target:       cpaTarget   ? Number(cpaTarget)   : null,
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json()
+        setGoalMsg({ ok: false, text: d.detail || 'Erro ao salvar' })
+      } else {
+        setGoalMsg({ ok: true, text: 'Metas salvas.' })
+        load()
+      }
+    } catch (err: unknown) {
+      setGoalMsg({ ok: false, text: err instanceof Error ? err.message : 'Erro de rede' })
     }
-    const { error: err } = goal
-      ? await supabase.from('goals').update(payload).eq('id', goal.id)
-      : await supabase.from('goals').insert(payload)
     setSavingGoal(false)
-    if (err) { setGoalMsg({ ok: false, text: err.message }); return }
-    setGoalMsg({ ok: true, text: 'Metas salvas.' })
-    load()
   }
 
   async function saveBudgets(e: React.FormEvent) {

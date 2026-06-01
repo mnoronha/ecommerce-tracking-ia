@@ -15,8 +15,96 @@ from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
 
+from pydantic import BaseModel
+from typing import Optional
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ── Goals CRUD (service-key — bypasses RLS) ───────────────────────────────────
+
+class GoalPayload(BaseModel):
+    month:            str            # YYYY-MM-DD
+    revenue_goal:     Optional[float] = None
+    roas_goal:        Optional[float] = None
+    leads_goal:       Optional[int]   = None
+    conversions_goal: Optional[int]   = None
+    cpa_target:       Optional[float] = None
+
+
+@router.post("/goals/{pixel_id}", summary="Salva meta mensal (service key — bypass RLS)")
+async def upsert_goal(pixel_id: str, body: GoalPayload):
+    sb = get_supabase()
+
+    client = sb.table("clients").select("id, agency_id").eq("pixel_id", pixel_id).limit(1).execute()
+    if not (client and client.data):
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    client_id = client.data[0]["id"]
+    agency_id = client.data[0]["agency_id"]
+
+    payload = {
+        "agency_id":        agency_id,
+        "client_id":        client_id,
+        "month":            body.month,
+        "revenue_goal":     body.revenue_goal,
+        "roas_goal":        body.roas_goal,
+        "leads_goal":       body.leads_goal,
+        "conversions_goal": body.conversions_goal,
+        "cpa_target":       body.cpa_target,
+    }
+
+    # Upsert — update if row exists for (client_id, month)
+    existing = (
+        sb.table("goals")
+        .select("id")
+        .eq("client_id", client_id)
+        .eq("month", body.month)
+        .limit(1)
+        .execute()
+    )
+
+    if existing.data:
+        result = sb.table("goals").update(payload).eq("id", existing.data[0]["id"]).execute()
+    else:
+        result = sb.table("goals").insert(payload).execute()
+
+    if not (result and result.data):
+        raise HTTPException(status_code=500, detail="Falha ao salvar meta")
+
+    return result.data[0]
+
+
+@router.get("/goals/{pixel_id}", summary="Lista metas dos últimos N meses")
+async def list_goals(pixel_id: str, months: int = 6):
+    sb = get_supabase()
+    client = sb.table("clients").select("id").eq("pixel_id", pixel_id).limit(1).execute()
+    if not (client and client.data):
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    from datetime import date, timedelta
+    today = date.today()
+    month_starts = []
+    for i in range(months):
+        d = today.replace(day=1)
+        # Subtract i months
+        month = d.month - i
+        year  = d.year
+        while month <= 0:
+            month += 12
+            year  -= 1
+        month_starts.append(f"{year}-{month:02d}-01")
+
+    result = (
+        sb.table("goals")
+        .select("id, month, revenue_goal, roas_goal, leads_goal, conversions_goal, cpa_target")
+        .eq("client_id", client.data[0]["id"])
+        .in_("month", month_starts)
+        .order("month", desc=True)
+        .execute()
+    )
+    return {"goals": result.data or []}
 
 
 @router.get(
