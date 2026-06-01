@@ -293,6 +293,79 @@ h1, h2, h3 { font-family: 'Sora', sans-serif; }
 }
 .acao-txt { font-size: 13px; color: var(--ink-soft); }
 
+/* ── Capa logo cliente ── */
+.capa-client-logo { max-height: 48px; max-width: 200px; object-fit: contain; margin-bottom: 6px; }
+
+/* ── Goal bar ── */
+.goal-bar-wrap { margin: 14px 0 0; }
+.goal-bar-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-dim); margin-bottom: 5px; }
+.goal-bar-pct { font-weight: 700; color: var(--ink-soft); }
+.goal-bar-track { background: var(--line); border-radius: 6px; height: 10px; }
+.goal-bar-fill { height: 10px; border-radius: 6px; background: linear-gradient(90deg, var(--color-accent), var(--color-accent2)); max-width: 100%; }
+
+/* ── Attribution funnel ── */
+.atrib-table { display: flex; flex-direction: column; gap: 10px; }
+.atrib-row { display: grid; grid-template-columns: 140px 1fr 100px 56px 68px; align-items: center; gap: 10px; }
+.atrib-canal { font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.atrib-bar-wrap { background: var(--line); border-radius: 6px; height: 10px; }
+.atrib-bar { height: 10px; border-radius: 6px; background: linear-gradient(90deg, var(--color-accent), var(--color-accent2)); max-width: 100%; }
+.atrib-receita { text-align: right; font-family: 'Sora'; font-size: 13px; font-weight: 700; }
+.atrib-pct { text-align: right; font-size: 12px; color: var(--color-accent); font-weight: 700; }
+.atrib-pedidos { text-align: right; font-size: 11px; color: var(--ink-dim); }
+
+/* ── Daily revenue chart ── */
+.daily-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 90px;
+  margin-top: 8px;
+  border-bottom: 2px solid var(--line);
+  padding-bottom: 4px;
+}
+.daily-col { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.daily-bar-wrap { width: 100%; flex: 1; display: flex; align-items: flex-end; }
+.daily-bar { width: 100%; border-radius: 3px 3px 0 0; background: linear-gradient(180deg, var(--color-accent), var(--color-accent2)); min-height: 2px; }
+.daily-label { font-size: 7.5px; color: var(--ink-dim); margin-top: 3px; writing-mode: vertical-rl; transform: rotate(180deg); }
+.daily-legend { text-align: right; font-size: 11px; color: var(--ink-dim); margin-top: 6px; }
+.dl-item { font-weight: 600; }
+
+/* ── Meta criativos grid ── */
+.meta-criativo-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.meta-criativo-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+.mc-thumb-wrap { width: 100%; aspect-ratio: 16/9; overflow: hidden; background: var(--bg-soft); }
+.mc-thumb { width: 100%; height: 100%; object-fit: cover; }
+.mc-thumb-placeholder { height: 80px; display: flex; align-items: center; justify-content: center; font-size: 32px; background: var(--bg-soft); }
+.mc-body { padding: 12px 14px 14px; }
+.mc-nome { font-family: 'Sora'; font-size: 12px; font-weight: 700; margin-bottom: 4px; line-height: 1.3; }
+.mc-headline { font-size: 11px; color: var(--ink-dim); margin-bottom: 8px; line-height: 1.3; font-style: italic; }
+.mc-metricas { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.mc-metrica { background: var(--bg-soft); border-radius: 6px; padding: 6px 8px; }
+.mc-ml { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-dim); font-weight: 600; }
+.mc-mv { display: block; font-family: 'Sora'; font-size: 14px; font-weight: 700; margin-top: 2px; }
+.mc-mv.accent { color: var(--color-accent); }
+
+/* ── Sem dados ── */
+.sem-dados { font-size: 13px; color: var(--ink-dim); text-align: center; padding: 32px 0; }
+.sem-dados-box { background: var(--bg-soft); border-radius: 12px; padding: 32px; text-align: center; font-size: 13px; color: var(--ink-dim); line-height: 1.6; }
+
+/* ── Retenção ── */
+.retencao-block { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 20px; }
+.ret-row { display: grid; grid-template-columns: 148px 1fr 130px; align-items: center; gap: 12px; margin-bottom: 12px; }
+.ret-label { font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.ret-bar-wrap { background: var(--line); border-radius: 6px; height: 14px; }
+.ret-bar { height: 14px; border-radius: 6px; }
+.ret-bar-new { background: linear-gradient(90deg, var(--color-accent), var(--color-accent2)); }
+.ret-bar-rec { background: linear-gradient(90deg, var(--c-roas), #84d6a3); }
+.ret-num { font-family: 'Sora'; font-size: 14px; font-weight: 700; text-align: right; }
+.ret-pct { font-size: 12px; color: var(--ink-dim); font-weight: 400; }
+.ret-total { font-size: 12px; color: var(--ink-dim); border-top: 1px solid var(--line); padding-top: 10px; margin-top: 4px; }
+
 /* ── Footer ── */
 .rep-footer {
   margin-top: 26px;

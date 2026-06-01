@@ -2,194 +2,336 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Relatório Mensal · {{cliente.nome}} · {{mes_label}}</title>
   <style>{{{css}}}</style>
 </head>
 <body>
 
-  <!-- ═══════════════ PÁGINA 1 — CAPA ═══════════════ -->
-  <section class="page page-capa">
-    <div class="capa-top">
+<!-- ═══════════════ PÁG 1 — CAPA ═══════════════ -->
+<section class="page page-capa">
+  <div class="capa-top">
+    {{#if cliente.logo}}
+      <img src="{{cliente.logo}}" alt="{{cliente.nome}}" class="capa-client-logo" />
+    {{else}}
       <span class="capa-logo">{{agencia.logo_texto}}</span>
-    </div>
-    <div class="capa-center">
-      <span class="badge-perfil {{#if ecommerce}}badge-ecom{{else}}badge-leads{{/if}}">{{perfil_label}}</span>
-      <p class="capa-kicker">Relatório Mensal de Tráfego Pago</p>
-      <h1 class="capa-cliente">{{cliente.nome}}</h1>
-      <p class="capa-mes">{{mes}} de {{ano}}</p>
-    </div>
-    <div class="capa-bottom">
-      <span>{{agencia.nome}}</span>
-      <span>{{agencia.site}}</span>
-    </div>
-  </section>
-
-  <!-- ═══════════════ PÁGINA 2 — RESUMO + KPIs ═══════════════ -->
-  <section class="page">
-    <div class="page-head">
-      <h2 class="page-title">Resumo Executivo</h2>
-      <span class="page-tag">{{mes_label}}</span>
-    </div>
-
-    <div class="resumo-box">
-      <p>{{resumo_executivo}}</p>
-    </div>
-
-    <h3 class="block-title">Indicadores gerais</h3>
-    <div class="kpi-grid kpi-grid-3">
-      {{#each kpis}}
-        {{> kpi_card}}
-      {{/each}}
-    </div>
-
-    <h3 class="block-title">Comparativo Year-over-Year ({{ano_anterior_label}})</h3>
-    <div class="yoy-banner">
-      {{#each yoy}}
-        <div class="yoy-cell">
-          <div class="yoy-label">{{label}}</div>
-          <div class="yoy-atual">{{atual}}</div>
-          <div class="yoy-cmp">
-            <span class="yoy-ant">{{ant}}</span>
-            <span class="delta {{classe}}">{{delta}}</span>
-          </div>
-        </div>
-      {{/each}}
-    </div>
-  </section>
-
-  <!-- ═══════════════ PÁGINA 3 — CANAIS ═══════════════ -->
-  <section class="page">
-    <div class="page-head">
-      <h2 class="page-title">Desempenho por Canal</h2>
-      <span class="page-tag">{{mes_label}}</span>
-    </div>
-
-    {{#each canais}}
-      <div class="canal-block">
-        <div class="canal-block-head">
-          <div class="canal-block-nome">
-            <span class="canal-icone">{{icone}}</span>
-            <span>{{nome}}</span>
-          </div>
-          <div class="canal-block-stats">
-            <span class="canal-block-inv">{{investimento_fmt}}</span>
-            <span class="canal-block-destaque">{{destaque}}</span>
-          </div>
-        </div>
-        <div class="canal-metricas">
-          {{#each metricas}}
-            <div class="canal-metrica">
-              <div class="cm-label">{{label}}</div>
-              <div class="cm-valor">{{valor}}</div>
-              {{#if delta}}<div class="cm-delta delta {{classe}}">{{delta}}</div>{{/if}}
-            </div>
-          {{/each}}
-        </div>
-      </div>
-    {{/each}}
-  </section>
-
-  <!-- ═══════════════ PÁGINA 4 — CAMPANHAS + CRIATIVOS ═══════════════ -->
-  <section class="page">
-    <div class="page-head">
-      <h2 class="page-title">Campanhas &amp; Criativos</h2>
-      <span class="page-tag">{{mes_label}}</span>
-    </div>
-
-    <h3 class="block-title">Campanhas em destaque</h3>
-    <table class="camp-table">
-      <thead>
-        <tr>
-          <th>Campanha</th>
-          <th>Canal</th>
-          <th class="num">Invest.</th>
-          <th class="num">{{#if ecommerce}}Receita{{else}}Leads{{/if}}</th>
-          <th class="num">{{#if ecommerce}}ROAS{{else}}CPL{{/if}}</th>
-          <th class="num">{{#if ecommerce}}Pedidos{{else}}Qualif.{{/if}}</th>
-          <th class="num">{{#if ecommerce}}CPA{{else}}% Qualif.{{/if}}</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {{#each campanhas}}
-          {{> campaign_row}}
-        {{/each}}
-      </tbody>
-    </table>
-
-    <h3 class="block-title">Criativos de destaque</h3>
-    <div class="criativo-grid">
-      {{#each criativos_destaque}}
-        <div class="criativo-card">
-          <div class="criativo-icone">{{icone}}</div>
-          <div class="criativo-nome">{{nome}}</div>
-          <div class="criativo-tipo">{{tipo}}</div>
-          <div class="criativo-canal">{{canal}}</div>
-          <div class="criativo-pills">
-            {{#each metricas}}
-              <span class="pill"><b>{{@key}}</b> {{this}}</span>
-            {{/each}}
-          </div>
-        </div>
-      {{/each}}
-    </div>
-  </section>
-
-  <!-- ═══════════════ PÁGINA 5 — DESTAQUES / ATENÇÕES / PLANO ═══════════════ -->
-  <section class="page">
-    <div class="page-head">
-      <h2 class="page-title">Análise &amp; Plano</h2>
-      <span class="page-tag">{{mes_label}}</span>
-    </div>
-
-    <h3 class="block-title">Destaques do mês</h3>
-    <div class="highlight-grid">
-      {{#each destaques}}
-        <div class="highlight-card hl-{{tipo}}">
-          <div class="hl-titulo">{{titulo}}</div>
-          <p class="hl-texto">{{texto}}</p>
-        </div>
-      {{/each}}
-    </div>
-
-    <h3 class="block-title">Pontos de atenção</h3>
-    {{#each atencoes}}
-      <div class="atencao-item prio-{{prioridade}}">
-        <div class="atencao-icone">{{icone}}</div>
-        <div class="atencao-corpo">
-          <div class="atencao-titulo">
-            {{titulo}}
-            <span class="prio-badge prio-badge-{{prioridade}}">{{prioridade}}</span>
-          </div>
-          <p class="atencao-desc">{{descricao}}</p>
-        </div>
-      </div>
-    {{/each}}
-
-    {{#if plano}}
-    <h3 class="block-title">Plano para {{plano.mes}}</h3>
-    <div class="plano-metas">
-      {{#if ecommerce}}
-        <div class="plano-meta"><span class="pm-label">Meta de faturamento</span><span class="pm-valor">{{plano_meta_faturamento_fmt}}</span></div>
-        <div class="plano-meta"><span class="pm-label">Meta de ROAS</span><span class="pm-valor">{{plano.meta_roas}}x</span></div>
-        <div class="plano-meta"><span class="pm-label">Meta de CPA</span><span class="pm-valor">{{brl plano.meta_cpa}}</span></div>
-      {{else}}
-        <div class="plano-meta"><span class="pm-label">Meta de leads</span><span class="pm-valor">{{plano_meta_leads_fmt}}</span></div>
-        <div class="plano-meta"><span class="pm-label">Meta de CPL</span><span class="pm-valor">{{brl plano.meta_cpl}}</span></div>
-        <div class="plano-meta"><span class="pm-label">Meta de agendamentos</span><span class="pm-valor">{{plano.meta_agendamentos}}</span></div>
-      {{/if}}
-      <div class="plano-meta"><span class="pm-label">Budget total</span><span class="pm-valor">{{plano_budget_fmt}}</span></div>
-    </div>
-    <ol class="acao-list">
-      {{#each plano.acoes}}
-        <li><span class="acao-num">{{inc @index}}</span><span class="acao-txt">{{this}}</span></li>
-      {{/each}}
-    </ol>
     {{/if}}
+  </div>
+  <div class="capa-center">
+    <span class="badge-perfil {{#if ecommerce}}badge-ecom{{else}}badge-leads{{/if}}">{{perfil_label}}</span>
+    <p class="capa-kicker">Relatório Mensal de Tráfego Pago</p>
+    <h1 class="capa-cliente">{{cliente.nome}}</h1>
+    <p class="capa-mes">{{mes}} de {{ano}}</p>
+  </div>
+  <div class="capa-bottom">
+    <span>{{agencia.nome}}</span>
+    <span>{{agencia.site}}</span>
+    <span>Gerado em {{data_geracao}}</span>
+  </div>
+</section>
 
-    {{> footer}}
-  </section>
+<!-- ═══════════════ PÁG 2 — RESUMO + KPIs + YoY ═══════════════ -->
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Resumo Executivo</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  <div class="resumo-box"><p>{{resumo_executivo}}</p></div>
+
+  {{#if goal_pct}}
+  <div class="goal-bar-wrap">
+    <div class="goal-bar-labels">
+      <span class="goal-bar-pct">{{goal_pct_fmt}} da meta</span>
+    </div>
+    <div class="goal-bar-track">
+      <div class="goal-bar-fill" style="width:{{goal_pct}}%"></div>
+    </div>
+  </div>
+  {{/if}}
+
+  <h3 class="block-title">Indicadores gerais do mês</h3>
+  <div class="kpi-grid kpi-grid-3">
+    {{#each kpis}}{{> kpi_card}}{{/each}}
+  </div>
+
+  <h3 class="block-title">Comparativo Year-over-Year ({{ano_anterior_label}})</h3>
+  <div class="yoy-banner">
+    {{#each yoy}}
+    <div class="yoy-cell">
+      <div class="yoy-label">{{label}}</div>
+      <div class="yoy-atual">{{atual}}</div>
+      <div class="yoy-cmp">
+        <span class="yoy-ant">{{ant}}</span>
+        <span class="delta {{classe}}">{{delta}}</span>
+      </div>
+    </div>
+    {{/each}}
+  </div>
+</section>
+
+<!-- ═══════════════ PÁG 3 — CANAIS ═══════════════ -->
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Desempenho por Canal</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  {{#each canais}}
+  <div class="canal-block">
+    <div class="canal-block-head">
+      <div class="canal-block-nome">
+        <span class="canal-icone">{{icone}}</span>
+        <span>{{nome}}</span>
+      </div>
+      <div class="canal-block-stats">
+        <span class="canal-block-inv">Invest. {{investimento_fmt}}</span>
+        <span class="canal-block-destaque">{{destaque}}</span>
+      </div>
+    </div>
+    <div class="canal-metricas">
+      {{#each metricas}}
+      <div class="canal-metrica">
+        <div class="cm-label">{{label}}</div>
+        <div class="cm-valor">{{valor}}</div>
+        {{#if delta}}<div class="cm-delta delta {{classe}}">{{delta}}</div>{{/if}}
+      </div>
+      {{/each}}
+    </div>
+  </div>
+  {{/each}}
+
+  {{#unless canais}}
+  <p class="sem-dados">Sem dados de investimento para este período.</p>
+  {{/unless}}
+</section>
+
+<!-- ═══════════════ PÁG 4 — ATRIBUIÇÃO + EVOLUÇÃO ═══════════════ -->
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Atribuição &amp; Evolução de Receita</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  <h3 class="block-title">Funil de atribuição — receita por origem</h3>
+  <div class="atrib-table">
+    {{#each atribuicao}}
+    <div class="atrib-row">
+      <div class="atrib-canal">{{canal}}</div>
+      <div class="atrib-bar-wrap">
+        <div class="atrib-bar" style="width:{{bar_pct}}%"></div>
+      </div>
+      <div class="atrib-receita">{{receita_fmt}}</div>
+      <div class="atrib-pct">{{pct_fmt}}</div>
+      <div class="atrib-pedidos">{{pedidos}} ped.</div>
+    </div>
+    {{/each}}
+  </div>
+
+  <h3 class="block-title">Evolução diária de receita</h3>
+  <div class="daily-chart">
+    {{#each receita_diaria}}
+    <div class="daily-col">
+      <div class="daily-bar-wrap">
+        <div class="daily-bar" style="height:{{bar_pct}}%"></div>
+      </div>
+      <div class="daily-label">{{dia}}</div>
+    </div>
+    {{/each}}
+  </div>
+  <div class="daily-legend">
+    <span class="dl-item">📈 Total do mês: {{atribuicao_total_fmt}}</span>
+  </div>
+</section>
+
+<!-- ═══════════════ PÁG 5 — CRIATIVOS META ═══════════════ -->
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Criativos Meta Ads</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  {{#if tem_criativos_meta}}
+  <h3 class="block-title">Top criativos por investimento</h3>
+  <div class="meta-criativo-grid">
+    {{#each criativos_meta}}
+    <div class="meta-criativo-card">
+      {{#if has_thumb}}
+        <div class="mc-thumb-wrap">
+          <img src="{{thumbnail}}" alt="{{nome}}" class="mc-thumb" onerror="this.style.display='none'" />
+        </div>
+      {{else}}
+        <div class="mc-thumb-placeholder">📱</div>
+      {{/if}}
+      <div class="mc-body">
+        <p class="mc-nome">{{nome}}</p>
+        {{#if headline}}<p class="mc-headline">{{headline}}</p>{{/if}}
+        <div class="mc-metricas">
+          <div class="mc-metrica">
+            <span class="mc-ml">Investimento</span>
+            <span class="mc-mv accent">{{spend_fmt}}</span>
+          </div>
+          <div class="mc-metrica">
+            <span class="mc-ml">Compras</span>
+            <span class="mc-mv">{{purchases_fmt}}</span>
+          </div>
+          <div class="mc-metrica">
+            <span class="mc-ml">CPA</span>
+            <span class="mc-mv">{{cpa_fmt}}</span>
+          </div>
+          <div class="mc-metrica">
+            <span class="mc-ml">CTR</span>
+            <span class="mc-mv">{{ctr_fmt}}</span>
+          </div>
+          <div class="mc-metrica">
+            <span class="mc-ml">Impressões</span>
+            <span class="mc-mv">{{impressions_fmt}}</span>
+          </div>
+          <div class="mc-metrica">
+            <span class="mc-ml">Cliques</span>
+            <span class="mc-mv">{{clicks_fmt}}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    {{/each}}
+  </div>
+  {{else}}
+  <div class="sem-dados-box">
+    <p>Dados de criativos não disponíveis para este período.<br>Verifique se o token Meta está configurado nas integrações.</p>
+  </div>
+  {{/if}}
+</section>
+
+<!-- ═══════════════ PÁG 6 — PRODUTOS + CAMPANHAS ═══════════════ -->
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Produtos &amp; Campanhas</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  {{#if tem_produtos}}
+  <h3 class="block-title">Top {{top_produtos.length}} produtos mais vendidos</h3>
+  <table class="camp-table">
+    <thead>
+      <tr>
+        <th style="width:32px">#</th>
+        <th>Produto</th>
+        <th class="num">Qtd</th>
+        <th class="num">Receita</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each top_produtos}}
+      <tr>
+        <td style="font-weight:700;color:var(--ink-dim)">{{rank}}</td>
+        <td class="camp-nome"><strong>{{name}}</strong></td>
+        <td class="num">{{qty_fmt}}</td>
+        <td class="num" style="font-weight:700;color:var(--color-accent)">{{revenue_fmt}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+  {{/if}}
+
+  {{#if campanhas.length}}
+  <h3 class="block-title">Campanhas em destaque</h3>
+  <table class="camp-table">
+    <thead>
+      <tr>
+        <th>Campanha</th>
+        <th>Canal</th>
+        <th class="num">Invest.</th>
+        <th class="num">Receita</th>
+        <th class="num">ROAS</th>
+        <th class="num">Pedidos</th>
+        <th class="num">CPA</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each campanhas}}{{> campaign_row}}{{/each}}
+    </tbody>
+  </table>
+  {{/if}}
+</section>
+
+<!-- ═══════════════ PÁG 7 — RETENÇÃO + DESTAQUES + PLANO ═══════════════ -->
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Análise &amp; Plano</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  <!-- Retenção -->
+  <h3 class="block-title">Base de clientes — retenção</h3>
+  <div class="retencao-block">
+    <div class="ret-row">
+      <div class="ret-label">Novos clientes</div>
+      <div class="ret-bar-wrap">
+        <div class="ret-bar ret-bar-new" style="width:{{retencao.bar_novos}}%"></div>
+      </div>
+      <div class="ret-num">{{retencao.novos_fmt}} <span class="ret-pct">({{retencao.novos_pct_fmt}})</span></div>
+    </div>
+    <div class="ret-row">
+      <div class="ret-label">Clientes recorrentes</div>
+      <div class="ret-bar-wrap">
+        <div class="ret-bar ret-bar-rec" style="width:{{retencao.bar_rec}}%"></div>
+      </div>
+      <div class="ret-num">{{retencao.recorrentes_fmt}} <span class="ret-pct">({{retencao.rep_rate_fmt}})</span></div>
+    </div>
+    <div class="ret-total">Total: <strong>{{retencao.total_fmt}} pedidos</strong> · Taxa de recompra: <strong>{{retencao.rep_rate_fmt}}</strong></div>
+  </div>
+
+  <!-- Destaques -->
+  {{#if destaques.length}}
+  <h3 class="block-title">Destaques do mês</h3>
+  <div class="highlight-grid">
+    {{#each destaques}}
+    <div class="highlight-card hl-{{tipo}}">
+      <div class="hl-titulo">{{titulo}}</div>
+      <p class="hl-texto">{{texto}}</p>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <!-- Atenções -->
+  {{#if tem_atencoes}}
+  <h3 class="block-title">Pontos de atenção</h3>
+  {{#each atencoes}}
+  <div class="atencao-item prio-{{prioridade}}">
+    <div class="atencao-icone">{{icone}}</div>
+    <div class="atencao-corpo">
+      <div class="atencao-titulo">
+        {{titulo}}
+        <span class="prio-badge prio-badge-{{prioridade}}">{{prioridade}}</span>
+      </div>
+      <p class="atencao-desc">{{descricao}}</p>
+    </div>
+  </div>
+  {{/each}}
+  {{/if}}
+
+  <!-- Plano próximo mês -->
+  {{#if plano}}
+  <h3 class="block-title">Plano para {{plano.mes}}</h3>
+  <div class="plano-metas">
+    {{#if ecommerce}}
+      <div class="plano-meta"><span class="pm-label">Meta faturamento</span><span class="pm-valor">{{plano_meta_faturamento_fmt}}</span></div>
+      <div class="plano-meta"><span class="pm-label">Meta ROAS</span><span class="pm-valor">{{plano.meta_roas}}x</span></div>
+      <div class="plano-meta"><span class="pm-label">Meta CPA</span><span class="pm-valor">{{plano.meta_cpa}}</span></div>
+    {{/if}}
+    <div class="plano-meta"><span class="pm-label">Budget total</span><span class="pm-valor">{{plano_budget_fmt}}</span></div>
+  </div>
+  <ol class="acao-list">
+    {{#each plano.acoes}}
+    <li><span class="acao-num">{{inc @index}}</span><span class="acao-txt">{{this}}</span></li>
+    {{/each}}
+  </ol>
+  {{/if}}
+
+  {{> footer}}
+</section>
 
 </body>
 </html>

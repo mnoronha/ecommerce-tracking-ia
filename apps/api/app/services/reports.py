@@ -23,6 +23,8 @@ from ..config import settings
 from ..database import get_supabase
 from . import resend as email_service
 from . import notify as _notify
+from . import report_builder, report_renderer
+
 
 def _html_to_pdf(html: str) -> Optional[bytes]:
     """Convert HTML string to PDF bytes using WeasyPrint. Returns None on failure."""
@@ -713,11 +715,29 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
         logger.info("monthly report HELD for %s → agency %s (%s)", pixel_id, agency, "; ".join(m["health"]["reasons"]))
         return {"sent_to": agency, "held": True, "reasons": m["health"]["reasons"]}
 
-    html    = _render_monthly_html(pixel_id, client_name, m, client_logo=logo)
-    subject = f"📈 Relatório mensal · {m['month_label']}: {fmt_brl(m['revenue'])} · {client_name}"
-    pdf     = _html_to_pdf(html)
+    # ── Build rich PDF via new template system ───────────────────────────
+    pdf: Optional[bytes] = None
+    try:
+        now_dt  = datetime.now(timezone.utc)
+        rb_year  = now_dt.year if now_dt.month > 1 else now_dt.year - 1
+        rb_month = now_dt.month - 1 if now_dt.month > 1 else 12
+        ctx = report_builder.build_monthly_context(
+            client_id=client_id,
+            client=client or {},
+            year=rb_year,
+            month=rb_month,
+        )
+        pdf = report_renderer.render_to_pdf(ctx)
+        logger.info("monthly report: new template PDF generated (%d bytes)", len(pdf) if pdf else 0)
+    except Exception as exc:
+        logger.warning("monthly report: new template failed (%s) — falling back to legacy HTML", exc)
 
-    # E-mail body simples — o conteúdo completo está no PDF anexo
+    # ── Fallback: legacy HTML template ───────────────────────────────────
+    if not pdf:
+        html = _render_monthly_html(pixel_id, client_name, m, client_logo=logo)
+        pdf  = _html_to_pdf(html)
+
+    subject = f"📈 Relatório mensal · {m['month_label']}: {fmt_brl(m['revenue'])} · {client_name}"
     body_html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:Arial,sans-serif;background:#f9fafb;padding:32px">
@@ -725,7 +745,7 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
   <h2 style="margin:0 0 8px;color:#111827">📈 Relatório Mensal — {m['month_label']}</h2>
   <p style="margin:0 0 16px;color:#6b7280;font-size:14px">
     Olá! O relatório completo de <strong>{client_name}</strong> referente a <strong>{m['month_label']}</strong>
-    está anexado neste e-mail em PDF.
+    está em anexo (PDF).
   </p>
   <p style="margin:0;color:#6b7280;font-size:13px">
     Faturamento do mês: <strong>{fmt_brl(m['revenue'])}</strong><br>
@@ -734,7 +754,9 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
 </div>
 </body></html>"""
 
-    filename = f"relatorio-mensal-{m['month_label'].lower().replace(' ', '-')}-{client_name.lower().replace(' ', '-')}.pdf"
+    safe_name = client_name.lower().replace(" ", "-").replace("/", "-")[:30]
+    filename  = f"relatorio-{m['month_label'].lower().replace(' ','').replace('/','_')}-{safe_name}.pdf"
+
     for addr in to_list:
         if pdf:
             email_service.send_email_with_attachment(
@@ -742,9 +764,10 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
                 attachment_content=pdf, attachment_filename=filename,
             )
         else:
-            # WeasyPrint não disponível — fallback para HTML inline
-            email_service.send_email(to=addr, subject=subject, html_body=html)
-    logger.info("monthly report (%s) sent to %s for %s", "PDF" if pdf else "HTML", to_list, pixel_id)
+            html_fb = _render_monthly_html(pixel_id, client_name, m, client_logo=logo)
+            email_service.send_email(to=addr, subject=subject, html_body=html_fb)
+
+    logger.info("monthly report (%s) sent to %s for %s", "PDF" if pdf else "HTML-fallback", to_list, pixel_id)
 
     # WhatsApp group — resumo mensal compacto
     if client:
