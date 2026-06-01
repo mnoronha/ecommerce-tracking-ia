@@ -7,10 +7,12 @@ the dashboard can surface exactly where a client's data pipeline stands.
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..database import get_supabase
+from ..services import health_monitor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -230,4 +232,65 @@ async def get_diagnostics(pixel_id: str):
             "warning":  alert_warning,
             "total":    len(alert_rows),
         },
+    }
+
+
+@router.post(
+    "/health-monitor/run",
+    summary="Dispara o monitor de saúde manualmente",
+    tags=["diagnostics"],
+)
+async def run_health_monitor(
+    date: Optional[str] = Query(
+        default=None,
+        description="Data alvo YYYY-MM-DD (default: ontem UTC)",
+    )
+):
+    """
+    Executa o health_monitor para todos os clientes ativos e retorna o resultado.
+    Envia o email de relatório para AGENCY_NOTIFY_EMAIL.
+    Aceita ?date=2026-05-31 para re-verificar um dia específico.
+    """
+    try:
+        results = health_monitor.run_daily_health_check(target_date=date)
+    except Exception as exc:
+        logger.error("health-monitor/run: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    summary = [
+        {
+            "pixel_id":  r["pixel_id"],
+            "name":      r["name"],
+            "healthy":   r["healthy"],
+            "findings":  r["findings"],
+            "snippet":   {
+                "total":     r["snippet"]["total"],
+                "daily_avg": r["snippet"]["daily_avg"],
+                "drop_pct":  r["snippet"]["drop_pct"],
+            },
+            "visitors": {
+                "total":     r["visitors"]["total"],
+                "pct_fbp":   r["visitors"]["pct_fbp"],
+                "pct_gclid": r["visitors"]["pct_gclid"],
+            },
+            "orders": {
+                "paid_online":       r["orders"]["paid_online"],
+                "paid_pos":          r["orders"]["paid_pos"],
+                "meta_dispatched":   r["orders"]["meta_dispatched"],
+                "google_dispatched": r["orders"]["google_dispatched"],
+                "meta_missing":      r["orders"]["meta_missing"],
+                "google_missing":    r["orders"]["google_missing"],
+                "pct_enriched":      r["orders"]["pct_enriched"],
+                "gm_counts":         r["orders"]["gm_counts"],
+            },
+        }
+        for r in results
+    ]
+
+    all_healthy = all(r["healthy"] for r in results)
+    return {
+        "status":    "ok" if all_healthy else "issues_found",
+        "clients":   len(results),
+        "n_issues":  sum(len(r["findings"]) for r in results),
+        "results":   summary,
     }
