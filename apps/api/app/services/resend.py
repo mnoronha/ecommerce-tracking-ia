@@ -27,11 +27,20 @@ _FROM_DOMAIN = "relatorios@noroia.com"
 def send_email(to: str, subject: str, html_body: str, from_name: str = _FROM_NAME) -> bool:
     """Send an HTML email. Returns True on success."""
     if settings.RESEND_API_KEY:
-        return _via_resend(to, subject, html_body, from_name)
+        ok, _ = _via_resend(to, subject, html_body, from_name)
+        return ok
     return _smtp.send_email(to, subject, html_body)
 
 
-def _via_resend(to: str, subject: str, html: str, from_name: str) -> bool:
+def send_email_with_error(to: str, subject: str, html_body: str, from_name: str = _FROM_NAME) -> tuple[bool, str]:
+    """Send an HTML email. Returns (success, error_message)."""
+    if settings.RESEND_API_KEY:
+        return _via_resend(to, subject, html_body, from_name)
+    ok = _smtp.send_email(to, subject, html_body)
+    return ok, "" if ok else "SMTP send failed — check logs"
+
+
+def _via_resend(to: str, subject: str, html: str, from_name: str) -> tuple[bool, str]:
     from_addr = settings.RESEND_FROM or _FROM_DOMAIN
     payload = {
         "from":    f"{from_name} <{from_addr}>",
@@ -51,10 +60,11 @@ def _via_resend(to: str, subject: str, html: str, from_name: str) -> bool:
         )
         resp.raise_for_status()
         logger.info("resend: sent → %s | %s", to, subject)
-        return True
+        return True, ""
     except httpx.HTTPStatusError as exc:
-        logger.error("resend HTTP %s → %s: %s", exc.response.status_code, to, exc.response.text[:200])
-        return False
+        err = exc.response.text[:300]
+        logger.error("resend HTTP %s → %s: %s", exc.response.status_code, to, err)
+        return False, f"HTTP {exc.response.status_code}: {err}"
     except Exception as exc:
         logger.error("resend error → %s: %s", to, exc)
-        return False
+        return False, str(exc)[:200]

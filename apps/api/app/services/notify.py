@@ -162,7 +162,7 @@ def test_email(to: Optional[str] = None) -> dict:
     dest = to or settings.AGENCY_NOTIFY_EMAIL
     if not dest:
         return {"ok": False, "error": "Nenhum destinatário configurado (AGENCY_NOTIFY_EMAIL)"}
-    ok = email_svc.send_email(
+    ok, err = email_svc.send_email_with_error(
         to=dest,
         subject="✅ Teste de email — Ecommerce Tracking IA",
         html_body="""<!DOCTYPE html>
@@ -177,7 +177,10 @@ def test_email(to: Optional[str] = None) -> dict:
 </div>
 </body></html>""",
     )
-    return {"ok": ok, "to": dest, "provider": "resend" if settings.RESEND_API_KEY else "smtp"}
+    result = {"ok": ok, "to": dest, "provider": "resend" if settings.RESEND_API_KEY else "smtp"}
+    if not ok and err:
+        result["error"] = err
+    return result
 
 
 def test_whatsapp(phone: Optional[str] = None) -> dict:
