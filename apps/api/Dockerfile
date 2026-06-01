@@ -13,6 +13,12 @@ WORKDIR /app
 # Install system deps (gcc for some Python packages that need to compile)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    # WeasyPrint dependencies (PDF generation)
+    libpango-1.0-0 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    libffi-dev \
+    shared-mime-info \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (better layer caching)

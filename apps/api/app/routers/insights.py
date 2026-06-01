@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from ..database import get_supabase
-from ..services import ai_analyst, alerts, reports
+from ..services import ai_analyst, alerts, reports, spend_sync
 from ..services.writer import resolve_client_uuid
 
 logger = logging.getLogger(__name__)
@@ -230,6 +230,46 @@ async def send_report(pixel_id: str, body: ReportRequest | None = None, backgrou
         report_type=report_type, generate_ai=True, force=force,
     )
     return {"status": "sent", "report_type": report_type, "pixel_id": pixel_id, **res}
+
+
+class SpendBackfillRequest(BaseModel):
+    start_date: str   # YYYY-MM-DD
+    end_date:   str   # YYYY-MM-DD
+
+
+@router.post("/{pixel_id}/spend-backfill", summary="Importa histórico de investimento Meta + Google")
+async def spend_backfill(pixel_id: str, body: SpendBackfillRequest, background_tasks: BackgroundTasks):
+    """
+    Busca o investimento diário real nas APIs da Meta e Google para cada dia do período
+    e upserta na tabela ad_spend. Útil para preencher dados históricos faltantes.
+
+    Executa em background — pode levar alguns minutos para períodos longos.
+    """
+    from datetime import date as date_type
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail=f"Cliente '{pixel_id}' não encontrado")
+
+    try:
+        start = date_type.fromisoformat(body.start_date)
+        end   = date_type.fromisoformat(body.end_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Datas inválidas — use YYYY-MM-DD")
+
+    if (end - start).days > 365:
+        raise HTTPException(status_code=400, detail="Período máximo: 365 dias")
+    if end < start:
+        raise HTTPException(status_code=400, detail="end_date deve ser >= start_date")
+
+    background_tasks.add_task(spend_sync.backfill_spend_range, client_uuid, pixel_id, start, end)
+    return {
+        "status":  "queued",
+        "pixel_id": pixel_id,
+        "start":   body.start_date,
+        "end":     body.end_date,
+        "days":    (end - start).days + 1,
+        "message": "Backfill iniciado em background. Acompanhe nos logs do Railway.",
+    }
 
 
 @router.get("/{pixel_id}/campaign-products")

@@ -24,6 +24,15 @@ from ..database import get_supabase
 from . import resend as email_service
 from . import notify as _notify
 
+def _html_to_pdf(html: str) -> Optional[bytes]:
+    """Convert HTML string to PDF bytes using WeasyPrint. Returns None on failure."""
+    try:
+        from weasyprint import HTML as WP_HTML
+        return WP_HTML(string=html).write_pdf()
+    except Exception as exc:
+        logger.warning("reports: PDF generation failed (WeasyPrint): %s", exc)
+        return None
+
 logger = logging.getLogger(__name__)
 
 # ── Negativity gate thresholds (tweak here) ─────────────────────────────────────
@@ -706,9 +715,36 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
 
     html    = _render_monthly_html(pixel_id, client_name, m, client_logo=logo)
     subject = f"📈 Relatório mensal · {m['month_label']}: {fmt_brl(m['revenue'])} · {client_name}"
+    pdf     = _html_to_pdf(html)
+
+    # E-mail body simples — o conteúdo completo está no PDF anexo
+    body_html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;background:#f9fafb;padding:32px">
+<div style="max-width:480px;margin:0 auto;background:#fff;border-radius:8px;border:1px solid #e5e7eb;padding:28px">
+  <h2 style="margin:0 0 8px;color:#111827">📈 Relatório Mensal — {m['month_label']}</h2>
+  <p style="margin:0 0 16px;color:#6b7280;font-size:14px">
+    Olá! O relatório completo de <strong>{client_name}</strong> referente a <strong>{m['month_label']}</strong>
+    está anexado neste e-mail em PDF.
+  </p>
+  <p style="margin:0;color:#6b7280;font-size:13px">
+    Faturamento do mês: <strong>{fmt_brl(m['revenue'])}</strong><br>
+    Pedidos: <strong>{m['orders']}</strong> · Ticket médio: <strong>{fmt_brl(m['aov'])}</strong>
+  </p>
+</div>
+</body></html>"""
+
+    filename = f"relatorio-mensal-{m['month_label'].lower().replace(' ', '-')}-{client_name.lower().replace(' ', '-')}.pdf"
     for addr in to_list:
-        email_service.send_email(to=addr, subject=subject, html_body=html)
-    logger.info("monthly report sent to %s for %s", to_list, pixel_id)
+        if pdf:
+            email_service.send_email_with_attachment(
+                to=addr, subject=subject, html_body=body_html,
+                attachment_content=pdf, attachment_filename=filename,
+            )
+        else:
+            # WeasyPrint não disponível — fallback para HTML inline
+            email_service.send_email(to=addr, subject=subject, html_body=html)
+    logger.info("monthly report (%s) sent to %s for %s", "PDF" if pdf else "HTML", to_list, pixel_id)
 
     # WhatsApp group — resumo mensal compacto
     if client:

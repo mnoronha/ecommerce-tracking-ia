@@ -293,3 +293,75 @@ def run_daily_spend_sync() -> None:
             if metrics is not None:
                 _upsert_spend(c["id"], "tiktok_ads", yesterday, metrics)
                 logger.info("spend_sync: tiktok_ads %s → R$%.2f", pixel, metrics["spend"])
+
+
+# ── Historical backfill ───────────────────────────────────────────────────────
+
+def backfill_spend_range(client_id: str, pixel_id: str, start_date: date, end_date: date) -> dict:
+    """
+    Fetches and upserts ad spend for every day in [start_date, end_date] inclusive.
+    Returns a summary of what was synced.
+    """
+    sb = get_supabase()
+    client_row = (
+        sb.table("clients")
+        .select(
+            "id, pixel_id, "
+            "meta_ad_account_id, meta_access_token, "
+            "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
+            "tiktok_advertiser_id, tiktok_access_token"
+        )
+        .eq("id", client_id)
+        .limit(1)
+        .execute()
+    )
+    if not (client_row and client_row.data):
+        return {"error": "cliente não encontrado"}
+
+    c       = client_row.data[0]
+    results = {"meta_ads": [], "google_ads": [], "tiktok_ads": [], "errors": []}
+    manager = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None
+
+    current = start_date
+    while current <= end_date:
+        d = current
+
+        if c.get("meta_ad_account_id") and c.get("meta_access_token"):
+            m = _fetch_meta_spend(c["meta_ad_account_id"], c["meta_access_token"], d)
+            if m is not None:
+                _upsert_spend(client_id, "meta_ads", d, m)
+                results["meta_ads"].append({"date": d.isoformat(), "spend": m["spend"]})
+                logger.info("backfill: meta_ads %s %s → R$%.2f", pixel_id, d, m["spend"])
+            else:
+                results["errors"].append(f"meta_ads {d}: fetch failed")
+
+        if c.get("google_ads_customer_id") and c.get("google_ads_refresh_token"):
+            m = _fetch_google_spend(c["google_ads_customer_id"], c["google_ads_refresh_token"], d, manager)
+            if m is not None:
+                _upsert_spend(client_id, "google_ads", d, m)
+                results["google_ads"].append({"date": d.isoformat(), "spend": m["spend"]})
+                logger.info("backfill: google_ads %s %s → R$%.2f", pixel_id, d, m["spend"])
+            else:
+                results["errors"].append(f"google_ads {d}: fetch failed")
+
+        if c.get("tiktok_advertiser_id") and c.get("tiktok_access_token"):
+            m = _fetch_tiktok_spend(c["tiktok_advertiser_id"], c["tiktok_access_token"], d)
+            if m is not None:
+                _upsert_spend(client_id, "tiktok_ads", d, m)
+                results["tiktok_ads"].append({"date": d.isoformat(), "spend": m["spend"]})
+
+        current += timedelta(days=1)
+
+    totals = {
+        ch: round(sum(r["spend"] for r in lst), 2)
+        for ch, lst in results.items()
+        if ch != "errors"
+    }
+    return {
+        "client":    pixel_id,
+        "start":     start_date.isoformat(),
+        "end":       end_date.isoformat(),
+        "days_synced": (end_date - start_date).days + 1,
+        "totals":    totals,
+        "errors":    results["errors"],
+    }
