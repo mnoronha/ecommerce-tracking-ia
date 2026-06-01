@@ -116,6 +116,36 @@ def severity_should_notify(severity: str) -> bool:
     return sev == "critical"  # default: só crítico
 
 
+def list_instances() -> dict:
+    """Retorna todas as instâncias da Evolution API (debug)."""
+    if not _is_configured():
+        return {"ok": False, "error": "Evolution API não configurada"}
+    url = f"{settings.EVOLUTION_API_URL.rstrip('/')}/instance/fetchInstances"
+    try:
+        resp = httpx.get(url, headers={"apikey": settings.EVOLUTION_API_KEY}, timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
+        instances = data if isinstance(data, list) else data.get("instances", [])
+        names = []
+        for inst in instances:
+            name = (
+                inst.get("instance", {}).get("instanceName")
+                or inst.get("instanceName")
+                or inst.get("name")
+                or str(inst)[:80]
+            )
+            state = (
+                inst.get("instance", {}).get("connectionStatus")
+                or inst.get("connectionStatus")
+                or inst.get("state")
+                or "unknown"
+            )
+            names.append({"name": name, "state": state})
+        return {"ok": True, "instances": names, "raw_sample": instances[:2]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
 def check_instance_status() -> dict:
     """
     Verifica se a instância Evolution está conectada.

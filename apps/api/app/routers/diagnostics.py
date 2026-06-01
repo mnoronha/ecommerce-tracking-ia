@@ -333,6 +333,16 @@ async def notifications_status():
     }
 
 
+@router.get(
+    "/notifications/whatsapp/instances",
+    summary="Lista todas as instâncias Evolution API (debug)",
+    tags=["diagnostics"],
+)
+async def list_whatsapp_instances():
+    """Mostra todas as instâncias disponíveis na Evolution API para debug."""
+    return wa_svc.list_instances()
+
+
 @router.post(
     "/notifications/test/email",
     summary="Envia email de teste para AGENCY_NOTIFY_EMAIL",
