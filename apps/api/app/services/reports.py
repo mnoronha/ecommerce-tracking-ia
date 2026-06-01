@@ -286,6 +286,54 @@ def _client_name(sb, client_id: str, pixel_id: str) -> str:
     return pixel_id
 
 
+def _client_logo(sb, client_id: str) -> Optional[str]:
+    try:
+        row = sb.table("clients").select("logo_url").eq("id", client_id).limit(1).execute()
+        if row.data:
+            return row.data[0].get("logo_url") or None
+    except Exception:
+        pass
+    return None
+
+
+def _header_html(client_name: str, subtitle: str,
+                 client_logo: Optional[str] = None,
+                 wide: bool = False) -> str:
+    """
+    Bloco de cabeçalho reutilizável para ambos os relatórios.
+    Inclui logo do cliente (se houver) + logo da agência.
+    """
+    agency_logo = settings.AGENCY_LOGO_URL
+    agency_name = settings.AGENCY_NAME or "Noroia"
+
+    # Logo do cliente
+    client_logo_html = ""
+    if client_logo:
+        client_logo_html = f'<img src="{client_logo}" alt="{client_name}" style="height:36px;max-width:160px;object-fit:contain;margin-bottom:8px;display:block">'
+
+    # Logo da agência (canto superior direito)
+    agency_logo_html = ""
+    if agency_logo:
+        agency_logo_html = f'<img src="{agency_logo}" alt="{agency_name}" style="height:22px;object-fit:contain;opacity:0.7">'
+    else:
+        agency_logo_html = f'<span style="color:#a5b4fc;font-size:11px;font-weight:600;letter-spacing:0.5px">{agency_name}</span>'
+
+    max_w = "640px" if wide else "560px"
+    return f"""
+    <div style="background:#1e1b4b;border-radius:8px 8px 0 0;padding:20px 24px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:4px">
+        <div>
+          {client_logo_html}
+          <h1 style="margin:0;color:#fff;font-size:{'22px' if wide else '20px'};font-weight:700">{client_name}</h1>
+          <p style="margin:4px 0 0;color:#8b9cf4;font-size:12px">{subtitle}</p>
+        </div>
+        <div style="text-align:right;padding-top:2px">
+          {agency_logo_html}
+        </div>
+      </div>
+    </div>"""
+
+
 # ════════════════════════════════════════════════════════════════════════════════
 # WEEKLY — objective digest
 # ════════════════════════════════════════════════════════════════════════════════
@@ -356,11 +404,12 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
 
 def _send_weekly(client_id: str, pixel_id: str, client_name: str,
                  recipients: list[str] | str, client: Optional[dict] = None) -> None:
-    sb  = get_supabase()
-    now = datetime.now(timezone.utc)
-    m   = _build_weekly(sb, client_id, now)
-    html    = _render_weekly_html(pixel_id, client_name, m)
-    subject = f"📊 Semana {m['week_start'].strftime('%d/%m')}–{now.strftime('%d/%m')}: {fmt_brl(m['week']['revenue'])} · {client_name}"
+    sb        = get_supabase()
+    now       = datetime.now(timezone.utc)
+    m         = _build_weekly(sb, client_id, now)
+    logo      = (client or {}).get("logo_url") or _client_logo(sb, client_id)
+    html      = _render_weekly_html(pixel_id, client_name, m, client_logo=logo)
+    subject   = f"📊 Semana {m['week_start'].strftime('%d/%m')}–{now.strftime('%d/%m')}: {fmt_brl(m['week']['revenue'])} · {client_name}"
 
     to_list = [recipients] if isinstance(recipients, str) else recipients
     for addr in to_list:
@@ -383,7 +432,8 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
             _wa.send_to_group(group_jid, wa_text)
 
 
-def _render_weekly_html(pixel_id: str, client_name: str, m: dict) -> str:
+def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
+                        client_logo: Optional[str] = None) -> str:
     now        = m["now"]
     week_range = f"{m['week_start'].strftime('%d/%m')} – {now.strftime('%d/%m')}"
 
@@ -440,16 +490,14 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict) -> str:
           <p style="margin:0;color:#374151;font-size:13px;line-height:1.5">{line}</p>
         </div>"""
 
+    dashboard_url = f"{settings.DASHBOARD_URL}/clients/{pixel_id}/dashboard"
+
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f9fafb;margin:0;padding:0">
 <div style="max-width:560px;margin:0 auto;padding:24px 16px">
 
-  <div style="background:#1e1b4b;border-radius:8px 8px 0 0;padding:20px 24px">
-    <p style="margin:0;color:#a5b4fc;font-size:11px;letter-spacing:1px;text-transform:uppercase">Resumo Semanal</p>
-    <h1 style="margin:4px 0 0;color:#fff;font-size:20px">{client_name}</h1>
-    <p style="margin:4px 0 0;color:#8b9cf4;font-size:12px">{week_range}</p>
-  </div>
+  {_header_html(client_name, f"Resumo Semanal · {week_range}", client_logo=client_logo)}
 
   <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:24px">
 
@@ -487,7 +535,8 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict) -> str:
   </div>
 
   <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:16px">
-    Ecommerce Tracking IA · <a href="https://app.noroia.com/clients/{pixel_id}/dashboard" style="color:#6366f1">Ver dashboard</a>
+    {settings.AGENCY_NAME or 'Ecommerce Tracking IA'} ·
+    <a href="{dashboard_url}" style="color:#6366f1">Ver dashboard</a>
   </p>
 </div>
 </body></html>"""
@@ -590,7 +639,7 @@ def send_monthly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, client_type, reports_enabled")
+            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, logo_url, client_type, reports_enabled")
             .eq("is_active", True)
             .eq("reports_enabled", True)
             .execute()
@@ -640,19 +689,22 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
     m   = _build_monthly(sb, client_id, now)
     to_list = [recipients] if isinstance(recipients, str) else recipients
 
+    logo  = (client or {}).get("logo_url") or _client_logo(sb, client_id)
+
     held = m["health"]["negative"] and not force
     if held:
         agency = settings.AGENCY_NOTIFY_EMAIL
         if not agency:
             logger.warning("monthly report HELD for %s but AGENCY_NOTIFY_EMAIL unset — not sent", pixel_id)
             return {"sent_to": None, "held": True, "reasons": m["health"]["reasons"]}
-        html    = _render_monthly_html(pixel_id, client_name, m, held_for=", ".join(to_list))
+        html    = _render_monthly_html(pixel_id, client_name, m,
+                                       held_for=", ".join(to_list), client_logo=logo)
         subject = f"⚠️ [REVISAR] Relatório mensal retido — {client_name} · {m['month_label']}"
         email_service.send_email(to=agency, subject=subject, html_body=html)
         logger.info("monthly report HELD for %s → agency %s (%s)", pixel_id, agency, "; ".join(m["health"]["reasons"]))
         return {"sent_to": agency, "held": True, "reasons": m["health"]["reasons"]}
 
-    html    = _render_monthly_html(pixel_id, client_name, m)
+    html    = _render_monthly_html(pixel_id, client_name, m, client_logo=logo)
     subject = f"📈 Relatório mensal · {m['month_label']}: {fmt_brl(m['revenue'])} · {client_name}"
     for addr in to_list:
         email_service.send_email(to=addr, subject=subject, html_body=html)
@@ -678,7 +730,9 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
     return {"sent_to": to_list, "held": False, "reasons": []}
 
 
-def _render_monthly_html(pixel_id: str, client_name: str, m: dict, held_for: Optional[str] = None) -> str:
+def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
+                         held_for: Optional[str] = None,
+                         client_logo: Optional[str] = None) -> str:
     # Held banner (agency-only)
     held_banner = ""
     if held_for:
@@ -811,17 +865,14 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict, held_for: Opt
     </div>"""
 
     mom_line = f"vs. {_MONTH_PT[m['month_start'].month-1] if m['month_start'].month>1 else 'Dezembro'}: {delta_badge(m['mom_delta'])}" if m["mom_delta"] is not None else ""
+    dashboard_url = f"{settings.DASHBOARD_URL}/clients/{pixel_id}/dashboard"
 
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#f9fafb;margin:0;padding:0">
 <div style="max-width:620px;margin:0 auto;padding:24px 16px">
 
-  <div style="background:#1e1b4b;border-radius:8px 8px 0 0;padding:22px 24px">
-    <p style="margin:0;color:#a5b4fc;font-size:11px;letter-spacing:1px;text-transform:uppercase">Relatório Mensal</p>
-    <h1 style="margin:4px 0 0;color:#fff;font-size:22px">{client_name}</h1>
-    <p style="margin:4px 0 0;color:#8b9cf4;font-size:13px">{m['month_label']}</p>
-  </div>
+  {_header_html(client_name, f"Relatório Mensal · {m['month_label']}", client_logo=client_logo, wide=True)}
 
   <div style="background:#fff;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:24px">
 
@@ -853,7 +904,8 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict, held_for: Opt
   </div>
 
   <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:16px">
-    Ecommerce Tracking IA · <a href="https://app.noroia.com/clients/{pixel_id}/dashboard" style="color:#6366f1">Ver dashboard</a>
+    {settings.AGENCY_NAME or 'Ecommerce Tracking IA'} ·
+    <a href="{dashboard_url}" style="color:#6366f1">Ver dashboard</a>
   </p>
 </div>
 </body></html>"""

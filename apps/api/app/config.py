@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     SMTP_PASS: str = ""
     SMTP_FROM: str = ""  # defaults to SMTP_USER if empty
 
+    # ── Branding ─────────────────────────────────────────────────────────
+    AGENCY_NAME:     str = "Noroia"
+    AGENCY_LOGO_URL: str = ""   # ex: https://cdn.noroia.com/logo-white.png
+    AGENCY_WEBSITE:  str = "https://noroia.com"
+    DASHBOARD_URL:   str = "https://ecommerce-tracking-ia-dash.vercel.app"
+
     # ── Notificação da agência ────────────────────────────────────────────
     # Destino interno para relatórios retidos pelo gate de negatividade
     # (mês ruim não vai direto pro cliente — a agência revisa antes).

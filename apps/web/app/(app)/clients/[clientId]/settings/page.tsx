@@ -30,6 +30,7 @@ interface ClientRow {
   tiktok_pixel_id: string | null
   tiktok_access_token: string | null
   tiktok_advertiser_id: string | null
+  logo_url: string | null
   alert_email: string | null
   alert_emails: string[]
   whatsapp_group_jid: string | null
@@ -283,6 +284,7 @@ export default function ClientSettingsPage() {
         tiktok_pixel_id:                 form.tiktok_pixel_id      || null,
         tiktok_access_token:             form.tiktok_access_token  || null,
         tiktok_advertiser_id:            form.tiktok_advertiser_id || null,
+        logo_url:                        form.logo_url                  || null,
         alert_email:                     (form.alert_emails as string[] | undefined)?.[0] || form.alert_email || null,
         alert_emails:                    (form.alert_emails as string[] | undefined)?.filter(e => e.trim()) || [],
         whatsapp_group_jid:              form.whatsapp_group_jid    || null,
@@ -376,6 +378,18 @@ export default function ClientSettingsPage() {
         <Section title="Dados básicos">
           <Field label="Nome do cliente">
             <input value={form.name || ''} onChange={e => set('name', e.target.value)} className={INPUT} />
+          </Field>
+          <Field label="Logo do cliente" hint="URL da imagem (PNG/SVG, fundo transparente, ideal 200×60px) — aparece nos relatórios de email">
+            <div className="space-y-2">
+              <input value={form.logo_url || ''} onChange={e => set('logo_url', e.target.value)}
+                placeholder="https://cdn.suaempresa.com/logo.png" className={INPUT} />
+              {form.logo_url && (
+                <div className="flex items-center gap-3 bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-2">
+                  <img src={form.logo_url} alt="preview" className="h-8 max-w-[140px] object-contain" onError={e => (e.currentTarget.style.display='none')} />
+                  <span className="text-xs text-slate-500">preview</span>
+                </div>
+              )}
+            </div>
           </Field>
           {form.ecommerce_platform === 'shopify' && (
             <>
