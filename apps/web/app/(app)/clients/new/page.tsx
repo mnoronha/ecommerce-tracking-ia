@@ -68,11 +68,12 @@ function NewClientWizard() {
   const [error,   setError]   = useState('')
 
   // Step 1
-  const [platform,  setPlatform]  = useState<Platform>('shopify')
-  const [storeName, setStoreName] = useState('')
-  const [domain,    setDomain]    = useState('')
-  const [apiToken,  setApiToken]  = useState('')
-  const [apiSecret, setApiSecret] = useState('')
+  const [platform,   setPlatform]   = useState<Platform>('shopify')
+  const [storeName,  setStoreName]  = useState('')
+  const [clientType, setClientType] = useState<'ecommerce' | 'leads'>('ecommerce')
+  const [domain,     setDomain]     = useState('')
+  const [apiToken,   setApiToken]   = useState('')
+  const [apiSecret,  setApiSecret]  = useState('')
 
   // Created client
   const [pixelId,    setPixelId]    = useState('')
@@ -94,9 +95,10 @@ function NewClientWizard() {
   const [installResult, setInstallResult] = useState<InstallResult | null>(null)
 
   // Step 4
-  const [alertEmail,   setAlertEmail]   = useState('')
-  const [slackWebhook, setSlackWebhook] = useState('')
-  const [savingNotif,  setSavingNotif]  = useState(false)
+  const [alertEmail,     setAlertEmail]     = useState('')
+  const [slackWebhook,   setSlackWebhook]   = useState('')
+  const [reportsEnabled, setReportsEnabled] = useState(false)
+  const [savingNotif,    setSavingNotif]    = useState(false)
 
   function setM(k: string, v: string)  { setMetaForm(f      => ({ ...f, [k]: v })) }
   function setG(k: string, v: string)  { setGoogleForm(f    => ({ ...f, [k]: v })) }
@@ -137,6 +139,7 @@ function NewClientWizard() {
       const slug = slugify(storeName)
       const payload: Record<string, string | boolean> = {
         name: storeName, ecommerce_platform: platform, agency_id: mem.agency_id, is_active: true,
+        client_type: clientType,
       }
       if (slug) payload.pixel_id = slug
       if (domain) {
@@ -217,6 +220,7 @@ function NewClientWizard() {
       await sb.from('clients').update({
         alert_email:       alertEmail   || null,
         slack_webhook_url: slackWebhook || null,
+        reports_enabled:   reportsEnabled,
       }).eq('id', clientDbId)
     } finally {
       setSavingNotif(false)
@@ -302,6 +306,27 @@ function NewClientWizard() {
                 <label className={LABEL}>Nome da loja</label>
                 <input autoFocus required value={storeName} onChange={e => setStoreName(e.target.value)}
                   placeholder="LK Sneakers" className={INPUT} />
+              </div>
+
+              <div>
+                <label className={LABEL}>Tipo de cliente</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {([
+                    { v: 'ecommerce', label: 'E-commerce', hint: 'Faturamento, ROAS, pedidos' },
+                    { v: 'leads',     label: 'Leads',      hint: 'Leads, CPL, agendamentos' },
+                  ] as const).map(opt => (
+                    <button key={opt.v} type="button" onClick={() => setClientType(opt.v)}
+                      className={`py-3 px-3 rounded-xl border text-sm font-medium transition-colors text-left ${
+                        clientType === opt.v
+                          ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
+                          : 'border-[#2a2f3e] text-slate-400 hover:border-slate-500 hover:text-white'
+                      }`}>
+                      <span className="block">{opt.label}</span>
+                      <span className="block text-[11px] font-normal text-slate-500 mt-0.5">{opt.hint}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-xs text-slate-600">Define quais métricas aparecem nos relatórios deste cliente.</p>
               </div>
 
               <div>
@@ -697,6 +722,19 @@ function NewClientWizard() {
                   <p className="text-xs text-slate-600 mt-1.5">
                     Recebe relatório semanal IA e alertas de anomalias críticas.
                   </p>
+                </div>
+
+                <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-xl p-4">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input type="checkbox" checked={reportsEnabled} onChange={e => setReportsEnabled(e.target.checked)}
+                      className="w-4 h-4 mt-0.5 accent-indigo-500 shrink-0" />
+                    <span>
+                      <span className="block text-sm text-slate-200 font-medium">Ativar relatórios de tráfego pago</span>
+                      <span className="block text-xs text-slate-500 mt-0.5">
+                        Gera os relatórios semanal e mensal ({clientType === 'leads' ? 'perfil Leads' : 'perfil E-commerce'}) para este cliente.
+                      </span>
+                    </span>
+                  </label>
                 </div>
 
                 <div>

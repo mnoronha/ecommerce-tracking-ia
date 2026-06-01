@@ -34,6 +34,8 @@ interface ClientRow {
   webhook_secret: string | null
   slack_webhook_url: string | null
   is_active: boolean
+  client_type: string | null
+  reports_enabled: boolean | null
   tracking_cname: string | null
   tracking_cname_verified: boolean | null
   tracking_cname_secret: string | null
@@ -244,6 +246,8 @@ export default function ClientSettingsPage() {
         slack_webhook_url:               form.slack_webhook_url     || null,
         webhook_secret:                  form.webhook_secret        || null,
         is_active:                       form.is_active,
+        client_type:                     form.client_type           || 'ecommerce',
+        reports_enabled:                 form.reports_enabled       ?? false,
         meta_prepaid:                    form.meta_prepaid          ?? false,
         google_prepaid:                  form.google_prepaid        ?? false,
         meta_balance_threshold:          form.meta_balance_threshold ?? 200,
@@ -365,6 +369,24 @@ export default function ClientSettingsPage() {
               </Field>
             </>
           )}
+          <Field label="Tipo de cliente" hint="define as métricas dos relatórios: e-commerce ou geração de leads">
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                { v: 'ecommerce', label: 'E-commerce', hint: 'Faturamento, ROAS, pedidos' },
+                { v: 'leads',     label: 'Leads',      hint: 'Leads, CPL, agendamentos' },
+              ] as const).map(opt => (
+                <button key={opt.v} type="button" onClick={() => set('client_type', opt.v)}
+                  className={`py-3 px-3 rounded-xl border text-sm font-medium transition-colors text-left ${
+                    (form.client_type || 'ecommerce') === opt.v
+                      ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
+                      : 'border-[#2a2f3e] text-slate-400 hover:border-slate-500 hover:text-white'
+                  }`}>
+                  <span className="block">{opt.label}</span>
+                  <span className="block text-[11px] font-normal text-slate-500 mt-0.5">{opt.hint}</span>
+                </button>
+              ))}
+            </div>
+          </Field>
           <Field label="Status">
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={!!form.is_active} onChange={e => set('is_active', e.target.checked)}
@@ -584,6 +606,22 @@ export default function ClientSettingsPage() {
                 </div>
               )}
             </div>
+          </Field>
+          <Field label="Relatórios de tráfego pago" hint="gera os relatórios semanal e mensal para este cliente">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.reports_enabled ?? false}
+                onChange={e => set('reports_enabled', e.target.checked)}
+                className="w-4 h-4 mt-0.5 accent-indigo-500 shrink-0"
+              />
+              <span>
+                <span className="block text-sm text-slate-300">Ativar relatórios automáticos</span>
+                <span className="block text-xs text-slate-500 mt-0.5">
+                  Perfil {(form.client_type || 'ecommerce') === 'leads' ? 'Leads' : 'E-commerce'} — ajuste o tipo de cliente em Dados básicos.
+                </span>
+              </span>
+            </label>
           </Field>
           {/* Pre-paid balance alerts */}
           <Field label="Conta Pré-Paga Meta Ads"

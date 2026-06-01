@@ -295,17 +295,22 @@ def send_weekly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email")
+            .select("id, pixel_id, name, alert_email, client_type, reports_enabled")
             .eq("is_active", True)
+            .eq("reports_enabled", True)
             .not_.is_("alert_email", "null")
             .execute()
         )
         for c in (clients.data or []):
-            if c.get("alert_email"):
-                try:
-                    _send_weekly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], c["alert_email"])
-                except Exception as exc:
-                    logger.error("weekly report failed for %s: %s", c.get("pixel_id"), exc)
+            if not c.get("alert_email"):
+                continue
+            if (c.get("client_type") or "ecommerce") == "leads":
+                logger.info("weekly report skipped for %s — template de Leads ainda não implementado", c.get("pixel_id"))
+                continue
+            try:
+                _send_weekly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], c["alert_email"])
+            except Exception as exc:
+                logger.error("weekly report failed for %s: %s", c.get("pixel_id"), exc)
     except Exception as exc:
         logger.error("send_weekly_reports: %s", exc)
 
@@ -565,13 +570,17 @@ def send_monthly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email")
+            .select("id, pixel_id, name, alert_email, client_type, reports_enabled")
             .eq("is_active", True)
+            .eq("reports_enabled", True)
             .not_.is_("alert_email", "null")
             .execute()
         )
         for c in (clients.data or []):
             if not c.get("alert_email"):
+                continue
+            if (c.get("client_type") or "ecommerce") == "leads":
+                logger.info("monthly report skipped for %s — template de Leads ainda não implementado", c.get("pixel_id"))
                 continue
             try:
                 _ensure_monthly_ai(c["id"], c["pixel_id"])
