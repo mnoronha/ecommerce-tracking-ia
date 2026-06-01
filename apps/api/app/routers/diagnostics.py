@@ -333,6 +333,18 @@ async def notifications_status():
     }
 
 
+@router.post(
+    "/notifications/whatsapp/resolve-invite",
+    summary="Resolve link de convite WhatsApp para JID do grupo",
+    tags=["diagnostics"],
+)
+async def resolve_whatsapp_invite(invite: str = Query(..., description="Link ou código do convite")):
+    result = wa_svc.resolve_group_invite(invite)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Não foi possível resolver o convite"))
+    return result
+
+
 @router.get(
     "/notifications/whatsapp/instances",
     summary="Lista todas as instâncias Evolution API (debug)",

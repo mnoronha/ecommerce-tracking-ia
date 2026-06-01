@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relatório Semanal · {{cliente.nome}}</title>
+  <style>{{{css}}}</style>
+</head>
+<body>
+  <div class="wrap">
+
+    {{> header}}
+
+    <!-- HERO -->
+    <div class="hero">
+      <div class="hero-top">
+        <span class="badge-perfil {{#if ecommerce}}badge-ecom{{else}}badge-leads{{/if}}">{{perfil_label}}</span>
+        <span class="hero-semana">Semana {{semana_num}}</span>
+      </div>
+      <h1 class="hero-nome">{{cliente.nome}}</h1>
+      <p class="hero-periodo">Resumo de performance · {{periodo}}</p>
+    </div>
+
+    <!-- KPIs -->
+    <div class="section">
+      <h2 class="section-title">Indicadores principais</h2>
+      <div class="kpi-grid">
+        {{#each kpis}}
+          {{> kpi_card}}
+        {{/each}}
+      </div>
+    </div>
+
+    <!-- CANAIS -->
+    <div class="section">
+      <h2 class="section-title">Desempenho por canal</h2>
+      <div class="canal-table">
+        <div class="canal-head">
+          <div>Canal</div>
+          <div class="canal-cel">Investimento</div>
+          <div class="canal-cel">{{#if ecommerce}}Receita{{else}}Leads{{/if}}</div>
+          <div class="canal-cel">{{#if ecommerce}}ROAS{{else}}CPL{{/if}}</div>
+        </div>
+        {{#each canais}}
+          {{> channel_row}}
+        {{/each}}
+      </div>
+    </div>
+
+    <!-- DESTAQUES -->
+    <div class="section">
+      <h2 class="section-title">Destaques da semana</h2>
+      <div class="destaque-grid">
+        <div class="destaque-card d-positivo">
+          <span class="d-tag">✅ Destaque positivo</span>
+          <p>{{destaques.positivo}}</p>
+        </div>
+        <div class="destaque-card d-criativo">
+          <span class="d-tag">🎬 Criativo destaque</span>
+          <p>{{destaques.criativo}}</p>
+        </div>
+        <div class="destaque-card d-atencao">
+          <span class="d-tag">⚠️ Ponto de atenção</span>
+          <p>{{destaques.atencao}}</p>
+        </div>
+        <div class="destaque-card d-proxima">
+          <span class="d-tag">🚀 Próxima semana</span>
+          <p>{{destaques.proxima_semana}}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLANO DE AÇÃO -->
+    <div class="section">
+      <h2 class="section-title">Plano de ação</h2>
+      <ol class="acao-list">
+        {{#each acoes}}
+          <li><span class="acao-num">{{inc @index}}</span><span class="acao-txt">{{this}}</span></li>
+        {{/each}}
+      </ol>
+    </div>
+
+    {{> footer}}
+
+  </div>
+</body>
+</html>

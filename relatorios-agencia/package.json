@@ -1,0 +1,22 @@
+{
+  "name": "relatorios-agencia",
+  "version": "1.0.0",
+  "description": "Gerador de relatórios de tráfego pago (semanal/mensal) em HTML, PDF e WhatsApp para clientes de agência.",
+  "main": "gerar_relatorio.js",
+  "type": "commonjs",
+  "scripts": {
+    "semanal": "node gerar_relatorio.js --todos --tipo semanal",
+    "mensal": "node gerar_relatorio.js --todos --tipo mensal"
+  },
+  "bin": {
+    "relatorio": "gerar_relatorio.js"
+  },
+  "keywords": ["relatorios", "trafego-pago", "agencia", "handlebars", "puppeteer"],
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "handlebars": "^4.7.8",
+    "juice": "^11.0.0",
+    "puppeteer": "^23.0.0"
+  }
+}

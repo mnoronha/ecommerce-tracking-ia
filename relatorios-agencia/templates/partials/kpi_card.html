@@ -1,0 +1,22 @@
+<div class="kpi-card">
+  <div class="kpi-bar" style="background: {{cor}}"></div>
+  <div class="kpi-body">
+    <div class="kpi-label">{{upper label}}</div>
+    <div class="kpi-valor">{{valor}}</div>
+    {{#if mom}}
+      <div class="kpi-cmp-row">
+        <span class="delta {{momClass}}">{{mom}}</span>
+        <span class="kpi-cmp-lbl">vs {{../mes_anterior_label}}</span>
+      </div>
+      {{#if yoy}}
+        <div class="kpi-cmp-row">
+          <span class="delta {{yoyClass}}">{{yoy}}</span>
+          <span class="kpi-cmp-lbl">vs {{../ano_anterior_label}}</span>
+        </div>
+      {{/if}}
+    {{else}}
+      {{#if delta}}<span class="kpi-delta delta {{deltaClass}}">{{delta}}</span>{{/if}}
+      {{#if contexto}}<div class="kpi-ctx">{{contexto}}</div>{{/if}}
+    {{/if}}
+  </div>
+</div>

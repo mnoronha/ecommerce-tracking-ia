@@ -59,6 +59,55 @@ def _html_to_wa(html_body: str, max_len: int = 2000) -> str:
 
 # ── Core dispatchers ──────────────────────────────────────────────────────────
 
+def _all_client_emails(client: dict) -> list[str]:
+    """
+    Retorna todos os destinatários de email de um cliente.
+    Usa alert_emails (array) + alert_email (legado) sem duplicatas.
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    # Novo campo (array)
+    for addr in (client.get("alert_emails") or []):
+        addr = (addr or "").strip()
+        if addr and addr not in seen:
+            seen.add(addr)
+            result.append(addr)
+    # Campo legado
+    legacy = (client.get("alert_email") or "").strip()
+    if legacy and legacy not in seen:
+        seen.add(legacy)
+        result.append(legacy)
+    return result
+
+
+def notify_client(
+    client: dict,
+    subject: str,
+    html_body: str,
+    wa_text: Optional[str] = None,
+    severity: str = "info",
+) -> None:
+    """
+    Envia notificação para todos os destinatários de um cliente:
+      • Todos os emails em alert_emails / alert_email
+      • Grupo WhatsApp em whatsapp_group_jid (se severity qualifica)
+    """
+    for addr in _all_client_emails(client):
+        try:
+            email_svc.send_email(to=addr, subject=subject, html_body=html_body)
+        except Exception as exc:
+            logger.error("notify_client: email failed for %s: %s", addr, exc)
+
+    if wa.severity_should_notify(severity):
+        group_jid = (client.get("whatsapp_group_jid") or "").strip()
+        if group_jid:
+            text = wa_text or _html_to_wa(html_body)
+            try:
+                wa.send_to_group(group_jid, text)
+            except Exception as exc:
+                logger.error("notify_client: group WA failed: %s", exc)
+
+
 def notify_agency(
     subject:  str,
     html_body: str,

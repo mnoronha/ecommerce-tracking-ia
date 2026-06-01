@@ -146,6 +146,67 @@ def list_instances() -> dict:
         return {"ok": False, "error": str(exc)[:300]}
 
 
+def send_to_group(group_jid: str, text: str) -> bool:
+    """Envia mensagem para um grupo WhatsApp via JID (ex: 120363xxx@g.us)."""
+    if not _is_configured():
+        return False
+    if not group_jid or "@g.us" not in group_jid:
+        logger.warning("whatsapp: JID de grupo inválido: %s", group_jid)
+        return False
+    text = text[:_MAX_LEN]
+    url  = f"{settings.EVOLUTION_API_URL.rstrip('/')}/message/sendText/{settings.EVOLUTION_INSTANCE}"
+    try:
+        resp = httpx.post(
+            url,
+            headers={"apikey": settings.EVOLUTION_API_KEY, "Content-Type": "application/json"},
+            json={"number": group_jid, "text": text},
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        logger.info("whatsapp: grupo enviado → %s", group_jid)
+        return True
+    except httpx.HTTPStatusError as exc:
+        logger.error("whatsapp group HTTP %s → %s: %s", exc.response.status_code, group_jid, exc.response.text[:200])
+        return False
+    except Exception as exc:
+        logger.error("whatsapp group error → %s: %s", group_jid, exc)
+        return False
+
+
+def resolve_group_invite(invite_code_or_link: str) -> dict:
+    """
+    Resolve um link/código de convite de grupo WhatsApp para o JID do grupo.
+    Aceita tanto o link completo (https://chat.whatsapp.com/XXXX) quanto só o código.
+    Retorna {"ok": True, "jid": "...", "subject": "..."} ou {"ok": False, "error": "..."}.
+    """
+    if not _is_configured():
+        return {"ok": False, "error": "Evolution API não configurada"}
+
+    code = invite_code_or_link.strip()
+    if "chat.whatsapp.com/" in code:
+        code = code.split("chat.whatsapp.com/")[-1].strip("/")
+
+    url = f"{settings.EVOLUTION_API_URL.rstrip('/')}/group/inviteInfo/{settings.EVOLUTION_INSTANCE}"
+    try:
+        resp = httpx.get(
+            url,
+            headers={"apikey": settings.EVOLUTION_API_KEY},
+            params={"inviteCode": code},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        jid  = data.get("id") or data.get("jid") or data.get("groupId") or ""
+        subj = data.get("subject") or data.get("name") or ""
+        if not jid:
+            return {"ok": False, "error": f"JID não encontrado na resposta: {str(data)[:200]}"}
+        return {"ok": True, "jid": jid, "subject": subj}
+    except httpx.HTTPStatusError as exc:
+        return {"ok": False, "error": f"HTTP {exc.response.status_code}: {exc.response.text[:200]}"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:200]}
+
+
 def check_instance_status() -> dict:
     """
     Verifica se a instância Evolution está conectada.

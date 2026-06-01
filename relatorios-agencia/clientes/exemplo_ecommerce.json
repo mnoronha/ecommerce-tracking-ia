@@ -1,0 +1,286 @@
+{
+  "id": "exemplo_ecommerce",
+  "nome": "Loja Exemplo Store",
+  "tipo": "ecommerce",
+  "canais": ["meta", "google", "tiktok"],
+
+  "semanal": {
+    "periodo": "26/05 a 01/06/2025",
+    "semana_num": 22,
+    "meta_faturamento": 40000,
+
+    "metricas": {
+      "faturamento": 48320,
+      "faturamento_semana_ant": 40949,
+      "roas": 4.2,
+      "roas_semana_ant": 3.8,
+      "pedidos": 214,
+      "pedidos_semana_ant": 192,
+      "ticket_medio": 225.80,
+      "investimento": 11500,
+      "cpa": 53.74,
+      "cpa_meta": 60.00,
+      "ctr": 2.8,
+      "taxa_conversao": 3.1,
+      "impressoes": 1200000,
+      "sessoes": 6903
+    },
+
+    "canais": [
+      {
+        "nome": "Meta Ads",
+        "tipo": "meta",
+        "investimento": 5200,
+        "receita": 23100,
+        "roas": 4.4,
+        "roas_semana_ant": 3.8,
+        "variacao": "up"
+      },
+      {
+        "nome": "Google Ads",
+        "tipo": "google",
+        "investimento": 4800,
+        "receita": 19700,
+        "roas": 4.1,
+        "roas_semana_ant": 4.3,
+        "variacao": "down"
+      },
+      {
+        "nome": "TikTok Ads",
+        "tipo": "tiktok",
+        "investimento": 1500,
+        "receita": 5520,
+        "roas": 3.7,
+        "roas_semana_ant": 3.3,
+        "variacao": "up"
+      }
+    ],
+
+    "destaques": {
+      "positivo": "Campanha Remarketing Meta bateu ROAS de 6,8x essa semana — maior da conta no mês.",
+      "criativo": "Vídeo UGC 'Unboxing Produto X' teve CTR 4,2% — 2x acima da média.",
+      "atencao": "CPM do Google Shopping subiu +34% — investigar concorrência no leilão.",
+      "proxima_semana": "Lançar teste A/B com novo criativo estático no conjunto Prospecção Meta."
+    },
+
+    "acoes": [
+      "Escalar orçamento da campanha Remarketing Dinâmico Meta em 20% — ROAS sustentado acima de 5x.",
+      "Pausar grupos de anúncio com CPA acima de R$ 90 no Google Performance Max.",
+      "Testar novo público Lookalike 3% baseado em compradores dos últimos 60 dias no Meta."
+    ]
+  },
+
+  "mensal": {
+    "mes": "Maio",
+    "ano": 2025,
+    "mes_anterior_label": "Abril/2025",
+    "ano_anterior_label": "Maio/2024",
+    "meta_faturamento": 165000,
+
+    "metricas": {
+      "faturamento": 192480,
+      "faturamento_mes_ant": 156488,
+      "faturamento_ano_ant": 136400,
+      "roas": 4.1,
+      "roas_mes_ant": 3.8,
+      "roas_ano_ant": 3.3,
+      "pedidos": 854,
+      "pedidos_mes_ant": 724,
+      "pedidos_ano_ant": 647,
+      "ticket_medio": 225.40,
+      "investimento": 46945,
+      "investimento_mes_ant": 41198,
+      "investimento_ano_ant": 41333,
+      "cpa": 54.97,
+      "cpa_mes_ant": 60.97,
+      "cpa_ano_ant": 68.97,
+      "cpa_meta": 60.00,
+      "ctr": 2.7,
+      "taxa_conversao": 3.0,
+      "impressoes": 4800000,
+      "sessoes": 28467
+    },
+
+    "canais": [
+      {
+        "nome": "Meta Ads (Facebook + Instagram)",
+        "tipo": "meta",
+        "investimento": 22400,
+        "receita": 103000,
+        "roas": 4.6,
+        "pedidos": 458,
+        "cpm": 18.40,
+        "ctr": 2.9,
+        "frequencia": 3.2,
+        "var_receita_pct": 26,
+        "var_receita_dir": "up",
+        "var_pedidos_pct": 22,
+        "var_pedidos_dir": "up",
+        "var_cpm_pct": 8,
+        "var_cpm_dir": "down",
+        "var_ctr_pp": 0.3,
+        "var_ctr_dir": "up"
+      },
+      {
+        "nome": "Google Ads (Search + Shopping + PMax)",
+        "tipo": "google",
+        "investimento": 19200,
+        "receita": 71000,
+        "roas": 3.7,
+        "pedidos": 316,
+        "cpm": 28.70,
+        "ctr": 5.2,
+        "impression_share": 62,
+        "var_receita_pct": 14,
+        "var_receita_dir": "up",
+        "var_pedidos_pct": 11,
+        "var_pedidos_dir": "up",
+        "var_cpm_pct": 41,
+        "var_cpm_dir": "down",
+        "var_is_pp": -4,
+        "var_is_dir": "down"
+      },
+      {
+        "nome": "TikTok Ads",
+        "tipo": "tiktok",
+        "investimento": 5345,
+        "receita": 18000,
+        "roas": 3.4,
+        "pedidos": 80,
+        "cpm": 9.80,
+        "ctr": 3.8,
+        "vtr_6s": 71,
+        "var_receita_pct": 62,
+        "var_receita_dir": "up",
+        "var_pedidos_pct": 45,
+        "var_pedidos_dir": "up",
+        "var_cpm_pct": 12,
+        "var_cpm_dir": "up",
+        "var_ctr_pp": 0.9,
+        "var_ctr_dir": "up"
+      }
+    ],
+
+    "campanhas": [
+      {
+        "nome": "Remarketing Dinâmico",
+        "descricao": "Carrinho abandonado + visitantes",
+        "canal": "meta",
+        "investimento": 7200,
+        "receita": 73440,
+        "roas": 10.2,
+        "pedidos": 326,
+        "cpa": 22.09,
+        "status": "ativo"
+      },
+      {
+        "nome": "Prospecção — Interesses",
+        "descricao": "Topo de funil, 1–3% LAL",
+        "canal": "meta",
+        "investimento": 9800,
+        "receita": 27440,
+        "roas": 2.8,
+        "pedidos": 122,
+        "cpa": 80.33,
+        "status": "ativo"
+      },
+      {
+        "nome": "Shopping — Catálogo Geral",
+        "descricao": "Smart Shopping + PMax",
+        "canal": "google",
+        "investimento": 12000,
+        "receita": 43200,
+        "roas": 3.6,
+        "pedidos": 192,
+        "cpa": 62.50,
+        "status": "ativo"
+      },
+      {
+        "nome": "Search — Marca",
+        "descricao": "Brand keywords",
+        "canal": "google",
+        "investimento": 4200,
+        "receita": 24360,
+        "roas": 5.8,
+        "pedidos": 108,
+        "cpa": 38.89,
+        "status": "ativo"
+      },
+      {
+        "nome": "TikTok — UGC Videos",
+        "descricao": "Vídeos orgânicos impulsionados",
+        "canal": "tiktok",
+        "investimento": 3745,
+        "receita": 15730,
+        "roas": 4.2,
+        "pedidos": 70,
+        "cpa": 53.50,
+        "status": "ativo"
+      }
+    ],
+
+    "criativos_destaque": [
+      {
+        "nome": "Unboxing Produto Hero",
+        "tipo": "Vídeo UGC · 15s",
+        "canal": "Meta Ads",
+        "icone": "🎬",
+        "metricas": { "ctr": "4,8%", "roas": "6,2x", "cpa": "R$38" }
+      },
+      {
+        "nome": "Antes & Depois — Resultado",
+        "tipo": "Estático · Carrossel",
+        "canal": "Meta Ads",
+        "icone": "🖼️",
+        "metricas": { "ctr": "3,9%", "roas": "5,1x", "cpa": "R$46" }
+      },
+      {
+        "nome": "Review Espontâneo Cliente",
+        "tipo": "Vídeo Curto · 8s",
+        "canal": "TikTok Ads",
+        "icone": "📱",
+        "metricas": { "vtr": "78%", "ctr": "5,2%", "cpa": "R$32" }
+      }
+    ],
+
+    "resumo_executivo": "Maio foi o melhor mês do ano até o momento para a conta. O faturamento atribuído ao tráfego pago atingiu R$ 192.480, superando a meta em +16% e crescendo +23% vs Abril/2025. O ROAS geral consolidou em 4,1x, impulsionado principalmente pelo Meta Ads com 4,6x. O principal driver foi a campanha de Remarketing Dinâmico, que sozinha representou 38% da receita total. O TikTok Ads começou a apresentar resultados consistentes e deve receber incremento de budget em Junho. Ponto de atenção: Google Shopping sofreu com CPM +41%, pressionando o CPA da categoria.",
+
+    "destaques": [
+      { "tipo": "positivo", "titulo": "Resultado Destaque", "texto": "Campanha de Remarketing Dinâmico entregou ROAS de 10,2x — o melhor mês desde o início da conta. Aumento de budget de R$ 5k para R$ 7,2k foi determinante." },
+      { "tipo": "positivo", "titulo": "Canal em Crescimento", "texto": "TikTok Ads cresceu 62% em receita vs mês anterior com CPM 45% mais barato que Meta. Canal mostra maturação e deve receber mais budget em Junho." },
+      { "tipo": "negativo", "titulo": "Ponto de Atenção 1", "texto": "CPM do Google Shopping subiu 41% em maio — pressão de concorrentes no leilão detectada. Impression Share caiu de 66% para 62%." },
+      { "tipo": "negativo", "titulo": "Ponto de Atenção 2", "texto": "Campanha Prospecção Broad (Advantage+) com ROAS 1,4x — abaixo do break-even. Pausada em 28/05." },
+      { "tipo": "neutro",   "titulo": "Oportunidade Identificada", "texto": "Público Lookalike 1% baseado em compradores dos últimos 90 dias ainda não foi testado. Potencial de escalar prospecção com melhor custo." },
+      { "tipo": "insight",  "titulo": "Insight de Criativo", "texto": "Vídeos com depoimento real de clientes converteram 2,4x mais que criativos estáticos. Recomendação: produzir 4 novos UGC para Junho." }
+    ],
+
+    "atencoes": [
+      {
+        "icone": "📊",
+        "titulo": "CPM elevado no Google Shopping — risco de escalada de custo",
+        "descricao": "O CPM médio do Google Shopping subiu 41% em Maio vs Abril. Principais causas: entrada de novos concorrentes no leilão e sazonalidade. Recomendamos revisão de lance máximo de CPC e segmentação por produto.",
+        "prioridade": "alta"
+      },
+      {
+        "icone": "🔄",
+        "titulo": "Frequência do Meta Ads — risco de saturação em Junho",
+        "descricao": "A frequência média chegou a 3,2 — próxima do limiar de saturação (3,5). Criativos rodando desde meados de Abril. Necessário inserir novos criativos nas próximas 2 semanas.",
+        "prioridade": "media"
+      }
+    ],
+
+    "plano_proximo_mes": {
+      "mes": "Junho",
+      "meta_faturamento": 210000,
+      "meta_roas": 4.0,
+      "meta_cpa": 58.00,
+      "budget_total": 52500,
+      "acoes": [
+        "Incrementar budget do TikTok Ads em 40% (de R$ 5,3k para R$ 7,5k/mês) aproveitando CPM baixo.",
+        "Lançar 4 novos criativos UGC no Meta (vídeos 15–30s com depoimentos) para renovar o pool.",
+        "Criar campanha de Lookalike 1% e 3% baseado em compradores dos últimos 90 dias.",
+        "Revisão completa do Google Shopping: negativar termos, ajustar lances por categoria e testar segmentação manual vs PMax."
+      ]
+    }
+  }
+}

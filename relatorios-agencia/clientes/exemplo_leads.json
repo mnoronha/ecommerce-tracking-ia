@@ -1,0 +1,287 @@
+{
+  "id": "exemplo_leads",
+  "nome": "Clínica Exemplo Saúde",
+  "tipo": "leads",
+  "canais": ["meta", "google", "tiktok"],
+
+  "semanal": {
+    "periodo": "26/05 a 01/06/2025",
+    "semana_num": 22,
+    "meta_leads": 170,
+
+    "metricas": {
+      "leads": 187,
+      "leads_semana_ant": 156,
+      "leads_qualificados": 89,
+      "leads_qualificados_semana_ant": 72,
+      "taxa_qualificacao": 47,
+      "agendamentos": 41,
+      "agendamentos_semana_ant": 32,
+      "investimento": 4900,
+      "budget_semanal": 5000,
+      "cpl": 26.20,
+      "cpl_meta": 30.00,
+      "cpl_semana_ant": 30.20,
+      "taxa_conversao": 4.8,
+      "taxa_conversao_semana_ant": 4.2,
+      "cliques": 3896,
+      "impressoes": 412000
+    },
+
+    "canais": [
+      {
+        "nome": "Meta Ads",
+        "tipo": "meta",
+        "investimento": 2600,
+        "leads": 108,
+        "cpl": 24.07,
+        "cpl_semana_ant": 28.90,
+        "variacao": "up"
+      },
+      {
+        "nome": "Google Ads",
+        "tipo": "google",
+        "investimento": 1800,
+        "leads": 61,
+        "cpl": 29.51,
+        "cpl_semana_ant": 31.40,
+        "variacao": "up"
+      },
+      {
+        "nome": "TikTok Ads",
+        "tipo": "tiktok",
+        "investimento": 500,
+        "leads": 18,
+        "cpl": 27.78,
+        "cpl_semana_ant": 33.10,
+        "variacao": "up"
+      }
+    ],
+
+    "destaques": {
+      "positivo": "Campanha Formulário Instantâneo Meta trouxe 64 leads a CPL de R$ 21 — melhor da semana.",
+      "criativo": "Vídeo depoimento 'Resultado em 30 dias' teve CTR 5,1% e CPL 30% abaixo da média.",
+      "atencao": "Taxa de comparecimento nos agendamentos caiu para 68% — reforçar lembrete via WhatsApp.",
+      "proxima_semana": "Testar novo público de raio 5km com criativo focado em primeira consulta gratuita."
+    },
+
+    "acoes": [
+      "Escalar budget da campanha Formulário Instantâneo Meta em 25% — CPL sustentado abaixo de R$ 22.",
+      "Pausar grupos de anúncio do Google com CPL acima de R$ 40 na campanha de Search Genérico.",
+      "Implementar fluxo de qualificação automática no WhatsApp para aumentar taxa de agendamento."
+    ]
+  },
+
+  "mensal": {
+    "mes": "Maio",
+    "ano": 2025,
+    "mes_anterior_label": "Abril/2025",
+    "ano_anterior_label": "Maio/2024",
+    "meta_leads": 700,
+
+    "metricas": {
+      "leads": 768,
+      "leads_mes_ant": 642,
+      "leads_ano_ant": 503,
+      "leads_qualificados": 372,
+      "leads_qualificados_mes_ant": 298,
+      "taxa_qualificacao": 48,
+      "agendamentos": 174,
+      "agendamentos_mes_ant": 138,
+      "agendamentos_ano_ant": 101,
+      "investimento": 20100,
+      "investimento_mes_ant": 18450,
+      "investimento_ano_ant": 16200,
+      "cpl": 26.17,
+      "cpl_mes_ant": 28.74,
+      "cpl_ano_ant": 32.21,
+      "cpl_meta": 30.00,
+      "taxa_conversao": 4.6,
+      "taxa_conversao_mes_ant": 4.1,
+      "cliques": 16280,
+      "impressoes": 1720000
+    },
+
+    "canais": [
+      {
+        "nome": "Meta Ads (Facebook + Instagram)",
+        "tipo": "meta",
+        "investimento": 11200,
+        "leads": 452,
+        "cpl": 24.78,
+        "leads_qualificados": 228,
+        "cpm": 14.20,
+        "ctr": 2.6,
+        "frequencia": 2.8,
+        "var_leads_pct": 24,
+        "var_leads_dir": "up",
+        "var_cpl_pct": 9,
+        "var_cpl_dir": "down",
+        "var_cpm_pct": 6,
+        "var_cpm_dir": "down",
+        "var_ctr_pp": 0.2,
+        "var_ctr_dir": "up"
+      },
+      {
+        "nome": "Google Ads (Search + PMax)",
+        "tipo": "google",
+        "investimento": 7100,
+        "leads": 248,
+        "cpl": 28.63,
+        "leads_qualificados": 121,
+        "cpm": 22.40,
+        "ctr": 6.1,
+        "impression_share": 58,
+        "var_leads_pct": 16,
+        "var_leads_dir": "up",
+        "var_cpl_pct": 7,
+        "var_cpl_dir": "down",
+        "var_cpm_pct": 18,
+        "var_cpm_dir": "up",
+        "var_is_pp": -3,
+        "var_is_dir": "down"
+      },
+      {
+        "nome": "TikTok Ads",
+        "tipo": "tiktok",
+        "investimento": 1800,
+        "leads": 68,
+        "cpl": 26.47,
+        "leads_qualificados": 23,
+        "cpm": 8.10,
+        "ctr": 3.4,
+        "vtr_6s": 69,
+        "var_leads_pct": 51,
+        "var_leads_dir": "up",
+        "var_cpl_pct": 14,
+        "var_cpl_dir": "down",
+        "var_cpm_pct": 9,
+        "var_cpm_dir": "up",
+        "var_ctr_pp": 0.7,
+        "var_ctr_dir": "up"
+      }
+    ],
+
+    "campanhas": [
+      {
+        "nome": "Formulário Instantâneo — Consulta",
+        "descricao": "Lead form nativo Meta",
+        "canal": "meta",
+        "investimento": 6400,
+        "leads": 286,
+        "cpl": 22.38,
+        "leads_qualificados": 158,
+        "taxa_qualificacao": 55,
+        "status": "ativo"
+      },
+      {
+        "nome": "Prospecção — Interesses Saúde",
+        "descricao": "Topo de funil, raio 8km",
+        "canal": "meta",
+        "investimento": 4800,
+        "leads": 166,
+        "cpl": 28.92,
+        "leads_qualificados": 70,
+        "taxa_qualificacao": 42,
+        "status": "ativo"
+      },
+      {
+        "nome": "Search — Termos de Marca",
+        "descricao": "Nome da clínica + variações",
+        "canal": "google",
+        "investimento": 2600,
+        "leads": 118,
+        "cpl": 22.03,
+        "leads_qualificados": 78,
+        "taxa_qualificacao": 66,
+        "status": "ativo"
+      },
+      {
+        "nome": "Search — Genérico Procedimentos",
+        "descricao": "Termos de tratamento",
+        "canal": "google",
+        "investimento": 4500,
+        "leads": 130,
+        "cpl": 34.62,
+        "leads_qualificados": 43,
+        "taxa_qualificacao": 33,
+        "status": "atencao"
+      },
+      {
+        "nome": "TikTok — Depoimentos",
+        "descricao": "Vídeos de pacientes reais",
+        "canal": "tiktok",
+        "investimento": 1800,
+        "leads": 68,
+        "cpl": 26.47,
+        "leads_qualificados": 23,
+        "taxa_qualificacao": 34,
+        "status": "ativo"
+      }
+    ],
+
+    "criativos_destaque": [
+      {
+        "nome": "Resultado em 30 Dias",
+        "tipo": "Vídeo Depoimento · 20s",
+        "canal": "Meta Ads",
+        "icone": "🎬",
+        "metricas": { "ctr": "5,1%", "cpl": "R$19", "qualif": "58%" }
+      },
+      {
+        "nome": "Primeira Consulta Gratuita",
+        "tipo": "Estático · Imagem",
+        "canal": "Meta Ads",
+        "icone": "🖼️",
+        "metricas": { "ctr": "3,4%", "cpl": "R$23", "qualif": "49%" }
+      },
+      {
+        "nome": "Tour pela Clínica",
+        "tipo": "Vídeo Curto · 12s",
+        "canal": "TikTok Ads",
+        "icone": "📱",
+        "metricas": { "vtr": "74%", "ctr": "4,0%", "cpl": "R$24" }
+      }
+    ],
+
+    "resumo_executivo": "Maio foi o melhor mês em volume de leads do histórico da conta. Foram gerados 768 leads (+20% vs Abril) a um CPL médio de R$ 26,17, abaixo da meta de R$ 30. Os agendamentos cresceram +26%, atingindo 174 no mês, com taxa de qualificação consolidada em 48%. O principal driver foi a campanha de Formulário Instantâneo no Meta, responsável por 37% dos leads a um CPL de R$ 22. O TikTok Ads vem amadurecendo como canal de topo de funil barato. Ponto de atenção: a campanha de Search Genérico do Google está com CPL acima da meta e baixa qualificação, exigindo revisão de palavras-chave.",
+
+    "destaques": [
+      { "tipo": "positivo", "titulo": "Resultado Destaque", "texto": "Campanha de Formulário Instantâneo entregou 286 leads a CPL de R$ 22 com 55% de qualificação — melhor relação volume/qualidade da conta." },
+      { "tipo": "positivo", "titulo": "Canal em Crescimento", "texto": "TikTok Ads cresceu 51% em leads vs mês anterior com CPM 43% mais barato que Meta. Ótimo canal de topo de funil para escalar." },
+      { "tipo": "negativo", "titulo": "Ponto de Atenção 1", "texto": "Search Genérico do Google com CPL de R$ 34,62 (acima da meta) e qualificação de apenas 33%. Termos amplos atraindo leads frios." },
+      { "tipo": "negativo", "titulo": "Ponto de Atenção 2", "texto": "Taxa de comparecimento nas consultas agendadas caiu para 68%. Fluxo de lembrete via WhatsApp precisa ser reforçado." },
+      { "tipo": "neutro",   "titulo": "Oportunidade Identificada", "texto": "Público de retargeting de quem abriu o formulário mas não concluiu ainda não está sendo trabalhado. Potencial de recuperar leads a custo baixo." },
+      { "tipo": "insight",  "titulo": "Insight de Criativo", "texto": "Vídeos com depoimento real de pacientes geraram leads 2,1x mais qualificados que criativos estáticos. Recomendação: produzir 4 novos depoimentos para Junho." }
+    ],
+
+    "atencoes": [
+      {
+        "icone": "🎯",
+        "titulo": "Search Genérico com CPL alto e baixa qualificação",
+        "descricao": "A campanha de Search Genérico atingiu CPL de R$ 34,62, acima da meta de R$ 30, com taxa de qualificação de apenas 33%. Termos muito amplos estão atraindo público fora do perfil. Recomendamos negativar termos e refinar a correspondência de palavras-chave.",
+        "prioridade": "alta"
+      },
+      {
+        "icone": "📅",
+        "titulo": "Queda na taxa de comparecimento dos agendamentos",
+        "descricao": "A taxa de comparecimento caiu de 76% para 68% em Maio. Parte dos leads agenda mas não comparece. Sugerimos implementar fluxo automatizado de confirmação e lembrete via WhatsApp 24h e 2h antes da consulta.",
+        "prioridade": "media"
+      }
+    ],
+
+    "plano_proximo_mes": {
+      "mes": "Junho",
+      "meta_leads": 850,
+      "meta_cpl": 27.00,
+      "meta_agendamentos": 200,
+      "budget_total": 22500,
+      "acoes": [
+        "Incrementar budget do TikTok Ads em 40% aproveitando o CPL baixo e crescimento consistente.",
+        "Revisar completamente o Search Genérico do Google: negativar termos frios e ajustar correspondências.",
+        "Criar campanha de retargeting para quem abriu o formulário e não concluiu o cadastro.",
+        "Implementar fluxo de confirmação/lembrete via WhatsApp para elevar a taxa de comparecimento."
+      ]
+    }
+  }
+}

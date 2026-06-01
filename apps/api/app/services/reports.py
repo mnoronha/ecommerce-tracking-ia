@@ -22,6 +22,7 @@ from typing import Optional
 from ..config import settings
 from ..database import get_supabase
 from . import resend as email_service
+from . import notify as _notify
 
 logger = logging.getLogger(__name__)
 
@@ -295,20 +296,20 @@ def send_weekly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email, client_type, reports_enabled")
+            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, client_type, reports_enabled")
             .eq("is_active", True)
             .eq("reports_enabled", True)
-            .not_.is_("alert_email", "null")
             .execute()
         )
         for c in (clients.data or []):
-            if not c.get("alert_email"):
+            recipients = _notify._all_client_emails(c)
+            if not recipients:
                 continue
             if (c.get("client_type") or "ecommerce") == "leads":
                 logger.info("weekly report skipped for %s — template de Leads ainda não implementado", c.get("pixel_id"))
                 continue
             try:
-                _send_weekly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], c["alert_email"])
+                _send_weekly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], recipients, c)
             except Exception as exc:
                 logger.error("weekly report failed for %s: %s", c.get("pixel_id"), exc)
     except Exception as exc:
@@ -353,14 +354,33 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
     }
 
 
-def _send_weekly(client_id: str, pixel_id: str, client_name: str, to_email: str) -> None:
+def _send_weekly(client_id: str, pixel_id: str, client_name: str,
+                 recipients: list[str] | str, client: Optional[dict] = None) -> None:
     sb  = get_supabase()
     now = datetime.now(timezone.utc)
     m   = _build_weekly(sb, client_id, now)
     html    = _render_weekly_html(pixel_id, client_name, m)
     subject = f"📊 Semana {m['week_start'].strftime('%d/%m')}–{now.strftime('%d/%m')}: {fmt_brl(m['week']['revenue'])} · {client_name}"
-    email_service.send_email(to=to_email, subject=subject, html_body=html)
-    logger.info("weekly report sent to %s for %s", to_email, pixel_id)
+
+    to_list = [recipients] if isinstance(recipients, str) else recipients
+    for addr in to_list:
+        email_service.send_email(to=addr, subject=subject, html_body=html)
+    logger.info("weekly report sent to %s for %s", to_list, pixel_id)
+
+    # WhatsApp group — resumo compacto
+    if client:
+        group_jid = (client.get("whatsapp_group_jid") or "").strip()
+        if group_jid:
+            from . import whatsapp as _wa
+            wa_text = (
+                f"📊 *Resumo Semanal — {client_name}*\n\n"
+                f"Receita: *{fmt_brl(m['week']['revenue'])}*"
+                + (f" {'+' if (m['week_delta'] or 0) >= 0 else ''}{m['week_delta']:.1f}% vs sem. anterior" if m['week_delta'] is not None else "")
+                + f"\nPedidos: {m['week']['orders']} · Ticket médio: {fmt_brl(m['week']['aov'])}"
+                + (f"\nROAS: {m['roas']:.2f}x" if m['roas'] else "")
+                + (f"\nMeta do mês: {m['pct_of_goal']:.0f}%" if m['pct_of_goal'] is not None else "")
+            )
+            _wa.send_to_group(group_jid, wa_text)
 
 
 def _render_weekly_html(pixel_id: str, client_name: str, m: dict) -> str:
@@ -570,21 +590,21 @@ def send_monthly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email, client_type, reports_enabled")
+            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, client_type, reports_enabled")
             .eq("is_active", True)
             .eq("reports_enabled", True)
-            .not_.is_("alert_email", "null")
             .execute()
         )
         for c in (clients.data or []):
-            if not c.get("alert_email"):
+            recipients = _notify._all_client_emails(c)
+            if not recipients:
                 continue
             if (c.get("client_type") or "ecommerce") == "leads":
                 logger.info("monthly report skipped for %s — template de Leads ainda não implementado", c.get("pixel_id"))
                 continue
             try:
                 _ensure_monthly_ai(c["id"], c["pixel_id"])
-                _send_monthly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], c["alert_email"])
+                _send_monthly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], recipients, client=c)
             except Exception as exc:
                 logger.error("monthly report failed for %s: %s", c.get("pixel_id"), exc)
     except Exception as exc:
@@ -607,7 +627,9 @@ def _ensure_monthly_ai(client_id: str, pixel_id: str) -> None:
         logger.warning("_ensure_monthly_ai failed for %s: %s", pixel_id, exc)
 
 
-def _send_monthly(client_id: str, pixel_id: str, client_name: str, to_email: str, force: bool = False) -> dict:
+def _send_monthly(client_id: str, pixel_id: str, client_name: str,
+                  recipients: list[str] | str, force: bool = False,
+                  client: Optional[dict] = None) -> dict:
     """
     Build and send the monthly report. If the month is too negative and force is
     False, hold the client send and notify the agency instead.
@@ -616,6 +638,7 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str, to_email: str
     sb  = get_supabase()
     now = datetime.now(timezone.utc)
     m   = _build_monthly(sb, client_id, now)
+    to_list = [recipients] if isinstance(recipients, str) else recipients
 
     held = m["health"]["negative"] and not force
     if held:
@@ -623,7 +646,7 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str, to_email: str
         if not agency:
             logger.warning("monthly report HELD for %s but AGENCY_NOTIFY_EMAIL unset — not sent", pixel_id)
             return {"sent_to": None, "held": True, "reasons": m["health"]["reasons"]}
-        html    = _render_monthly_html(pixel_id, client_name, m, held_for=to_email)
+        html    = _render_monthly_html(pixel_id, client_name, m, held_for=", ".join(to_list))
         subject = f"⚠️ [REVISAR] Relatório mensal retido — {client_name} · {m['month_label']}"
         email_service.send_email(to=agency, subject=subject, html_body=html)
         logger.info("monthly report HELD for %s → agency %s (%s)", pixel_id, agency, "; ".join(m["health"]["reasons"]))
@@ -631,9 +654,28 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str, to_email: str
 
     html    = _render_monthly_html(pixel_id, client_name, m)
     subject = f"📈 Relatório mensal · {m['month_label']}: {fmt_brl(m['revenue'])} · {client_name}"
-    email_service.send_email(to=to_email, subject=subject, html_body=html)
-    logger.info("monthly report sent to %s for %s", to_email, pixel_id)
-    return {"sent_to": to_email, "held": False, "reasons": []}
+    for addr in to_list:
+        email_service.send_email(to=addr, subject=subject, html_body=html)
+    logger.info("monthly report sent to %s for %s", to_list, pixel_id)
+
+    # WhatsApp group — resumo mensal compacto
+    if client:
+        group_jid = (client.get("whatsapp_group_jid") or "").strip()
+        if group_jid:
+            from . import whatsapp as _wa
+            highlights = " · ".join(m.get("highlights", [])[:2])
+            wa_text = (
+                f"📈 *Relatório {m['month_label']} — {client_name}*\n\n"
+                f"Faturamento: *{fmt_brl(m['revenue'])}*"
+                + (f" {'+' if (m['mom_delta'] or 0) >= 0 else ''}{m['mom_delta']:.1f}% vs mês anterior" if m['mom_delta'] is not None else "")
+                + f"\nPedidos: {m['orders']} · Ticket médio: {fmt_brl(m['aov'])}"
+                + (f"\nROAS: {m['roas']:.2f}x" if m.get('roas') else "")
+                + (f"\n\n{highlights}" if highlights else "")
+                + "\n\nRelatório completo foi enviado por email."
+            )
+            _wa.send_to_group(group_jid, wa_text)
+
+    return {"sent_to": to_list, "held": False, "reasons": []}
 
 
 def _render_monthly_html(pixel_id: str, client_name: str, m: dict, held_for: Optional[str] = None) -> str:
@@ -856,8 +898,13 @@ def send_report_now(
 
     client_name = _client_name(sb, client_id, pixel_id)
 
-    if report_type == "monthly":
-        return _send_monthly(client_id, pixel_id, client_name, to_email, force=force)
+    # Busca todos os destinatários do cliente
+    client_row = sb.table("clients").select("alert_email, alert_emails, whatsapp_group_jid").eq("id", client_id).limit(1).execute()
+    client_data = (client_row.data or [{}])[0]
+    recipients  = _notify._all_client_emails(client_data) or [to_email]
 
-    _send_weekly(client_id, pixel_id, client_name, to_email)
+    if report_type == "monthly":
+        return _send_monthly(client_id, pixel_id, client_name, recipients, force=force, client=client_data)
+
+    _send_weekly(client_id, pixel_id, client_name, recipients, client=client_data)
     return {"sent_to": to_email, "held": False, "reasons": []}

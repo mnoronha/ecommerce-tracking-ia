@@ -1,0 +1,13 @@
+<tr>
+  <td class="camp-nome">
+    <strong>{{nome}}</strong>
+    {{#if descricao}}<span class="camp-desc">{{descricao}}</span>{{/if}}
+  </td>
+  <td><span class="badge badge-{{canal}}">{{canal_label}}</span></td>
+  <td class="num">{{investimento_fmt}}</td>
+  <td class="num">{{resultado_fmt}}</td>
+  <td class="num"><strong>{{indice_fmt}}</strong></td>
+  <td class="num">{{qtd_fmt}}</td>
+  <td class="num">{{custo_fmt}}</td>
+  <td><span class="status status-{{status}}">{{status_label}}</span></td>
+</tr>

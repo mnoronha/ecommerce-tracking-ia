@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle, Send, Zap } from 'lucide-react'
+import { ArrowLeft, Loader2, Save, CheckCircle, AlertCircle, Send, Zap, Plus, Trash2, MessageSquare } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -31,6 +31,8 @@ interface ClientRow {
   tiktok_access_token: string | null
   tiktok_advertiser_id: string | null
   alert_email: string | null
+  alert_emails: string[]
+  whatsapp_group_jid: string | null
   webhook_secret: string | null
   slack_webhook_url: string | null
   is_active: boolean
@@ -73,6 +75,9 @@ export default function ClientSettingsPage() {
   const [slackTestMsg, setSlackTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [testingEmail, setTestingEmail] = useState(false)
   const [emailTestMsg, setEmailTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const [waGroupInput,  setWaGroupInput]  = useState('')
+  const [resolvingWA,   setResolvingWA]   = useState(false)
+  const [waResolveMsg,  setWaResolveMsg]  = useState<{ ok: boolean; text: string } | null>(null)
 
   const load = useCallback(async () => {
     // supabase singleton
@@ -87,8 +92,44 @@ export default function ClientSettingsPage() {
 
   useEffect(() => { load() }, [load])
 
-  function set(key: string, value: string | boolean) {
+  function set(key: string, value: string | boolean | string[]) {
     setForm(f => ({ ...f, [key]: value }))
+  }
+
+  // alert_emails helpers
+  const emailList: string[] = (form.alert_emails as string[] | undefined) || []
+
+  function addEmail() {
+    set('alert_emails', [...emailList, ''])
+  }
+  function updateEmail(i: number, val: string) {
+    const next = [...emailList]; next[i] = val; set('alert_emails', next)
+  }
+  function removeEmail(i: number) {
+    set('alert_emails', emailList.filter((_, idx) => idx !== i))
+  }
+
+  // WhatsApp group resolve
+  async function resolveWAGroup() {
+    if (!waGroupInput.trim()) return
+    setResolvingWA(true); setWaResolveMsg(null)
+    try {
+      const res = await fetch(
+        `${API_URL}/notifications/whatsapp/resolve-invite?invite=${encodeURIComponent(waGroupInput.trim())}`,
+        { method: 'POST' }
+      )
+      const data = await res.json()
+      if (res.ok) {
+        set('whatsapp_group_jid', data.jid)
+        setWaGroupInput('')
+        setWaResolveMsg({ ok: true, text: `JID resolvido: ${data.subject || data.jid}` })
+      } else {
+        setWaResolveMsg({ ok: false, text: data.detail || 'Não foi possível resolver' })
+      }
+    } catch {
+      setWaResolveMsg({ ok: false, text: 'Erro de conexão' })
+    }
+    setResolvingWA(false)
   }
 
   async function handleDisconnectGoogle() {
@@ -242,7 +283,9 @@ export default function ClientSettingsPage() {
         tiktok_pixel_id:                 form.tiktok_pixel_id      || null,
         tiktok_access_token:             form.tiktok_access_token  || null,
         tiktok_advertiser_id:            form.tiktok_advertiser_id || null,
-        alert_email:                     form.alert_email           || null,
+        alert_email:                     (form.alert_emails as string[] | undefined)?.[0] || form.alert_email || null,
+        alert_emails:                    (form.alert_emails as string[] | undefined)?.filter(e => e.trim()) || [],
+        whatsapp_group_jid:              form.whatsapp_group_jid    || null,
         slack_webhook_url:               form.slack_webhook_url     || null,
         webhook_secret:                  form.webhook_secret        || null,
         is_active:                       form.is_active,
@@ -583,26 +626,105 @@ export default function ClientSettingsPage() {
         </Section>
 
         <Section title="Alertas e notificações">
-          <Field label="Email para relatórios semanais">
+          {/* Multi-email list */}
+          <Field label="Emails para relatórios e alertas" hint="todos os endereços receberão relatórios semanais, mensais e alertas críticos">
             <div className="space-y-2">
-              <input type="email" value={form.alert_email || ''} onChange={e => set('alert_email', e.target.value)}
-                placeholder="marketing@empresa.com" className={INPUT} />
-              {form.alert_email && (
-                <div className="flex items-center gap-2">
+              {emailList.map((addr, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    type="email"
+                    value={addr}
+                    onChange={e => updateEmail(i, e.target.value)}
+                    placeholder="marketing@empresa.com"
+                    className={INPUT + ' flex-1'}
+                  />
                   <button
                     type="button"
-                    onClick={testEmail}
-                    disabled={testingEmail}
-                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-[#0f1117] border border-[#2a2f3e] hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                    onClick={() => removeEmail(i)}
+                    className="shrink-0 p-2 text-slate-600 hover:text-red-400 transition-colors"
+                    title="Remover email"
                   >
-                    {testingEmail ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-                    Enviar relatório teste
+                    <Trash2 size={13} />
                   </button>
-                  {emailTestMsg && (
-                    <span className={`text-xs ${emailTestMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {emailTestMsg.ok ? '✓' : '✗'} {emailTestMsg.text}
-                    </span>
+                </div>
+              ))}
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={addEmail}
+                  className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                >
+                  <Plus size={12} /> Adicionar email
+                </button>
+                {emailList.some(e => e.trim()) && (
+                  <>
+                    <span className="text-slate-700">·</span>
+                    <button
+                      type="button"
+                      onClick={testEmail}
+                      disabled={testingEmail}
+                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white bg-[#0f1117] border border-[#2a2f3e] hover:border-slate-600 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {testingEmail ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                      Enviar teste
+                    </button>
+                    {emailTestMsg && (
+                      <span className={`text-xs ${emailTestMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {emailTestMsg.ok ? '✓' : '✗'} {emailTestMsg.text}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+              {emailList.length === 0 && (
+                <p className="text-xs text-slate-600">Nenhum email cadastrado. Clique em "Adicionar email" para começar.</p>
+              )}
+            </div>
+          </Field>
+
+          {/* WhatsApp group */}
+          <Field label="Grupo WhatsApp" hint="Resumo semanal/mensal + alertas críticos enviados para o grupo da empresa">
+            <div className="space-y-2">
+              {form.whatsapp_group_jid ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                    <MessageSquare size={13} className="text-emerald-400 shrink-0" />
+                    <span className="text-xs text-emerald-300 font-mono truncate">{form.whatsapp_group_jid}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { set('whatsapp_group_jid', ''); setWaResolveMsg(null) }}
+                    className="p-2 text-slate-600 hover:text-red-400 transition-colors shrink-0"
+                    title="Remover grupo"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      value={waGroupInput}
+                      onChange={e => setWaGroupInput(e.target.value)}
+                      placeholder="https://chat.whatsapp.com/... ou JID (120363xxx@g.us)"
+                      className={INPUT + ' flex-1'}
+                    />
+                    <button
+                      type="button"
+                      onClick={resolveWAGroup}
+                      disabled={resolvingWA || !waGroupInput.trim()}
+                      className="flex items-center gap-1.5 text-xs bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white px-3 py-2 rounded-lg transition-colors shrink-0"
+                    >
+                      {resolvingWA ? <Loader2 size={11} className="animate-spin" /> : <MessageSquare size={11} />}
+                      Resolver
+                    </button>
+                  </div>
+                  {waResolveMsg && (
+                    <p className={`text-xs ${waResolveMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {waResolveMsg.ok ? '✓' : '✗'} {waResolveMsg.text}
+                    </p>
                   )}
+                  <p className="text-xs text-slate-600">Cole o link de convite do grupo ou o JID direto. Salve após resolver.</p>
                 </div>
               )}
             </div>

@@ -1,0 +1,11 @@
+<div class="rep-header">
+  <div class="rep-header-left">
+    <span class="rep-logo">{{agencia.logo_texto}}</span>
+    <span class="rep-logo-dot">●</span>
+    <span class="rep-cliente">{{cliente.nome}}</span>
+  </div>
+  <div class="rep-header-right">
+    <span class="rep-tipo">Relatório {{#if (eq tipo "semanal")}}Semanal{{else}}Mensal{{/if}}</span>
+    <span class="rep-periodo">{{periodo}}</span>
+  </div>
+</div>
