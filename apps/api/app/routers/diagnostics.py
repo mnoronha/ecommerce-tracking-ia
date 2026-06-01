@@ -355,6 +355,28 @@ async def list_whatsapp_instances():
     return wa_svc.list_instances()
 
 
+@router.get(
+    "/notifications/test/pdf",
+    summary="Testa geração de PDF com WeasyPrint",
+    tags=["diagnostics"],
+)
+async def test_pdf_generation():
+    """Gera um PDF simples e retorna info sobre o resultado."""
+    try:
+        from weasyprint import HTML as WP_HTML
+        html = "<html><body><h1>Teste PDF</h1><p>WeasyPrint funcionando.</p></body></html>"
+        pdf_bytes = WP_HTML(string=html).write_pdf()
+        return {
+            "weasyprint": "ok",
+            "pdf_size_bytes": len(pdf_bytes),
+            "pdf_size_kb": round(len(pdf_bytes) / 1024, 1),
+        }
+    except ImportError:
+        return {"weasyprint": "not_installed", "error": "WeasyPrint não encontrado"}
+    except Exception as exc:
+        return {"weasyprint": "error", "error": str(exc)[:300]}
+
+
 @router.post(
     "/notifications/test/email",
     summary="Envia email de teste para AGENCY_NOTIFY_EMAIL",
