@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, Users, LogOut, Bell, LayoutDashboard, CreditCard } from 'lucide-react'
+import { BarChart2, Users, LogOut, Bell, LayoutDashboard, CreditCard, Settings } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 
@@ -10,7 +10,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router   = useRouter()
 
-  const isClientsRoot = pathname === '/dashboard' || pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas' || pathname === '/billing'
+  const isClientsRoot = pathname === '/dashboard' || pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas' || pathname === '/billing' || pathname === '/configuracoes'
 
   async function handleSignOut() {
     const supabase = createSupabaseBrowserClient()
@@ -41,6 +41,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </Link>
             <Link href="/billing" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/billing' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
               <CreditCard size={13} />Plano
+            </Link>
+            <Link href="/configuracoes" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/configuracoes' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
+              <Settings size={13} />Config
             </Link>
             <button onClick={handleSignOut} className="text-xs text-slate-500 hover:text-white transition-colors flex items-center gap-1">
               <LogOut size={13} />Sair

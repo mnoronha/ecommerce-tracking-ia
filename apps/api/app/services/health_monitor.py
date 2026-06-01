@@ -27,6 +27,7 @@ from typing import Optional
 from ..config import settings
 from ..database import get_supabase
 from . import resend as email_service
+from . import notify as _notify
 
 logger = logging.getLogger(__name__)
 
@@ -529,20 +530,29 @@ def run_daily_health_check(target_date: Optional[str] = None) -> list[dict]:
         logger.info("health_monitor: no results for %s", day_label)
         return results
 
+    all_healthy = all(r["healthy"] for r in results)
+    n_issues    = sum(len(r["findings"]) for r in results)
+    subject = (
+        f"✅ Tracking OK — {day_label}"
+        if all_healthy
+        else f"🚨 {n_issues} problema(s) — {day_label}"
+    )
+
+    # Email (sempre para AGENCY_NOTIFY_EMAIL)
     if notify_email:
         try:
-            all_healthy = all(r["healthy"] for r in results)
-            n_issues    = sum(len(r["findings"]) for r in results)
-            subject = (
-                f"✅ Tracking OK — {day_label}"
-                if all_healthy
-                else f"🚨 {n_issues} problema(s) — {day_label}"
-            )
             email_service.send_email(to=notify_email, subject=subject, html_body=_render_email(results, day_label))
-            logger.info("health_monitor: report sent to %s (%d clients, %d issues)",
+            logger.info("health_monitor: email sent to %s (%d clients, %d issues)",
                         notify_email, len(results), n_issues)
         except Exception as exc:
-            logger.error("health_monitor: email send failed: %s", exc)
+            logger.error("health_monitor: email failed: %s", exc)
+
+    # WhatsApp — só se houver problemas críticos/warning
+    if not all_healthy:
+        try:
+            _notify.notify_health_issues(results)
+        except Exception as exc:
+            logger.error("health_monitor: whatsapp notify failed: %s", exc)
 
     return results
 

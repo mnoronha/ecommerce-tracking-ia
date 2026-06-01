@@ -42,6 +42,16 @@ class Settings(BaseSettings):
     # Destino interno para relatórios retidos pelo gate de negatividade
     # (mês ruim não vai direto pro cliente — a agência revisa antes).
     AGENCY_NOTIFY_EMAIL: str = ""
+    # WhatsApp da agência para alertas críticos (ex: 5511999999999)
+    AGENCY_WHATSAPP: str = ""
+
+    # ── Evolution API (WhatsApp) ─────────────────────────────────────────
+    # Self-hosted Evolution API para envio de mensagens WhatsApp
+    EVOLUTION_API_URL:      str = ""   # ex: https://evolution.suaempresa.com
+    EVOLUTION_API_KEY:      str = ""   # global apikey configurada no Evolution
+    EVOLUTION_INSTANCE:     str = ""   # nome da instância (ex: noroia-principal)
+    # Mínima severidade para disparar WhatsApp (critical | warning | all)
+    EVOLUTION_MIN_SEVERITY: str = "critical"
 
     # ── Meta CAPI ────────────────────────────────────────────────────────────
     # Código de teste do Events Manager — remover após validação

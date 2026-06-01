@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..database import get_supabase
-from ..services import health_monitor
+from ..services import health_monitor, notify as notify_svc, whatsapp as wa_svc
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -294,3 +294,64 @@ async def run_health_monitor(
         "n_issues":  sum(len(r["findings"]) for r in results),
         "results":   summary,
     }
+
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+
+@router.get(
+    "/notifications/status",
+    summary="Status dos canais de notificação (email + WhatsApp)",
+    tags=["diagnostics"],
+)
+async def notifications_status():
+    """
+    Verifica quais canais de notificação estão configurados e operacionais.
+    """
+    from ..config import settings
+
+    email_configured = bool(settings.RESEND_API_KEY or settings.SMTP_HOST)
+    wa_configured    = bool(settings.EVOLUTION_API_URL and settings.EVOLUTION_API_KEY and settings.EVOLUTION_INSTANCE)
+
+    wa_status = wa_svc.check_instance_status() if wa_configured else {"ok": False, "error": "não configurado"}
+
+    return {
+        "email": {
+            "configured": email_configured,
+            "provider":   "resend" if settings.RESEND_API_KEY else ("smtp" if settings.SMTP_HOST else "none"),
+            "from":       settings.RESEND_FROM or settings.SMTP_FROM or settings.SMTP_USER or None,
+            "agency_email": settings.AGENCY_NOTIFY_EMAIL or None,
+        },
+        "whatsapp": {
+            "configured":   wa_configured,
+            "instance":     settings.EVOLUTION_INSTANCE or None,
+            "agency_phone": settings.AGENCY_WHATSAPP or None,
+            "min_severity": settings.EVOLUTION_MIN_SEVERITY or "critical",
+            "connected":    wa_status.get("ok", False),
+            "state":        wa_status.get("state"),
+            "error":        wa_status.get("error"),
+        },
+    }
+
+
+@router.post(
+    "/notifications/test/email",
+    summary="Envia email de teste para AGENCY_NOTIFY_EMAIL",
+    tags=["diagnostics"],
+)
+async def test_email_notification(to: Optional[str] = Query(default=None)):
+    result = notify_svc.test_email(to=to)
+    if not result["ok"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "falha ao enviar"))
+    return result
+
+
+@router.post(
+    "/notifications/test/whatsapp",
+    summary="Envia mensagem de teste via WhatsApp (Evolution API)",
+    tags=["diagnostics"],
+)
+async def test_whatsapp_notification(phone: Optional[str] = Query(default=None)):
+    result = notify_svc.test_whatsapp(phone=phone)
+    if not result["ok"]:
+        raise HTTPException(status_code=400, detail=result.get("error", "falha ao enviar"))
+    return result
