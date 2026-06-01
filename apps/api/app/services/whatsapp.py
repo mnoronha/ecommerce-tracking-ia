@@ -166,11 +166,18 @@ def check_instance_status() -> dict:
         # Evolution retorna lista de instâncias
         instances = data if isinstance(data, list) else data.get("instances", [])
         for inst in instances:
-            name = inst.get("instance", {}).get("instanceName") or inst.get("instanceName", "")
+            name = (
+                inst.get("instance", {}).get("instanceName")
+                or inst.get("instanceName")
+                or inst.get("name")
+                or ""
+            )
             if name == settings.EVOLUTION_INSTANCE:
                 state = (
                     inst.get("instance", {}).get("connectionStatus")
-                    or inst.get("connectionStatus", "unknown")
+                    or inst.get("connectionStatus")
+                    or inst.get("state")
+                    or "unknown"
                 )
                 return {
                     "ok":    state.lower() == "open",
