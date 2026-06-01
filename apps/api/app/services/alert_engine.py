@@ -832,6 +832,197 @@ def _eval_high_ticket_anomaly(rule: dict, client: dict) -> list[dict]:
     return findings
 
 
+def _eval_roas_drop_channel(rule: dict, client: dict) -> list[dict]:
+    """
+    ROAS das últimas 24h por canal caiu X% vs média dos 7 dias anteriores.
+    Detecta campanhas que pararam de converter mesmo com spend ativo.
+    config: channel ('meta_ads'|'google_ads'), drop_pct (default 40)
+    """
+    channel    = (rule.get("config") or {}).get("channel", "meta_ads")
+    drop_pct   = float((rule.get("config") or {}).get("drop_pct", 40))
+    min_spend  = float((rule.get("config") or {}).get("min_spend_24h", 100))
+
+    sb  = get_supabase()
+    now = _now()
+    t24h     = now - timedelta(hours=24)
+    t7d_end  = now - timedelta(hours=24)
+    t7d_start = now - timedelta(days=8)
+
+    # Map channel key to utm_source values
+    _UTM = {
+        "meta_ads":   ("facebook", "fb", "instagram", "ig", "meta"),
+        "google_ads": ("google", "google_ads"),
+    }
+    utm_values = _UTM.get(channel, ())
+
+    def _period_roas(start, end) -> tuple[float, float]:
+        rows = (
+            sb.table("orders")
+            .select("total_price, utm_source")
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", start.isoformat())
+            .lt("created_at", end.isoformat())
+            .execute()
+        ).data or []
+        rev = sum(float(r["total_price"]) for r in rows
+                  if (r.get("utm_source") or "").lower() in utm_values)
+        spd_rows = (
+            sb.table("ad_spend")
+            .select("spend")
+            .eq("client_id", client["id"])
+            .eq("channel", channel)
+            .gte("date", start.date().isoformat())
+            .lte("date", end.date().isoformat())
+            .execute()
+        ).data or []
+        spd = sum(float(r["spend"]) for r in spd_rows)
+        return rev, spd
+
+    try:
+        rev_recent, spd_recent = _period_roas(t24h, now)
+        rev_base, spd_base = _period_roas(t7d_start, t7d_end)
+    except Exception as exc:
+        logger.debug("_eval_roas_drop_channel(%s/%s): %s", client.get("pixel_id"), channel, exc)
+        return []
+
+    if spd_recent < min_spend:
+        return []  # spend muito baixo — não é significativo
+
+    roas_recent = rev_recent / spd_recent if spd_recent > 0 else 0
+    roas_base   = (rev_base / spd_base / 7) if spd_base > 0 else 0  # média diária
+
+    if roas_base < 0.5:
+        return []  # sem baseline confiável
+
+    drop = (roas_base - roas_recent) / roas_base
+    if drop < drop_pct / 100:
+        return []
+
+    channel_label = {"meta_ads": "Meta Ads", "google_ads": "Google Ads"}.get(channel, channel)
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"roas_drop_channel:{client['id']}:{channel}:{now.date().isoformat()}",
+        "title":       f"ROAS {channel_label} caiu — {pixel}",
+        "message":     (
+            f"ROAS 24h ({channel_label}): {roas_recent:.2f}x vs média 7d {roas_base:.2f}x "
+            f"(queda {drop * 100:.0f}%). Receita: R$ {rev_recent:,.0f} / Gasto: R$ {spd_recent:,.0f}."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": "critical" if drop >= 0.60 else "warning",
+        "data":     {"channel": channel, "roas_24h": round(roas_recent, 2),
+                     "roas_7d_avg": round(roas_base, 2), "drop_pct": round(drop * 100, 1)},
+    }]
+
+
+def _eval_spend_below_expected(rule: dict, client: dict) -> list[dict]:
+    """
+    Gasto das últimas 24h caiu X% vs média 7d — indica campanhas pausadas ou sem entrega.
+    config: channel ('meta_ads'|'google_ads'|'all'), drop_pct (default 50), min_daily_spend
+    """
+    channel   = (rule.get("config") or {}).get("channel", "meta_ads")
+    drop_pct  = float((rule.get("config") or {}).get("drop_pct", 50))
+    min_spend = float((rule.get("config") or {}).get("min_daily_spend", 200))
+
+    sb  = get_supabase()
+    now = _now()
+    yesterday     = (now - timedelta(days=1)).date()
+    week_ago      = (now - timedelta(days=8)).date()
+
+    def _daily_spend(start_date, end_date):
+        q = sb.table("ad_spend").select("spend, channel").eq("client_id", client["id"])
+        if channel != "all":
+            q = q.eq("channel", channel)
+        rows = q.gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).execute().data or []
+        return sum(float(r["spend"]) for r in rows)
+
+    try:
+        spend_yesterday = _daily_spend(yesterday, yesterday)
+        spend_7d_total  = _daily_spend(week_ago, (now - timedelta(days=2)).date())
+    except Exception as exc:
+        logger.debug("_eval_spend_below_expected(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    spend_7d_avg = spend_7d_total / 7.0
+    if spend_7d_avg < min_spend:
+        return []  # cliente não tem spend relevante
+
+    drop = (spend_7d_avg - spend_yesterday) / spend_7d_avg
+    if drop < drop_pct / 100:
+        return []
+
+    channel_label = {"meta_ads": "Meta Ads", "google_ads": "Google Ads", "all": "Ads"}.get(channel, channel)
+    pixel = client.get("pixel_id") or "unknown"
+    sev   = "critical" if drop >= 0.80 else "warning"
+
+    return [{
+        "fingerprint": f"spend_below_expected:{client['id']}:{channel}:{yesterday.isoformat()}",
+        "title":       f"Investimento {channel_label} abaixo do esperado — {pixel}",
+        "message":     (
+            f"Gasto ontem ({channel_label}): R$ {spend_yesterday:,.0f} vs média 7d "
+            f"R$ {spend_7d_avg:,.0f}/dia (queda {drop * 100:.0f}%). "
+            f"Verifique se as campanhas estão ativas e com orçamento suficiente."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": sev,
+        "data":     {"channel": channel, "spend_yesterday": round(spend_yesterday, 2),
+                     "spend_7d_avg": round(spend_7d_avg, 2), "drop_pct": round(drop * 100, 1)},
+    }]
+
+
+def _eval_utm_null_ratio(rule: dict, client: dict) -> list[dict]:
+    """
+    % de pedidos sem utm_source nas últimas 24h acima do threshold.
+    Detecta falha no relay de UTM — quando snippet não passa UTMs para os pedidos,
+    o Meta e Google ficam cegos para as conversões.
+    config: threshold_pct (default 60), min_orders (default 5)
+    """
+    threshold  = float((rule.get("config") or {}).get("threshold_pct", 60))
+    min_orders = int((rule.get("config") or {}).get("min_orders", 5))
+
+    sb   = get_supabase()
+    now  = _now()
+    t24h = (now - timedelta(hours=24)).isoformat()
+
+    try:
+        rows = (
+            sb.table("orders")
+            .select("utm_source, financial_status")
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", t24h)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_utm_null_ratio(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    # Exclude POS/offline
+    online = [r for r in rows if (r.get("utm_source") or "").lower() not in ("pos", "in_store", "offline", "draft_order")]
+    if len(online) < min_orders:
+        return []
+
+    null_count = sum(1 for r in online if not r.get("utm_source"))
+    null_pct   = null_count / len(online) * 100
+
+    if null_pct < threshold:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"utm_null_ratio:{client['id']}:{now.date().isoformat()}",
+        "title":       f"UTM sem atribuição ({null_pct:.0f}%) — {pixel}",
+        "message":     (
+            f"{null_count} de {len(online)} pedidos online nas últimas 24h sem utm_source "
+            f"({null_pct:.0f}%). O snippet pode não estar passando UTMs para os pedidos. "
+            f"Meta e Google ficam cegos para essas conversões."
+        ),
+        "severity": "critical" if null_pct >= 80 else "warning",
+        "data":     {"null_count": null_count, "total_online": len(online),
+                     "null_pct": round(null_pct, 1)},
+    }]
+
+
 _EVALUATORS = {
     "meta_token_expiring":      _eval_meta_token_expiring,
     "integration_unhealthy":    _eval_integration_unhealthy,
@@ -839,7 +1030,6 @@ _EVALUATORS = {
     "budget_overspent":         _eval_budget_overspent,
     "tracking_stopped":         _eval_tracking_stopped,
     "cpa_over_target":          _eval_cpa_over_target,
-    # New evaluators
     "revenue_drop":             _eval_revenue_drop,
     "views_drop":               _eval_views_drop,
     "zero_sales":               _eval_zero_sales,
@@ -848,6 +1038,10 @@ _EVALUATORS = {
     "low_balance_google":       _eval_low_balance_google,
     "google_conversion_drop":   _eval_google_conversion_drop,
     "high_ticket_anomaly":      _eval_high_ticket_anomaly,
+    # 4 novos checks
+    "roas_drop_channel":        _eval_roas_drop_channel,
+    "spend_below_expected":     _eval_spend_below_expected,
+    "utm_null_ratio":           _eval_utm_null_ratio,
 }
 
 
