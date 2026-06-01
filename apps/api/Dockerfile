@@ -15,10 +15,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     # WeasyPrint dependencies (PDF generation)
     libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libpangocairo-1.0-0 \
     libcairo2 \
     libgdk-pixbuf-2.0-0 \
     libffi-dev \
     shared-mime-info \
+    libxml2 \
+    libxslt1.1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (better layer caching)
