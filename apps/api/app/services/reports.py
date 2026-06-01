@@ -986,13 +986,17 @@ def send_report_now(
 
     client_name = _client_name(sb, client_id, pixel_id)
 
-    # Busca todos os destinatários do cliente
-    client_row = sb.table("clients").select("alert_email, alert_emails, whatsapp_group_jid").eq("id", client_id).limit(1).execute()
+    # Se foi passado email de override (UI / teste), usa ele.
+    # Caso contrário usa toda a lista de destinatários do cliente.
+    client_row  = sb.table("clients").select("alert_email, alert_emails, whatsapp_group_jid, logo_url").eq("id", client_id).limit(1).execute()
     client_data = (client_row.data or [{}])[0]
-    recipients  = _notify._all_client_emails(client_data) or [to_email]
+    recipients  = [to_email] if to_email else (_notify._all_client_emails(client_data) or [])
+
+    if not recipients:
+        raise ValueError(f"Nenhum email configurado para {pixel_id}")
 
     if report_type == "monthly":
         return _send_monthly(client_id, pixel_id, client_name, recipients, force=force, client=client_data)
 
     _send_weekly(client_id, pixel_id, client_name, recipients, client=client_data)
-    return {"sent_to": to_email, "held": False, "reasons": []}
+    return {"sent_to": recipients, "held": False, "reasons": []}
