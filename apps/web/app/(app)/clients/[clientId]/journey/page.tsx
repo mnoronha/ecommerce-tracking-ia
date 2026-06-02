@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles, AlertTriangle, Layers } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, ChevronUp, Package, Megaphone, RefreshCw, Target, Sparkles, AlertTriangle, Layers } from 'lucide-react'
 import { useDatePeriod } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 
@@ -11,6 +11,14 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 type DatePreset = '1d' | '7d' | '30d' | '90d' | 'custom'
 type Lens = 'campaign' | 'product' | 'channel' | 'meta-attribution' | 'declared-source' | 'ad'
 
+interface ChannelProduct {
+  product_id: string
+  name:       string
+  variants:   number
+  units:      number
+  revenue:    number
+  profit:     number | null
+}
 interface ChannelRow {
   channel:       string
   orders:        number
@@ -19,7 +27,7 @@ interface ChannelRow {
   units:         number
   avg_ticket:    number
   product_count: number
-  top_products:  ProductInCampaign[]
+  products:      ChannelProduct[]
 }
 
 interface DeclaredSourceRow {
@@ -192,6 +200,7 @@ export default function JourneyPage() {
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [products,  setProducts]  = useState<ProductRow[]>([])
   const [channels,  setChannels]  = useState<ChannelRow[]>([])
+  const [seeAllChannels, setSeeAllChannels] = useState<Set<string>>(new Set())
   const [metaAttr, setMetaAttr] = useState<MetaAttrRow[]>([])
   const [metaTotals, setMetaTotals] = useState<MetaAttrTotals | null>(null)
   const [ads, setAds] = useState<AdRow[]>([])
@@ -219,7 +228,7 @@ export default function JourneyPage() {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-product?${q}&top_campaigns=10`)
         if (res.ok) setProducts((await res.json()).products || [])
       } else if (lens === 'channel') {
-        const res = await fetch(`${API_URL}/journey/${pixelId}/by-channel?${q}&top_products=8`)
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-channel?${q}`)
         if (res.ok) setChannels((await res.json()).channels || [])
       } else if (lens === 'meta-attribution') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-meta-attribution?${q}`)
@@ -297,6 +306,15 @@ export default function JourneyPage() {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key)
       else next.add(key)
+      return next
+    })
+  }
+
+  function toggleSeeAll(channel: string) {
+    setSeeAllChannels(prev => {
+      const next = new Set(prev)
+      if (next.has(channel)) next.delete(channel)
+      else next.add(channel)
       return next
     })
   }
@@ -510,7 +528,10 @@ export default function JourneyPage() {
             ) : channels.map(c => {
               const key  = `channel-${c.channel}`
               const open = expanded.has(key)
-              const hidden = c.product_count - c.top_products.length
+              const INLINE = 5
+              const showingAll = seeAllChannels.has(c.channel)
+              const visible = showingAll ? c.products : c.products.slice(0, INLINE)
+              const more = c.products.length - INLINE
               return (
                 <div key={key} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
                   <button
@@ -543,17 +564,21 @@ export default function JourneyPage() {
                       </div>
                       <div className="border-t border-[#2a2f3e]">
                         <p className="px-5 pt-3 text-xs uppercase tracking-wider text-slate-500 font-medium">
-                          Produtos vendidos por {channelLabel(c.channel)}
+                          Produtos vendidos por {channelLabel(c.channel)} · mais vendidos
                         </p>
                         <table className="w-full text-sm">
                           <tbody>
-                            {c.top_products.map(p => (
+                            {visible.map(p => (
                               <tr key={p.product_id} className="border-t border-[#2a2f3e] last:border-0">
-                                <td className="px-5 py-2.5 text-slate-200 text-xs max-w-md truncate">
-                                  {p.name}
-                                  {p.sku && <span className="text-slate-600 ml-2 font-mono">{p.sku}</span>}
+                                <td className="px-5 py-2.5 text-slate-200 text-xs">
+                                  <span className="max-w-md truncate inline-block align-middle">{p.name}</span>
+                                  {p.variants > 1 && (
+                                    <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400 border border-slate-500/25 whitespace-nowrap">
+                                      {p.variants} tam.
+                                    </span>
+                                  )}
                                 </td>
-                                <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{p.units} un.</td>
+                                <td className="px-5 py-2.5 text-right text-white font-semibold text-xs whitespace-nowrap">{p.units} un.</td>
                                 <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(p.revenue)}</td>
                                 <td className="px-5 py-2.5 text-right text-teal-400 font-medium text-xs whitespace-nowrap">
                                   {p.profit != null ? fmt(p.profit) : <span className="text-slate-600">—</span>}
@@ -562,10 +587,15 @@ export default function JourneyPage() {
                             ))}
                           </tbody>
                         </table>
-                        {hidden > 0 && (
-                          <p className="px-5 py-2.5 text-xs text-slate-500 border-t border-[#2a2f3e]">
-                            Mostrando os {c.top_products.length} maiores · +{hidden} outro{hidden === 1 ? '' : 's'} produto{hidden === 1 ? '' : 's'} no período
-                          </p>
+                        {more > 0 && (
+                          <button
+                            onClick={() => toggleSeeAll(c.channel)}
+                            className="w-full px-5 py-2.5 text-xs text-indigo-300 hover:text-indigo-200 hover:bg-[#1a1f2e] border-t border-[#2a2f3e] transition-colors flex items-center justify-center gap-1.5"
+                          >
+                            {showingAll
+                              ? <>Ver menos <ChevronUp size={13} /></>
+                              : <>Ver mais — todos os {c.product_count} produtos do canal <ChevronDown size={13} /></>}
+                          </button>
                         )}
                       </div>
                     </div>

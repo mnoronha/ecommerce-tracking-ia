@@ -12,6 +12,8 @@ Two perspectives served from one endpoint:
 """
 
 import logging
+import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -38,6 +40,45 @@ def _resolve(pixel_id: str) -> str:
     if not (r and r.data):
         raise HTTPException(status_code=404, detail="Client not found")
     return r.data[0]["id"]
+
+
+# Sufixo de tamanho/variação no fim do nome do item: " - 39", " - 37.5",
+# " - L/G", " - M/M", " / XS/PP", " - Tam 41", " - Tamanho P", " - OS"…
+# Tokens de tamanho explícitos (não qualquer palavra de 1-3 letras, pra não
+# remover cores como "Red"/"Pin").
+_SIZE_SUFFIX = re.compile(
+    r"\s*[-–/]\s*(?:tam\.?|tamanho)?\s*("
+    r"\d{1,2}(?:[.,]\d)?"                                # numéricos (36, 37.5, 40.5)
+    r"|(?:PP|P|M|GG|G|XGG|XG|XL|XS|S|L|U|UN|OS)"         # tamanhos de roupa
+    r"|[A-Za-z]{1,3}/[A-Za-z]{1,3}"                      # combos L/G, M/M, XS/PP
+    r"|[Úú]nico|[Uu]nico"                                # tamanho único
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _strip_size(name: str) -> str:
+    return _SIZE_SUFFIX.sub("", name).strip() or name
+
+
+def _parent_name(names: list[str]) -> str:
+    """Nome do produto pai a partir dos nomes das variantes vendidas.
+
+    Para múltiplas variantes usa o prefixo comum (cortado no último separador
+    de tamanho, para não quebrar no meio de '36'/'38'); para uma só, remove o
+    sufixo de tamanho. Assim 'New Balance 9060 … - 36/37/39' vira o pai único.
+    """
+    uniq = list(dict.fromkeys(n for n in names if n))
+    if not uniq:
+        return "—"
+    if len(uniq) == 1:
+        return _strip_size(uniq[0])
+    prefix = os.path.commonprefix(uniq)
+    cut = max(prefix.rfind(" - "), prefix.rfind(" – "), prefix.rfind(" / "))
+    if cut > 3:
+        prefix = prefix[:cut]
+    prefix = prefix.strip(" -–/·\t")
+    return prefix if len(prefix) >= 3 else _strip_size(uniq[0])
 
 
 def _platform_from_source(source: Optional[str]) -> str:
@@ -264,10 +305,14 @@ async def by_channel(
 ):
     """
     Agrupa os pedidos pagos por canal (inferido de utm_source) e, dentro de
-    cada canal, lista os produtos mais vendidos (top N por receita) + a
-    contagem total de produtos distintos — para a UI limitar a lista quando
-    houver muitos. start/end (YYYY-MM-DD) sobrepõem days.
+    cada canal, agrupa os itens por **produto pai** (platform_product_id, somando
+    as variações de tamanho), ordenado pelos mais vendidos (unidades). Retorna a
+    lista completa de produtos do canal para o "Ver mais". start/end (YYYY-MM-DD)
+    sobrepõem days. `top_products` é mantido por compat (a UI faz o corte).
     """
+    _ = top_products  # corte é feito no frontend; mantido por compatibilidade
+    PRODUCT_CAP = 300  # teto de segurança por canal
+
     client_uuid = _resolve(pixel_id)
     orders = _fetch_paid_orders_with_items(client_uuid, days, start, end)
     if not orders:
@@ -282,7 +327,7 @@ async def by_channel(
             "revenue":   0.0,
             "profit":    0.0,
             "units":     0,
-            "_products": {},  # platform_product_id → aggregates
+            "_products": {},  # platform_product_id (pai) → aggregates
         })
         b["orders"]  += 1
         b["revenue"] += float(o.get("total_price") or 0)
@@ -290,20 +335,26 @@ async def by_channel(
             b["profit"] += float(o["gross_profit"])
 
         for it in o.get("_items") or []:
-            pid  = it.get("platform_product_id") or it.get("sku") or "unknown"
+            # Chave do produto pai: platform_product_id é compartilhado entre os
+            # tamanhos; cai pra sku/nome só quando o id não veio no webhook.
+            pid  = it.get("platform_product_id") or it.get("sku") or it.get("name") or "unknown"
             qty  = int(it.get("quantity") or 1)
             line = float(it.get("line_total") or 0)
             cost = it.get("cost_price_snapshot")
             line_profit = (line - float(cost) * qty) if cost is not None else None
 
-            p = b["_products"].setdefault(pid, {
-                "product_id": pid,
-                "name":       it.get("name") or "—",
-                "sku":        it.get("sku"),
+            p = b["_products"].setdefault(str(pid), {
+                "product_id": str(pid),
+                "_names":     [],   # nomes das variantes → nome do pai
+                "_skus":      set(),
                 "units":      0,
                 "revenue":    0.0,
                 "profit":     0.0,
             })
+            if it.get("name"):
+                p["_names"].append(it["name"])
+            if it.get("sku"):
+                p["_skus"].add(it["sku"])
             p["units"]   += qty
             p["revenue"] += line
             if line_profit is not None:
@@ -312,8 +363,23 @@ async def by_channel(
 
     channels = []
     for b in bucket.values():
-        all_products = sorted(b["_products"].values(), key=lambda p: p["revenue"], reverse=True)
-        prods = all_products[:top_products]
+        # Mais vendidos primeiro (unidades), desempate por receita.
+        all_products = sorted(
+            b["_products"].values(),
+            key=lambda p: (p["units"], p["revenue"]),
+            reverse=True,
+        )
+        products = [
+            {
+                "product_id": p["product_id"],
+                "name":       _parent_name(p["_names"]),
+                "variants":   len(p["_skus"]) or len(set(p["_names"])),
+                "units":      p["units"],
+                "revenue":    round(p["revenue"], 2),
+                "profit":     round(p["profit"], 2) if p["profit"] else None,
+            }
+            for p in all_products[:PRODUCT_CAP]
+        ]
         channels.append({
             "channel":       b["channel"],
             "orders":        b["orders"],
@@ -322,17 +388,7 @@ async def by_channel(
             "units":         b["units"],
             "avg_ticket":    round(b["revenue"] / b["orders"], 2) if b["orders"] else 0,
             "product_count": len(all_products),
-            "top_products": [
-                {
-                    "product_id": p["product_id"],
-                    "name":       p["name"],
-                    "sku":        p["sku"],
-                    "units":      p["units"],
-                    "revenue":    round(p["revenue"], 2),
-                    "profit":     round(p["profit"], 2) if p["profit"] else None,
-                }
-                for p in prods
-            ],
+            "products":      products,
         })
     channels.sort(key=lambda c: c["revenue"], reverse=True)
     return {
