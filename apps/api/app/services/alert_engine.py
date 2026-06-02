@@ -737,13 +737,20 @@ def _eval_low_balance_google(rule: dict, client: dict) -> list[dict]:
 
 
 def _eval_google_conversion_drop(rule: dict, client: dict) -> list[dict]:
-    """Queda no número de conversões enviadas ao Google vs baseline 7d."""
-    threshold = float((rule.get("config") or {}).get("drop_pct", 50))
+    """Queda no número de conversões enviadas ao Google vs MEDIANA dos 7 dias.
+
+    Usa mediana + exige envio em quase todos os dias (conversões Google são
+    esparsas/voláteis) pra não disparar por variação normal nem por um dia
+    atípico no baseline.
+    """
+    cfg             = rule.get("config") or {}
+    threshold       = float(cfg.get("drop_pct", 50))
+    min_active_days = int(cfg.get("min_active_days", 6))
 
     sb  = get_supabase()
     now = _now()
-    t24h = now - timedelta(hours=24)
-    t7d  = now - timedelta(days=8)
+    t24h    = now - timedelta(hours=24)
+    t7d     = now - timedelta(days=8)
     t7d_end = now - timedelta(hours=24)
 
     try:
@@ -760,25 +767,35 @@ def _eval_google_conversion_drop(rule: dict, client: dict) -> list[dict]:
 
         baseline_rows = (
             sb.table("orders")
-            .select("id", count="exact", head=True)
+            .select("created_at")
             .eq("client_id", client["id"])
             .eq("financial_status", "paid")
             .gt("total_price", 0)
             .eq("google_sent", True)
             .gte("created_at", t7d.isoformat())
             .lt("created_at", t7d_end.isoformat())
+            .limit(5000)
             .execute()
-        ).count or 0
-
-        baseline_avg = baseline_rows / 7.0
+        ).data or []
     except Exception as exc:
         logger.debug("_eval_google_conversion_drop(%s): %s", client.get("pixel_id"), exc)
         return []
 
-    if baseline_avg < 1:
+    by_day: dict = {}
+    for r in baseline_rows:
+        day = str(r.get("created_at") or "")[:10]
+        if day:
+            by_day[day] = by_day.get(day, 0) + 1
+    daily = [by_day.get((t7d_end - timedelta(days=i)).date().isoformat(), 0) for i in range(7)]
+    active_days = sum(1 for v in daily if v > 0)
+    if active_days < min_active_days:
         return []
 
-    drop = (baseline_avg - recent) / baseline_avg
+    baseline_ref = statistics.median(daily)
+    if baseline_ref < 1:
+        return []
+
+    drop = (baseline_ref - recent) / baseline_ref
     if drop < threshold / 100:
         return []
 
@@ -787,12 +804,12 @@ def _eval_google_conversion_drop(rule: dict, client: dict) -> list[dict]:
         "fingerprint": f"google_conv_drop:{client['id']}:{now.date().isoformat()}",
         "title":       f"Queda de conversões Google — {pixel}",
         "message":     (
-            f"Conversões enviadas ao Google nas últimas 24h: {recent} vs média 7d "
-            f"{baseline_avg:.1f}/dia (queda {drop * 100:.0f}%). Verifique o webhook."
+            f"Conversões enviadas ao Google nas últimas 24h: {recent} vs mediana 7d "
+            f"{baseline_ref:.0f}/dia (queda {drop * 100:.0f}%). Verifique o webhook."
         ),
         "severity": "warning",
-        "data":     {"recent": recent, "baseline_avg": round(baseline_avg, 1),
-                     "drop_pct": round(drop * 100, 1)},
+        "data":     {"recent": recent, "baseline_median": baseline_ref,
+                     "active_days": active_days, "drop_pct": round(drop * 100, 1)},
     }]
 
 
@@ -1199,13 +1216,29 @@ def run_alert_engine() -> dict:
     try:
         rules = (
             sb.table("alert_rules")
-            .select("id, agency_id, client_id, rule_key, severity, config, throttle_minutes")
+            .select("id, agency_id, client_id, rule_key, name, severity, config, throttle_minutes")
             .eq("enabled", True)
             .execute()
         ).data or []
     except Exception as exc:
         logger.error("alert_engine: load rules failed: %s", exc)
         return {"rules": 0, "new": 0, "resolved": 0}
+
+    # Overrides por cliente: a existência de uma regra client-specific (ligada OU
+    # desligada) de mesmo (rule_key, name) anula a regra global para aquele
+    # cliente — a versão do cliente é quem manda (liga/desliga por cliente).
+    try:
+        specific = (
+            sb.table("alert_rules")
+            .select("client_id, rule_key, name")
+            .not_.is_("client_id", "null")
+            .execute()
+        ).data or []
+    except Exception:
+        specific = []
+    overridden: dict = {}
+    for s in specific:
+        overridden.setdefault((s["rule_key"], s.get("name")), set()).add(s["client_id"])
 
     total_new = 0
     total_resolved = 0
@@ -1217,7 +1250,12 @@ def run_alert_engine() -> dict:
             logger.debug("alert_engine: no evaluator for rule_key=%s", rule["rule_key"])
             continue
 
-        clients        = _clients_for_rule(rule)
+        clients = _clients_for_rule(rule)
+        # Regra global pula clientes que têm override próprio dessa (rule_key, name).
+        if not rule.get("client_id"):
+            skip = overridden.get((rule["rule_key"], rule.get("name")), set())
+            if skip:
+                clients = [c for c in clients if c["id"] not in skip]
         clients_by_id  = {c["id"]: c for c in clients}
         all_findings: list[dict] = []
         for client in clients:

@@ -28,6 +28,12 @@ class RuleUpdate(BaseModel):
     config:  Optional[dict] = None
 
 
+class RuleToggle(BaseModel):
+    rule_key: str
+    name:     str
+    enabled:  bool
+
+
 @router.post("/run", summary="Manually run the alert engine")
 async def trigger_alert_engine():
     """
@@ -52,16 +58,100 @@ async def list_rules_for_client(pixel_id: str):
     agency_id  = c["agency_id"]
     client_id  = c["id"]
 
-    # Return agency-wide rules + client-specific rules
+    # Regras da agência (globais) + overrides deste cliente, fundidas no estado
+    # EFETIVO por regra: o override (se existir) manda no enabled.
     rows = (
         sb.table("alert_rules")
         .select("id, name, rule_key, severity, enabled, channels, throttle_minutes, config, client_id")
         .eq("agency_id", agency_id)
         .or_(f"client_id.is.null,client_id.eq.{client_id}")
-        .order("rule_key")
         .execute()
     ).data or []
-    return {"rules": rows}
+
+    globals_  = [r for r in rows if r.get("client_id") is None]
+    overrides = {(r["rule_key"], r.get("name")): r for r in rows if r.get("client_id")}
+
+    effective = []
+    for g in globals_:
+        ov = overrides.get((g["rule_key"], g.get("name")))
+        enabled = ov["enabled"] if ov else g["enabled"]
+        effective.append({
+            "rule_key":         g["rule_key"],
+            "name":             g.get("name"),
+            "severity":         g["severity"],
+            "throttle_minutes": g.get("throttle_minutes"),
+            "config":           g.get("config"),
+            "enabled":          enabled,
+            "global_enabled":   g["enabled"],
+            "overridden":       bool(ov) and ov["enabled"] != g["enabled"],
+        })
+    # Ordena por severidade (crítico → atenção → info) e nome
+    sev_order = {"critical": 0, "warning": 1, "info": 2}
+    effective.sort(key=lambda r: (sev_order.get(r["severity"], 9), r.get("name") or ""))
+    return {"rules": effective}
+
+
+@router.post("/rules/{pixel_id}/toggle", summary="Liga/desliga um alerta SÓ para este cliente")
+async def toggle_rule_for_client(pixel_id: str, body: RuleToggle):
+    """
+    Cria/atualiza um override por cliente para a regra (rule_key, name). Se o
+    valor voltar a coincidir com o padrão global, o override é removido (volta
+    a herdar o global). Não altera a regra global da agência.
+    """
+    sb = get_supabase()
+    client = (
+        sb.table("clients").select("id, agency_id")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (client and client.data):
+        raise HTTPException(status_code=404, detail="client not found")
+    cid       = client.data[0]["id"]
+    agency_id = client.data[0]["agency_id"]
+
+    g = (
+        sb.table("alert_rules")
+        .select("id, rule_key, name, severity, channels, throttle_minutes, config, enabled")
+        .eq("agency_id", agency_id)
+        .eq("rule_key", body.rule_key)
+        .eq("name", body.name)
+        .is_("client_id", "null")
+        .limit(1)
+        .execute()
+    ).data
+    if not g:
+        raise HTTPException(status_code=404, detail="global rule not found")
+    g = g[0]
+
+    existing = (
+        sb.table("alert_rules")
+        .select("id")
+        .eq("agency_id", agency_id).eq("client_id", cid)
+        .eq("rule_key", body.rule_key).eq("name", body.name)
+        .limit(1)
+        .execute()
+    ).data
+
+    # Voltou ao padrão global → remove override (herda de novo)
+    if body.enabled == g["enabled"]:
+        if existing:
+            sb.table("alert_rules").delete().eq("id", existing[0]["id"]).execute()
+        return {"enabled": body.enabled, "overridden": False}
+
+    if existing:
+        sb.table("alert_rules").update({"enabled": body.enabled}).eq("id", existing[0]["id"]).execute()
+    else:
+        sb.table("alert_rules").insert({
+            "agency_id":        agency_id,
+            "client_id":        cid,
+            "rule_key":         g["rule_key"],
+            "name":             g["name"],
+            "severity":         g["severity"],
+            "channels":         g.get("channels"),
+            "throttle_minutes": g.get("throttle_minutes"),
+            "config":           g.get("config"),
+            "enabled":          body.enabled,
+        }).execute()
+    return {"enabled": body.enabled, "overridden": True}
 
 
 @router.patch("/rules/{rule_id}", summary="Update a rule (enabled, config)")

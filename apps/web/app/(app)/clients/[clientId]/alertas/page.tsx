@@ -25,14 +25,14 @@ type Alert = {
 }
 
 type Rule = {
-  id: string
-  name: string
   rule_key: string
+  name: string
   severity: Severity
   enabled: boolean
+  global_enabled: boolean
+  overridden: boolean
   throttle_minutes: number
   config: Record<string, unknown>
-  client_id: string | null
 }
 
 // ── Visual constants ──────────────────────────────────────────────────────────
@@ -82,6 +82,27 @@ const RULE_LABEL: Record<string, string> = {
   meta_dispatch:          'Dispatch Meta CAPI',
   google_dispatch:        'Dispatch Google Ads',
   pos_filter:             'Filtro POS offline',
+}
+
+// O que dispara cada alerta + a proteção contra falso positivo.
+const RULE_DESC: Record<string, string> = {
+  meta_token_expiring:    'Token da Meta perto de expirar (precisa renovar).',
+  integration_unhealthy:  'Integração Meta/Google/Shopify com falha de conexão.',
+  roas_below_goal:        'ROAS do mês abaixo da meta definida (com tolerância).',
+  budget_overspent:       'Gasto do mês ultrapassou o orçamento definido.',
+  tracking_stopped:       'Nenhum evento de tracking recebido há horas (snippet/CAPI).',
+  cpa_over_target:        'CPA do mês acima da meta (com tolerância e mínimo de pedidos).',
+  revenue_drop:           'Faturamento 24h muito abaixo da mediana 7d. Só alerta canal que vende quase todo dia (evita falso por canal esparso).',
+  views_drop:             'Pageviews das últimas 2h despencaram vs o mesmo horário dos 7 dias (ignora tráfego baixo).',
+  zero_sales:             'Nenhuma venda online em horário comercial por X horas seguidas.',
+  checkout_drop:          'Checkouts iniciados nas últimas 2h despencaram vs baseline (ignora volume baixo).',
+  low_balance_meta:       'Saldo pré-pago da Meta abaixo do limite.',
+  low_balance_google:     'Saldo/dias restantes do Google estimados baixos pelo ritmo de gasto.',
+  google_conversion_drop: 'Conversões enviadas ao Google 24h abaixo da mediana 7d. Só canal consistente (evita falso).',
+  high_ticket_anomaly:    'Pedido muito acima do ticket médio — apenas informativo.',
+  roas_drop_channel:      'ROAS 24h do canal caiu vs 7d mesmo com investimento ativo (mínimo de spend).',
+  spend_below_expected:   'Investimento do canal abaixo do esperado — possível campanha pausada.',
+  utm_null_ratio:         'Muitos pedidos sem UTM nas últimas 24h (snippet não está passando a origem).',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -212,21 +233,29 @@ function AlertCard({ alert: a, onResolve }: { alert: Alert; onResolve?: () => vo
 
 function RuleRow({ rule, onToggle }: { rule: Rule; onToggle: (v: boolean) => void }) {
   return (
-    <div className="flex items-center justify-between px-5 py-3 gap-4">
+    <div className="flex items-start justify-between px-5 py-3 gap-4">
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-slate-300">{RULE_LABEL[rule.rule_key] || rule.name}</p>
-        <p className="text-xs text-slate-600 mt-0.5">
-          {SEV_LABEL[rule.severity] || rule.severity}
-          {rule.throttle_minutes > 0 && ` · silencia por ${rule.throttle_minutes}min`}
-          {rule.client_id ? ' · específica deste cliente' : ' · todos os clientes'}
-        </p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className={`text-sm ${rule.enabled ? 'text-slate-200' : 'text-slate-500'}`}>{rule.name || RULE_LABEL[rule.rule_key] || rule.rule_key}</p>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${SEV_BADGE[rule.severity] || SEV_BADGE.info}`}>
+            {SEV_LABEL[rule.severity] || rule.severity}
+          </span>
+          {rule.overridden && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/25" title="Diferente do padrão da agência — específico deste cliente">
+              personalizado
+            </span>
+          )}
+        </div>
+        {RULE_DESC[rule.rule_key] && (
+          <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">{RULE_DESC[rule.rule_key]}</p>
+        )}
       </div>
       <button
         onClick={() => onToggle(!rule.enabled)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
           rule.enabled ? 'bg-indigo-600' : 'bg-slate-700'
         }`}
-        aria-label={rule.enabled ? 'Desativar regra' : 'Ativar regra'}
+        aria-label={rule.enabled ? 'Desativar alerta' : 'Ativar alerta'}
       >
         <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
           rule.enabled ? 'translate-x-4' : 'translate-x-1'
@@ -271,7 +300,7 @@ export default function AlertasPage() {
   const [running,         setRunning]         = useState(false)
   const [runResult,       setRunResult]       = useState<{ rules: number; new: number; resolved: number } | null>(null)
   const [error,           setError]           = useState<string | null>(null)
-  const [showRules,       setShowRules]       = useState(false)
+  const [showRules,       setShowRules]       = useState(true)
   const [filter,          setFilter]          = useState<Filter>('all')
   const [lastRefresh,     setLastRefresh]     = useState<Date>(new Date())
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -331,15 +360,22 @@ export default function AlertasPage() {
     } catch (_) {}
   }
 
-  async function toggleRule(ruleId: string, enabled: boolean) {
+  async function toggleRule(rule: Rule, enabled: boolean) {
+    // Otimista: atualiza o estado efetivo + flag de personalizado.
+    setRules(prev => prev.map(r =>
+      (r.rule_key === rule.rule_key && r.name === rule.name)
+        ? { ...r, enabled, overridden: enabled !== r.global_enabled }
+        : r
+    ))
     try {
-      await fetch(`${API_URL}/alerts/rules/${ruleId}`, {
-        method: 'PATCH',
+      await fetch(`${API_URL}/alerts/rules/${pixelId}/toggle`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ rule_key: rule.rule_key, name: rule.name, enabled }),
       })
-      setRules(prev => prev.map(r => r.id === ruleId ? { ...r, enabled } : r))
-    } catch (_) {}
+    } catch (_) {
+      loadRules()  // reverte pro estado real em caso de falha
+    }
   }
 
   // Derived state
@@ -506,9 +542,9 @@ export default function AlertasPage() {
               >
                 <div className="flex items-center gap-2">
                   <Settings2 size={14} className="text-slate-400" />
-                  <span className="text-sm font-medium text-slate-300">Regras de alerta</span>
+                  <span className="text-sm font-medium text-slate-300">Alertas configurados</span>
                   <span className="text-xs text-slate-600">
-                    ({rules.filter(r => r.enabled).length}/{rules.length} ativas)
+                    ({rules.filter(r => r.enabled).length}/{rules.length} ativos neste cliente)
                   </span>
                 </div>
                 {showRules
@@ -517,15 +553,20 @@ export default function AlertasPage() {
                 }
               </button>
               {showRules && (
-                <div className="divide-y divide-[#2a2f3e] border-t border-[#2a2f3e]">
-                  {rules.map(rule => (
-                    <RuleRow
-                      key={rule.id}
-                      rule={rule}
-                      onToggle={enabled => toggleRule(rule.id, enabled)}
-                    />
-                  ))}
-                </div>
+                <>
+                  <p className="px-5 pt-3 pb-1 text-xs text-slate-600 border-t border-[#2a2f3e]">
+                    Ligue/desligue cada alerta só para este cliente. Mudar aqui não afeta os outros clientes da agência.
+                  </p>
+                  <div className="divide-y divide-[#2a2f3e]">
+                    {rules.map(rule => (
+                      <RuleRow
+                        key={`${rule.rule_key}:${rule.name}`}
+                        rule={rule}
+                        onToggle={enabled => toggleRule(rule, enabled)}
+                      />
+                    ))}
+                  </div>
+                </>
               )}
             </div>
           )}
