@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { RefreshCw, Loader2, TrendingUp, Info } from 'lucide-react'
+import { useDatePeriod } from '@/lib/use-date-range'
+import { PeriodPicker } from '@/components/PeriodPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -107,21 +109,18 @@ export default function AttributionPage() {
   const clientId = params.clientId as string
 
   const [model,      setModel]      = useState<Model>('last_click')
-  const [preset,     setPreset]     = useState<DatePreset>('30d')
-  const [fromDate,   setFromDate]   = useState('')
-  const [toDate,     setToDate]     = useState('')
-  const fromRef = useRef(''); const toRef = useRef('')
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [data,       setData]       = useState<Summary | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [recomputing, setRecomputing] = useState(false)
 
-  const days = preset === '7d' ? 7 : preset === '30d' ? 30 : 90
+  const days = period === '7d' ? 7 : period === '90d' ? 90 : period === '1d' ? 1 : 30
 
   const load = useCallback(async (p: DatePreset, m: Model, fd: string, td: string) => {
     if (p === 'custom' && (!fd || !td)) return
     setLoading(true)
     try {
-      const q  = buildQuery(p, p === '7d' ? 7 : p === '30d' ? 30 : 90, fd, td)
+      const q  = buildQuery(p, p === '7d' ? 7 : p === '30d' ? 30 : p === '90d' ? 90 : 1, fd, td)
       const res = await fetch(`${API_URL}/attribution/${clientId}/summary?model=${m}&${q}`)
       if (res.ok) setData(await res.json())
     } finally {
@@ -129,14 +128,14 @@ export default function AttributionPage() {
     }
   }, [clientId])
 
-  useEffect(() => { load(preset, model, fromDate, toDate) }, [preset, model])
+  useEffect(() => { load(period, model, from, to) }, [period, from, to, model, load])
 
   async function recompute() {
     setRecomputing(true)
     try {
       await fetch(`${API_URL}/attribution/${clientId}/recompute?days=${days}`, { method: 'POST' })
       await new Promise(r => setTimeout(r, 3000))
-      await load(preset, model, fromDate, toDate)
+      await load(period, model, from, to)
     } finally {
       setRecomputing(false)
     }
@@ -188,41 +187,7 @@ export default function AttributionPage() {
           </div>
 
           {/* Date presets */}
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-              {(['1d','7d','30d','90d','custom'] as DatePreset[]).map(p => (
-                <button
-                  key={p}
-                  onClick={() => setPreset(p)}
-                  className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                    preset === p ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {p === '1d' ? 'Ontem' : p === 'custom' ? 'Custom' : p}
-                </button>
-              ))}
-            </div>
-            {preset === 'custom' && (
-              <div className="flex items-center gap-1.5">
-                <input type="date" value={fromDate}
-                  onChange={e => { setFromDate(e.target.value); fromRef.current = e.target.value }}
-                  className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-                <span className="text-slate-500 text-xs">–</span>
-                <input type="date" value={toDate}
-                  onChange={e => { setToDate(e.target.value); toRef.current = e.target.value }}
-                  className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-                <button
-                  onClick={() => load('custom', model, fromRef.current, toRef.current)}
-                  disabled={!fromDate || !toDate}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-3 py-1 rounded-lg text-xs font-medium transition-colors"
-                >
-                  Aplicar
-                </button>
-              </div>
-            )}
-          </div>
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
 
           <p className="text-xs text-slate-500 ml-auto flex items-center gap-1.5">
             <Info size={12} />
@@ -248,7 +213,7 @@ export default function AttributionPage() {
                   Receita atribuída — {activeModel?.label}
                 </p>
                 <p className="text-3xl font-bold text-white mt-1">{fmtBRL(data.total_revenue)}</p>
-                <p className="text-xs text-slate-500 mt-1">{periodLabel(preset, fromDate, toDate)}</p>
+                <p className="text-xs text-slate-500 mt-1">{periodLabel(period, from, to)}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs text-slate-500">Canais ativos</p>

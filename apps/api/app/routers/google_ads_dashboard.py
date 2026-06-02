@@ -44,7 +44,12 @@ def _delta(curr: float | None, prev: float | None) -> float | None:
     summary="Dashboard Google Ads — dados server-side (pedidos + match_type)",
     tags=["google_ads"],
 )
-async def google_overview(pixel_id: str, days: int = 30):
+async def google_overview(
+    pixel_id: str,
+    days: int = 30,
+    start: str | None = None,
+    end:   str | None = None,
+):
     """
     Retorna:
     - KPIs: compras, receita, cobertura gclid/enhanced, CPA estimado
@@ -71,9 +76,14 @@ async def google_overview(pixel_id: str, days: int = 30):
     client_id = c["id"]
     has_creds = bool(c.get("google_ads_customer_id"))
 
-    today        = datetime.now(timezone.utc).date()
-    d_end        = today
-    d_start      = today - timedelta(days=days - 1)
+    if start and end:
+        d_start = datetime.fromisoformat(start).date()
+        d_end   = datetime.fromisoformat(end).date()
+        days    = max(1, (d_end - d_start).days + 1)
+    else:
+        today   = datetime.now(timezone.utc).date()
+        d_end   = today
+        d_start = today - timedelta(days=days - 1)
     d_prev_end   = d_start - timedelta(days=1)
     d_prev_start = d_prev_end - timedelta(days=days - 1)
 

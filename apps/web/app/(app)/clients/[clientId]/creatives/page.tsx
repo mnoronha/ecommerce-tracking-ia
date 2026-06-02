@@ -5,6 +5,8 @@ import { useParams } from 'next/navigation'
 import { Loader2, RefreshCw, Sparkles, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanGate } from '@/components/plan-gate'
+import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
+import { PeriodPicker } from '@/components/PeriodPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -51,7 +53,7 @@ export default function CreativesPage() {
   const pixelId = params.clientId as string
   const { plan } = useAgencyPlan(pixelId)
 
-  const [days, setDays] = useState<7 | 30 | 90>(30)
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [creatives, setCreatives] = useState<CreativeRow[]>([])
   const [totalSpend, setTotalSpend] = useState(0)
   const [totalRevenue, setTotalRevenue] = useState(0)
@@ -63,10 +65,11 @@ export default function CreativesPage() {
   const [sort, setSort] = useState<'spend' | 'roas' | 'ctr'>('spend')
 
   const load = useCallback(async () => {
+    if (period === 'custom' && (!from || !to)) return
     setLoading(true)
     try {
       const [galRes, anaRes] = await Promise.all([
-        fetch(`${API_URL}/creatives/${pixelId}?days=${days}`),
+        fetch(`${API_URL}/creatives/${pixelId}?${periodToQuery(period, from, to)}`),
         fetch(`${API_URL}/creatives/${pixelId}/latest-analysis`),
       ])
       if (galRes.ok) {
@@ -82,7 +85,7 @@ export default function CreativesPage() {
     } finally {
       setLoading(false)
     }
-  }, [pixelId, days])
+  }, [pixelId, period, from, to])
 
   useEffect(() => { load() }, [load])
 
@@ -132,16 +135,7 @@ export default function CreativesPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {[7, 30, 90].map(r => (
-              <button key={r} onClick={() => setDays(r as 7 | 30 | 90)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  days === r ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}>
-                {r}d
-              </button>
-            ))}
-          </div>
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
           <button
             onClick={handleSync}
             disabled={syncing}

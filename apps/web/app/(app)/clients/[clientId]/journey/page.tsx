@@ -1,8 +1,10 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles, AlertTriangle } from 'lucide-react'
+import { useDatePeriod } from '@/lib/use-date-range'
+import { PeriodPicker } from '@/components/PeriodPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -158,13 +160,7 @@ export default function JourneyPage() {
   const pixelId = params.clientId as string
 
   const [lens,    setLens]    = useState<Lens>('campaign')
-  const [preset,  setPreset]  = useState<DatePreset>('30d')
-  const [fromDate, setFromDate] = useState('')
-  const [toDate,   setToDate]   = useState('')
-  const [showCustom, setShowCustom] = useState(false)
-  const [loadKey, setLoadKey]   = useState(0)
-  const fromRef = useRef<HTMLInputElement>(null)
-  const toRef   = useRef<HTMLInputElement>(null)
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
 
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [products,  setProducts]  = useState<ProductRow[]>([])
@@ -183,16 +179,10 @@ export default function JourneyPage() {
   const [matching, setMatching] = useState(false)
   const [actionMsg, setActionMsg] = useState<string | null>(null)
 
-  const presetRef  = useRef(preset)
-  const fromDRef   = useRef(fromDate)
-  const toDRef     = useRef(toDate)
-  presetRef.current = preset
-  fromDRef.current  = fromDate
-  toDRef.current    = toDate
-
   const load = useCallback(async () => {
+    if (period === 'custom' && (!from || !to)) return
     setLoading(true)
-    const q = buildQuery(presetRef.current, fromDRef.current, toDRef.current)
+    const q = buildQuery(period, from, to)
     try {
       if (lens === 'campaign') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-campaign?${q}&top_products=10`)
@@ -221,10 +211,9 @@ export default function JourneyPage() {
     } finally {
       setLoading(false)
     }
-  }, [lens, pixelId])
+  }, [lens, pixelId, period, from, to])
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [load, loadKey])
+  useEffect(() => { load() }, [load])
 
   async function handleResolveMeta() {
     setResolving(true); setResolveMsg(null)
@@ -258,7 +247,7 @@ export default function JourneyPage() {
 
   async function handleProbableMatch() {
     setMatching(true); setActionMsg(null)
-    const q = buildQuery(presetRef.current, fromDRef.current, toDRef.current)
+    const q = buildQuery(period, from, to)
     const days = q.startsWith('days=') ? q.slice(5) : '30'
     try {
       const res = await fetch(`${API_URL}/journey/${pixelId}/probable-match?days=${days}`, { method: 'POST' })
@@ -269,26 +258,6 @@ export default function JourneyPage() {
       setActionMsg('Erro: ' + (e as Error).message)
     } finally {
       setMatching(false)
-    }
-  }
-
-  function applyCustom() {
-    const from = fromRef.current?.value || ''
-    const to   = toRef.current?.value   || ''
-    if (!from || !to) return
-    setFromDate(from)
-    setToDate(to)
-    setShowCustom(false)
-    setLoadKey(k => k + 1)
-  }
-
-  function selectPreset(p: DatePreset) {
-    setPreset(p)
-    if (p !== 'custom') {
-      setShowCustom(false)
-      setLoadKey(k => k + 1)
-    } else {
-      setShowCustom(true)
     }
   }
 
@@ -334,7 +303,7 @@ export default function JourneyPage() {
           ? ads.reduce((s, a) => s + a.revenue, 0)
           : metaTotals?.meta_revenue || 0
 
-  const periodLbl = periodLabel(preset, fromDate, toDate)
+  const periodLbl = periodLabel(period, from, to)
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -354,44 +323,9 @@ export default function JourneyPage() {
             className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500 w-44"
           />
           {/* Date preset buttons */}
-          <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {(['1d', '7d', '30d', '90d'] as DatePreset[]).map(p => (
-              <button key={p} onClick={() => selectPreset(p)}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  preset === p && !showCustom ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}>
-                {p === '1d' ? 'Ontem' : p}
-              </button>
-            ))}
-            <button onClick={() => selectPreset('custom')}
-              className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                preset === 'custom' || showCustom ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}>
-              Custom
-            </button>
-          </div>
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
         </div>
       </div>
-
-      {/* Custom date picker row */}
-      {showCustom && (
-        <div className="border-b border-[#2a2f3e] px-6 py-3 flex items-center gap-3 bg-[#1a1f2e]/60">
-          <span className="text-xs text-slate-400">De</span>
-          <input ref={fromRef} type="date" defaultValue={fromDate}
-            className="bg-[#252a3a] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500" />
-          <span className="text-xs text-slate-400">até</span>
-          <input ref={toRef} type="date" defaultValue={toDate}
-            className="bg-[#252a3a] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500" />
-          <button onClick={applyCustom}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-1.5 rounded-lg font-medium transition-colors">
-            Aplicar
-          </button>
-          <button onClick={() => setShowCustom(false)}
-            className="text-xs text-slate-500 hover:text-slate-300 transition-colors">
-            Cancelar
-          </button>
-        </div>
-      )}
 
       {/* Lens toggle */}
       <div className="px-6 pt-6">

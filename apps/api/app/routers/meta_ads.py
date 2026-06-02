@@ -249,11 +249,17 @@ async def get_roas(pixel_id: str, days: int = 30):
     summary="Dashboard Meta Ads completo — usa meta_ad_attributions (sync diário)",
     tags=["meta_ads"],
 )
-async def get_overview(pixel_id: str, days: int = 30):
+async def get_overview(
+    pixel_id: str,
+    days: int = 30,
+    start: str | None = None,
+    end:   str | None = None,
+):
     """
     Retorna KPIs, séries diárias, breakdown campanha→adset→anúncio e funil.
     Fonte principal: meta_ad_attributions (sem chamada live à Meta API).
     Período anterior (mesma duração) incluído para calcular % Δ.
+    start/end (YYYY-MM-DD) sobrepõem `days` quando informados.
     """
     sb = get_supabase()
 
@@ -270,9 +276,14 @@ async def get_overview(pixel_id: str, days: int = 30):
     c         = creds.data[0]
     client_id = c["id"]
 
-    today     = datetime.now(timezone.utc).date()
-    d_end     = today
-    d_start   = today - timedelta(days=days - 1)
+    if start and end:
+        d_start = datetime.fromisoformat(start).date()
+        d_end   = datetime.fromisoformat(end).date()
+        days    = max(1, (d_end - d_start).days + 1)
+    else:
+        today   = datetime.now(timezone.utc).date()
+        d_end   = today
+        d_start = today - timedelta(days=days - 1)
     d_prev_end   = d_start - timedelta(days=1)
     d_prev_start = d_prev_end - timedelta(days=days - 1)
 

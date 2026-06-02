@@ -10,6 +10,8 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
+import { PeriodPicker } from '@/components/PeriodPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -42,7 +44,6 @@ interface OverviewData {
   funnel: Record<string, number>
 }
 
-type Preset = '7d' | '30d' | '90d'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -168,27 +169,23 @@ export default function GoogleAdsPage() {
   const params  = useParams()
   const pixelId = params.clientId as string
 
-  const [preset,  setPreset]  = useState<Preset>(() => {
-    if (typeof window !== 'undefined') {
-      const v = window.localStorage.getItem('dash_period')
-      if (v === '7d' || v === '30d' || v === '90d') return v as Preset
-    }
-    return '7d'
-  })
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [data,    setData]    = useState<OverviewData | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const load = useCallback(async (p: Preset) => {
+  const load = useCallback(async (q: string) => {
     setLoading(true)
     try {
-      const days = p === '7d' ? 7 : p === '30d' ? 30 : 90
-      const res  = await fetch(`${API_URL}/google-ads/${pixelId}/overview?days=${days}`)
+      const res  = await fetch(`${API_URL}/google-ads/${pixelId}/overview?${q}`)
       if (res.ok) setData(await res.json())
     } catch (_) {}
     setLoading(false)
   }, [pixelId])
 
-  useEffect(() => { load(preset) }, [preset, load])
+  useEffect(() => {
+    if (period === 'custom' && (!from || !to)) return
+    load(periodToQuery(period, from, to))
+  }, [period, from, to, load])
 
   const t   = data?.totals
   const dlt = data?.deltas || {}
@@ -216,15 +213,8 @@ export default function GoogleAdsPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {(['7d', '30d', '90d'] as Preset[]).map(p => (
-              <button key={p} onClick={() => { setPreset(p); try { localStorage.setItem('dash_period', p) } catch(_){} }}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${preset === p ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
-                {p}
-              </button>
-            ))}
-          </div>
-          <button onClick={() => load(preset)} className="text-slate-500 hover:text-white transition-colors">
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
+          <button onClick={() => load(periodToQuery(period, from, to))} className="text-slate-500 hover:text-white transition-colors">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>

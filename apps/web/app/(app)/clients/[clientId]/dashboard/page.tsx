@@ -5,6 +5,8 @@ import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
 import IntegrationsHealth from '@/components/IntegrationsHealth'
+import { useDatePeriod, periodLabelLong } from '@/lib/use-date-range'
+import { PeriodPicker } from '@/components/PeriodPicker'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
@@ -12,7 +14,6 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type DateRange = '1d' | '7d' | '30d' | '90d' | 'custom'
 
 interface KPIs {
   totalRevenue: number
@@ -692,17 +693,7 @@ export default function DashboardPage() {
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
   const [clientName, setClientName]     = useState<string>('')
-  const [dateRange, setDateRange]       = useState<DateRange>(() => {
-    if (typeof window !== 'undefined') {
-      const v = window.localStorage.getItem('dash_period')
-      if (v === '1d' || v === '7d' || v === '14d' || v === '30d' || v === '90d') return v as DateRange
-    }
-    return '7d'
-  })
-  const [fromDate, setFromDate]         = useState<string>('')
-  const [toDate, setToDate]             = useState<string>('')
-  const fromDateRef                     = useRef<string>('')
-  const toDateRef                       = useRef<string>('')
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [device,   setDevice]           = useState<string>('all')
   const [country,  setCountry]          = useState<string>('all')
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
@@ -716,7 +707,8 @@ export default function DashboardPage() {
   // Cache clientId so we don't hit Supabase on every filter change
   const clientIdRef = useRef<string | null>(null)
 
-  const loadData = useCallback(async (range: DateRange) => {
+  const loadData = useCallback(async () => {
+    if (period === 'custom' && (!from || !to)) return
     setLoading(true)
 
     // ── Resolve clientId (cached after first call) ────────────────────────────
@@ -735,16 +727,14 @@ export default function DashboardPage() {
     // ── Date range computation ────────────────────────────────────────────────
     const now = new Date()
     let startDate: Date, endDate: Date
-    const _from = fromDateRef.current
-    const _to   = toDateRef.current
-    if (range === 'custom' && _from && _to) {
-      startDate = new Date(_from + 'T00:00:00')
-      endDate   = new Date(_to   + 'T23:59:59')
-    } else if (range === '1d') {
+    if (period === 'custom' && from && to) {
+      startDate = new Date(from + 'T00:00:00')
+      endDate   = new Date(to   + 'T23:59:59')
+    } else if (period === '1d') {
       startDate = new Date(now); startDate.setDate(startDate.getDate() - 1); startDate.setHours(0, 0, 0, 0)
       endDate   = new Date(startDate); endDate.setHours(23, 59, 59, 999)
     } else {
-      const d = range === '7d' ? 7 : range === '30d' ? 30 : 90
+      const d = period === '7d' ? 7 : period === '30d' ? 30 : 90
       startDate = new Date(); startDate.setDate(startDate.getDate() - d)
       endDate   = now
     }
@@ -958,7 +948,7 @@ export default function DashboardPage() {
 
     setLastUpdate(new Date())
     setLoading(false)
-  }, [country, device, CLIENT_PIXEL_ID])
+  }, [country, device, CLIENT_PIXEL_ID, period, from, to])
 
   const loadInsights = useCallback(async () => {
     setInsLoading(true)
@@ -1058,7 +1048,7 @@ export default function DashboardPage() {
     } catch (_) {}
   }, [])
 
-  useEffect(() => { loadData(dateRange) }, [dateRange, loadData])
+  useEffect(() => { loadData() }, [loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
   useEffect(() => { loadCohort() }, [loadCohort])
   useEffect(() => { loadPacing() }, [loadPacing])
@@ -1096,43 +1086,8 @@ export default function DashboardPage() {
               <option key={c as string} value={c as string}>{c as string}</option>
             ))}
           </select>
-          <div className="flex items-center gap-2">
-            <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-              {(['1d', '7d', '30d', '90d', 'custom'] as DateRange[]).map(r => (
-                <button key={r} onClick={() => { setDateRange(r); if (r !== 'custom') try { localStorage.setItem('dash_period', r) } catch(_){} }}
-                  className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                    dateRange === r ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                  }`}>
-                  {r === '1d' ? 'Ontem' : r === '7d' ? '7d' : r === '30d' ? '30d' : r === '90d' ? '90d' : 'Custom'}
-                </button>
-              ))}
-            </div>
-            {dateRange === 'custom' && (
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={fromDate}
-                  onChange={e => { setFromDate(e.target.value); fromDateRef.current = e.target.value }}
-                  className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-                <span className="text-slate-500 text-xs">–</span>
-                <input
-                  type="date"
-                  value={toDate}
-                  onChange={e => { setToDate(e.target.value); toDateRef.current = e.target.value }}
-                  className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500"
-                />
-                <button
-                  onClick={() => loadData('custom')}
-                  disabled={!fromDate || !toDate}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white px-3 py-1 rounded-lg text-xs font-medium transition-colors"
-                >
-                  Aplicar
-                </button>
-              </div>
-            )}
-          </div>
-          <button onClick={() => loadData(dateRange)}
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
+          <button onClick={() => loadData()}
             className="flex items-center gap-2 text-xs text-slate-400 hover:text-white transition-colors">
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
             {lastUpdate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -1192,9 +1147,9 @@ export default function DashboardPage() {
           <div className="lg:col-span-2 bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-slate-300">
-                Receita — {dateRange === '1d' ? 'ontem' : dateRange === '7d' ? 'últimos 7 dias' : dateRange === '30d' ? 'últimos 30 dias' : 'últimos 90 dias'}
+                Receita — {periodLabelLong(period, from, to).toLowerCase()}
               </h2>
-              {dateRange === '90d' && revenueData.filter(p => p.revenue > 0).length < 45 && (
+              {period === '90d' && revenueData.filter(p => p.revenue > 0).length < 45 && (
                 <span className="text-xs text-slate-500">
                   Rastreamento desde {revenueData.find(p => p.revenue > 0)?.date ?? 'Abr/26'}
                 </span>

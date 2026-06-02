@@ -36,14 +36,24 @@ def _resolve(pixel_id: str) -> tuple[str, dict]:
 
 
 @router.get("/creatives/{pixel_id}", tags=["creatives"])
-async def list_creatives(pixel_id: str, days: int = 30):
+async def list_creatives(
+    pixel_id: str,
+    days: int = 30,
+    start: str | None = None,
+    end:   str | None = None,
+):
     """
     Returns one row per ad with creative metadata + aggregated performance over
     the trailing `days`. Sorted by spend desc.
+    start/end (YYYY-MM-DD) sobrepõem `days` quando informados.
     """
     client_uuid, _ = _resolve(pixel_id)
     sb = get_supabase()
-    since = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+    if start and end:
+        since, until = start, end
+    else:
+        since = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+        until = None
 
     creatives = (
         sb.table("ad_creatives")
@@ -61,14 +71,15 @@ async def list_creatives(pixel_id: str, days: int = 30):
     perf_rows: list[dict] = []
     for i in range(0, len(ad_ids), 200):
         chunk = ad_ids[i:i + 200]
-        r = (
+        q = (
             sb.table("meta_ad_attributions")
             .select("ad_id, spend, clicks, impressions, purchases, purchase_value")
             .eq("client_id", client_uuid)
             .gte("date", since)
-            .in_("ad_id", chunk)
-            .execute()
         )
+        if until:
+            q = q.lte("date", until)
+        r = q.in_("ad_id", chunk).execute()
         perf_rows.extend(r.data or [])
 
     agg: dict[str, dict] = {}

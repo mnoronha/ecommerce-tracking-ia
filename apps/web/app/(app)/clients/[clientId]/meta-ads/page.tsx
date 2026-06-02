@@ -11,6 +11,8 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
+import { PeriodPicker } from '@/components/PeriodPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -60,7 +62,6 @@ interface OverviewData {
   funnel_prev: Record<string, number>
 }
 
-type Preset = '7d' | '30d' | '90d'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -243,13 +244,7 @@ export default function MetaAdsPage() {
   const params  = useParams()
   const pixelId = params.clientId as string
 
-  const [preset,   setPreset]   = useState<Preset>(() => {
-    if (typeof window !== 'undefined') {
-      const v = window.localStorage.getItem('dash_period')
-      if (v === '7d' || v === '30d' || v === '90d') return v as Preset
-    }
-    return '7d'
-  })
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [data,     setData]     = useState<OverviewData | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [syncing,  setSyncing]  = useState(false)
@@ -257,28 +252,28 @@ export default function MetaAdsPage() {
   const [adData,   setAdData]   = useState<any[]>([])
   const [adExpanded, setAdExpanded] = useState<Set<string>>(new Set())
 
-  const load = useCallback(async (p: Preset) => {
+  const load = useCallback(async (q: string) => {
     setLoading(true)
     try {
-      const days = p === '7d' ? 7 : p === '30d' ? 30 : 90
-      const res  = await fetch(`${API_URL}/meta-ads/${pixelId}/overview?days=${days}`)
+      const res  = await fetch(`${API_URL}/meta-ads/${pixelId}/overview?${q}`)
       if (res.ok) setData(await res.json())
     } catch (_) {}
     setLoading(false)
   }, [pixelId])
 
-  const loadAdProducts = useCallback(async (p: Preset) => {
+  const loadAdProducts = useCallback(async (q: string) => {
     try {
-      const days = p === '7d' ? 7 : p === '30d' ? 30 : 90
-      const res  = await fetch(`${API_URL}/journey/${pixelId}/by-ad?days=${days}&top_products=5`)
+      const res  = await fetch(`${API_URL}/journey/${pixelId}/by-ad?${q}&top_products=5`)
       if (res.ok) setAdData((await res.json()).ads || [])
     } catch (_) {}
   }, [pixelId])
 
   useEffect(() => {
-    load(preset)
-    loadAdProducts(preset)
-  }, [preset, load, loadAdProducts])
+    if (period === 'custom' && (!from || !to)) return
+    const q = periodToQuery(period, from, to)
+    load(q)
+    loadAdProducts(q)
+  }, [period, from, to, load, loadAdProducts])
 
   async function handleSync() {
     setSyncing(true); setSyncMsg(null)
@@ -286,7 +281,7 @@ export default function MetaAdsPage() {
       const res = await fetch(`${API_URL}/journey/${pixelId}/sync-meta-attribution?days=7`, { method: 'POST' })
       const d = await res.json()
       setSyncMsg(res.ok ? `${d.synced || 0} registros sincronizados` : 'Erro ao sincronizar')
-      if (res.ok) { load(preset); loadAdProducts(preset) }
+      if (res.ok) { const q = periodToQuery(period, from, to); load(q); loadAdProducts(q) }
     } catch (_) { setSyncMsg('Erro ao sincronizar') }
     setSyncing(false)
   }
@@ -319,20 +314,13 @@ export default function MetaAdsPage() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex gap-1 bg-[#1a1f2e] rounded-lg p-1 border border-[#2a2f3e]">
-            {(['7d', '30d', '90d'] as Preset[]).map(p => (
-              <button key={p} onClick={() => { setPreset(p); try { localStorage.setItem('dash_period', p) } catch(_){} }}
-                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  preset === p ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}>{p}</button>
-            ))}
-          </div>
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
           <button onClick={handleSync} disabled={syncing}
             className="flex items-center gap-1.5 text-xs bg-[#1a1f2e] border border-[#2a2f3e] text-slate-300 px-3 py-2 rounded-lg hover:bg-[#252a3a] transition-colors disabled:opacity-50">
             {syncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Sincronizar
           </button>
-          <button onClick={() => load(preset)} className="text-slate-500 hover:text-white transition-colors">
+          <button onClick={() => load(periodToQuery(period, from, to))} className="text-slate-500 hover:text-white transition-colors">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
