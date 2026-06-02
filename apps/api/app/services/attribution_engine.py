@@ -259,6 +259,27 @@ def attribute_order(order: dict, visitor: Optional[dict]) -> int:
         except Exception as exc:
             logger.debug('attribution_cookies fallback failed for %s: %s', order.get('id'), exc)
 
+    # ── Fallback 3: click-ids guardados no visitante (veio de anúncio mas
+    # sem UTM no pedido/jornada) — usa o link pedido→visitante pra recuperar a
+    # origem em vez de cair em "direct". gclid também é coberto por
+    # _infer_platform via gclid_present, mas o explicitamos aqui pra clareza.
+    if not journey:
+        v = visitor or {}
+        if v.get('fbclid') or v.get('fbc'):
+            journey = [{
+                'ts':       order.get('created_at'),
+                'source':   'facebook',
+                'medium':   'paid_social',
+                'campaign': None,
+            }]
+        elif v.get('gclid'):
+            journey = [{
+                'ts':       order.get('created_at'),
+                'source':   'google',
+                'medium':   'cpc',
+                'campaign': None,
+            }]
+
     # If no journey, attribute 100% to "direct" for all models
     if not journey:
         journey = [{
@@ -338,7 +359,7 @@ def recompute_for_client(client_uuid: str, days: int = 90) -> dict:
     if visitor_ids:
         v_resp = (
             sb.table('visitors')
-            .select('id, visitor_id, gclid, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at')
+            .select('id, visitor_id, gclid, fbclid, fbc, utm_history, first_utm_source, first_utm_medium, first_utm_campaign, first_seen_at, last_seen_at')
             .in_('id', list(visitor_ids))
             .execute()
         )
@@ -380,18 +401,32 @@ def get_summary(
         p_start = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         p_end   = None
 
-    # Fetch all attributions for this client + model + period
-    q = (
-        sb.table('order_attributions')
-        .select('platform, source, medium, campaign, attributed_revenue, credit, order_id, total_touchpoints')
+    # Recorta pela data do PEDIDO (não por computed_at — um recompute recente
+    # joga computed_at pra hoje em tudo e o período deixava de filtrar).
+    oq = (
+        sb.table('orders')
+        .select('id')
         .eq('client_id', client_uuid)
-        .eq('model', model)
-        .gte('computed_at', p_start)
+        .eq('financial_status', 'paid')
+        .gt('total_price', 0)
+        .gte('created_at', p_start)
     )
     if p_end:
-        q = q.lte('computed_at', p_end)
-    resp = q.limit(20000).execute()
-    rows = resp.data or []
+        oq = oq.lte('created_at', p_end)
+    order_ids = [r['id'] for r in (oq.limit(20000).execute().data or [])]
+
+    rows: list = []
+    for i in range(0, len(order_ids), 200):
+        chunk = order_ids[i:i + 200]
+        r = (
+            sb.table('order_attributions')
+            .select('platform, source, medium, campaign, attributed_revenue, credit, order_id, total_touchpoints')
+            .eq('client_id', client_uuid)
+            .eq('model', model)
+            .in_('order_id', chunk)
+            .execute()
+        )
+        rows.extend(r.data or [])
 
     total_revenue = round(sum(float(r.get('attributed_revenue') or 0) for r in rows), 2)
 
