@@ -28,6 +28,7 @@ Cron: every 30 minutes via APScheduler.
 from __future__ import annotations
 
 import logging
+import statistics
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -374,24 +375,31 @@ def _eval_cpa_over_target(rule: dict, client: dict) -> list[dict]:
 # ── New evaluators ────────────────────────────────────────────────────────────
 
 def _eval_revenue_drop(rule: dict, client: dict) -> list[dict]:
-    """Receita 24h caiu X% vs média dos 7 dias anteriores (geral + por canal)."""
-    threshold_warning  = float((rule.get("config") or {}).get("drop_warning_pct",  15))
-    threshold_critical = float((rule.get("config") or {}).get("drop_critical_pct", 30))
-    channel_filter     = (rule.get("config") or {}).get("channel")  # e.g. "facebook" or None
+    """Receita 24h caiu X% vs a MEDIANA dos 7 dias anteriores (geral + por canal).
+
+    Usa mediana (não média) pra não disparar por causa de um único dia atípico,
+    e exige que canais filtrados vendam na maioria dos dias — canais esparsos
+    (ex.: Google server-side da LK, com vários dias zerados e um pico isolado)
+    são voláteis demais pra um alerta de 24h fazer sentido.
+    """
+    cfg                = rule.get("config") or {}
+    threshold_warning  = float(cfg.get("drop_warning_pct",  15))
+    threshold_critical = float(cfg.get("drop_critical_pct", 30))
+    channel_filter     = cfg.get("channel")  # e.g. "facebook" or None
+    # Canal precisa vender em pelo menos N dos 7 dias do baseline pra ser elegível.
+    min_active_days    = int(cfg.get("min_active_days", 6))
 
     sb = get_supabase()
     now = _now()
-    t24h = now - timedelta(hours=24)
-    t7d  = now - timedelta(days=8)
+    t24h    = now - timedelta(hours=24)
+    t7d     = now - timedelta(days=8)
     t7d_end = now - timedelta(hours=24)
-
-    def _sum(rows): return sum(float(r["total_price"]) for r in rows)
 
     try:
         def _q(start, end):
             q = (
                 sb.table("orders")
-                .select("total_price, utm_source")
+                .select("total_price, utm_source, created_at")
                 .eq("client_id", client["id"])
                 .eq("financial_status", "paid")
                 .gt("total_price", 0)
@@ -409,12 +417,26 @@ def _eval_revenue_drop(rule: dict, client: dict) -> list[dict]:
         logger.debug("_eval_revenue_drop(%s): %s", client.get("pixel_id"), exc)
         return []
 
-    baseline_avg = _sum(baseline) / 7.0 if baseline else 0
-    if baseline_avg <= 0:
+    recent_rev = sum(float(r["total_price"]) for r in recent)
+
+    # Receita por dia no baseline (7 dias), preenchendo dias zerados.
+    by_day: dict = {}
+    for r in baseline:
+        day = str(r.get("created_at") or "")[:10]
+        if day:
+            by_day[day] = by_day.get(day, 0.0) + float(r["total_price"])
+    daily = [by_day.get((t7d_end - timedelta(days=i)).date().isoformat(), 0.0) for i in range(7)]
+    active_days = sum(1 for v in daily if v > 0)
+
+    # Canal esparso → volátil demais pra alertar em janela de 24h.
+    if channel_filter and active_days < min_active_days:
         return []
 
-    recent_rev = _sum(recent)
-    drop = (baseline_avg - recent_rev) / baseline_avg
+    baseline_ref = statistics.median(daily) if daily else 0
+    if baseline_ref <= 0:
+        return []
+
+    drop = (baseline_ref - recent_rev) / baseline_ref
     if drop < threshold_warning / 100:
         return []
 
@@ -425,11 +447,12 @@ def _eval_revenue_drop(rule: dict, client: dict) -> list[dict]:
         "fingerprint": f"revenue_drop:{client['id']}:{channel_filter or 'all'}:{now.date().isoformat()}",
         "title":       f"Queda de faturamento{label} — {pixel}",
         "message":     (
-            f"Receita 24h{label}: R$ {recent_rev:,.0f} vs média 7d R$ {baseline_avg:,.0f}/dia "
+            f"Receita 24h{label}: R$ {recent_rev:,.0f} vs mediana 7d R$ {baseline_ref:,.0f}/dia "
             f"(queda de {drop * 100:.0f}%)"
         ).replace(",", "_").replace(".", ",").replace("_", "."),
         "severity": sev,
-        "data":     {"recent_rev": recent_rev, "baseline_avg": baseline_avg,
+        "data":     {"recent_rev": recent_rev, "baseline_median": baseline_ref,
+                     "active_days": active_days,
                      "drop_pct": round(drop * 100, 1), "channel": channel_filter},
     }]
 
