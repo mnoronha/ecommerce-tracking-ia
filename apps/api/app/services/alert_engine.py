@@ -496,11 +496,17 @@ def _eval_views_drop(rule: dict, client: dict) -> list[dict]:
         logger.debug("_eval_views_drop(%s): %s", client.get("pixel_id"), exc)
         return []
 
-    baseline_avg = sum(baseline_counts) / len(baseline_counts) if baseline_counts else 0
-    if baseline_avg < 10:  # pouco tráfego — não alerta
+    # MEDIANA dos 7 intervalos (imune a um dia atípico) + exige que a maioria
+    # dos intervalos no mesmo horário tenha tido tráfego (senão é volátil demais).
+    active     = sum(1 for c in baseline_counts if c > 0)
+    min_active = int((rule.get("config") or {}).get("min_active_windows", 5))
+    if active < min_active:
+        return []
+    baseline_ref = statistics.median(baseline_counts) if baseline_counts else 0
+    if baseline_ref < 10:  # pouco tráfego — não alerta
         return []
 
-    drop = (baseline_avg - recent_ct) / baseline_avg
+    drop = (baseline_ref - recent_ct) / baseline_ref
     if drop < threshold / 100:
         return []
 
@@ -509,12 +515,12 @@ def _eval_views_drop(rule: dict, client: dict) -> list[dict]:
         "fingerprint": f"views_drop:{client['id']}:{now.strftime('%Y%m%d%H')}",
         "title":       f"Queda brusca de views — {pixel}",
         "message":     (
-            f"Pageviews nas últimas {window_h}h: {recent_ct} vs média 7d "
-            f"{baseline_avg:.0f}/intervalo (queda {drop * 100:.0f}%). Verifique o snippet."
+            f"Pageviews nas últimas {window_h}h: {recent_ct} vs mediana 7d "
+            f"{baseline_ref:.0f}/intervalo (queda {drop * 100:.0f}%). Verifique o snippet."
         ),
         "severity": "critical" if drop >= 0.80 else "warning",
-        "data":     {"recent": recent_ct, "baseline_avg": round(baseline_avg, 1),
-                     "drop_pct": round(drop * 100, 1)},
+        "data":     {"recent": recent_ct, "baseline_median": round(baseline_ref, 1),
+                     "active_windows": active, "drop_pct": round(drop * 100, 1)},
     }]
 
 
@@ -596,11 +602,17 @@ def _eval_checkout_drop(rule: dict, client: dict) -> list[dict]:
         logger.debug("_eval_checkout_drop(%s): %s", client.get("pixel_id"), exc)
         return []
 
-    baseline_avg = sum(baseline_counts) / len(baseline_counts) if baseline_counts else 0
-    if baseline_avg < 3:
+    # MEDIANA + guard de janelas ativas. begin_checkout é baixo volume, então o
+    # piso na mediana já evita disparar por intervalos naturalmente pequenos.
+    active     = sum(1 for c in baseline_counts if c > 0)
+    min_active = int((rule.get("config") or {}).get("min_active_windows", 4))
+    if active < min_active:
+        return []
+    baseline_ref = statistics.median(baseline_counts) if baseline_counts else 0
+    if baseline_ref < 3:
         return []
 
-    drop = (baseline_avg - recent_ct) / baseline_avg
+    drop = (baseline_ref - recent_ct) / baseline_ref
     if drop < threshold / 100:
         return []
 
@@ -609,12 +621,12 @@ def _eval_checkout_drop(rule: dict, client: dict) -> list[dict]:
         "fingerprint": f"checkout_drop:{client['id']}:{now.strftime('%Y%m%d%H')}",
         "title":       f"Queda de checkouts iniciados — {pixel}",
         "message":     (
-            f"begin_checkout nas últimas {window_h}h: {recent_ct} vs média 7d "
-            f"{baseline_avg:.0f}/intervalo (queda {drop * 100:.0f}%). Possível problema no checkout."
+            f"begin_checkout nas últimas {window_h}h: {recent_ct} vs mediana 7d "
+            f"{baseline_ref:.0f}/intervalo (queda {drop * 100:.0f}%). Possível problema no checkout."
         ),
         "severity": "warning",
-        "data":     {"recent": recent_ct, "baseline_avg": round(baseline_avg, 1),
-                     "drop_pct": round(drop * 100, 1)},
+        "data":     {"recent": recent_ct, "baseline_median": round(baseline_ref, 1),
+                     "active_windows": active, "drop_pct": round(drop * 100, 1)},
     }]
 
 
