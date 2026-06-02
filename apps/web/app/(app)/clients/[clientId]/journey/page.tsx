@@ -2,14 +2,25 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
-import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles, AlertTriangle } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, Package, Megaphone, RefreshCw, Target, Sparkles, AlertTriangle, Layers } from 'lucide-react'
 import { useDatePeriod } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 type DatePreset = '1d' | '7d' | '30d' | '90d' | 'custom'
-type Lens = 'campaign' | 'product' | 'meta-attribution' | 'declared-source' | 'ad'
+type Lens = 'campaign' | 'product' | 'channel' | 'meta-attribution' | 'declared-source' | 'ad'
+
+interface ChannelRow {
+  channel:       string
+  orders:        number
+  revenue:       number
+  profit:        number | null
+  units:         number
+  avg_ticket:    number
+  product_count: number
+  top_products:  ProductInCampaign[]
+}
 
 interface DeclaredSourceRow {
   source_declared:    string
@@ -120,6 +131,22 @@ function badge(platform: string) {
   return PLATFORM_BADGE[platform] || 'bg-indigo-500/15 text-indigo-300 border-indigo-500/25'
 }
 
+const CHANNEL_LABEL: Record<string, string> = {
+  meta:      'Meta Ads',
+  google:    'Google Ads',
+  tiktok:    'TikTok',
+  pinterest: 'Pinterest',
+  email:     'E-mail',
+  organic:   'Orgânico',
+  direto:    'Direto',
+  direct:    'Direto',
+  pos:       'Loja Física',
+  ig:        'Instagram',
+}
+function channelLabel(channel: string): string {
+  return CHANNEL_LABEL[channel] || channel.charAt(0).toUpperCase() + channel.slice(1)
+}
+
 // A campaign name that looks like a raw UTM template or unresolved ID
 function isRawUTM(campaign: string): boolean {
   if (!campaign || campaign === '—') return true
@@ -164,6 +191,7 @@ export default function JourneyPage() {
 
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [products,  setProducts]  = useState<ProductRow[]>([])
+  const [channels,  setChannels]  = useState<ChannelRow[]>([])
   const [metaAttr, setMetaAttr] = useState<MetaAttrRow[]>([])
   const [metaTotals, setMetaTotals] = useState<MetaAttrTotals | null>(null)
   const [ads, setAds] = useState<AdRow[]>([])
@@ -190,6 +218,9 @@ export default function JourneyPage() {
       } else if (lens === 'product') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-product?${q}&top_campaigns=10`)
         if (res.ok) setProducts((await res.json()).products || [])
+      } else if (lens === 'channel') {
+        const res = await fetch(`${API_URL}/journey/${pixelId}/by-channel?${q}&top_products=8`)
+        if (res.ok) setChannels((await res.json()).channels || [])
       } else if (lens === 'meta-attribution') {
         const res = await fetch(`${API_URL}/journey/${pixelId}/by-meta-attribution?${q}`)
         if (res.ok) {
@@ -295,6 +326,8 @@ export default function JourneyPage() {
 
   const totalRevenue = lens === 'campaign'
     ? campaigns.reduce((s, c) => s + c.revenue, 0)
+    : lens === 'channel'
+      ? channels.reduce((s, c) => s + c.revenue, 0)
     : lens === 'product'
       ? products.reduce((s, p) => s + p.revenue, 0)
       : lens === 'declared-source'
@@ -346,6 +379,14 @@ export default function JourneyPage() {
               }`}
             >
               <Package size={14} />Por produto
+            </button>
+            <button
+              onClick={() => { setLens('channel'); setExpanded(new Set()) }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                lens === 'channel' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Layers size={14} />Por canal
             </button>
             <button
               onClick={() => { setLens('meta-attribution'); setExpanded(new Set()) }}
@@ -461,6 +502,77 @@ export default function JourneyPage() {
         {loading ? (
           <div className="flex items-center gap-2 text-slate-500 text-sm py-12 justify-center">
             <Loader2 size={16} className="animate-spin" /> Carregando jornadas...
+          </div>
+        ) : lens === 'channel' ? (
+          <div className="space-y-2">
+            {channels.length === 0 ? (
+              <p className="text-slate-500 text-sm text-center py-8">Sem dados no período</p>
+            ) : channels.map(c => {
+              const key  = `channel-${c.channel}`
+              const open = expanded.has(key)
+              const hidden = c.product_count - c.top_products.length
+              return (
+                <div key={key} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+                  <button
+                    onClick={() => toggle(key)}
+                    className="w-full px-5 py-3.5 flex items-center gap-4 hover:bg-[#252a3a] transition-colors text-left"
+                  >
+                    {open ? <ChevronDown size={14} className="text-slate-500 shrink-0" /> : <ChevronRight size={14} className="text-slate-500 shrink-0" />}
+                    <div className={`px-2 py-0.5 rounded text-xs font-medium border ${badge(c.channel)} shrink-0`}>
+                      {c.channel}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white font-medium truncate">{channelLabel(c.channel)}</p>
+                      <p className="text-xs text-slate-500 truncate">
+                        {c.orders} pedido{c.orders === 1 ? '' : 's'} · {c.units} un. · {c.product_count} produto{c.product_count === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-bold text-emerald-400">{fmt(c.revenue)}</p>
+                      <p className="text-xs text-slate-500">ticket {fmt(c.avg_ticket)}</p>
+                    </div>
+                  </button>
+
+                  {open && (
+                    <div className="border-t border-[#2a2f3e] bg-[#0f1117]">
+                      <div className="px-5 py-3 grid grid-cols-4 gap-4">
+                        <Mini label="Pedidos"      value={c.orders.toString()} />
+                        <Mini label="Receita"      value={fmt(c.revenue)} accent="emerald" />
+                        <Mini label="Ticket médio" value={fmt(c.avg_ticket)} />
+                        <Mini label="Margem"       value={c.profit != null ? fmt(c.profit) : '—'} accent="teal" />
+                      </div>
+                      <div className="border-t border-[#2a2f3e]">
+                        <p className="px-5 pt-3 text-xs uppercase tracking-wider text-slate-500 font-medium">
+                          Produtos vendidos por {channelLabel(c.channel)}
+                        </p>
+                        <table className="w-full text-sm">
+                          <tbody>
+                            {c.top_products.map(p => (
+                              <tr key={p.product_id} className="border-t border-[#2a2f3e] last:border-0">
+                                <td className="px-5 py-2.5 text-slate-200 text-xs max-w-md truncate">
+                                  {p.name}
+                                  {p.sku && <span className="text-slate-600 ml-2 font-mono">{p.sku}</span>}
+                                </td>
+                                <td className="px-5 py-2.5 text-right text-slate-400 text-xs whitespace-nowrap">{p.units} un.</td>
+                                <td className="px-5 py-2.5 text-right text-emerald-400 font-semibold whitespace-nowrap">{fmt(p.revenue)}</td>
+                                <td className="px-5 py-2.5 text-right text-teal-400 font-medium text-xs whitespace-nowrap">
+                                  {p.profit != null ? fmt(p.profit) : <span className="text-slate-600">—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {hidden > 0 && (
+                          <p className="px-5 py-2.5 text-xs text-slate-500 border-t border-[#2a2f3e]">
+                            Mostrando os {c.top_products.length} maiores · +{hidden} outro{hidden === 1 ? '' : 's'} produto{hidden === 1 ? '' : 's'} no período
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         ) : lens === 'meta-attribution' ? (
           <div className="space-y-4">

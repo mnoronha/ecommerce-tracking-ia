@@ -251,6 +251,99 @@ async def by_campaign(
 
 
 @router.get(
+    "/journey/{pixel_id}/by-channel",
+    summary="Group sales by channel (Meta, Google, …) and list top products sold",
+    tags=["journey"],
+)
+async def by_channel(
+    pixel_id: str,
+    days: int = 30,
+    top_products: int = 8,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
+    """
+    Agrupa os pedidos pagos por canal (inferido de utm_source) e, dentro de
+    cada canal, lista os produtos mais vendidos (top N por receita) + a
+    contagem total de produtos distintos — para a UI limitar a lista quando
+    houver muitos. start/end (YYYY-MM-DD) sobrepõem days.
+    """
+    client_uuid = _resolve(pixel_id)
+    orders = _fetch_paid_orders_with_items(client_uuid, days, start, end)
+    if not orders:
+        return {"days": days, "channels": [], "total_orders": 0, "total_revenue": 0.0}
+
+    bucket: dict[str, dict] = {}
+    for o in orders:
+        channel = _platform_from_source(o.get("utm_source"))
+        b = bucket.setdefault(channel, {
+            "channel":   channel,
+            "orders":    0,
+            "revenue":   0.0,
+            "profit":    0.0,
+            "units":     0,
+            "_products": {},  # platform_product_id → aggregates
+        })
+        b["orders"]  += 1
+        b["revenue"] += float(o.get("total_price") or 0)
+        if o.get("gross_profit") is not None:
+            b["profit"] += float(o["gross_profit"])
+
+        for it in o.get("_items") or []:
+            pid  = it.get("platform_product_id") or it.get("sku") or "unknown"
+            qty  = int(it.get("quantity") or 1)
+            line = float(it.get("line_total") or 0)
+            cost = it.get("cost_price_snapshot")
+            line_profit = (line - float(cost) * qty) if cost is not None else None
+
+            p = b["_products"].setdefault(pid, {
+                "product_id": pid,
+                "name":       it.get("name") or "—",
+                "sku":        it.get("sku"),
+                "units":      0,
+                "revenue":    0.0,
+                "profit":     0.0,
+            })
+            p["units"]   += qty
+            p["revenue"] += line
+            if line_profit is not None:
+                p["profit"] += line_profit
+            b["units"] += qty
+
+    channels = []
+    for b in bucket.values():
+        all_products = sorted(b["_products"].values(), key=lambda p: p["revenue"], reverse=True)
+        prods = all_products[:top_products]
+        channels.append({
+            "channel":       b["channel"],
+            "orders":        b["orders"],
+            "revenue":       round(b["revenue"], 2),
+            "profit":        round(b["profit"], 2) if b["profit"] else None,
+            "units":         b["units"],
+            "avg_ticket":    round(b["revenue"] / b["orders"], 2) if b["orders"] else 0,
+            "product_count": len(all_products),
+            "top_products": [
+                {
+                    "product_id": p["product_id"],
+                    "name":       p["name"],
+                    "sku":        p["sku"],
+                    "units":      p["units"],
+                    "revenue":    round(p["revenue"], 2),
+                    "profit":     round(p["profit"], 2) if p["profit"] else None,
+                }
+                for p in prods
+            ],
+        })
+    channels.sort(key=lambda c: c["revenue"], reverse=True)
+    return {
+        "days":          days,
+        "channels":      channels,
+        "total_orders":  sum(c["orders"] for c in channels),
+        "total_revenue": round(sum(c["revenue"] for c in channels), 2),
+    }
+
+
+@router.get(
     "/journey/{pixel_id}/by-product",
     summary="Top products and the campaigns that drove their sales",
     tags=["journey"],
