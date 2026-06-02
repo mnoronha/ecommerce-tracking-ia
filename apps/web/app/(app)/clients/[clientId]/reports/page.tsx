@@ -84,6 +84,30 @@ function downloadMarkdown(insights: Insight[], clientId: string) {
   URL.revokeObjectURL(url)
 }
 
+function ReportToggleRow({ title, desc, enabled, onToggle }: {
+  title: string; desc: string; enabled: boolean; onToggle: (v: boolean) => void
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-4 py-3">
+      <div className="min-w-0">
+        <p className={`text-sm font-medium ${enabled ? 'text-slate-200' : 'text-slate-500'}`}>{title}</p>
+        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</p>
+      </div>
+      <button
+        onClick={() => onToggle(!enabled)}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
+          enabled ? 'bg-indigo-600' : 'bg-slate-700'
+        }`}
+        aria-label={enabled ? `Desativar ${title}` : `Ativar ${title}`}
+      >
+        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
+          enabled ? 'translate-x-4' : 'translate-x-1'
+        }`} />
+      </button>
+    </div>
+  )
+}
+
 export default function ReportsPage() {
   const params   = useParams()
   const clientId = params.clientId as string
@@ -100,6 +124,8 @@ export default function ReportsPage() {
   const [emailInput,  setEmailInput]  = useState('')
   const [savingEmail, setSavingEmail] = useState(false)
   const [emailSaved,  setEmailSaved]  = useState(false)
+  const [weeklyEnabled,  setWeeklyEnabled]  = useState(false)
+  const [monthlyEnabled, setMonthlyEnabled] = useState(false)
   const [typeFilter,  setTypeFilter]  = useState<InsightType>('all')
   const [sevFilter,   setSevFilter]   = useState<Severity>('all')
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set())
@@ -181,15 +207,31 @@ export default function ReportsPage() {
     await fetch(`${API_URL}/insights/${clientId}/${id}/read`, { method: 'PATCH' })
   }
 
-  // Load alert_email on mount
+  // Load report settings on mount
   useEffect(() => {
-    supabase.from('clients').select('alert_email').eq('pixel_id', clientId).single()
+    supabase.from('clients')
+      .select('alert_email, weekly_report_enabled, monthly_report_enabled')
+      .eq('pixel_id', clientId).single()
       .then(({ data }) => {
         const email = data?.alert_email ?? ''
         setAlertEmail(email)
         setEmailInput(email)
+        setWeeklyEnabled(Boolean(data?.weekly_report_enabled))
+        setMonthlyEnabled(Boolean(data?.monthly_report_enabled))
       })
   }, [clientId])
+
+  async function toggleReport(kind: ReportType, value: boolean) {
+    // Otimista
+    if (kind === 'weekly') setWeeklyEnabled(value)
+    else                   setMonthlyEnabled(value)
+    const col = kind === 'weekly' ? 'weekly_report_enabled' : 'monthly_report_enabled'
+    const { error } = await supabase.from('clients').update({ [col]: value }).eq('pixel_id', clientId)
+    if (error) {  // reverte
+      if (kind === 'weekly') setWeeklyEnabled(!value)
+      else                   setMonthlyEnabled(!value)
+    }
+  }
 
   async function saveAlertEmail(e: React.FormEvent) {
     e.preventDefault()
@@ -294,21 +336,46 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* Agendamento */}
-        <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div className="max-w-md">
-              <p className="text-sm font-semibold text-white mb-0.5">Relatórios automáticos</p>
-              <p className="text-xs text-slate-500">
-                <span className="text-slate-400 font-medium">Semanal</span> — toda segunda-feira às 8h (Brasília): resumo objetivo com
-                receita da semana, KPIs essenciais, progresso da meta e alertas.
-              </p>
-              <p className="text-xs text-slate-500 mt-1">
-                <span className="text-slate-400 font-medium">Mensal</span> — todo dia 1º às 8h: relatório completo do mês anterior
-                (faturamento, canais Meta/Google, produtos, retenção e análise IA). Se o mês for muito negativo,
-                o envio é retido e a agência é notificada antes.
-              </p>
-              <p className="text-xs text-slate-500 mt-1">Ambos vão para o email abaixo.</p>
+        {/* Relatórios automáticos — ativar/desativar por cliente */}
+        <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5 space-y-4">
+          <div>
+            <p className="text-sm font-semibold text-white">Relatórios automáticos</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Ligue/desligue o envio automático por email — vale só para este cliente.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <ReportToggleRow
+              title="Relatório semanal"
+              desc="Toda segunda-feira às 8h (Brasília) — receita da semana, KPIs essenciais, progresso da meta e alertas."
+              enabled={weeklyEnabled}
+              onToggle={v => toggleReport('weekly', v)}
+            />
+            <ReportToggleRow
+              title="Relatório mensal"
+              desc="Todo dia 1º às 8h — relatório completo do mês anterior (canais Meta/Google, produtos, retenção e análise IA). Mês muito negativo é retido para revisão da agência antes."
+              enabled={monthlyEnabled}
+              onToggle={v => toggleReport('monthly', v)}
+            />
+          </div>
+
+          {!weeklyEnabled && !monthlyEnabled && (
+            <p className="text-xs text-slate-600">
+              Nenhum relatório automático ativo. Você ainda pode enviar manualmente pelos botões acima.
+            </p>
+          )}
+
+          {/* Destinatário */}
+          <div className="border-t border-[#2a2f3e] pt-4 flex items-start justify-between gap-4 flex-wrap">
+            <div className="max-w-xs">
+              <p className="text-xs font-medium text-slate-300">Destinatário</p>
+              <p className="text-xs text-slate-500 mt-0.5">Email que recebe os relatórios ativos acima.</p>
+              {alertEmail && (
+                <p className="text-xs text-slate-600 mt-1">
+                  Atual: <span className="text-slate-400">{alertEmail}</span>
+                </p>
+              )}
             </div>
             <form onSubmit={saveAlertEmail} className="flex items-center gap-2 shrink-0">
               <input
@@ -328,11 +395,6 @@ export default function ReportsPage() {
               </button>
             </form>
           </div>
-          {alertEmail && (
-            <p className="text-xs text-slate-600 mt-2">
-              Enviando atualmente para: <span className="text-slate-400">{alertEmail}</span>
-            </p>
-          )}
         </div>
 
         {/* Filtros */}

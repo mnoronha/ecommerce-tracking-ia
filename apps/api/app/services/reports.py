@@ -355,9 +355,9 @@ def send_weekly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, client_type, reports_enabled")
+            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, client_type, weekly_report_enabled")
             .eq("is_active", True)
-            .eq("reports_enabled", True)
+            .eq("weekly_report_enabled", True)
             .execute()
         )
         for c in (clients.data or []):
@@ -650,9 +650,9 @@ def send_monthly_reports() -> None:
         clients = (
             get_supabase()
             .table("clients")
-            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, logo_url, client_type, reports_enabled")
+            .select("id, pixel_id, name, alert_email, alert_emails, whatsapp_group_jid, logo_url, client_type, monthly_report_enabled")
             .eq("is_active", True)
-            .eq("reports_enabled", True)
+            .eq("monthly_report_enabled", True)
             .execute()
         )
         for c in (clients.data or []):
