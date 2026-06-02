@@ -19,6 +19,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 interface Totals {
   orders: number; revenue: number
+  spend: number; has_spend: boolean; roas: number | null
+  impressions: number; clicks: number
   total_sent: number; sent_coverage_pct: number | null
   gclid: number; gbraid: number; enhanced_only: number; not_sent: number
   gclid_pct: number | null; cpa: number | null; avg_ticket: number | null
@@ -32,6 +34,7 @@ interface CampaignRow {
 
 interface DayRow {
   date: string; orders: number; revenue: number; gclid: number; enhanced: number
+  spend: number; roas: number | null
 }
 
 interface OverviewData {
@@ -66,9 +69,9 @@ function Delta({ v, invert }: { v: number | null; invert?: boolean }) {
 
 function KpiCard({ label, value, delta, sub, accent, invertDelta }: {
   label: string; value: string; delta?: number | null; sub?: string
-  accent?: 'emerald' | 'teal' | 'blue' | 'yellow' | 'orange'; invertDelta?: boolean
+  accent?: 'emerald' | 'teal' | 'blue' | 'yellow' | 'orange' | 'rose'; invertDelta?: boolean
 }) {
-  const colorMap: Record<string, string> = { emerald: 'text-emerald-400', teal: 'text-teal-400', blue: 'text-blue-400', yellow: 'text-yellow-400', orange: 'text-orange-400' }
+  const colorMap: Record<string, string> = { emerald: 'text-emerald-400', teal: 'text-teal-400', blue: 'text-blue-400', yellow: 'text-yellow-400', orange: 'text-orange-400', rose: 'text-rose-400' }
   const c = (accent ? colorMap[accent] : null) ?? 'text-white'
   return (
     <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl px-4 py-3">
@@ -193,10 +196,11 @@ export default function GoogleAdsPage() {
   const fTop   = funnel.pageview || 1
 
   const chartData = (data?.daily || []).map(d => ({
-    date:    fmtDt(d.date),
-    Receita: d.revenue,
-    Compras: d.orders,
-    gclid:   d.gclid,
+    date:        fmtDt(d.date),
+    Receita:     d.revenue,
+    Investimento: d.spend,
+    Compras:     d.orders,
+    gclid:       d.gclid,
   }))
 
   return (
@@ -228,7 +232,10 @@ export default function GoogleAdsPage() {
         <div className="p-6 space-y-6 max-w-[1400px]">
 
           {/* KPI Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
+            <KpiCard label="Investimento"     value={t?.has_spend ? fmt(t.spend) : '—'} delta={dlt.spend} invertDelta accent="rose"
+              sub={t && !t.has_spend ? 'sem sync de spend' : undefined} />
+            <KpiCard label="ROAS"             value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'} delta={dlt.roas} accent="emerald" />
             <KpiCard label="Compras Google"   value={t ? String(t.orders) : '—'}       delta={dlt.orders}   accent="emerald" />
             <KpiCard label="Receita Google"   value={t ? fmt(t.revenue) : '—'}          delta={dlt.revenue}  accent="emerald" />
             <KpiCard label="CPA"              value={t?.cpa != null ? fmtD2(t.cpa) : '—'} invertDelta />
@@ -246,7 +253,7 @@ export default function GoogleAdsPage() {
 
             {/* Daily Chart */}
             <div className="lg:col-span-2 bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
-              <h2 className="text-sm font-semibold text-slate-300 mb-4">Receita Google × Compras por dia</h2>
+              <h2 className="text-sm font-semibold text-slate-300 mb-4">Receita × Investimento × Compras por dia</h2>
               <ResponsiveContainer width="100%" height={200}>
                 <ComposedChart data={chartData} margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3e" />
@@ -257,6 +264,7 @@ export default function GoogleAdsPage() {
                     formatter={(v: any, name: any) => name === 'Compras' ? [v, name] : [fmt(Number(v)), name]} />
                   <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
                   <Bar yAxisId="left"  dataKey="Receita" fill="#34d399" opacity={0.7} radius={[2,2,0,0]} />
+                  <Bar yAxisId="left"  dataKey="Investimento" fill="#fb7185" opacity={0.7} radius={[2,2,0,0]} />
                   <Line yAxisId="right" dataKey="Compras" stroke="#6366f1" strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>

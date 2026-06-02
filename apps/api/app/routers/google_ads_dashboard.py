@@ -106,6 +106,29 @@ async def google_overview(
     curr_orders = _fetch_orders(d_start, d_end)
     prev_orders = _fetch_orders(d_prev_start, d_prev_end)
 
+    # ── Ad spend (Google) — tabela ad_spend (sync diário, account-level) ─────
+    def _fetch_spend(d_from, d_to):
+        return (
+            sb.table("ad_spend")
+            .select("date, spend, impressions, clicks")
+            .eq("client_id", client_id)
+            .eq("channel", "google_ads")
+            .gte("date", str(d_from))
+            .lte("date", str(d_to))
+            .execute()
+        ).data or []
+
+    curr_spend_rows = _fetch_spend(d_start, d_end)
+    prev_spend_rows = _fetch_spend(d_prev_start, d_prev_end)
+    curr_spend  = round(sum(float(r.get("spend") or 0)     for r in curr_spend_rows), 2)
+    prev_spend  = round(sum(float(r.get("spend") or 0)     for r in prev_spend_rows), 2)
+    curr_impr   = sum(int(r.get("impressions") or 0)       for r in curr_spend_rows)
+    curr_clicks = sum(int(r.get("clicks") or 0)            for r in curr_spend_rows)
+    has_spend   = len(curr_spend_rows) > 0
+    spend_by_day: dict = {}
+    for r in curr_spend_rows:
+        spend_by_day[str(r["date"])[:10]] = float(r.get("spend") or 0)
+
     # Partition: Google-attributed vs all conversions sent to Google
     def _partition(orders):
         google_attr = [o for o in orders if _is_google(o.get("utm_source"), o.get("utm_medium"))]
@@ -146,8 +169,14 @@ async def google_overview(
     )
 
     # ── Totals with deltas ─────────────────────────────────────────────────
+    prev_roas = round(prev_agg["revenue"] / prev_spend, 2) if prev_spend > 0 else None
     totals = {
         **curr_agg,
+        "spend":            curr_spend,
+        "has_spend":        has_spend,
+        "impressions":      curr_impr,
+        "clicks":           curr_clicks,
+        "roas":             round(curr_agg["revenue"] / curr_spend, 2) if curr_spend > 0 else None,
         "total_sent":       curr_match["total_sent"],
         "sent_coverage_pct": sent_coverage_curr,
         "gclid_pct":        gclid_pct_curr,
@@ -155,17 +184,22 @@ async def google_overview(
         "gbraid":           curr_match["gbraid"],
         "enhanced_only":    curr_match["enhanced_only"],
         "not_sent":         curr_match["not_sent"],
-        "cpa": round(curr_agg["revenue"] / curr_agg["orders"], 2) if curr_agg["orders"] > 0 else None,
+        # CPA real = investimento ÷ pedidos atribuídos ao Google (null se sem spend)
+        "cpa": round(curr_spend / curr_agg["orders"], 2) if (has_spend and curr_agg["orders"] > 0) else None,
         "avg_ticket": round(curr_agg["revenue"] / curr_agg["orders"], 2) if curr_agg["orders"] > 0 else None,
     }
     prev_totals = {
         **prev_agg,
+        "spend":  prev_spend,
+        "roas":   prev_roas,
         "gclid":  prev_match["gclid"],
         "total_sent": prev_match["total_sent"],
     }
     deltas = {
         "orders":  _delta(curr_agg["orders"],  prev_agg["orders"]),
         "revenue": _delta(curr_agg["revenue"], prev_agg["revenue"]),
+        "spend":   _delta(curr_spend, prev_spend),
+        "roas":    _delta(totals["roas"], prev_roas),
         "gclid":   _delta(curr_match["gclid"], prev_match["gclid"]),
         "total_sent": _delta(curr_match["total_sent"], prev_match["total_sent"]),
     }
@@ -189,6 +223,9 @@ async def google_overview(
         d = str(d_start + timedelta(days=i))
         row = daily_map.get(d, {"date": d, "orders": 0, "revenue": 0.0, "gclid": 0, "enhanced": 0})
         row["revenue"] = round(row["revenue"], 2)
+        row["spend"]   = round(spend_by_day.get(d, 0.0), 2)
+        roas_d         = row["revenue"] / row["spend"] if row["spend"] > 0 else None
+        row["roas"]    = round(roas_d, 2) if roas_d is not None else None
         daily.append(row)
 
     # ── Campaign breakdown ─────────────────────────────────────────────────
