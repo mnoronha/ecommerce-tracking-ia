@@ -293,21 +293,33 @@ async def google_overview(
         })
     campaigns_out.sort(key=lambda x: x["revenue"], reverse=True)
 
-    # ── Funnel ─────────────────────────────────────────────────────────────
-    funnel_start = f"{d_start}T00:00:00+00:00"
-    funnel_end   = f"{d_end}T23:59:59+00:00"
-    funnel = {}
-    for et in ("pageview", "add_to_cart", "begin_checkout"):
-        funnel[et] = (
-            sb.table("tracking_events")
-            .select("id", count="exact", head=True)
-            .eq("client_id", client_id)
-            .eq("event_type", et)
-            .gte("created_at", funnel_start)
-            .lte("created_at", funnel_end)
-            .execute()
-        ).count or 0
-    funnel["purchases"] = curr_agg["orders"]
+    # ── Funil (eventos do site) ──────────────────────────────────────────────
+    # O exact count em tracking_events (centenas de milhares de linhas) estoura
+    # o statement_timeout do PostgREST em janelas longas — o que derrubava o
+    # endpoint inteiro com 500 ao trocar de período. Só calculamos em janelas
+    # curtas e degradamos com segurança: os KPIs/investimento/campanhas sempre
+    # carregam, independente do tamanho do período.
+    FUNNEL_MAX_DAYS = 7
+    funnel: dict = {"pageview": None, "add_to_cart": None, "begin_checkout": None,
+                    "purchases": curr_agg["orders"]}
+    funnel_available = False
+    if days <= FUNNEL_MAX_DAYS:
+        funnel_start = f"{d_start}T00:00:00+00:00"
+        funnel_end   = f"{d_end}T23:59:59+00:00"
+        try:
+            for et in ("pageview", "add_to_cart", "begin_checkout"):
+                funnel[et] = (
+                    sb.table("tracking_events")
+                    .select("id", count="exact", head=True)
+                    .eq("client_id", client_id)
+                    .eq("event_type", et)
+                    .gte("created_at", funnel_start)
+                    .lte("created_at", funnel_end)
+                    .execute()
+                ).count or 0
+            funnel_available = True
+        except Exception as exc:
+            logger.warning("google_overview: funil indisponível (%s, %sd): %s", pixel_id, days, exc)
 
     return {
         "days":        days,
@@ -323,4 +335,5 @@ async def google_overview(
         "campaigns":   campaigns_out,
         "daily":       daily,
         "funnel":      funnel,
+        "funnel_available": funnel_available,
     }

@@ -44,7 +44,8 @@ interface OverviewData {
   deltas: Record<string, number | null>
   campaigns: CampaignRow[]
   daily: DayRow[]
-  funnel: Record<string, number>
+  funnel: Record<string, number | null>
+  funnel_available: boolean
 }
 
 
@@ -298,6 +299,17 @@ export default function GoogleAdsPage() {
               {/* Funnel */}
               <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
                 <h2 className="text-sm font-semibold text-slate-300 mb-3">Funil (site)</h2>
+                {data && !data.funnel_available ? (
+                  <div className="space-y-2 text-xs">
+                    <p className="text-slate-500">
+                      Pageviews · carrinho · checkout indisponíveis em períodos longos. Selecione <span className="text-slate-300 font-medium">Ontem</span> ou <span className="text-slate-300 font-medium">7d</span> para ver o funil do site.
+                    </p>
+                    <div className="flex justify-between pt-1 border-t border-[#2a2f3e]">
+                      <span className="text-slate-400">Compras Google</span>
+                      <span className="text-slate-300 tabular-nums">{fmtN(Number(funnel.purchases || 0))}</span>
+                    </div>
+                  </div>
+                ) : (
                 <div className="space-y-2 text-xs">
                   {[
                     { label: 'Pageviews',   key: 'pageview' },
@@ -305,7 +317,7 @@ export default function GoogleAdsPage() {
                     { label: 'Checkout',    key: 'begin_checkout' },
                     { label: 'Compras Google', key: 'purchases' },
                   ].map(({ label, key }) => {
-                    const count = funnel[key] || 0
+                    const count = Number(funnel[key] || 0)
                     const pct   = fTop > 0 ? (count / fTop * 100) : 0
                     return (
                       <div key={key}>
@@ -320,6 +332,7 @@ export default function GoogleAdsPage() {
                     )
                   })}
                 </div>
+                )}
               </div>
             </div>
           </div>
