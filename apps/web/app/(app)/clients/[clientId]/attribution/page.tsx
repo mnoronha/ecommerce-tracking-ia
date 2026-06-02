@@ -45,6 +45,9 @@ interface Summary {
   total_revenue: number
   by_platform:   PlatformRow[]
   by_source:     SourceRow[]
+  total_orders?:      number
+  multitouch_orders?: number
+  multitouch_pct?:    number
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -223,6 +226,24 @@ export default function AttributionPage() {
                 </p>
               </div>
             </div>
+
+            {/* Aviso: modelos coincidem quando a jornada tem um só toque */}
+            {data.multitouch_pct != null && data.multitouch_pct === 0 && (data.total_orders ?? 0) > 0 && (
+              <div className="flex items-start gap-2 text-xs bg-amber-500/5 border border-amber-500/20 rounded-lg px-4 py-3">
+                <Info size={14} className="shrink-0 text-amber-400 mt-0.5" />
+                <span className="text-amber-200/80">
+                  <span className="font-medium text-amber-300">Os 5 modelos mostram o mesmo resultado neste período.</span>{' '}
+                  Todos os {data.total_orders} pedidos têm jornada de <span className="font-medium">toque único</span> (uma só origem capturada),
+                  então 100% do crédito vai para esse toque em qualquer modelo — não é um erro. Os modelos passam a divergir conforme
+                  os clientes forem rastreados em múltiplas visitas com origens diferentes (multi-toque).
+                </span>
+              </div>
+            )}
+            {data.multitouch_pct != null && data.multitouch_pct > 0 && (
+              <p className="text-xs text-slate-500">
+                {data.multitouch_pct}% dos pedidos têm jornada multi-toque — onde os modelos divergem.
+              </p>
+            )}
 
             {/* By platform */}
             <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">

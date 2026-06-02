@@ -89,7 +89,7 @@ def upsert_visitor_by_cookie(
         sb = get_supabase()
         existing = (
             sb.table("visitors")
-            .select("id,total_pageviews,gclid,fbclid,fbp,fbc,cart_token,ga_client_id,ttclid")
+            .select("id,total_pageviews,gclid,fbclid,fbp,fbc,cart_token,ga_client_id,ttclid,utm_history")
             .eq("client_id", client_uuid)
             .eq("visitor_id", visitor_cookie_id)
             .limit(1)

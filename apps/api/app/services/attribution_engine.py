@@ -383,7 +383,7 @@ def get_summary(
     # Fetch all attributions for this client + model + period
     q = (
         sb.table('order_attributions')
-        .select('platform, source, medium, campaign, attributed_revenue, credit, order_id')
+        .select('platform, source, medium, campaign, attributed_revenue, credit, order_id, total_touchpoints')
         .eq('client_id', client_uuid)
         .eq('model', model)
         .gte('computed_at', p_start)
@@ -394,6 +394,18 @@ def get_summary(
     rows = resp.data or []
 
     total_revenue = round(sum(float(r.get('attributed_revenue') or 0) for r in rows), 2)
+
+    # Multi-touch coverage — quando as jornadas têm um único toque, TODOS os
+    # modelos coincidem (100% do crédito vai para o único toque). Expomos isso
+    # para a UI explicar por que os modelos parecem idênticos.
+    tp_by_order: dict = {}
+    for r in rows:
+        oid = r.get('order_id')
+        if oid is not None:
+            tp_by_order[oid] = max(tp_by_order.get(oid, 0), int(r.get('total_touchpoints') or 1))
+    total_orders     = len(tp_by_order)
+    multitouch_orders = sum(1 for n in tp_by_order.values() if n > 1)
+    multitouch_pct   = round(multitouch_orders / total_orders * 100, 1) if total_orders else 0.0
 
     # By platform
     plat_agg: dict = {}
@@ -437,11 +449,14 @@ def get_summary(
     ], key=lambda x: x['revenue'], reverse=True)[:50]
 
     return {
-        'model':         model,
-        'days':          days,
-        'start':         start,
-        'end':           end,
-        'total_revenue': total_revenue,
-        'by_platform':   by_platform,
-        'by_source':     by_source,
+        'model':             model,
+        'days':              days,
+        'start':             start,
+        'end':               end,
+        'total_revenue':     total_revenue,
+        'by_platform':       by_platform,
+        'by_source':         by_source,
+        'total_orders':      total_orders,
+        'multitouch_orders': multitouch_orders,
+        'multitouch_pct':    multitouch_pct,
     }
