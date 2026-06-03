@@ -293,4 +293,5 @@ async def health_check():
         "jobs": jobs,
         "supabase_url": settings.SUPABASE_URL[:40] + "..." if settings.SUPABASE_URL else "NOT SET",
         "service_key_set": bool(settings.SUPABASE_SERVICE_KEY),
+        "credentials_key_set": bool(settings.CREDENTIALS_KEY),
     }
