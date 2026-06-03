@@ -137,10 +137,20 @@ export async function GET(req: NextRequest) {
     console.warn('meta oauth: ad account auto-detect failed (non-fatal):', e)
   }
 
-  const { error: dbError } = await admin
-    .from('clients')
-    .update(update)
-    .eq('pixel_id', clientId)
+  // Grava via backend (cifra o meta_access_token em repouso) em vez de gravar
+  // o token em texto puro direto no Supabase.
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+  let dbError: { message: string } | null = null
+  try {
+    const resp = await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(update),
+    })
+    if (!resp.ok) dbError = { message: `HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}` }
+  } catch (e) {
+    dbError = { message: e instanceof Error ? e.message : 'fetch failed' }
+  }
 
   if (dbError) {
     console.error('meta oauth db save failed:', dbError.message)

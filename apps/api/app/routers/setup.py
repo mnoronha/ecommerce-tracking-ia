@@ -18,7 +18,7 @@ import logging
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
@@ -33,6 +33,36 @@ async def admin_encrypt_credentials(confirm: str = ""):
     if confirm != "encrypt-now":
         raise HTTPException(400, "passe ?confirm=encrypt-now para confirmar")
     return crypto.encrypt_existing_credentials()
+
+
+# Prefixos de campos de integração/credencial que esse endpoint pode gravar.
+_CRED_PREFIXES = (
+    "meta_", "google_ads_", "ga4_", "tiktok_", "pinterest_", "shopify_",
+    "woo_", "nuvemshop_", "tracking_cname", "ecommerce_platform", "webhook_secret",
+)
+
+
+@router.put("/{pixel_id}/credentials", summary="Grava credenciais cifrando os segredos no servidor")
+async def save_credentials(pixel_id: str, request: Request):
+    """Recebe campos de integração/credencial do cliente, **cifra os segredos**
+    (SECRET_FIELDS) e grava. As escritas de token (OAuth/Configurações) passam
+    por aqui em vez de gravarem direto no Supabase — assim novos tokens já
+    entram cifrados. Só aceita campos de integração (não sobrescreve nome/metas)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "JSON inválido")
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(400, "corpo vazio")
+    patch = {k: v for k, v in body.items()
+             if any(k == p or k.startswith(p) for p in _CRED_PREFIXES)}
+    if not patch:
+        raise HTTPException(400, "nenhum campo de credencial reconhecido")
+    crypto.encrypt_client_secrets(patch)
+    res = get_supabase().table("clients").update(patch).eq("pixel_id", pixel_id).execute()
+    if not (res and res.data):
+        raise HTTPException(404, "cliente não encontrado")
+    return {"updated": True, "fields": list(patch.keys())}
 
 
 _SHOPIFY_API_VERSION = "2024-10"

@@ -300,8 +300,33 @@ export default function ClientSettingsPage() {
       })
       .eq('pixel_id', clientId)
 
-    if (updateError) setError(updateError.message)
-    else setSaved(true)
+    if (updateError) {
+      setError(updateError.message)
+      setSaving(false)
+      return
+    }
+
+    // Re-grava os segredos via backend (cifra em repouso). A escrita acima pode
+    // ter posto o token em texto puro por um instante; isto sobrescreve cifrado.
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+      await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shopify_access_token:     form.shopify_access_token || null,
+          meta_access_token:        form.meta_access_token || null,
+          ga4_api_secret:           form.ga4_api_secret || null,
+          google_ads_refresh_token: form.google_ads_refresh_token || null,
+          tiktok_access_token:      form.tiktok_access_token || null,
+          webhook_secret:           form.webhook_secret || null,
+        }),
+      })
+    } catch (_) {
+      // Falha aqui não bloqueia o save; o cron diário re-cifra como rede de segurança.
+    }
+
+    setSaved(true)
     setSaving(false)
   }
 

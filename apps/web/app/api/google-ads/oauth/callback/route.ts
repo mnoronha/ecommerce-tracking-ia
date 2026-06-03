@@ -65,17 +65,19 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  // Persist refresh_token for this client (service role bypasses RLS)
-  const admin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } }
-  )
-
-  const { error: dbError } = await admin
-    .from('clients')
-    .update({ google_ads_refresh_token: refreshToken })
-    .eq('pixel_id', clientId)
+  // Grava via backend (cifra o refresh_token em repouso).
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+  let dbError: { message: string } | null = null
+  try {
+    const resp = await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ google_ads_refresh_token: refreshToken }),
+    })
+    if (!resp.ok) dbError = { message: `HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}` }
+  } catch (e) {
+    dbError = { message: e instanceof Error ? e.message : 'fetch failed' }
+  }
 
   if (dbError) {
     console.error('google_ads oauth db save failed:', dbError.message)
