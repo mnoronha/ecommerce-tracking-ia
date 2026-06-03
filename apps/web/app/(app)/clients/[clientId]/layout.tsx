@@ -71,8 +71,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           })}
         </nav>
 
-        {/* Plan badge at bottom */}
-        <div className="p-3 border-t border-[#2a2f3e]">
+        {/* Plan badge + footer */}
+        <div className="p-3 border-t border-[#2a2f3e] space-y-2">
           <Link
             href="/billing"
             className="flex items-center justify-between px-3 py-2 rounded-lg bg-[#1a1f2e] hover:bg-[#252a3a] transition-colors group"
@@ -83,6 +83,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             {plan.isTrialing && (
               <span className="text-xs text-indigo-400 font-medium">Trial</span>
             )}
+          </Link>
+          <Link href="/privacidade" className="block px-3 text-[11px] text-slate-600 hover:text-slate-400 transition-colors">
+            Política de Privacidade
           </Link>
         </div>
       </aside>

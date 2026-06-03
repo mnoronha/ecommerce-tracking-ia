@@ -79,6 +79,9 @@ export default function ClientSettingsPage() {
   const [waGroupInput,  setWaGroupInput]  = useState('')
   const [resolvingWA,   setResolvingWA]   = useState(false)
   const [waResolveMsg,  setWaResolveMsg]  = useState<{ ok: boolean; text: string } | null>(null)
+  const [lgpdEmail,  setLgpdEmail]  = useState('')
+  const [lgpdBusy,   setLgpdBusy]   = useState<'preview' | 'forget' | null>(null)
+  const [lgpdResult, setLgpdResult] = useState<{ kind: 'preview' | 'forget'; data: Record<string, number | string> } | null>(null)
 
   const load = useCallback(async () => {
     // supabase singleton
@@ -92,6 +95,33 @@ export default function ClientSettingsPage() {
   }, [clientId])
 
   useEffect(() => { load() }, [load])
+
+  async function lgpdPreview() {
+    const e = lgpdEmail.trim()
+    if (!e) return
+    setLgpdBusy('preview'); setLgpdResult(null)
+    try {
+      const res = await fetch(`${API_URL}/lgpd/${clientId}/subject?email=${encodeURIComponent(e)}`)
+      if (res.ok) setLgpdResult({ kind: 'preview', data: await res.json() })
+    } catch (_) {}
+    setLgpdBusy(null)
+  }
+
+  async function lgpdForget() {
+    const e = lgpdEmail.trim()
+    if (!e) return
+    if (!confirm(`Apagar/anonimizar os dados pessoais de ${e}? Esta ação não pode ser desfeita.`)) return
+    setLgpdBusy('forget'); setLgpdResult(null)
+    try {
+      const res = await fetch(`${API_URL}/lgpd/${clientId}/forget`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: e }),
+      })
+      if (res.ok) setLgpdResult({ kind: 'forget', data: await res.json() })
+    } catch (_) {}
+    setLgpdBusy(null)
+  }
 
   function set(key: string, value: string | boolean | string[]) {
     setForm(f => ({ ...f, [key]: value }))
@@ -899,6 +929,49 @@ export default function ClientSettingsPage() {
           </button>
         </div>
       </form>
+
+      {/* Privacidade & LGPD — direito à eliminação */}
+      <div className="mt-8 bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Privacidade & LGPD</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          Atende a solicitação de eliminação de um titular: anonimiza os dados pessoais (email, telefone, nome, IP, CEP)
+          nos pedidos, visitantes e eventos, mantendo só o registro financeiro mínimo. Ação irreversível.
+        </p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <input
+            type="email"
+            value={lgpdEmail}
+            onChange={e => { setLgpdEmail(e.target.value); setLgpdResult(null) }}
+            placeholder="email@dotitular.com"
+            className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500 w-64"
+          />
+          <button
+            onClick={lgpdPreview}
+            disabled={lgpdBusy !== null || !lgpdEmail.trim()}
+            className="flex items-center gap-1.5 bg-[#0f1117] hover:bg-[#252b3b] border border-[#2a2f3e] disabled:opacity-50 text-slate-300 text-xs px-3 py-2 rounded-lg"
+          >
+            {lgpdBusy === 'preview' ? <Loader2 size={12} className="animate-spin" /> : null} Pré-visualizar
+          </button>
+          <button
+            onClick={lgpdForget}
+            disabled={lgpdBusy !== null || !lgpdEmail.trim()}
+            className="flex items-center gap-1.5 bg-red-600/90 hover:bg-red-600 disabled:opacity-50 text-white text-xs font-medium px-3 py-2 rounded-lg"
+          >
+            {lgpdBusy === 'forget' ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />} Apagar dados
+          </button>
+        </div>
+        {lgpdResult && (
+          <div className={`mt-3 text-xs rounded-lg px-4 py-2.5 border ${
+            lgpdResult.kind === 'forget'
+              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+              : 'bg-slate-500/10 border-slate-500/20 text-slate-300'
+          }`}>
+            {lgpdResult.kind === 'preview'
+              ? `Encontrados: ${lgpdResult.data.orders} pedido(s), ${lgpdResult.data.visitors} visitante(s), ${lgpdResult.data.attribution_cookies} cookie(s).`
+              : `Concluído: ${lgpdResult.data.orders_anonymized} pedido(s) anonimizado(s), ${lgpdResult.data.visitors_anonymized} visitante(s), ${lgpdResult.data.events_anonymized} evento(s), ${lgpdResult.data.attribution_cookies_deleted} cookie(s) apagado(s).`}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
