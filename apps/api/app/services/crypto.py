@@ -117,13 +117,22 @@ def encrypt_existing_credentials() -> dict:
     from ..database import get_supabase
     if not _get_fernet():
         key = getattr(settings, "CREDENTIALS_KEY", "") or ""
+        reason = "?"
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(key.encode())
+            reason = "construiu OK agora (cache antigo — reinicie o serviço)"
+        except Exception as e:
+            reason = f"{type(e).__name__}: {str(e)[:140]}"
         return {
             "error": "Fernet indisponível — chave ausente ou inválida",
             "key_present": bool(key),
             "key_length": len(key),
-            "hint": "A CREDENTIALS_KEY deve ser uma chave Fernet (44 chars, base64 url-safe terminando em '='). "
-                    "Gere com: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\". "
-                    "Verifique se não há aspas, espaços ou quebra de linha no valor do Railway.",
+            "fernet_error": reason,
+            "ends_with_equals": key.endswith("="),
+            "hint": "Gere a chave EXATAMENTE assim: "
+                    "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\". "
+                    "Não use openssl (gera base64 padrão +/ ; a Fernet exige url-safe -_). Sem aspas/espaços no Railway.",
         }
     sb = get_supabase()
     cols = ", ".join(("id",) + SECRET_FIELDS)
