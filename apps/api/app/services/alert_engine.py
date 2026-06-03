@@ -1076,6 +1076,106 @@ def _eval_utm_null_ratio(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+def _eval_nonpaid_spike(rule: dict, client: dict) -> list[dict]:
+    """Pico de receita SEM aumento proporcional de investimento (viral/orgânico/
+    influencer/imprensa). Compara ONTEM (dia completo, já sincronizado) com a
+    MEDIANA dos 7 dias anteriores — para receita E investimento. Só dispara se a
+    receita subiu forte e o gasto NÃO acompanhou. Alerta informativo (oportunidade
+    de capitalizar: subir remarketing/orçamento enquanto a demanda está quente).
+    """
+    cfg             = rule.get("config") or {}
+    spike_pct       = float(cfg.get("spike_pct", 50))        # receita +50% vs mediana
+    min_active_days = int(cfg.get("min_active_days", 5))     # baseline precisa ser sólido
+    min_revenue     = float(cfg.get("min_daily_revenue", 300))  # ignora lojas sem volume
+    # gasto pode subir no máximo metade do ritmo da receita pra ainda ser "não-pago"
+    spend_ratio_max = float(cfg.get("spend_ratio_max", 0.5))
+
+    sb  = get_supabase()
+    now = _now()
+    y_start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    y_end   = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    base_start = y_start - timedelta(days=7)
+    ydate = y_start.date().isoformat()
+
+    def _day(i):  # data ISO de i dias antes de ontem (i=0 → ontem)
+        return (y_start - timedelta(days=i)).date().isoformat()
+
+    # ── Receita por dia (online; exclui POS/offline) ──────────────────────────
+    try:
+        rows = (sb.table("orders")
+                .select("total_price, utm_source, created_at")
+                .eq("client_id", client["id"]).eq("financial_status", "paid")
+                .gt("total_price", 0)
+                .gte("created_at", base_start.isoformat()).lt("created_at", y_end.isoformat())
+                .limit(10000).execute().data or [])
+    except Exception as exc:
+        logger.debug("_eval_nonpaid_spike(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    rev_by_day: dict = {}
+    for r in rows:
+        if (r.get("utm_source") or "").lower() in ("pos", "draft_order", "in_store", "offline"):
+            continue
+        d = str(r.get("created_at") or "")[:10]
+        if d:
+            rev_by_day[d] = rev_by_day.get(d, 0.0) + float(r.get("total_price") or 0)
+
+    y_rev = rev_by_day.get(ydate, 0.0)
+    daily = [rev_by_day.get(_day(i), 0.0) for i in range(1, 8)]
+    if sum(1 for v in daily if v > 0) < min_active_days:
+        return []
+    base_rev = statistics.median(daily)
+    if base_rev < min_revenue:
+        return []
+
+    rev_lift = (y_rev - base_rev) / base_rev
+    if rev_lift < spike_pct / 100:
+        return []
+
+    # ── Investimento por dia (todos os canais) ────────────────────────────────
+    try:
+        srows = (sb.table("ad_spend").select("date, spend")
+                 .eq("client_id", client["id"])
+                 .gte("date", base_start.date().isoformat()).lte("date", ydate)
+                 .execute().data or [])
+    except Exception:
+        srows = []
+    spend_by_day: dict = {}
+    for r in srows:
+        d = str(r.get("date") or "")[:10]
+        if d:
+            spend_by_day[d] = spend_by_day.get(d, 0.0) + float(r.get("spend") or 0)
+
+    y_spend    = spend_by_day.get(ydate, 0.0)
+    sdaily     = [spend_by_day.get(_day(i), 0.0) for i in range(1, 8)]
+    base_spend = statistics.median(sdaily)
+
+    # Se havia investimento e ele acompanhou a receita, o pico é PAGO → não alerta.
+    if base_spend > 0:
+        spend_lift = (y_spend - base_spend) / base_spend
+        if spend_lift >= rev_lift * spend_ratio_max:
+            return []
+    else:
+        spend_lift = 0.0  # sem histórico de gasto → qualquer pico é não-pago
+
+    pixel    = client.get("pixel_id") or "unknown"
+    roas_txt = f" — ROAS do dia {y_rev / y_spend:.1f}x" if y_spend > 0 else " — sem investimento no dia"
+    return [{
+        "fingerprint": f"nonpaid_spike:{client['id']}:{ydate}",
+        "title":       f"Pico de tráfego não-pago — {pixel}",
+        "message":     (
+            f"Receita de ontem R$ {y_rev:,.0f} vs mediana 7d R$ {base_rev:,.0f}/dia "
+            f"(+{rev_lift * 100:.0f}%), sem aumento proporcional de investimento "
+            f"(gasto {y_spend:,.0f} vs mediana {base_spend:,.0f}){roas_txt}. "
+            f"Possível viral/orgânico/influencer — considere capitalizar (subir remarketing/orçamento)."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": "info",
+        "data":     {"yesterday_revenue": round(y_rev, 2), "baseline_revenue_median": round(base_rev, 2),
+                     "rev_lift_pct": round(rev_lift * 100, 1), "yesterday_spend": round(y_spend, 2),
+                     "baseline_spend_median": round(base_spend, 2), "spend_lift_pct": round(spend_lift * 100, 1)},
+    }]
+
+
 _EVALUATORS = {
     "meta_token_expiring":      _eval_meta_token_expiring,
     "integration_unhealthy":    _eval_integration_unhealthy,
@@ -1095,6 +1195,7 @@ _EVALUATORS = {
     "roas_drop_channel":        _eval_roas_drop_channel,
     "spend_below_expected":     _eval_spend_below_expected,
     "utm_null_ratio":           _eval_utm_null_ratio,
+    "nonpaid_spike":            _eval_nonpaid_spike,
 }
 
 
