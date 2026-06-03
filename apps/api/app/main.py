@@ -14,7 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .limiter import limiter
 from .routers import alerts as alerts_router, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, live, meta_ads, pacing, pixel, setup
-from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, health_monitor, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, reports, sessionization, spend_sync
+from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, health_monitor, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, reports, retention, sessionization, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -174,6 +174,13 @@ _scheduler.add_job(
     hour=12,
     minute=30,  # 12:30 UTC = 09:30 BRT — verifica o dia anterior completo
     id="daily_health_monitor",
+)
+_scheduler.add_job(
+    retention.run_retention,
+    "cron",
+    hour=6,
+    minute=0,  # 06:00 UTC = 03:00 BRT — purga eventos brutos > 90d (LGPD)
+    id="event_retention",
 )
 
 
