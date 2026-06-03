@@ -14,3 +14,4 @@ slowapi>=0.1.9
 apscheduler>=3.10.0
 weasyprint>=62.0
 pybars3>=0.9.7
+cryptography>=42.0.0
