@@ -16,6 +16,13 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_KEY: str = ""
 
+    # ── Segurança / LGPD ─────────────────────────────────────────────────
+    # Chave Fernet (base64) para encriptar credenciais em repouso. Gerar com:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    CREDENTIALS_KEY: str = ""
+    # Janela de retenção dos eventos brutos (tracking_events), em dias.
+    EVENT_RETENTION_DAYS: int = 90
+
     # ── Webhook secrets ───────────────────────────────────────────────────
     # Fallback secret used when no per-client secret is found in the database.
     DEFAULT_WEBHOOK_SECRET: str = ""
