@@ -1,7 +1,10 @@
 import logging
 from pathlib import Path
 
+from datetime import datetime, timezone
+
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -30,7 +33,19 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+_STARTED_AT = datetime.now(timezone.utc)
+_JOB_RUNS: dict = {}   # job_id → {last_run, last_status} para o /health
+
+
+def _record_job_run(event) -> None:
+    _JOB_RUNS[event.job_id] = {
+        "last_run":    datetime.now(timezone.utc).isoformat(),
+        "last_status": "error" if event.exception else "ok",
+    }
+
+
 _scheduler = BackgroundScheduler()
+_scheduler.add_listener(_record_job_run, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 _scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
 _scheduler.add_job(
     reports.send_weekly_reports,
@@ -247,11 +262,28 @@ async def health_check():
     except Exception as e:
         db_status = "error"
         db_error = str(e)[:200]
+    now = datetime.now(timezone.utc)
+    jobs = []
+    try:
+        for j in _scheduler.get_jobs():
+            run = _JOB_RUNS.get(j.id, {})
+            jobs.append({
+                "id":          j.id,
+                "next_run":    j.next_run_time.isoformat() if j.next_run_time else None,
+                "last_run":    run.get("last_run"),
+                "last_status": run.get("last_status"),
+            })
+    except Exception:
+        pass
     return {
-        "status": "ok",
+        "status": "ok" if db_status == "ok" else "degraded",
         "version": settings.APP_VERSION,
+        "uptime_seconds": int((now - _STARTED_AT).total_seconds()),
+        "started_at": _STARTED_AT.isoformat(),
         "db": db_status,
         "db_error": db_error,
+        "scheduler_running": getattr(_scheduler, "running", False),
+        "jobs": jobs,
         "supabase_url": settings.SUPABASE_URL[:40] + "..." if settings.SUPABASE_URL else "NOT SET",
         "service_key_set": bool(settings.SUPABASE_SERVICE_KEY),
     }
