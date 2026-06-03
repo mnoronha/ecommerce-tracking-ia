@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..config import settings
 from ..database import get_supabase
+from ..services import crypto
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -179,7 +180,7 @@ async def register_shopify_webhooks(pixel_id: str):
     if not (result and result.data):
         raise HTTPException(404, f"Client not found: {pixel_id}")
 
-    c = result.data
+    c = crypto.decrypt_client_secrets(result.data)
     if c.get("ecommerce_platform") != "shopify":
         raise HTTPException(400, "Client is not a Shopify store")
     if not c.get("shopify_domain") or not c.get("shopify_access_token"):
@@ -247,7 +248,7 @@ async def install_shopify(pixel_id: str):
     if not (result and result.data):
         raise HTTPException(404, f"Client not found: {pixel_id}")
 
-    c = result.data
+    c = crypto.decrypt_client_secrets(result.data)
     if c.get("ecommerce_platform") != "shopify":
         raise HTTPException(400, "Client is not a Shopify store")
     if not c.get("shopify_domain") or not c.get("shopify_access_token"):

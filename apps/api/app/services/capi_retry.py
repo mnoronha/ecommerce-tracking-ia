@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from ..database import get_supabase
+from ..services import crypto
 from ..config import settings
 from . import meta_capi, ga4, tiktok_capi
 from ..models.events import NormalizedEvent, EventType, OrderData, CustomerData, Address
@@ -148,7 +149,7 @@ def retry_failed_capi() -> None:
             )
             if not (client_row and client_row.data):
                 continue
-            c = client_row.data[0]
+            c = crypto.decrypt_client_secrets(client_row.data[0])
 
             # ── Fetch visitor for browser identifiers ─────────────────────────
             visitor = None
@@ -290,7 +291,7 @@ def retry_failed_tiktok() -> None:
             )
             if not (client_row and client_row.data):
                 continue
-            c = client_row.data[0]
+            c = crypto.decrypt_client_secrets(client_row.data[0])
             if not (c.get("tiktok_pixel_id") and c.get("tiktok_access_token")):
                 continue
 

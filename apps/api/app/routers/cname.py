@@ -36,6 +36,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 from ..database import get_supabase
+from ..services import crypto
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -69,7 +70,7 @@ async def cname_init(pixel_id: str, body: dict):
     secret = secrets.token_urlsafe(24)
     sb.table("clients").update({
         "tracking_cname":          cname,
-        "tracking_cname_secret":   secret,
+        "tracking_cname_secret":   crypto.encrypt_secret(secret),
         "tracking_cname_verified": False,
     }).eq("id", found.data["id"]).execute()
 

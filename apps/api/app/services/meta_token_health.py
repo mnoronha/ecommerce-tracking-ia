@@ -21,6 +21,7 @@ import httpx
 
 from ..config import settings
 from ..database import get_supabase
+from ..services import crypto
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def run_token_health_check() -> None:
         return
 
     for c in (result.data or []):
-        info = _check_token(c["meta_access_token"], app_id, app_secret)
+        info = _check_token(crypto.decrypt_secret(c["meta_access_token"]), app_id, app_secret)
         new_health = _classify_health(info, c.get("meta_token_expires_at"))
         old_health = c.get("meta_token_health") or "unknown"
 

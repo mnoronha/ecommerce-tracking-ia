@@ -21,6 +21,7 @@ from typing import Optional
 import httpx
 
 from ..database import get_supabase
+from ..services import crypto
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,6 @@ def run_daily_for_all_clients() -> None:
         if not (c.get("meta_ad_account_id") and c.get("meta_access_token")):
             continue
         try:
-            sync_for_client(c["id"], c["meta_ad_account_id"], c["meta_access_token"])
+            sync_for_client(c["id"], c["meta_ad_account_id"], crypto.decrypt_secret(c["meta_access_token"]))
         except Exception as exc:
             logger.warning("creative_sync: client %s failed: %s", c.get("id"), exc)

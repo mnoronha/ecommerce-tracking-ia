@@ -35,6 +35,7 @@ from typing import Optional
 import httpx
 
 from ..database import get_supabase
+from ..services import crypto
 
 logger = logging.getLogger(__name__)
 
@@ -1219,6 +1220,8 @@ def _clients_for_rule(rule: dict) -> list[dict]:
             .eq("agency_id", rule["agency_id"]).eq("is_active", True)
             .execute()
         ).data or []
+    for _r in rows:
+        crypto.decrypt_client_secrets(_r)
     return rows
 
 

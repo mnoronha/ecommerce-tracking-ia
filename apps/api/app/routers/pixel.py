@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from ..config import settings
 from ..database import get_supabase
 from ..limiter import limiter
-from ..services import ga4, google_ads, meta_capi, writer
+from ..services import crypto, ga4, google_ads, meta_capi, writer
 from ..models.events import EventType, NormalizedEvent, UTMParams
 
 logger = logging.getLogger(__name__)
@@ -176,7 +176,7 @@ def _dispatch_pixel_ga4(client_pixel_id: str, event: NormalizedEvent) -> None:
         )
         if not (creds and creds.data):
             return
-        c = creds.data[0]
+        c = crypto.decrypt_client_secrets(creds.data[0])
         if c.get("ga4_measurement_id") and c.get("ga4_api_secret"):
             ga4.send_pixel_event(
                 measurement_id=c["ga4_measurement_id"],
@@ -204,7 +204,7 @@ def _dispatch_pixel_google_ads(
         )
         if not (creds and creds.data):
             return
-        c = creds.data[0]
+        c = crypto.decrypt_client_secrets(creds.data[0])
         action_id = c.get(action_column)
         if not (c.get("google_ads_customer_id") and action_id and c.get("google_ads_refresh_token")):
             return
@@ -234,7 +234,7 @@ def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
         )
         if not (creds and creds.data):
             return
-        c = creds.data[0]
+        c = crypto.decrypt_client_secrets(creds.data[0])
         if c.get("meta_pixel_id") and c.get("meta_access_token"):
             ok, err = meta_capi.send_pixel_event(
                 pixel_id=c["meta_pixel_id"],

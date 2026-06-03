@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
-from ..services import meta_ads as meta_ads_svc
+from ..services import crypto, meta_ads as meta_ads_svc
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,7 +48,7 @@ async def get_roas(pixel_id: str, days: int = 30):
     if not (creds_result and creds_result.data):
         raise HTTPException(status_code=404, detail="Client not found or inactive")
 
-    c            = creds_result.data[0]
+    c            = crypto.decrypt_client_secrets(creds_result.data[0])
     client_uuid  = c["id"]
     has_ads_creds = bool(c.get("meta_ad_account_id") and c.get("meta_access_token"))
 
@@ -273,7 +273,7 @@ async def get_overview(
     )
     if not (creds and creds.data):
         raise HTTPException(status_code=404, detail="Client not found or inactive")
-    c         = creds.data[0]
+    c         = crypto.decrypt_client_secrets(creds.data[0])
     client_id = c["id"]
 
     if start and end:

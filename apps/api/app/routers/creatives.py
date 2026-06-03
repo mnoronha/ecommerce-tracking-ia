@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
-from ..services import creative_intelligence, creative_sync
+from ..services import creative_intelligence, creative_sync, crypto
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -31,7 +31,7 @@ def _resolve(pixel_id: str) -> tuple[str, dict]:
     )
     if not (r and r.data):
         raise HTTPException(404, "Client not found")
-    row = r.data[0]
+    row = crypto.decrypt_client_secrets(r.data[0])
     return row["id"], row
 
 

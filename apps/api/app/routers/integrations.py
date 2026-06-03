@@ -15,7 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
-from ..services import integrations_health
+from ..services import crypto, integrations_health
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/integrations", tags=["integrations"])
@@ -44,7 +44,7 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     )
     if not (cli and cli.data):
         raise HTTPException(404, "Client not found")
-    c = cli.data[0]
+    c = crypto.decrypt_client_secrets(cli.data[0])
     if not (c.get("google_ads_customer_id") and c.get("google_ads_refresh_token")
             and c.get("google_ads_conversion_action_id")):
         raise HTTPException(400, "Google Ads not fully configured for this client")
@@ -139,7 +139,7 @@ async def google_conversion_actions(pixel_id: str):
     )
     if not (cli and cli.data):
         raise HTTPException(404, "Client not found")
-    c = cli.data[0]
+    c = crypto.decrypt_client_secrets(cli.data[0])
     if not (c.get("google_ads_customer_id") and c.get("google_ads_refresh_token")):
         raise HTTPException(400, "Google Ads not connected for this client")
 
@@ -184,7 +184,7 @@ def _load_client(pixel_id: str) -> dict:
     )
     if not (r and r.data):
         raise HTTPException(status_code=404, detail="Client not found")
-    return r.data[0]
+    return crypto.decrypt_client_secrets(r.data[0])
 
 
 def _cached_view(client: dict) -> dict:

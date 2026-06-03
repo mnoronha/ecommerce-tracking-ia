@@ -20,6 +20,7 @@ import httpx
 
 from ..config import settings
 from ..database import get_supabase
+from ..services import crypto
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +258,7 @@ def run_daily_spend_sync() -> None:
         return
 
     for c in (clients.data or []):
+        crypto.decrypt_client_secrets(c)
         pixel = c.get("pixel_id", c["id"])
 
         # ── Meta Ads ──────────────────────────────────────────────────────
@@ -318,7 +320,7 @@ def backfill_spend_range(client_id: str, pixel_id: str, start_date: date, end_da
     if not (client_row and client_row.data):
         return {"error": "cliente não encontrado"}
 
-    c       = client_row.data[0]
+    c       = crypto.decrypt_client_secrets(client_row.data[0])
     results = {"meta_ads": [], "google_ads": [], "tiktok_ads": [], "errors": []}
     manager = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None
 

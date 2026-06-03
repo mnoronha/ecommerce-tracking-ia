@@ -21,7 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from ..database import get_supabase
-from ..services import meta_attribution_sync, meta_campaigns
+from ..services import crypto, meta_attribution_sync, meta_campaigns
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -637,7 +637,7 @@ async def force_sync_meta_attribution(pixel_id: str, days: int = 7):
     ).data or []
     if not creds:
         raise HTTPException(404, "Client not found")
-    c = creds[0]
+    c = crypto.decrypt_client_secrets(creds[0])
     if not (c.get("meta_ad_account_id") and c.get("meta_access_token")):
         raise HTTPException(400, "Client missing meta_ad_account_id or meta_access_token")
     return meta_attribution_sync.sync_for_client(
@@ -685,7 +685,7 @@ async def resolve_meta_names(pixel_id: str):
     ).data or []
     if not creds:
         raise HTTPException(404, "Client not found")
-    c = creds[0]
+    c = crypto.decrypt_client_secrets(creds[0])
     if not (c.get("meta_ad_account_id") and c.get("meta_access_token")):
         raise HTTPException(400, "Client missing meta_ad_account_id or meta_access_token")
 

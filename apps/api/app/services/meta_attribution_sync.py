@@ -22,6 +22,7 @@ from typing import Optional
 import httpx
 
 from ..database import get_supabase
+from ..services import crypto
 from .meta_ads import _pick_action
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ def run_daily_sync_all_clients() -> None:
             r = sync_for_client(
                 client_uuid=c["id"],
                 account_id=c["meta_ad_account_id"],
-                access_token=c["meta_access_token"],
+                access_token=crypto.decrypt_secret(c["meta_access_token"]),
                 days=7,
             )
             total += r.get("synced", 0)

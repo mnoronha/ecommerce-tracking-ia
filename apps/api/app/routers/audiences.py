@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from ..database import get_supabase
-from ..services import meta_audiences
+from ..services import crypto, meta_audiences
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ def _resolve_client_uuid(pixel_id: str) -> str:
             .execute()
         )
         if result.data:
-            return result.data[0]
+            return crypto.decrypt_client_secrets(result.data[0])
     except Exception as exc:
         logger.warning("_resolve_client: %s", exc)
     raise HTTPException(status_code=404, detail=f"Client '{pixel_id}' not found")
