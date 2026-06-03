@@ -75,3 +75,36 @@ def decrypt_secret(value: Optional[str]) -> Optional[str]:
     except Exception as exc:
         logger.error("crypto: decrypt falhou: %s", exc)
         return value
+
+
+# Campos de segredo na tabela `clients` (acesso a contas de ads/loja/webhook).
+SECRET_FIELDS = (
+    "meta_access_token", "google_ads_refresh_token", "shopify_access_token",
+    "tiktok_access_token", "pinterest_access_token", "nuvemshop_access_token",
+    "ga4_api_secret", "shopify_webhook_secret", "webhook_secret",
+    "woo_consumer_key", "woo_consumer_secret", "woo_webhook_secret",
+    "tracking_cname_secret",
+)
+
+
+def decrypt_client_secrets(row: Optional[dict]) -> Optional[dict]:
+    """Decifra (in place) os campos de segredo de uma linha de `clients`.
+    Chamar logo após buscar a linha — o plaintext flui pra todo uso downstream.
+    Idempotente e seguro: valor em texto puro/None passa direto."""
+    if not row:
+        return row
+    for fld in SECRET_FIELDS:
+        v = row.get(fld)
+        if v:
+            row[fld] = decrypt_secret(v)
+    return row
+
+
+def encrypt_client_secrets(data: Optional[dict]) -> Optional[dict]:
+    """Cifra (in place) os campos de segredo presentes num dict, antes de gravar."""
+    if not data:
+        return data
+    for fld in SECRET_FIELDS:
+        if data.get(fld):
+            data[fld] = encrypt_secret(data[fld])
+    return data

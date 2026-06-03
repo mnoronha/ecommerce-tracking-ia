@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..services import attribution_engine, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
+from ..services import attribution_engine, crypto, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
     ShopifyAdapter,
@@ -46,7 +46,7 @@ async def _get_client_secret(client_id: str, platform: str) -> str:
             .execute()
         )
         if result.data and result.data.get(secret_column):
-            return result.data[secret_column]
+            return crypto.decrypt_secret(result.data[secret_column])
     except Exception as exc:
         logger.warning("Could not fetch client secret for %s/%s: %s", platform, client_id, exc)
     return settings.DEFAULT_WEBHOOK_SECRET
@@ -123,7 +123,7 @@ def _dispatch_refund_capi(
         )
         if not (creds_result and creds_result.data):
             return
-        c = creds_result.data[0]
+        c = crypto.decrypt_client_secrets(creds_result.data[0])
 
         # Build user_data from email/phone for Meta match
         user_data: dict = {}
@@ -336,7 +336,7 @@ def _dispatch_purchase_capi(
         if not (creds_result and creds_result.data):
             _record_capi_error(order_uuid, "client credentials row not found")
             return
-        c = creds_result.data[0]
+        c = crypto.decrypt_client_secrets(creds_result.data[0])
 
         # Resolve the bid value: when value-based bidding is enabled and the
         # order has a predicted_ltv, send the LTV instead of the order total.
@@ -635,7 +635,7 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
         )
         if not (creds_result and creds_result.data):
             return
-        c = creds_result.data[0]
+        c = crypto.decrypt_client_secrets(creds_result.data[0])
 
         # Enrich event with cart totals / item count so each platform carries
         # a meaningful `value` instead of zero.
