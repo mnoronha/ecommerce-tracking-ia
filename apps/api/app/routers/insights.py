@@ -72,6 +72,37 @@ async def get_insights(
         raise HTTPException(status_code=500, detail="Erro ao buscar insights")
 
 
+@router.get("/{pixel_id}/report-history", summary="Histórico de relatórios enviados (versionamento)")
+async def report_history(pixel_id: str, limit: int = 20):
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail="cliente não encontrado")
+    rows = (
+        get_supabase().table("reports")
+        .select("id, type, period_start, period_end, status, sent_to, sent_at, ai_insight_id")
+        .eq("client_id", client_uuid)
+        .order("sent_at", desc=True)
+        .limit(limit)
+        .execute()
+    ).data or []
+    return {"reports": rows}
+
+
+@router.get("/{pixel_id}/report-history/{report_id}", summary="Conteúdo de um relatório versionado")
+async def report_detail(pixel_id: str, report_id: str):
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail="cliente não encontrado")
+    r = (
+        get_supabase().table("reports")
+        .select("id, type, period_start, period_end, status, sent_to, sent_at, html_content, ai_summary")
+        .eq("id", report_id).eq("client_id", client_uuid).limit(1).execute()
+    ).data
+    if not r:
+        raise HTTPException(status_code=404, detail="relatório não encontrado")
+    return r[0]
+
+
 @router.get("/{pixel_id}/funnel")
 async def get_funnel(
     pixel_id: str,

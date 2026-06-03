@@ -126,6 +126,7 @@ export default function ReportsPage() {
   const [emailSaved,  setEmailSaved]  = useState(false)
   const [weeklyEnabled,  setWeeklyEnabled]  = useState(false)
   const [monthlyEnabled, setMonthlyEnabled] = useState(false)
+  const [reportHistory, setReportHistory] = useState<Array<{ id: string; type: string; period_start: string; period_end: string; status: string; sent_to: string[] | null; sent_at: string }>>([])
   const [typeFilter,  setTypeFilter]  = useState<InsightType>('all')
   const [sevFilter,   setSevFilter]   = useState<Severity>('all')
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set())
@@ -154,6 +155,24 @@ export default function ReportsPage() {
   }, [clientId, typeFilter, sevFilter, page])
 
   useEffect(() => { load(true) }, [clientId, typeFilter, sevFilter])
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/insights/${clientId}/report-history?limit=20`)
+      if (res.ok) setReportHistory((await res.json()).reports || [])
+    } catch (_) {}
+  }, [clientId])
+  useEffect(() => { loadHistory() }, [loadHistory])
+
+  async function viewReport(id: string) {
+    try {
+      const res = await fetch(`${API_URL}/insights/${clientId}/report-history/${id}`)
+      if (!res.ok) return
+      const d = await res.json()
+      const w = window.open('', '_blank')
+      if (w) { w.document.write(d.html_content || '<p>Sem conteúdo salvo.</p>'); w.document.close() }
+    } catch (_) {}
+  }
 
   async function generate() {
     setGenerating(true)
@@ -396,6 +415,40 @@ export default function ReportsPage() {
             </form>
           </div>
         </div>
+
+        {/* Histórico de envios (versionamento) */}
+        {reportHistory.length > 0 && (
+          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-[#2a2f3e]">
+              <p className="text-sm font-semibold text-white">Histórico de relatórios enviados</p>
+              <p className="text-xs text-slate-500 mt-0.5">Cada envio é versionado — guardamos o conteúdo enviado e a análise da IA.</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <tbody>
+                  {reportHistory.map(r => (
+                    <tr key={r.id} className="border-b border-[#2a2f3e] last:border-0">
+                      <td className="px-5 py-2.5">
+                        <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300">{r.type === 'weekly' ? 'Semanal' : 'Mensal'}</span>
+                      </td>
+                      <td className="px-5 py-2.5 text-xs text-slate-400 whitespace-nowrap">{r.period_start} → {r.period_end}</td>
+                      <td className="px-5 py-2.5 text-xs">
+                        {r.status === 'held'
+                          ? <span className="text-yellow-400">retido (revisão)</span>
+                          : <span className="text-emerald-400">enviado</span>}
+                      </td>
+                      <td className="px-5 py-2.5 text-xs text-slate-500 truncate max-w-[180px]">{(r.sent_to || []).join(', ')}</td>
+                      <td className="px-5 py-2.5 text-xs text-slate-500 whitespace-nowrap">{fmtDate(r.sent_at)}</td>
+                      <td className="px-5 py-2.5 text-right">
+                        <button onClick={() => viewReport(r.id)} className="text-xs text-indigo-400 hover:text-indigo-300">Ver</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-3">

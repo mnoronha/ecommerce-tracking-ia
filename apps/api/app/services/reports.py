@@ -474,6 +474,30 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
     }
 
 
+def _log_report(sb, client_id: str, rtype: str, period_start, period_end,
+                html: str, ai: Optional[dict], recipients, status: str = "sent") -> None:
+    """Versiona o relatório enviado: guarda o HTML final + a análise da IA que o
+    gerou (ai_summary/ai_insight_id). Falha aqui não bloqueia o envio."""
+    try:
+        ag = sb.table("clients").select("agency_id").eq("id", client_id).limit(1).execute()
+        agency_id = ag.data[0].get("agency_id") if (ag and ag.data) else None
+        sb.table("reports").insert({
+            "agency_id":     agency_id,
+            "client_id":     client_id,
+            "type":          rtype,
+            "period_start":  period_start.isoformat() if hasattr(period_start, "isoformat") else period_start,
+            "period_end":    period_end.isoformat() if hasattr(period_end, "isoformat") else period_end,
+            "html_content":  html,
+            "ai_summary":    (ai or {}).get("content"),
+            "ai_insight_id": (ai or {}).get("id"),
+            "status":        status,
+            "sent_to":       recipients if isinstance(recipients, list) else [recipients],
+            "sent_at":       datetime.now(timezone.utc).isoformat(),
+        }).execute()
+    except Exception as exc:
+        logger.warning("report log (versão) falhou para %s: %s", client_id, exc)
+
+
 def _send_weekly(client_id: str, pixel_id: str, client_name: str,
                  recipients: list[str] | str, client: Optional[dict] = None) -> None:
     sb        = get_supabase()
@@ -487,6 +511,7 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
     for addr in to_list:
         email_service.send_email(to=addr, subject=subject, html_body=html)
     logger.info("weekly report sent to %s for %s", to_list, pixel_id)
+    _log_report(sb, client_id, "weekly", m["week_start"].date(), now.date(), html, m.get("ai"), to_list, "sent")
 
     # WhatsApp group — resumo compacto
     if client:
@@ -879,6 +904,8 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
     sb  = get_supabase()
     now = datetime.now(timezone.utc)
     m   = _build_monthly(sb, client_id, now)
+    _mstart, _mend, _ = _prev_month_window(now)
+    _pstart, _pend = _mstart.date(), (_mend - timedelta(days=1)).date()
     to_list = [recipients] if isinstance(recipients, str) else recipients
 
     logo  = (client or {}).get("logo_url") or _client_logo(sb, client_id)
@@ -894,6 +921,7 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
         subject = f"⚠️ [REVISAR] Relatório mensal retido — {client_name} · {m['month_label']}"
         email_service.send_email(to=agency, subject=subject, html_body=html)
         logger.info("monthly report HELD for %s → agency %s (%s)", pixel_id, agency, "; ".join(m["health"]["reasons"]))
+        _log_report(sb, client_id, "monthly", _pstart, _pend, html, m.get("ai"), [agency], "held")
         return {"sent_to": agency, "held": True, "reasons": m["health"]["reasons"]}
 
     # ── Build rich PDF via new template system ───────────────────────────
@@ -949,6 +977,7 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
             email_service.send_email(to=addr, subject=subject, html_body=html_fb)
 
     logger.info("monthly report (%s) sent to %s for %s", "PDF" if pdf else "HTML-fallback", to_list, pixel_id)
+    _log_report(sb, client_id, "monthly", _pstart, _pend, body_html, m.get("ai"), to_list, "sent")
 
     # WhatsApp group — resumo mensal compacto
     if client:
