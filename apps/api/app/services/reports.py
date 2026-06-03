@@ -236,11 +236,13 @@ def _goal_for_month(sb, client_id: str, month_start: date) -> tuple[float, Optio
     if g.data:
         revenue_goal = g.data[0].get("revenue_goal")
         roas_goal    = g.data[0].get("roas_goal")
-    if revenue_goal is None:
+    if revenue_goal is None or roas_goal is None:
         c = sb.table("clients").select("monthly_revenue_goal, target_roas").eq("id", client_id).limit(1).execute()
         if c.data:
-            revenue_goal = c.data[0].get("monthly_revenue_goal")
-            roas_goal    = roas_goal or c.data[0].get("target_roas")
+            if revenue_goal is None:
+                revenue_goal = c.data[0].get("monthly_revenue_goal")
+            if roas_goal is None:
+                roas_goal = c.data[0].get("target_roas")
     return float(revenue_goal or 0), roas_goal
 
 
@@ -375,6 +377,28 @@ def send_weekly_reports() -> None:
         logger.error("send_weekly_reports: %s", exc)
 
 
+def _budget_for_month(sb, client_id: str, month_start: date,
+                      revenue_goal: float = 0, roas_goal: Optional[float] = None) -> tuple[float, bool]:
+    """Orçamento de mídia do mês. Usa a tabela `budgets` (soma dos canais) se
+    houver; senão deriva um alvo IMPLÍCITO da meta de receita ÷ meta de ROAS
+    (para bater R$X de receita a Yx de ROAS, investe-se ~X/Y). Retorna
+    (valor, implícito)."""
+    try:
+        rows = (
+            sb.table("budgets").select("amount")
+            .eq("client_id", client_id).eq("month", month_start.isoformat())
+            .execute()
+        ).data or []
+        explicit = sum(float(r.get("amount") or 0) for r in rows)
+    except Exception:
+        explicit = 0.0
+    if explicit > 0:
+        return round(explicit, 2), False
+    if revenue_goal and roas_goal and float(roas_goal) > 0:
+        return round(float(revenue_goal) / float(roas_goal), 2), True
+    return 0.0, False
+
+
 def _build_weekly(sb, client_id: str, now: datetime) -> dict:
     week_start      = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
     prev_week_start = (now - timedelta(days=14)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -384,31 +408,68 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
     prev = _money(sb, client_id, prev_week_start.isoformat(), week_start.isoformat())
     mtd  = _money(sb, client_id, month_start.isoformat(), now.isoformat())
 
-    week_delta = (
-        round((week["revenue"] - prev["revenue"]) / prev["revenue"] * 100, 1)
-        if prev["revenue"] > 0 else None
-    )
+    def _pct_delta(cur, prv):
+        return round((cur - prv) / prv * 100, 1) if prv > 0 else None
 
-    # Goal progress (MTD)
+    week_delta = _pct_delta(week["revenue"], prev["revenue"])
+
+    # ── Investimento (semana vs anterior) ────────────────────────────────────
+    spend_now  = _spend_by_channel(sb, client_id, week_start.date().isoformat(), now.date().isoformat())
+    spend_prev = _spend_by_channel(sb, client_id, prev_week_start.date().isoformat(), week_start.date().isoformat())
+    total_spend = round(sum(s["spend"] for s in spend_now.values()), 2)
+    prev_spend  = round(sum(s["spend"] for s in spend_prev.values()), 2)
+    spend_delta = _pct_delta(total_spend, prev_spend)
+
+    # ── ROAS por canal: semana atual vs anterior ─────────────────────────────
+    ch_now = _channel_detail(
+        sb, client_id, week_start.isoformat(), now.isoformat(),
+        week_start.date().isoformat(), now.date().isoformat())
+    ch_prev = _channel_detail(
+        sb, client_id, prev_week_start.isoformat(), week_start.isoformat(),
+        prev_week_start.date().isoformat(), week_start.date().isoformat())
+    prev_roas_by_ch = {c["channel"]: c["roas"] for c in ch_prev}
+    for c in ch_now:
+        c["roas_prev"] = prev_roas_by_ch.get(c["channel"])
+    channels = [c for c in ch_now if c["spend"] > 0 or c["revenue"] > 0]
+
+    # ROAS pago = receita atribuída aos canais ÷ investimento (comparável à meta
+    # de ROAS). Evita o "ROAS blended" inflado por receita orgânica/direta.
+    paid_rev    = round(sum(c["revenue"] for c in channels), 2)
+    paid_orders = sum(c["orders"] for c in channels)
+    roas = round(paid_rev / total_spend, 2) if total_spend > 0 else None
+    cpa  = round(total_spend / paid_orders, 2) if (total_spend > 0 and paid_orders) else None
+
+    # ── Metas (MTD) ──────────────────────────────────────────────────────────
     goal, roas_goal = _goal_for_month(sb, client_id, month_start.date())
     pct_of_goal = round(mtd["revenue"] / goal * 100, 1) if goal > 0 else None
     days_total  = calendar.monthrange(now.year, now.month)[1]
     on_pace_pct = round(now.day / days_total * 100, 1)
+    # Projeção só a partir do dia 5 — extrapolar 2-3 dias é ruído.
+    proj_revenue = round(mtd["revenue"] / now.day * days_total, 2) if now.day >= 5 else None
 
-    # ROAS (last 7d)
-    spend = _spend_by_channel(sb, client_id, week_start.date().isoformat(), now.date().isoformat())
-    total_spend = sum(s["spend"] for s in spend.values())
-    roas = round(week["revenue"] / total_spend, 2) if total_spend > 0 else None
+    # ── Ritmo da meta de investimento ────────────────────────────────────────
+    mtd_spend = round(sum(
+        s["spend"] for s in
+        _spend_by_channel(sb, client_id, month_start.date().isoformat(), now.date().isoformat()).values()
+    ), 2)
+    budget, budget_implied = _budget_for_month(sb, client_id, month_start.date(), goal, roas_goal)
+    pct_of_budget = round(mtd_spend / budget * 100, 1) if budget > 0 else None
 
     conv = _visitors_conv(sb, client_id, week_start.isoformat(), week["orders"])
 
     return {
         "week_start": week_start, "now": now,
         "week": week, "week_delta": week_delta,
-        "mtd": mtd, "goal": goal, "pct_of_goal": pct_of_goal, "on_pace_pct": on_pace_pct,
-        "roas": roas, "roas_goal": roas_goal, "conv": conv,
+        "spend": total_spend, "spend_delta": spend_delta,
+        "roas": roas, "roas_goal": roas_goal, "cpa": cpa, "conv": conv,
+        "channels": channels,
+        "mtd": mtd, "goal": goal, "pct_of_goal": pct_of_goal,
+        "on_pace_pct": on_pace_pct, "proj_revenue": proj_revenue,
+        "mtd_spend": mtd_spend, "budget": budget, "budget_implied": budget_implied,
+        "pct_of_budget": pct_of_budget,
+        "top_products": _top_products(sb, client_id, week_start.isoformat(), now.isoformat(), limit=5),
+        "nvr": _new_vs_returning(sb, client_id, week_start.isoformat(), now.isoformat()),
         "alerts": _open_alerts(sb, client_id),
-        # Prefer a weekly_report insight; fall back to the freshest daily action
         "ai": _latest_ai(sb, client_id, "weekly_report") or _latest_ai(sb, client_id, "recommendation"),
     }
 
@@ -448,19 +509,112 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
     now        = m["now"]
     week_range = f"{m['week_start'].strftime('%d/%m')} – {now.strftime('%d/%m')}"
 
-    # Goal bar
-    goal_bar = ""
-    if m["pct_of_goal"] is not None:
-        bar_w   = min(int(m["pct_of_goal"]), 100)
-        bar_col = "#16a34a" if m["pct_of_goal"] >= m["on_pace_pct"] * 0.9 else "#f59e0b"
-        goal_bar = f"""
-        <div style="margin-top:16px">
-          <p style="margin:0 0 6px;font-weight:600;color:#374151;font-size:13px">Meta do mês</p>
-          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin-bottom:4px">
-            <span>{m['pct_of_goal']}% da meta</span><span>esperado: {m['on_pace_pct']}%</span>
+    # ── Ritmo das metas (faturamento + investimento) ─────────────────────────
+    def _pace_bar(title, value_html, pct, expected, target_html, good_high):
+        if pct is None:
+            return ""
+        bar_w = min(int(pct), 100)
+        if good_high:
+            col    = "#16a34a" if pct >= expected * 0.9 else "#f59e0b"
+            status = "no ritmo" if pct >= expected * 0.9 else "abaixo do ritmo"
+        else:
+            diff = pct - expected
+            col, status = ("#16a34a", "no ritmo") if abs(diff) <= 12 else \
+                          ("#f59e0b", "acima do ritmo") if diff > 12 else ("#3b82f6", "abaixo do ritmo")
+        marker = min(int(expected), 100)
+        return f"""
+        <div style="margin-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <p style="margin:0;font-weight:600;color:#374151;font-size:13px">{title}</p>
+            <span style="font-size:11px;font-weight:600;color:{col}">{status}</span>
           </div>
-          <div style="background:#e5e7eb;border-radius:4px;height:8px">
-            <div style="background:{bar_col};width:{bar_w}%;height:8px;border-radius:4px"></div>
+          <div style="display:flex;justify-content:space-between;font-size:11px;color:#6b7280;margin:4px 0">
+            <span>{value_html}</span><span>{target_html}</span>
+          </div>
+          <div style="position:relative;background:#e5e7eb;border-radius:4px;height:8px">
+            <div style="background:{col};width:{bar_w}%;height:8px;border-radius:4px"></div>
+            <div style="position:absolute;top:-2px;left:{marker}%;width:2px;height:12px;background:#9ca3af"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;margin-top:3px">
+            <span>{pct:.0f}% realizado</span><span>esperado p/ o dia {expected:.0f}%</span>
+          </div>
+        </div>"""
+
+    rev_target = f"meta {fmt_brl(m['goal'])}" + (f" · projeção {fmt_brl(m['proj_revenue'])}" if m.get("proj_revenue") else "")
+    goal_bar = _pace_bar("Meta de faturamento (mês)", f"realizado {fmt_brl(m['mtd']['revenue'])}",
+                         m["pct_of_goal"], m["on_pace_pct"], rev_target, good_high=True)
+    inv_target = (("orçamento " if not m["budget_implied"] else "alvo ") + fmt_brl(m["budget"])
+                  + (" (meta÷ROAS)" if m["budget_implied"] else ""))
+    invest_bar = _pace_bar("Meta de investimento (mês)", f"investido {fmt_brl(m['mtd_spend'])}",
+                           m["pct_of_budget"], m["on_pace_pct"], inv_target, good_high=False)
+
+    # ── ROAS por canal (semana atual vs anterior) ────────────────────────────
+    channel_html = ""
+    if m["channels"]:
+        rows = ""
+        for c in m["channels"]:
+            roas_now = f'{c["roas"]:.2f}x' if c["roas"] is not None else "—"
+            rp = c.get("roas_prev")
+            if c["roas"] is not None and rp:
+                d = (c["roas"] - rp) / rp * 100
+                ar, dc = ("▲", "#16a34a") if d >= 0 else ("▼", "#ef4444")
+                cmp_cell = f'<span style="color:{dc};font-weight:600">{ar} {abs(d):.0f}%</span> <span style="color:#9ca3af">(era {rp:.2f}x)</span>'
+            elif rp:
+                cmp_cell = f'<span style="color:#9ca3af">era {rp:.2f}x</span>'
+            else:
+                cmp_cell = '<span style="color:#9ca3af">—</span>'
+            rows += f"""
+            <tr style="border-bottom:1px solid #f3f4f6">
+              <td style="padding:8px 0;font-size:12px;color:#374151;font-weight:600">{c['label']}</td>
+              <td style="padding:8px 0;text-align:right;font-size:12px;color:#6b7280">{fmt_brl(c['spend'])}</td>
+              <td style="padding:8px 0;text-align:right;font-size:12px;color:#111827">{fmt_brl(c['revenue'])}</td>
+              <td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600;color:#111827">{roas_now}</td>
+              <td style="padding:8px 0;text-align:right;font-size:11px">{cmp_cell}</td>
+            </tr>"""
+        channel_html = f"""
+        <div style="margin-top:20px">
+          <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:13px">ROAS por canal · vs semana anterior</p>
+          <table style="width:100%;border-collapse:collapse">
+            <tr style="border-bottom:2px solid #e5e7eb">
+              <td style="padding:6px 0;font-size:10px;text-transform:uppercase;color:#9ca3af;letter-spacing:0.4px">Canal</td>
+              <td style="padding:6px 0;text-align:right;font-size:10px;text-transform:uppercase;color:#9ca3af">Invest.</td>
+              <td style="padding:6px 0;text-align:right;font-size:10px;text-transform:uppercase;color:#9ca3af">Receita</td>
+              <td style="padding:6px 0;text-align:right;font-size:10px;text-transform:uppercase;color:#9ca3af">ROAS</td>
+              <td style="padding:6px 0;text-align:right;font-size:10px;text-transform:uppercase;color:#9ca3af">vs sem.</td>
+            </tr>
+            {rows}
+          </table>
+        </div>"""
+
+    # ── Top produtos da semana ───────────────────────────────────────────────
+    products_html = ""
+    if m["top_products"]:
+        items = "".join(
+            f'<tr style="border-bottom:1px solid #f3f4f6">'
+            f'<td style="padding:7px 0;font-size:12px;color:#374151">{i+1}. {p["name"][:48]}</td>'
+            f'<td style="padding:7px 0;text-align:right;font-size:12px;color:#6b7280">{p["qty"]} un.</td>'
+            f'<td style="padding:7px 0;text-align:right;font-size:12px;font-weight:600;color:#111827">{fmt_brl(p["revenue"])}</td></tr>'
+            for i, p in enumerate(m["top_products"])
+        )
+        products_html = f"""
+        <div style="margin-top:20px">
+          <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:13px">Produtos mais vendidos na semana</p>
+          <table style="width:100%;border-collapse:collapse">{items}</table>
+        </div>"""
+
+    # ── Novos vs recorrentes ─────────────────────────────────────────────────
+    nvr = m["nvr"]
+    nvr_html = ""
+    if (nvr["new"] + nvr["returning"]) > 0:
+        nvr_html = f"""
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <div style="flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;text-align:center">
+            <p style="margin:0;font-size:18px;font-weight:700;color:#111827">{nvr['new']}</p>
+            <p style="margin:2px 0 0;font-size:11px;color:#6b7280">novos clientes</p>
+          </div>
+          <div style="flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;text-align:center">
+            <p style="margin:0;font-size:18px;font-weight:700;color:#111827">{nvr['returning']}</p>
+            <p style="margin:2px 0 0;font-size:11px;color:#6b7280">recorrentes ({nvr['repeat_rate_pct']:.0f}%)</p>
           </div>
         </div>"""
 
@@ -469,8 +623,12 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
     if m["roas"] is not None:
         tgt = float(m["roas_goal"] or 0)
         col = "#16a34a" if (tgt == 0 or m["roas"] >= tgt) else "#f59e0b"
-        roas_cell = f'<span style="color:{col};font-weight:600">{m["roas"]:.2f}x</span>'
+        roas_cell = f'<span style="color:{col};font-weight:600">{m["roas"]:.2f}x</span>' + (
+            f' <span style="color:#9ca3af;font-weight:400">/ meta {tgt:.1f}x</span>' if tgt else '')
     conv_cell = f'{m["conv"]:.2f}%' if m["conv"] is not None else "—"
+    cpa_cell  = fmt_brl(m["cpa"]) if m["cpa"] is not None else "—"
+    roas_big  = f'{m["roas"]:.2f}x' if m["roas"] is not None else "—"
+    roas_col  = "#16a34a" if (m["roas"] is not None and (not m["roas_goal"] or m["roas"] >= float(m["roas_goal"]))) else "#f59e0b"
 
     # Open alerts (compact)
     alerts_html = ""
@@ -519,6 +677,20 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
       <p style="margin:6px 0 0;font-size:13px">vs. semana anterior {delta_badge(m['week_delta'])}</p>
     </div>
 
+    <!-- Investimento + ROAS -->
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <div style="flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;text-align:center">
+        <p style="margin:0 0 2px;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:0.4px">Investido na semana</p>
+        <p style="margin:0;font-size:18px;font-weight:700;color:#111827">{fmt_brl(m['spend'])}</p>
+        <p style="margin:3px 0 0;font-size:11px">vs ant. {delta_badge(m['spend_delta'])}</p>
+      </div>
+      <div style="flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;text-align:center">
+        <p style="margin:0 0 2px;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:0.4px">ROAS geral</p>
+        <p style="margin:0;font-size:18px;font-weight:700;color:{roas_col}">{roas_big}</p>
+        <p style="margin:3px 0 0;font-size:11px;color:#9ca3af">{('meta ' + format(float(m['roas_goal']), '.1f') + 'x') if m['roas_goal'] else 'receita ÷ invest.'}</p>
+      </div>
+    </div>
+
     <!-- Essential KPIs -->
     <table style="width:100%;border-collapse:collapse;margin-top:16px">
       <tr style="border-bottom:1px solid #f3f4f6">
@@ -530,16 +702,25 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
         <td style="padding:9px 0;text-align:right;font-size:13px">{fmt_brl(m['week']['aov'])}</td>
       </tr>
       <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:9px 0;color:#6b7280;font-size:13px">CPA (custo por pedido)</td>
+        <td style="padding:9px 0;text-align:right;font-size:13px">{cpa_cell}</td>
+      </tr>
+      <tr>
         <td style="padding:9px 0;color:#6b7280;font-size:13px">Taxa de conversão</td>
         <td style="padding:9px 0;text-align:right;font-size:13px">{conv_cell}</td>
       </tr>
-      <tr>
-        <td style="padding:9px 0;color:#6b7280;font-size:13px">ROAS</td>
-        <td style="padding:9px 0;text-align:right;font-size:13px">{roas_cell}</td>
-      </tr>
     </table>
 
-    {goal_bar}
+    {channel_html}
+
+    <!-- Ritmo das metas -->
+    <div style="margin-top:20px;background:#fafafa;border:1px solid #f0f0f0;border-radius:6px;padding:4px 16px 16px">
+      {goal_bar}
+      {invest_bar}
+    </div>
+
+    {products_html}
+    {nvr_html}
     {alerts_html}
     {ai_html}
 
