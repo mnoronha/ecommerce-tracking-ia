@@ -9,7 +9,7 @@ import { useDatePeriod, periodLabelLong } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
+  ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -695,6 +695,10 @@ export default function DashboardPage() {
   const [clientName, setClientName]     = useState<string>('')
   const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [device,   setDevice]           = useState<string>('all')
+  const [annotations, setAnnotations]   = useState<Array<{ id: string; date: string; label: string }>>([])
+  const [annoOpen,  setAnnoOpen]        = useState(false)
+  const [annoDate,  setAnnoDate]        = useState('')
+  const [annoLabel, setAnnoLabel]       = useState('')
   const [country,  setCountry]          = useState<string>('all')
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
@@ -1048,10 +1052,33 @@ export default function DashboardPage() {
     } catch (_) {}
   }, [])
 
+  const loadAnnotations = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/annotations/${CLIENT_PIXEL_ID}`)
+      if (res.ok) setAnnotations((await res.json()).annotations || [])
+    } catch (_) {}
+  }, [CLIENT_PIXEL_ID])
+
+  async function addAnnotation() {
+    if (!annoDate || !annoLabel.trim()) return
+    await fetch(`${API_URL}/annotations/${CLIENT_PIXEL_ID}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: annoDate, label: annoLabel.trim() }),
+    })
+    setAnnoLabel(''); setAnnoDate(''); setAnnoOpen(false)
+    loadAnnotations()
+  }
+
+  async function delAnnotation(id: string) {
+    await fetch(`${API_URL}/annotations/${CLIENT_PIXEL_ID}/${id}`, { method: 'DELETE' })
+    setAnnotations(prev => prev.filter(a => a.id !== id))
+  }
+
   useEffect(() => { loadData() }, [loadData])
   useEffect(() => { loadInsights() }, [loadInsights])
   useEffect(() => { loadCohort() }, [loadCohort])
   useEffect(() => { loadPacing() }, [loadPacing])
+  useEffect(() => { loadAnnotations() }, [loadAnnotations])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1149,11 +1176,16 @@ export default function DashboardPage() {
               <h2 className="text-sm font-semibold text-slate-300">
                 Receita — {periodLabelLong(period, from, to).toLowerCase()}
               </h2>
-              {period === '90d' && revenueData.filter(p => p.revenue > 0).length < 45 && (
-                <span className="text-xs text-slate-500">
-                  Rastreamento desde {revenueData.find(p => p.revenue > 0)?.date ?? 'Abr/26'}
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {period === '90d' && revenueData.filter(p => p.revenue > 0).length < 45 && (
+                  <span className="text-xs text-slate-500">
+                    Rastreamento desde {revenueData.find(p => p.revenue > 0)?.date ?? 'Abr/26'}
+                  </span>
+                )}
+                <button onClick={() => setAnnoOpen(v => !v)} className="text-xs text-slate-400 hover:text-white">
+                  📌 Marcar evento
+                </button>
+              </div>
             </div>
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart data={revenueData}>
@@ -1170,9 +1202,35 @@ export default function DashboardPage() {
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
                   formatter={(v) => [fmt(Number(v)), 'Receita']}
                 />
+                {annotations.filter(a => revenueData.some(p => p.date === a.date)).map(a => (
+                  <ReferenceLine key={a.id} x={a.date} stroke="#f59e0b" strokeDasharray="4 4"
+                    label={{ value: '📌', position: 'top', fontSize: 11 }} />
+                ))}
                 <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="url(#colorRevenue)" strokeWidth={2} />
               </AreaChart>
             </ResponsiveContainer>
+
+            {annoOpen && (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <input type="date" value={annoDate} onChange={e => setAnnoDate(e.target.value)}
+                  className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-slate-200 outline-none focus:border-indigo-500" />
+                <input type="text" value={annoLabel} onChange={e => setAnnoLabel(e.target.value)}
+                  placeholder="ex.: Black Friday, mudamos o checkout…" maxLength={120}
+                  className="flex-1 min-w-[180px] bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-indigo-500" />
+                <button onClick={addAnnotation} disabled={!annoDate || !annoLabel.trim()}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs px-3 py-1 rounded">Adicionar</button>
+              </div>
+            )}
+            {annotations.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {annotations.map(a => (
+                  <span key={a.id} className="inline-flex items-center gap-1.5 text-xs bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded px-2 py-1">
+                    📌 {a.date.slice(8, 10)}/{a.date.slice(5, 7)} · {a.label}
+                    <button onClick={() => delAnnotation(a.id)} className="text-amber-400/60 hover:text-amber-300">×</button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
