@@ -27,6 +27,14 @@ from ..services import crypto
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/setup", tags=["setup"])
 
+
+@router.post("/admin/encrypt-credentials", summary="Migração única: cifra credenciais em texto puro (idempotente)")
+async def admin_encrypt_credentials(confirm: str = ""):
+    if confirm != "encrypt-now":
+        raise HTTPException(400, "passe ?confirm=encrypt-now para confirmar")
+    return crypto.encrypt_existing_credentials()
+
+
 _SHOPIFY_API_VERSION = "2024-10"
 
 # Topics our system processes — match ShopifyAdapter.TOPIC_MAP

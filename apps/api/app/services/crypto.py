@@ -108,3 +108,30 @@ def encrypt_client_secrets(data: Optional[dict]) -> Optional[dict]:
         if data.get(fld):
             data[fld] = encrypt_secret(data[fld])
     return data
+
+
+def encrypt_existing_credentials() -> dict:
+    """Migração única: cifra os segredos em texto puro já existentes na tabela
+    `clients`. Idempotente — pula valores já cifrados. Usa a chave do ambiente
+    (roda no servidor, onde CREDENTIALS_KEY existe)."""
+    from ..database import get_supabase
+    if not _get_fernet():
+        return {"error": "CREDENTIALS_KEY não configurada no ambiente"}
+    sb = get_supabase()
+    cols = ", ".join(("id",) + SECRET_FIELDS)
+    rows = (sb.table("clients").select(cols).execute().data) or []
+    clients_updated = 0
+    fields_encrypted = 0
+    for r in rows:
+        patch = {}
+        for fld in SECRET_FIELDS:
+            v = r.get(fld)
+            if v and not is_encrypted(v):
+                enc = encrypt_secret(v)
+                if is_encrypted(enc):           # só grava se realmente cifrou
+                    patch[fld] = enc
+        if patch:
+            sb.table("clients").update(patch).eq("id", r["id"]).execute()
+            clients_updated += 1
+            fields_encrypted += len(patch)
+    return {"clients_updated": clients_updated, "fields_encrypted": fields_encrypted}
