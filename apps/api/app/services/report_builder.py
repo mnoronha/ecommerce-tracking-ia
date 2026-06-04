@@ -971,7 +971,10 @@ def build_monthly_context(
     except Exception as exc:
         logger.warning("build_monthly_context: full client load failed: %s", exc)
         _full = {}
-    client = {**_full, **(client or {})}
+    # _full wins: it carries the DECRYPTED secrets + ad-account ids. The caller's
+    # dict is a subset of the same row and may hold still-encrypted tokens, which
+    # must NOT override the decrypted ones (that silently broke Meta/Google fetch).
+    client = crypto.decrypt_client_secrets({**(client or {}), **_full})
 
     # Date windows
     start, end   = _window(year, month)
