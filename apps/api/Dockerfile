@@ -23,6 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     shared-mime-info \
     libxml2 \
     libxslt1.1 \
+    # Fonts for WeasyPrint — slim image ships none, so PDFs render blank (no glyphs).
+    # Liberation = Arial substitute (CSS troca 'Sora'→'Arial'); DejaVu = sans-serif
+    # fallback ('Inter'→sans-serif); Noto emoji = 🟢/🟡/🔴/📈 do relatório.
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python deps first (better layer caching)
