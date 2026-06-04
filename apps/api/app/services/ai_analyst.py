@@ -524,7 +524,7 @@ def generate_monthly_analysis(
     try:
         message = client.messages.create(
             model=settings.ANTHROPIC_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
             system=_MONTHLY_SYSTEM_PROMPT,
         )

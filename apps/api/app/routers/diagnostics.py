@@ -408,6 +408,22 @@ async def test_monthly_pdf(pixel_id: str, download: bool = Query(default=False))
     pdf = report_renderer.render_to_pdf(ctx)
     if download and pdf:
         return Response(content=pdf, media_type="application/pdf")
+
+    # AI diagnostics — is the analysis actually coming from Claude?
+    from ..config import settings as _s
+    ai_diag = {"anthropic_key_set": bool(_s.ANTHROPIC_API_KEY), "model": _s.ANTHROPIC_MODEL}
+    if _ai_probe := True:
+        try:
+            from ..services import ai_analyst
+            res = ai_analyst.generate_monthly_analysis(
+                client["id"], {"mes": "probe", "faturamento": 1, "canais": []},
+                store_name=client.get("name"), force=True,
+            )
+            ai_diag["ai_returned_keys"] = sorted((res or {}).keys())
+            ai_diag["ai_has_plano"] = bool((res or {}).get("plano"))
+        except Exception as exc:
+            ai_diag["ai_error"] = f"{type(exc).__name__}: {exc}"
+
     return {
         "stage": "ok",
         "pdf_size_bytes": len(pdf) if pdf else 0,
@@ -419,6 +435,8 @@ async def test_monthly_pdf(pixel_id: str, download: bool = Query(default=False))
         "tem_plano": bool(ctx.get("plano")),
         "plano_acoes": len(((ctx.get("plano") or {}).get("acoes")) or []),
         "tem_criativos_meta": ctx.get("tem_criativos_meta"),
+        "analise_canais_len": len(ctx.get("analise_canais") or ""),
+        "ai": ai_diag,
     }
 
 
