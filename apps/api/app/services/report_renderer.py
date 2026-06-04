@@ -12,7 +12,22 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_TEMPLATES_DIR = Path(__file__).parent.parent.parent.parent.parent / "relatorios-agencia"
+def _resolve_templates_dir() -> Path:
+    """Find the relatorios-agencia bundle. It now lives inside the API package
+    (apps/api/relatorios-agencia) so it ships in the Docker build context; the
+    repo-root location is kept as a fallback for older checkouts/local runs."""
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent.parent / "relatorios-agencia",          # apps/api/relatorios-agencia
+        here.parent.parent.parent.parent.parent / "relatorios-agencia",  # repo-root (legacy)
+    ]
+    for c in candidates:
+        if (c / "templates" / "mensal.html").exists():
+            return c
+    return candidates[0]
+
+
+_TEMPLATES_DIR = _resolve_templates_dir()
 
 
 # ── Handlebars helpers (mirrors gerar_relatorio.js) ──────────────────────────

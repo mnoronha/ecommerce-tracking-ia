@@ -858,8 +858,16 @@ def build_monthly_context(
     mes_ant_label = f"{_MESES_PT[prev_month]}/{prev_year}"
     ano_ant_label = f"{_MESES_PT[month]}/{yoy_year}"
 
-    # Agency config
-    agency_cfg_path = Path(__file__).parent.parent.parent.parent.parent / "relatorios-agencia" / "config" / "agencia.json"
+    # Agency config — bundle now lives inside the API package (ships in the
+    # Docker build context); repo-root path kept as a legacy fallback.
+    _here = Path(__file__).resolve()
+    agency_cfg_path = next(
+        (p for p in (
+            _here.parent.parent.parent / "relatorios-agencia" / "config" / "agencia.json",
+            _here.parent.parent.parent.parent.parent / "relatorios-agencia" / "config" / "agencia.json",
+        ) if p.exists()),
+        _here.parent.parent.parent / "relatorios-agencia" / "config" / "agencia.json",
+    )
     agencia = {"nome": settings.AGENCY_NAME or "Noroia", "logo_texto": settings.AGENCY_NAME or "NOROIA",
                 "site": settings.AGENCY_WEBSITE or "noroia.com", "cor_primaria": "#6c47ff", "cor_secundaria": "#a855f7"}
     try:
