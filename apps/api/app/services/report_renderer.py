@@ -62,6 +62,8 @@ def _make_helpers() -> dict:
         if not val:
             return options["fn"](this)
         return ""
+    def _or(this, *args):
+        return any(bool(a) for a in args)
 
     return {
         "eq":     _eq,
@@ -76,6 +78,7 @@ def _make_helpers() -> dict:
         "inc":    _inc,
         "upper":  _upper,
         "unless": _unless,
+        "or":     _or,
     }
 
 

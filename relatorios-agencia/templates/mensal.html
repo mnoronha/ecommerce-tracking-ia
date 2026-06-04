@@ -36,6 +36,13 @@
     <span class="page-tag">{{mes_label}}</span>
   </div>
 
+  {{#if scorecard}}
+  <div class="scorecard sc-{{scorecard.status}}">
+    <div class="sc-badge">{{scorecard.emoji}} {{scorecard.label}}</div>
+    <p class="sc-verdict">{{scorecard.verdict}}</p>
+  </div>
+  {{/if}}
+
   <div class="resumo-box"><p>{{resumo_executivo}}</p></div>
 
   {{#if goal_pct}}
@@ -68,6 +75,77 @@
     {{/each}}
   </div>
 </section>
+
+<!-- ═══════════════ PÁG — METAS, EFICIÊNCIA & FUNIL ═══════════════ -->
+{{#if (or metas.length eficiencia.mer_fmt funil.length)}}
+<section class="page">
+  <div class="page-head">
+    <h2 class="page-title">Metas, Eficiência &amp; Funil</h2>
+    <span class="page-tag">{{mes_label}}</span>
+  </div>
+
+  {{#if metas.length}}
+  <h3 class="block-title">Metas vs. Realizado</h3>
+  <div class="metas-grid">
+    {{#each metas}}
+    <div class="meta-card">
+      <div class="meta-card-label">{{label}}</div>
+      <div class="meta-card-vals">
+        <span class="mc-real">{{realizado}}</span>
+        <span class="mc-sep">/</span>
+        <span class="mc-meta">{{meta}}</span>
+      </div>
+      <div class="meta-bar-track">
+        <div class="meta-bar-fill st-{{status}}" style="width:{{bar_pct}}%"></div>
+      </div>
+      <div class="meta-card-pct st-{{status}}">{{pct_fmt}} da meta</div>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  {{#if eficiencia.mer_fmt}}
+  <h3 class="block-title">Eficiência de mídia</h3>
+  <div class="efic-grid">
+    <div class="efic-card">
+      <div class="efic-label">MER</div>
+      <div class="efic-val">{{eficiencia.mer_fmt}}</div>
+      <div class="efic-sub">Receita total ÷ investimento</div>
+    </div>
+    <div class="efic-card">
+      <div class="efic-label">CAC</div>
+      <div class="efic-val">{{#if eficiencia.cac_fmt}}{{eficiencia.cac_fmt}}{{else}}—{{/if}}</div>
+      <div class="efic-sub">Custo por novo cliente</div>
+    </div>
+    <div class="efic-card">
+      <div class="efic-label">LTV (180d)</div>
+      <div class="efic-val">{{#if eficiencia.ltv_fmt}}{{eficiencia.ltv_fmt}}{{else}}—{{/if}}</div>
+      <div class="efic-sub">Valor estimado por cliente</div>
+    </div>
+    <div class="efic-card {{#if eficiencia.ltv_cac_ok}}efic-hl{{/if}}">
+      <div class="efic-label">LTV : CAC</div>
+      <div class="efic-val">{{#if eficiencia.ltv_cac_fmt}}{{eficiencia.ltv_cac_fmt}}{{else}}—{{/if}}</div>
+      <div class="efic-sub">Saudável ≥ 3:1</div>
+    </div>
+  </div>
+  {{/if}}
+
+  {{#if funil.length}}
+  <h3 class="block-title">Funil de conversão</h3>
+  <div class="funil">
+    {{#each funil}}
+    <div class="funil-row">
+      <div class="funil-label">{{label}}</div>
+      <div class="funil-bar-wrap"><div class="funil-bar" style="width:{{bar_pct}}%"></div></div>
+      <div class="funil-n">{{n_fmt}}</div>
+      <div class="funil-conv">{{#if conv_fmt}}{{conv_fmt}}{{/if}}</div>
+    </div>
+    {{/each}}
+  </div>
+  <p class="funil-note">As etapas de navegação vêm do pixel de rastreamento. A etapa final (Compras) considera todos os pedidos do período, inclusive os atribuídos via CAPI server-side.</p>
+  {{/if}}
+</section>
+{{/if}}
 
 <!-- ═══════════════ PÁG 3 — CANAIS ═══════════════ -->
 <section class="page">
@@ -126,6 +204,31 @@
     </div>
     {{/each}}
   </div>
+
+  {{#if atribuicao_modelos.rows.length}}
+  <h3 class="block-title">Comparação de modelos de atribuição</h3>
+  <table class="mt-table">
+    <thead>
+      <tr>
+        <th>Canal</th>
+        <th class="num">Último clique</th>
+        <th class="num">Linear</th>
+        <th class="num">Time decay</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each atribuicao_modelos.rows}}
+      <tr>
+        <td>{{canal}}</td>
+        <td class="num">{{last_click_fmt}}</td>
+        <td class="num">{{linear_fmt}}</td>
+        <td class="num">{{time_decay_fmt}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+  <p class="mt-note">Onde os valores divergem entre modelos, há canais que assistem à venda sem levar o último clique.{{#if atribuicao_modelos.multitouch_pct_fmt}} Cobertura multi-toque: {{atribuicao_modelos.multitouch_pct_fmt}} dos pedidos.{{/if}}</p>
+  {{/if}}
 
   <h3 class="block-title">Evolução diária de receita</h3>
   <div class="daily-chart">
@@ -280,6 +383,20 @@
       <div class="ret-num">{{retencao.recorrentes_fmt}} <span class="ret-pct">({{retencao.rep_rate_fmt}})</span></div>
     </div>
     <div class="ret-total">Total: <strong>{{retencao.total_fmt}} pedidos</strong> · Taxa de recompra: <strong>{{retencao.rep_rate_fmt}}</strong></div>
+    {{#if retencao.rev_novos_fmt}}
+    <div class="ret-rev">
+      <div class="ret-rev-card">
+        <span class="rr-label">Receita — novos</span>
+        <span class="rr-val">{{retencao.rev_novos_fmt}}</span>
+        <span class="rr-sub">Ticket médio {{retencao.ticket_novo_fmt}}</span>
+      </div>
+      <div class="ret-rev-card">
+        <span class="rr-label">Receita — recorrentes</span>
+        <span class="rr-val">{{retencao.rev_rec_fmt}}</span>
+        <span class="rr-sub">{{retencao.rev_rec_pct_fmt}} da receita · ticket {{retencao.ticket_rec_fmt}}</span>
+      </div>
+    </div>
+    {{/if}}
   </div>
 
   <!-- Destaques -->

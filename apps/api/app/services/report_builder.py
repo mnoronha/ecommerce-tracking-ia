@@ -223,15 +223,26 @@ def _fetch_attribution(orders: list[dict]) -> list[dict]:
 
 
 def _fetch_retention(orders: list[dict]) -> dict:
-    novos      = sum(1 for o in orders if o.get("is_first_purchase") is True)
-    recorrentes = sum(1 for o in orders if o.get("is_first_purchase") is False)
-    total      = novos + recorrentes
+    novos = recorrentes = 0
+    rev_novos = rev_rec = 0.0
+    for o in orders:
+        v = float(o.get("total_price") or 0)
+        if o.get("is_first_purchase") is True:
+            novos += 1; rev_novos += v
+        elif o.get("is_first_purchase") is False:
+            recorrentes += 1; rev_rec += v
+    total = novos + recorrentes
     if total == 0:
         total = len(orders)
         novos = total
+        rev_novos = sum(float(o.get("total_price") or 0) for o in orders)
 
     rep_rate = round(recorrentes / total * 100, 1) if total > 0 else 0
     nov_pct  = round(novos       / total * 100, 1) if total > 0 else 100
+    rev_total = rev_novos + rev_rec
+    rev_rec_pct = round(rev_rec / rev_total * 100, 1) if rev_total > 0 else 0
+    ticket_novo = round(rev_novos / novos, 2) if novos > 0 else 0
+    ticket_rec  = round(rev_rec / recorrentes, 2) if recorrentes > 0 else 0
     return {
         "novos":           novos,
         "recorrentes":     recorrentes,
@@ -245,6 +256,217 @@ def _fetch_retention(orders: list[dict]) -> dict:
         "total_fmt":       _num(total),
         "bar_novos":       nov_pct,
         "bar_rec":         rep_rate,
+        # Receita por tipo de cliente
+        "rev_novos":         round(rev_novos, 2),
+        "rev_rec":           round(rev_rec, 2),
+        "rev_novos_fmt":     _brl(rev_novos),
+        "rev_rec_fmt":       _brl(rev_rec),
+        "rev_rec_pct":       rev_rec_pct,
+        "rev_rec_pct_fmt":   _pct(rev_rec_pct),
+        "ticket_novo_fmt":   _brl(ticket_novo),
+        "ticket_rec_fmt":    _brl(ticket_rec),
+    }
+
+
+# ── Funil de conversão (RPC server-side) ──────────────────────────────────────
+
+def _fetch_funnel(sb, client_id: str, start: str, end: str, orders_count: int) -> list[dict]:
+    """Funil do mês via RPC funnel_counts (agrega tracking_events server-side).
+    Etapa final (Compras) vem de orders — o pixel não emite purchase (vem do CAPI)."""
+    counts: dict[str, int] = {}
+    try:
+        res = sb.rpc("funnel_counts", {"p_client": client_id, "p_start": start, "p_end": end}).execute()
+        for r in (res.data or []):
+            counts[r["event_type"]] = int(r["n"])
+    except Exception as exc:
+        logger.warning("_fetch_funnel rpc failed for %s: %s", client_id, exc)
+        return []
+
+    stages = [
+        ("Visitas",                 counts.get("pageview", 0)),
+        ("Visualizaram produto",    counts.get("view_product", 0)),
+        ("Adicionaram ao carrinho", counts.get("add_to_cart", 0)),
+        ("Iniciaram checkout",      counts.get("begin_checkout", 0)),
+        ("Compraram",               orders_count),
+    ]
+    top = stages[0][1] or max((n for _, n in stages), default=0) or 1
+    out: list[dict] = []
+    prev_n: Optional[int] = None
+    for label, n in stages:
+        conv = round(n / prev_n * 100, 1) if (prev_n and prev_n > 0) else None
+        out.append({
+            "label":    label,
+            "n":        n,
+            "n_fmt":    _num(n),
+            "bar_pct":  round(n / top * 100, 1) if top else 0,
+            "conv_fmt": _pct(conv) if conv is not None else None,
+        })
+        prev_n = n
+    return out
+
+
+# ── Eficiência de mídia: MER, CAC, LTV, LTV:CAC ───────────────────────────────
+
+def _build_efficiency(cur: dict, retention: dict, ltv_stats: dict) -> dict:
+    rev    = cur["revenue"]
+    spend  = cur["spend"]
+    novos  = retention.get("novos") or 0
+    mer    = round(rev / spend, 2) if spend > 0 else None
+    cac    = round(spend / novos, 2) if (spend > 0 and novos > 0) else None
+
+    # LTV estimado: ticket médio × multiplicador de recompra (média ponderada
+    # por amostra das estatísticas de LTV por canal, 180d).
+    ltv = ltv_cac = None
+    if ltv_stats:
+        tot_n = sum((s.get("sample_size") or 0) for s in ltv_stats.values())
+        if tot_n > 0:
+            blended = sum(
+                (1.0 + (s.get("repeat_rate") or 0) * (s.get("avg_repeat_orders") or 0)) * (s.get("sample_size") or 0)
+                for s in ltv_stats.values()
+            ) / tot_n
+            if cur["aov"]:
+                ltv = round(cur["aov"] * blended, 2)
+                if cac and cac > 0:
+                    ltv_cac = round(ltv / cac, 1)
+    return {
+        "mer":         mer,
+        "mer_fmt":     _roas(mer),
+        "cac":         cac,
+        "cac_fmt":     _brl(cac),
+        "ltv":         ltv,
+        "ltv_fmt":     _brl(ltv) if ltv else None,
+        "ltv_cac":     ltv_cac,
+        "ltv_cac_fmt": (f"{ltv_cac:.1f}:1".replace(".", ",") if ltv_cac else None),
+        "ltv_cac_ok":  bool(ltv_cac and ltv_cac >= 3),
+    }
+
+
+# ── Scorecard de saúde + Metas vs Realizado ───────────────────────────────────
+
+def _build_scorecard(cur: dict, mom_delta: Optional[float],
+                     goal_rev: float, goal_roas: float) -> tuple[dict, list[dict]]:
+    rev   = cur["revenue"]
+    roas  = cur["roas"]
+    spend = cur["spend"]
+
+    metas: list[dict] = []
+
+    def _meta(label, realizado_fmt, meta_fmt, pct, lower_better=False):
+        if pct is None:
+            return
+        if lower_better:
+            st = "good" if pct <= 100 else ("warn" if pct <= 115 else "bad")
+        else:
+            st = "good" if pct >= 100 else ("warn" if pct >= 85 else "bad")
+        metas.append({
+            "label": label, "realizado": realizado_fmt, "meta": meta_fmt,
+            "pct": pct, "pct_fmt": _pct(pct), "bar_pct": min(round(pct), 100),
+            "status": st,
+        })
+
+    pct_rev = round(rev / goal_rev * 100, 1) if goal_rev > 0 else None
+    _meta("Faturamento", _brl(rev), _brl(goal_rev), pct_rev)
+
+    pct_roas = round(roas / goal_roas * 100, 1) if (goal_roas > 0 and roas) else None
+    _meta("ROAS (MER)", _roas(roas), _roas(goal_roas), pct_roas)
+
+    if goal_rev > 0 and goal_roas > 0:
+        budget = goal_rev / goal_roas
+        pct_spend = round(spend / budget * 100, 1) if budget > 0 else None
+        _meta("Investimento", _brl(spend), _brl(budget), pct_spend, lower_better=True)
+
+    # Veredito do mês
+    bad = warn = 0
+    if rev <= 0:
+        bad += 2
+    if mom_delta is not None and mom_delta <= -20:
+        bad += 1
+    elif mom_delta is not None and mom_delta < 0:
+        warn += 1
+    for m in metas:
+        if m["status"] == "bad":
+            bad += 1
+        elif m["status"] == "warn":
+            warn += 1
+
+    if bad >= 2:
+        status, emoji, label = "vermelho", "🔴", "Mês de atenção"
+    elif bad == 1 or warn >= 2:
+        status, emoji, label = "amarelo", "🟡", "Mês dentro do esperado, com ressalvas"
+    else:
+        status, emoji, label = "verde", "🟢", "Mês saudável"
+
+    parts: list[str] = [f"Faturamento de {_brl(rev)}"]
+    if mom_delta is not None:
+        parts.append(f"{'+' if mom_delta >= 0 else ''}{mom_delta:.0f}% vs. mês anterior")
+    if pct_rev is not None:
+        parts.append(f"{_pct(pct_rev)} da meta")
+    if roas:
+        parts.append(f"ROAS {_roas(roas)}")
+    verdict = " · ".join(parts) + "."
+
+    return {"status": status, "emoji": emoji, "label": label, "verdict": verdict}, metas
+
+
+# ── Atribuição multi-toque: comparação de modelos ─────────────────────────────
+
+_ATTR_PLATFORM_LABELS = {
+    "meta": "Meta Ads", "facebook": "Meta Ads", "instagram": "Meta Ads",
+    "google": "Google Ads", "google_ads": "Google Ads",
+    "tiktok": "TikTok Ads", "direct": "Direto", "organic": "Orgânico",
+    "email": "E-mail", "other": "Outros",
+    "pos": "PDV / Loja física", "offline": "PDV / Loja física",
+}
+
+def _fetch_attribution_models(client_id: str, start_date: str, end_date: str) -> dict:
+    """Compara receita por canal sob 3 modelos (último clique / linear / time decay).
+    Onde os modelos divergem, há canais que assistem a venda sem levar o último clique.
+    Quando os 3 modelos coincidem (realidade de toque único), a seção é omitida —
+    rows=[] — para não exibir 3 colunas idênticas sem valor analítico."""
+    from . import attribution_engine
+    models = ["last_click", "linear", "time_decay"]
+    per_model: dict[str, dict] = {}
+    coverage: Optional[float] = None
+    for mdl in models:
+        try:
+            s = attribution_engine.get_summary(client_id, model=mdl, start=start_date, end=end_date)
+        except Exception as exc:
+            logger.warning("_fetch_attribution_models(%s) failed: %s", mdl, exc)
+            s = {}
+        per_model[mdl] = {p.get("platform"): float(p.get("revenue") or 0) for p in (s.get("by_platform") or [])}
+        if coverage is None:
+            coverage = s.get("multitouch_pct")
+
+    plats = {p for d in per_model.values() for p in d if p}
+    if not plats:
+        return {"rows": [], "multitouch_pct": coverage, "multitouch_pct_fmt": None, "converged": False}
+
+    lc = per_model.get("last_click", {})
+    ln = per_model.get("linear", {})
+    td = per_model.get("time_decay", {})
+    # Divergência real entre modelos? (tolerância de R$1 p/ ruído de arredondamento)
+    diverged = any(
+        abs(lc.get(p, 0) - ln.get(p, 0)) > 1.0 or abs(lc.get(p, 0) - td.get(p, 0)) > 1.0
+        for p in plats
+    )
+    if not diverged:
+        return {"rows": [], "multitouch_pct": coverage,
+                "multitouch_pct_fmt": _pct(coverage) if coverage is not None else None,
+                "converged": True}
+
+    rows = []
+    for p in sorted(plats, key=lambda x: lc.get(x, 0), reverse=True):
+        rows.append({
+            "canal":          _ATTR_PLATFORM_LABELS.get((p or "").lower(), (p or "—").title()),
+            "last_click_fmt": _brl(lc.get(p, 0)),
+            "linear_fmt":     _brl(ln.get(p, 0)),
+            "time_decay_fmt": _brl(td.get(p, 0)),
+        })
+    return {
+        "rows": rows,
+        "multitouch_pct": coverage,
+        "multitouch_pct_fmt": _pct(coverage) if coverage is not None else None,
+        "converged": False,
     }
 
 
@@ -647,11 +869,29 @@ def build_monthly_context(
     except Exception:
         pass
 
-    # Client goal
-    goal_row = sb.table("clients").select("monthly_revenue_goal, target_roas").eq("id", client_id).limit(1).execute()
-    goal_rev  = float((goal_row.data or [{}])[0].get("monthly_revenue_goal") or 0)
-    goal_roas = float((goal_row.data or [{}])[0].get("target_roas") or 0)
+    # Client goal + LTV stats
+    goal_row = sb.table("clients").select("monthly_revenue_goal, target_roas, ltv_stats").eq("id", client_id).limit(1).execute()
+    _goal0    = (goal_row.data or [{}])[0]
+    goal_rev  = float(_goal0.get("monthly_revenue_goal") or 0)
+    goal_roas = float(_goal0.get("target_roas") or 0)
     goal_pct  = round(cur["revenue"] / goal_rev * 100, 1) if goal_rev > 0 else None
+    ltv_stats = _goal0.get("ltv_stats") or {}
+
+    # Funil de conversão (RPC server-side)
+    funil = _fetch_funnel(sb, client_id, start, end, cur["orders"])
+
+    # Eficiência de mídia (MER, CAC, LTV, LTV:CAC)
+    eficiencia = _build_efficiency(cur, retention, ltv_stats)
+
+    # Scorecard de saúde + Metas vs Realizado
+    mom_delta_val = (
+        round((cur["revenue"] - prev["revenue"]) / prev["revenue"] * 100, 1)
+        if prev["revenue"] > 0 else None
+    )
+    scorecard, metas = _build_scorecard(cur, mom_delta_val, goal_rev, goal_roas)
+
+    # Atribuição multi-toque (comparação de modelos)
+    atribuicao_modelos = _fetch_attribution_models(client_id, start_date, end_date_iso)
 
     return {
         # Identity
@@ -691,12 +931,23 @@ def build_monthly_context(
         "goal_pct":         goal_pct,
         "goal_pct_fmt":     _pct(goal_pct) if goal_pct else None,
 
+        # Scorecard de saúde + Metas vs Realizado
+        "scorecard": scorecard,
+        "metas":     metas,
+
+        # Eficiência de mídia (MER, CAC, LTV, LTV:CAC)
+        "eficiencia": eficiencia,
+
+        # Funil de conversão
+        "funil": funil,
+
         # Channels
         "canais": channels,
 
         # Attribution
         "atribuicao": attribution,
         "atribuicao_total_fmt": _brl(cur["revenue"]),
+        "atribuicao_modelos": atribuicao_modelos,
 
         # Daily revenue (bar chart)
         "receita_diaria": daily_revenue,

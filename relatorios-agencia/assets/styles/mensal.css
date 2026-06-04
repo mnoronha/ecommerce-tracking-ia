@@ -377,3 +377,68 @@ h1, h2, h3 { font-family: 'Sora', sans-serif; }
 }
 .rep-footer-agencia { font-weight: 600; color: var(--ink-soft); }
 .rep-footer-sep { margin: 0 6px; }
+
+/* ── Scorecard de saúde do mês ── */
+.scorecard {
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin: 0 0 16px;
+  border-left: 5px solid var(--ink-dim);
+  background: var(--bg-soft);
+}
+.scorecard.sc-verde    { border-left-color: var(--good); background: #f0fbf4; }
+.scorecard.sc-amarelo  { border-left-color: #f59e0b; background: #fffaf0; }
+.scorecard.sc-vermelho { border-left-color: var(--bad); background: #fef2f2; }
+.sc-badge { font-family: 'Sora'; font-size: 15px; font-weight: 800; color: var(--ink); }
+.sc-verdict { font-size: 12.5px; color: var(--ink-soft); margin: 4px 0 0; line-height: 1.5; }
+
+/* ── Metas vs Realizado ── */
+.metas-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 4px; }
+.meta-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.meta-card-label { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-dim); }
+.meta-card-vals { font-family: 'Sora'; margin: 6px 0 9px; }
+.mc-real { font-size: 17px; font-weight: 800; color: var(--ink); }
+.mc-sep  { color: var(--ink-dim); margin: 0 5px; font-size: 13px; }
+.mc-meta { font-size: 13px; color: var(--ink-dim); font-weight: 600; }
+.meta-bar-track { background: var(--line); border-radius: 6px; height: 9px; }
+.meta-bar-fill { height: 9px; border-radius: 6px; max-width: 100%; background: var(--ink-dim); }
+.meta-bar-fill.st-good { background: linear-gradient(90deg, var(--good), #84d6a3); }
+.meta-bar-fill.st-warn { background: linear-gradient(90deg, #f59e0b, #fbd38d); }
+.meta-bar-fill.st-bad  { background: linear-gradient(90deg, var(--bad), #fca5a5); }
+.meta-card-pct { font-size: 11.5px; font-weight: 700; margin-top: 6px; }
+.meta-card-pct.st-good { color: var(--good); }
+.meta-card-pct.st-warn { color: #d97706; }
+.meta-card-pct.st-bad  { color: var(--bad); }
+
+/* ── Funil de conversão ── */
+.funil { display: flex; flex-direction: column; gap: 9px; margin-bottom: 4px; }
+.funil-row { display: grid; grid-template-columns: 168px 1fr 96px 78px; align-items: center; gap: 12px; }
+.funil-label { font-size: 13px; font-weight: 600; color: var(--ink-soft); }
+.funil-bar-wrap { background: var(--line); border-radius: 6px; height: 18px; overflow: hidden; }
+.funil-bar { height: 18px; border-radius: 6px; min-width: 2px; background: linear-gradient(90deg, var(--color-accent), var(--color-accent2)); }
+.funil-n { text-align: right; font-family: 'Sora'; font-size: 14px; font-weight: 700; }
+.funil-conv { text-align: right; font-size: 12px; color: var(--color-accent); font-weight: 700; }
+.funil-note { font-size: 11px; color: var(--ink-dim); margin-top: 10px; line-height: 1.5; }
+
+/* ── Eficiência de mídia ── */
+.efic-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.efic-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; text-align: center; }
+.efic-card.efic-hl { background: var(--bg-soft); border-color: var(--color-accent); }
+.efic-label { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-dim); }
+.efic-val { font-family: 'Sora'; font-size: 22px; font-weight: 800; color: var(--ink); margin: 6px 0 3px; }
+.efic-sub { font-size: 10.5px; color: var(--ink-dim); line-height: 1.4; }
+
+/* ── Atribuição multi-toque ── */
+.mt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.mt-table thead th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink-dim); border-bottom: 2px solid var(--ink); padding: 0 8px 8px; }
+.mt-table th.num, .mt-table td.num { text-align: right; }
+.mt-table tbody td { padding: 9px 8px; border-bottom: 1px solid var(--line); font-family: 'Sora'; }
+.mt-table tbody td:first-child { font-weight: 600; color: var(--ink-soft); font-family: inherit; }
+.mt-note { font-size: 11px; color: var(--ink-dim); margin-top: 10px; line-height: 1.5; }
+
+/* ── Receita por tipo de cliente (retenção) ── */
+.ret-rev { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+.ret-rev-card { border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; }
+.rr-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-dim); }
+.rr-val { display: block; font-family: 'Sora'; font-size: 19px; font-weight: 800; color: var(--ink); margin: 5px 0 2px; }
+.rr-sub { font-size: 11px; color: var(--ink-dim); }

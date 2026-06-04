@@ -173,6 +173,10 @@ function registerHelpers() {
   handlebars.registerHelper("seta", (variacao) => setaCanal(variacao));
   handlebars.registerHelper("inc", (i) => i + 1);
   handlebars.registerHelper("upper", (s) => String(s || "").toUpperCase());
+  handlebars.registerHelper("or", (...args) => {
+    args.pop(); // remove Handlebars options object
+    return args.some(Boolean);
+  });
 }
 
 function registerPartials() {
