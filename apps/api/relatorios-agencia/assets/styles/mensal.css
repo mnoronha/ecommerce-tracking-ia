@@ -41,17 +41,28 @@ h1, h2, h3 { font-family: 'Sora', sans-serif; }
 
 .page {
   width: 210mm;
-  min-height: 297mm;
-  padding: 20mm 16mm;
+  padding: 15mm 16mm 16mm;
   margin: 0 auto;
   position: relative;
-  page-break-after: always;
   background: #fff;
+  break-before: page;
 }
-.page:last-child { page-break-after: auto; }
+/* First page (cover) must NOT carry a leading break — that produced a blank
+   first page. Each subsequent .page starts fresh via break-before. No fixed
+   min-height (it caused ~1px overflow → trailing blank pages). */
+.page:first-child { break-before: avoid; }
+
+/* Keep atomic blocks from splitting across a page boundary */
+.kpi-card, .canal-block, .meta-card, .efic-card, .criativo-card,
+.meta-criativo-card, .atencao-item, .acao-list li, .highlight-card,
+.ret-rev-card, .yoy-cell, .camp-table tr, .mt-table tr {
+  break-inside: avoid;
+}
+.block-title { break-after: avoid; }
 
 /* ── Capa ── */
 .page-capa {
+  min-height: 297mm;
   background: radial-gradient(120% 120% at 0% 0%, var(--color-accent) 0%, var(--color-accent2) 55%, #2a1a66 100%);
   color: #fff;
   display: flex;
@@ -442,3 +453,43 @@ h1, h2, h3 { font-family: 'Sora', sans-serif; }
 .rr-label { display: block; font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--ink-dim); }
 .rr-val { display: block; font-family: 'Sora'; font-size: 19px; font-weight: 800; color: var(--ink); margin: 5px 0 2px; }
 .rr-sub { font-size: 11px; color: var(--ink-dim); }
+
+/* ── Insights & Oportunidades (destaques da IA, no Resumo) ── */
+.insight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.insight-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 12px;
+  padding: 13px 16px 14px;
+  background: #fff;
+}
+.insight-card.ins-positivo { border-left-color: var(--good); background: #f4fbf6; }
+.insight-card.ins-atencao  { border-left-color: #f59e0b; background: #fffaf0; }
+.ins-tag {
+  display: inline-block;
+  font-size: 9px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; margin-bottom: 6px; color: #fff;
+}
+.ins-positivo .ins-tag { background: var(--good); }
+.ins-atencao  .ins-tag { background: #f59e0b; }
+.ins-titulo { font-family: 'Sora'; font-weight: 700; font-size: 13.5px; color: var(--ink); margin-bottom: 3px; }
+.ins-texto  { font-size: 12.5px; color: var(--ink-soft); line-height: 1.5; }
+.insight-analise {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 18px;
+  background: linear-gradient(180deg, var(--bg-soft), #fff);
+  margin-bottom: 4px;
+}
+.insight-analise .ia-label {
+  display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .8px;
+  text-transform: uppercase; color: var(--color-accent); margin-bottom: 6px;
+}
+.insight-analise p { font-size: 12.5px; color: var(--ink-soft); line-height: 1.65; }
+
+/* ── Refinos de redesign ── */
+.page-title { background: linear-gradient(90deg, var(--color-accent), var(--color-accent2)); -webkit-background-clip: text; background-clip: text; color: var(--color-accent); }
+.capa-cliente { line-height: 1.05; }
+.camp-table tbody tr:nth-child(even) td { background: var(--bg-soft); }
+.canal-block-destaque { white-space: nowrap; }

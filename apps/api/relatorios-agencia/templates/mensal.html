@@ -56,6 +56,25 @@
   </div>
   {{/if}}
 
+  {{#if destaques.length}}
+  <h3 class="block-title">Insights &amp; Oportunidades</h3>
+  <div class="insight-grid">
+    {{#each destaques}}
+    <div class="insight-card ins-{{tipo}}">
+      <span class="ins-tag">{{#if (eq tipo "positivo")}}Destaque{{else}}Atenção{{/if}}</span>
+      <div class="ins-titulo">{{titulo}}</div>
+      <p class="ins-texto">{{texto}}</p>
+    </div>
+    {{/each}}
+  </div>
+  {{#if analise_canais}}
+  <div class="insight-analise">
+    <span class="ia-label">Leitura da IA · canais</span>
+    <p>{{analise_canais}}</p>
+  </div>
+  {{/if}}
+  {{/if}}
+
   <h3 class="block-title">Indicadores gerais do mês</h3>
   <div class="kpi-grid kpi-grid-3">
     {{#each kpis}}{{> kpi_card}}{{/each}}
@@ -181,6 +200,41 @@
   {{#unless canais}}
   <p class="sem-dados">Sem dados de investimento para este período.</p>
   {{/unless}}
+
+  {{#if tem_campanhas}}
+  {{#each campanhas_por_canal}}
+  <h3 class="block-title">{{icone}} Top campanhas — {{canal_label}}</h3>
+  <table class="camp-table">
+    <thead>
+      <tr>
+        <th>Campanha</th>
+        <th class="num">Invest.</th>
+        <th class="num">Resultado</th>
+        <th class="num">ROAS</th>
+        <th class="num">Conv.</th>
+        <th class="num">CPA</th>
+        <th class="num">CTR</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each campanhas}}
+      <tr>
+        <td class="camp-nome"><strong>{{nome}}</strong></td>
+        <td class="num">{{investimento_fmt}}</td>
+        <td class="num">{{resultado_fmt}}</td>
+        <td class="num"><strong>{{indice_fmt}}</strong></td>
+        <td class="num">{{qtd_fmt}}</td>
+        <td class="num">{{custo_fmt}}</td>
+        <td class="num">{{ctr_fmt}}</td>
+        <td><span class="status status-{{status}}">{{status_label}}</span></td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+  {{/each}}
+  <p class="funil-note">Resultado e ROAS por campanha usam números reportados pela própria plataforma (Meta: compras e valor de conversão; Google: conversões e valor). Podem divergir da receita atribuída server-side, que é a base do restante do relatório.</p>
+  {{/if}}
 </section>
 
 <!-- ═══════════════ PÁG 4 — ATRIBUIÇÃO + EVOLUÇÃO ═══════════════ -->
@@ -246,14 +300,14 @@
   </div>
 </section>
 
-<!-- ═══════════════ PÁG 5 — CRIATIVOS META ═══════════════ -->
+<!-- ═══════════════ PÁG 5 — CRIATIVOS META (só se houver dados) ═══════════════ -->
+{{#if tem_criativos_meta}}
 <section class="page">
   <div class="page-head">
     <h2 class="page-title">Criativos Meta Ads</h2>
     <span class="page-tag">{{mes_label}}</span>
   </div>
 
-  {{#if tem_criativos_meta}}
   <h3 class="block-title">Top criativos por investimento</h3>
   <div class="meta-criativo-grid">
     {{#each criativos_meta}}
@@ -298,22 +352,18 @@
     </div>
     {{/each}}
   </div>
-  {{else}}
-  <div class="sem-dados-box">
-    <p>Dados de criativos não disponíveis para este período.<br>Verifique se o token Meta está configurado nas integrações.</p>
-  </div>
-  {{/if}}
 </section>
+{{/if}}
 
-<!-- ═══════════════ PÁG 6 — PRODUTOS + CAMPANHAS ═══════════════ -->
+<!-- ═══════════════ PÁG 6 — PRODUTOS ═══════════════ -->
+{{#if tem_produtos}}
 <section class="page">
   <div class="page-head">
-    <h2 class="page-title">Produtos &amp; Campanhas</h2>
+    <h2 class="page-title">Produtos mais vendidos</h2>
     <span class="page-tag">{{mes_label}}</span>
   </div>
 
-  {{#if tem_produtos}}
-  <h3 class="block-title">Top {{top_produtos.length}} produtos mais vendidos</h3>
+  <h3 class="block-title">Top {{top_produtos.length}} produtos do mês</h3>
   <table class="camp-table">
     <thead>
       <tr>
@@ -334,29 +384,8 @@
       {{/each}}
     </tbody>
   </table>
-  {{/if}}
-
-  {{#if campanhas.length}}
-  <h3 class="block-title">Campanhas em destaque</h3>
-  <table class="camp-table">
-    <thead>
-      <tr>
-        <th>Campanha</th>
-        <th>Canal</th>
-        <th class="num">Invest.</th>
-        <th class="num">Receita</th>
-        <th class="num">ROAS</th>
-        <th class="num">Pedidos</th>
-        <th class="num">CPA</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{#each campanhas}}{{> campaign_row}}{{/each}}
-    </tbody>
-  </table>
-  {{/if}}
 </section>
+{{/if}}
 
 <!-- ═══════════════ PÁG 7 — RETENÇÃO + DESTAQUES + PLANO ═══════════════ -->
 <section class="page">
@@ -399,18 +428,8 @@
     {{/if}}
   </div>
 
-  <!-- Destaques -->
-  {{#if destaques.length}}
-  <h3 class="block-title">Destaques do mês</h3>
-  <div class="highlight-grid">
-    {{#each destaques}}
-    <div class="highlight-card hl-{{tipo}}">
-      <div class="hl-titulo">{{titulo}}</div>
-      <p class="hl-texto">{{texto}}</p>
-    </div>
-    {{/each}}
-  </div>
-  {{/if}}
+  <!-- Destaques movidos para a seção "Insights & Oportunidades" no Resumo -->
+
 
   <!-- Atenções -->
   {{#if tem_atencoes}}

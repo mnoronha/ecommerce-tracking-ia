@@ -431,84 +431,138 @@ def run_daily_insights_all_clients() -> None:
 
 # ── Monthly deep analysis ──────────────────────────────────────────────────────
 
-_MONTHLY_SYSTEM_PROMPT = """Você é um analista sênior de e-commerce escrevendo o relatório MENSAL
-que será lido pelo dono da loja (cliente da agência).
+_MONTHLY_SYSTEM_PROMPT = """Você é um estrategista sênior de tráfego pago e e-commerce escrevendo o
+relatório MENSAL que será lido pelo dono da loja (cliente da agência). Sua
+análise é o principal diferencial da agência — precisa ser específica,
+acionável e valiosa, nunca genérica.
 
-Retorne EXATAMENTE um JSON (sem markdown, sem texto extra):
+Você recebe os números REAIS do mês (faturamento, ROAS por canal, campanhas,
+funil, retenção, metas). Use-os literalmente — cite valores, percentuais e
+nomes de campanha. Nada de conselhos vagos do tipo "invista mais em quem
+performa"; diga QUAL campanha/canal, com QUE número, e O QUE fazer.
+
+Retorne EXATAMENTE este JSON (sem markdown, sem texto fora do JSON):
 
 {
-  "insights": [
-    {
-      "type": "monthly_report",
-      "severity": "info|warning|critical",
-      "title": "Título do mês (max 80 chars)",
-      "content": "Análise estratégica completa em 4-6 parágrafos: visão geral do mês, desempenho por canal, retenção/LTV, o que funcionou e o que ajustar no próximo mês. Use números reais.",
-      "recommendation": "As 2-3 prioridades para o próximo mês",
-      "data": {}
-    }
-  ]
+  "resumo_executivo": "2-4 frases que um dono de loja ocupado leria em 15s: como foi o mês, o número que mais importa, e o foco do próximo mês.",
+  "destaques": [
+    {"tipo": "positivo", "titulo": "curto", "texto": "1-2 frases com número real"},
+    {"tipo": "atencao",  "titulo": "curto", "texto": "1-2 frases com número real e o porquê"}
+  ],
+  "analise_canais": "1-2 parágrafos comparando Meta vs Google (e outros) com ROAS/CPA reais; aponte a melhor e a pior campanha pelo nome e o que fazer com cada uma.",
+  "plano": {
+    "meta_faturamento": <número sugerido p/ próximo mês, baseado na tendência e na meta atual>,
+    "meta_roas": <número>,
+    "meta_cpa": <número ou 0 se não der p/ estimar>,
+    "budget_total": <investimento total sugerido p/ próximo mês>,
+    "acoes": [
+      "Ação 1 priorizada, específica e mensurável (ex.: 'Escalar a campanha X em 20% — ROAS 4,1x, melhor do mês')",
+      "Ação 2",
+      "Ação 3",
+      "(3 a 5 ações no total)"
+    ]
+  }
 }
 
 Regras:
-- Gere EXATAMENTE 1 insight do tipo 'monthly_report'
-- SEMPRE comece destacando os pontos positivos do mês, mesmo que o resultado geral tenha sido fraco — encontre o que funcionou (um canal eficiente, recompra, um produto, melhora de ticket)
-- Seja honesto sobre os problemas, mas com tom construtivo e propositivo (foco em solução, não em culpa)
-- Use os números reais dos dados (receita, ROAS por canal, cohort de recompra, top produtos)
-- Responda em português brasileiro"""
+- SEMPRE comece pelos pontos positivos, mesmo num mês fraco — encontre o que funcionou (canal eficiente, recompra, produto, melhora de ticket).
+- Seja honesto sobre problemas, com tom construtivo e propositivo (solução, não culpa).
+- 1 a 3 destaques positivos e 1 a 2 de atenção.
+- 3 a 5 ações no plano, ordenadas por impacto, cada uma com um número/critério concreto.
+- Se faltar dado para uma meta numérica, estime com base na tendência (não deixe 0 sem motivo).
+- Português brasileiro. Valores monetários em reais."""
+
+
+def generate_monthly_analysis(
+    client_uuid: str,
+    report_metrics: Optional[dict] = None,
+    store_name: Optional[str] = None,
+    force: bool = False,
+) -> dict:
+    """
+    Análise mensal estratégica (Claude Sonnet) a partir dos números REAIS do
+    relatório. Retorna o objeto rico {resumo_executivo, destaques, analise_canais,
+    plano} e o persiste em ai_insights (type=monthly_report, data=<objeto>).
+
+    `report_metrics`: dict compacto montado pelo report_builder com os números do
+    mês (canais, campanhas, metas, funil, retenção). Se ausente, cai no coletor
+    genérico de 30d. Reutiliza um insight rico gerado nas últimas 3h (a menos de
+    force=True) para não repetir a chamada ao Claude em re-renders.
+    """
+    if not settings.ANTHROPIC_API_KEY:
+        logger.warning("generate_monthly_analysis: ANTHROPIC_API_KEY ausente")
+        return {}
+
+    sb = get_supabase()
+    if not force:
+        try:
+            cutoff = (datetime.utcnow() - timedelta(hours=3)).isoformat()
+            recent = (
+                sb.table("ai_insights").select("data, created_at")
+                .eq("client_id", client_uuid).eq("type", "monthly_report")
+                .gte("created_at", cutoff).order("created_at", desc=True).limit(1).execute()
+            )
+            if recent.data:
+                data = recent.data[0].get("data") or {}
+                if data.get("plano"):           # already the rich structure
+                    logger.info("monthly analysis: reusing cached insight for %s", client_uuid)
+                    return data
+        except Exception as exc:
+            logger.debug("monthly analysis cache check failed: %s", exc)
+
+    store_name = store_name or _get_client_name(client_uuid)
+    metrics = report_metrics if report_metrics is not None else _collect_metrics(client_uuid)
+
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    prompt = (
+        f"Números reais do mês para a loja {store_name}:\n\n"
+        f"{json.dumps(metrics, ensure_ascii=False, indent=2)}\n\n"
+        "Escreva a análise mensal seguindo EXATAMENTE o formato JSON do sistema. "
+        "Cite campanhas pelo nome e use os números acima."
+    )
+
+    try:
+        message = client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+            system=_MONTHLY_SYSTEM_PROMPT,
+        )
+        raw = message.content[0].text.strip()
+        for fence in ("```json", "```"):
+            if raw.startswith(fence):
+                raw = raw[len(fence):]
+                break
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        parsed = json.loads(raw.strip())
+    except Exception as exc:
+        logger.error("monthly analysis Claude/JSON failed for %s: %s", store_name, exc)
+        return {}
+
+    # Persist as a monthly_report insight (content = resumo, data = full object)
+    try:
+        sb.table("ai_insights").insert({
+            "client_id": client_uuid,
+            "type":      "monthly_report",
+            "severity":  "info",
+            "title":     f"Relatório mensal — {store_name}",
+            "content":   parsed.get("resumo_executivo", ""),
+            "data":      parsed,
+        }).execute()
+    except Exception as exc:
+        logger.warning("monthly analysis save failed for %s: %s", store_name, exc)
+
+    logger.info("monthly analysis generated for %s (acoes=%d)", store_name,
+                len((parsed.get("plano") or {}).get("acoes") or []))
+    return parsed
 
 
 def generate_monthly_insights(client_uuid: str) -> dict:
-    """
-    Análise mensal aprofundada (Claude Sonnet) — gera 1 insight 'monthly_report'.
-    Consumida pelo relatório mensal (services.reports). Sempre destaca o positivo.
-    """
-    if not settings.ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY não configurada")
-
-    store_name = _get_client_name(client_uuid)
-    metrics = _collect_metrics(client_uuid)
-
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    prompt = f"""Dados da loja {store_name} (janela de 30 dias e cohorts):
-
-{json.dumps(metrics, ensure_ascii=False, indent=2)}
-
-Escreva o relatório mensal estratégico cobrindo:
-1. Pontos positivos do mês (sempre começar por aqui)
-2. Visão geral de faturamento e tendência
-3. Eficiência por canal (use budget_intel_por_canal) com recomendação de budget
-4. Retenção e LTV (use cohort_retencao)
-5. As 2-3 prioridades para o próximo mês"""
-
-    message = client.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-        system=_MONTHLY_SYSTEM_PROMPT,
-    )
-
-    raw = message.content[0].text.strip()
-    for fence in ("```json", "```"):
-        if raw.startswith(fence):
-            raw = raw[len(fence):]
-            break
-    if raw.endswith("```"):
-        raw = raw[:-3]
-
-    try:
-        parsed = json.loads(raw.strip())
-        insights = parsed.get("insights", [])
-    except json.JSONDecodeError as exc:
-        logger.error("Monthly Claude returned invalid JSON: %s — raw[:200]=%s", exc, raw[:200])
-        return {"insights_generated": 0, "insights_saved": 0, "error": str(exc)}
-
-    # Force type to monthly_report regardless of what Claude returned
-    for ins in insights:
-        ins["type"] = "monthly_report"
-
-    saved = _save_insights(client_uuid, insights)
-    logger.info("Monthly insights for %s: generated=%d saved=%d", store_name, len(insights), saved)
-    return {"insights_generated": len(insights), "insights_saved": saved}
+    """Back-compat wrapper — o relatório agora chama generate_monthly_analysis
+    com os dados reais. Mantido para callers/cron legados."""
+    parsed = generate_monthly_analysis(client_uuid)
+    return {"insights_generated": 1 if parsed else 0, "insights_saved": 1 if parsed else 0}
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────

@@ -316,3 +316,100 @@ def list_conversion_actions(
             "primary_for_goal": ca.get("primaryForGoal"),
         })
     return True, None, actions
+
+
+def fetch_campaign_insights(
+    customer_id:   str,
+    refresh_token: str,
+    start_date:    str,
+    end_date:      str,
+    manager_id:    Optional[str] = None,
+    limit:         int = 8,
+) -> list[dict]:
+    """
+    Campaign-level performance for the period, for the monthly report.
+
+    Returns top `limit` campaigns by cost, each:
+      {campaign_id, campaign_name, spend, impressions, clicks, conversions,
+       conversions_value, roas, cpa, ctr, status}
+
+    Best-effort: returns [] on any failure (missing creds, API error) so the
+    report never breaks. start_date/end_date are inclusive YYYY-MM-DD.
+    Revenue here is Google's reported conversions_value — differs from our
+    server-side attribution; the report footnotes this.
+    """
+    if not all([customer_id, refresh_token,
+                settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+                settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
+                settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET]):
+        return []
+
+    access_token = _get_access_token(
+        settings.GOOGLE_ADS_OAUTH_CLIENT_ID,
+        settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET,
+        refresh_token,
+    )
+    if not access_token:
+        return []
+
+    clean_cid = customer_id.replace("-", "").replace(" ", "")
+    headers = {
+        "Authorization":   f"Bearer {access_token}",
+        "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+        "Content-Type":    "application/json",
+    }
+    mcc = manager_id or settings.GOOGLE_ADS_MANAGER_ID
+    if mcc:
+        headers["login-customer-id"] = mcc.replace("-", "")
+
+    # No LIMIT in GAQL alongside an ORDER BY pageSize quirk — slice client-side.
+    query = (
+        "SELECT campaign.name, campaign.id, campaign.status, "
+        "metrics.cost_micros, metrics.impressions, metrics.clicks, "
+        "metrics.conversions, metrics.conversions_value "
+        "FROM campaign "
+        f"WHERE segments.date BETWEEN '{start_date}' AND '{end_date}' "
+        "AND metrics.cost_micros > 0 "
+        "ORDER BY metrics.cost_micros DESC"
+    )
+    try:
+        resp = httpx.post(
+            f"{_ADS_API}/customers/{clean_cid}/googleAds:search",
+            headers=headers, json={"query": query}, timeout=20.0,
+        )
+    except Exception as exc:
+        logger.warning("google_ads fetch_campaign_insights: %s", exc)
+        return []
+
+    if resp.status_code != 200:
+        logger.warning("google_ads campaigns HTTP %s: %s", resp.status_code, resp.text[:300])
+        return []
+
+    rows: list[dict] = []
+    for row in resp.json().get("results", []):
+        camp = row.get("campaign", {})
+        m    = row.get("metrics", {})
+        spend = round(int(m.get("costMicros") or 0) / 1_000_000, 2)
+        if spend <= 0:
+            continue
+        impressions = int(m.get("impressions") or 0)
+        clicks      = int(m.get("clicks") or 0)
+        conversions = float(m.get("conversions") or 0)
+        conv_value  = round(float(m.get("conversionsValue") or 0), 2)
+        rows.append({
+            "campaign_id":       camp.get("id"),
+            "campaign_name":     camp.get("name") or "—",
+            "status":            camp.get("status") or "",
+            "spend":             spend,
+            "impressions":       impressions,
+            "clicks":            clicks,
+            "conversions":       conversions,
+            "conversions_value": conv_value,
+            "roas":              round(conv_value / spend, 2) if spend > 0 else None,
+            "cpa":               round(spend / conversions, 2) if conversions > 0 else None,
+            "ctr":               round(clicks / impressions * 100, 2) if impressions > 0 else 0.0,
+        })
+
+    rows.sort(key=lambda x: x["spend"], reverse=True)
+    logger.info("google_ads: %d campaigns fetched for %s", len(rows), clean_cid)
+    return rows[:limit]

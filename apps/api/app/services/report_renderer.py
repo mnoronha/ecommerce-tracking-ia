@@ -64,10 +64,6 @@ def _make_helpers() -> dict:
         if v is None: return "—"
         try: return f"{float(v):.1f}x".replace(".", ",")
         except (TypeError, ValueError): return "—"
-    def _icone(this, tipo):
-        return {"meta": "📘", "google": "🔴", "tiktok": "🎵", "pinterest": "📌"}.get(str(tipo), "📡")
-    def _seta(this, variacao):
-        return {"up": "▲", "down": "▼"}.get(str(variacao), "→")
     def _inc(this, i):
         try: return int(i) + 1
         except (TypeError, ValueError): return 1
@@ -88,8 +84,6 @@ def _make_helpers() -> dict:
         "num":    _num,
         "pct":    _pct,
         "roas":   _roas_helper,
-        "icone":  _icone,
-        "seta":   _seta,
         "inc":    _inc,
         "upper":  _upper,
         "unless": _unless,
@@ -117,9 +111,14 @@ def _load_css(template_type: str, agencia: dict) -> str:
     css = css_path.read_text(encoding="utf-8")
     css = css.replace("__COR_PRIMARIA__",   agencia.get("cor_primaria",   "#6c47ff"))
     css = css.replace("__COR_SECUNDARIA__", agencia.get("cor_secundaria", "#a855f7"))
-    # Inline Google Fonts as system fonts fallback (WeasyPrint can't load remote fonts)
+    # WeasyPrint can't fetch remote @import fonts — drop them and map the brand
+    # font names to fonts actually installed in the container (Dockerfile ships
+    # fonts-liberation + fonts-dejavu-core). Replace ALL occurrences (with or
+    # without trailing comma/semicolon) so headings never fall back to an
+    # undefined family. Liberation Sans = display/headings, DejaVu Sans = body.
     css = re.sub(r"@import url\([^)]+\);", "", css)
-    css = css.replace("'Sora',", "'Arial',").replace("'Inter',", "sans-serif,")
+    css = css.replace("'Sora'",  "'Liberation Sans'")
+    css = css.replace("'Inter'", "'DejaVu Sans'")
     return css
 
 
@@ -179,11 +178,13 @@ def render_monthly_html(context: dict) -> str:
 
 
 def render_to_pdf(context: dict) -> Optional[bytes]:
-    """Render template → HTML → PDF bytes. Returns None on failure."""
+    """Render template → HTML → PDF bytes. Returns None on failure.
+    base_url points at the templates dir so local assets (fonts/images) resolve;
+    remote https logos work regardless."""
     html = render_monthly_html(context)
     try:
         from weasyprint import HTML as WP_HTML
-        return WP_HTML(string=html).write_pdf()
+        return WP_HTML(string=html, base_url=str(_TEMPLATES_DIR)).write_pdf()
     except Exception as exc:
         logger.error("PDF generation failed: %s", exc)
         return None

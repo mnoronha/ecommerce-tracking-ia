@@ -869,7 +869,7 @@ def send_monthly_reports() -> None:
                 logger.info("monthly report skipped for %s — template de Leads ainda não implementado", c.get("pixel_id"))
                 continue
             try:
-                _ensure_monthly_ai(c["id"], c["pixel_id"])
+                # Monthly AI is generated inside build_monthly_context with real data.
                 _send_monthly(c["id"], c["pixel_id"], c.get("name") or c["pixel_id"], recipients, client=c)
             except Exception as exc:
                 logger.error("monthly report failed for %s: %s", c.get("pixel_id"), exc)
@@ -1211,7 +1211,10 @@ def send_report_now(
             )
             if not (recent.count and recent.count > 0):
                 if report_type == "monthly":
-                    ai_analyst.generate_monthly_insights(client_id)
+                    # Monthly AI is generated inside build_monthly_context with the
+                    # real report numbers (channels, campaigns, goals) — skip the
+                    # generic pre-generation here to avoid a second Claude call.
+                    pass
                 else:
                     ai_analyst.generate_insights(client_id)
         except Exception as exc:

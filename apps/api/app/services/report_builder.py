@@ -651,19 +651,21 @@ def _build_yoy(cur: dict, yoy: dict) -> list[dict]:
     ]
 
 
-def _build_channel_rows(spend: dict, rev_by_source: dict) -> list[dict]:
-    _META_KEYS   = {"meta_ads"}
-    _GOOGLE_KEYS = {"google_ads"}
-    _TIKTOK_KEYS = {"tiktok_ads"}
+_SOURCE_TO_CHANNEL = {
+    "facebook": "meta_ads", "fb": "meta_ads", "instagram": "meta_ads",
+    "ig": "meta_ads", "meta": "meta_ads",
+    "google": "google_ads", "google_ads": "google_ads",
+    "tiktok": "tiktok_ads", "tiktok_ads": "tiktok_ads",
+}
 
-    _SOURCE_TO_CHANNEL = {
-        "facebook": "meta_ads", "fb": "meta_ads", "instagram": "meta_ads",
-        "ig": "meta_ads", "meta": "meta_ads",
-        "google": "google_ads", "google_ads": "google_ads",
-        "tiktok": "tiktok_ads", "tiktok_ads": "tiktok_ads",
-    }
+_CHANNEL_INFO = {
+    "meta_ads":   {"nome": "Meta Ads (Facebook + Instagram)", "tipo": "meta",   "icone": "📘"},
+    "google_ads": {"nome": "Google Ads (Search + Shopping + PMax)", "tipo": "google", "icone": "🔴"},
+    "tiktok_ads": {"nome": "TikTok Ads", "tipo": "tiktok", "icone": "🎵"},
+}
 
-    # Aggregate revenue by channel
+
+def _rev_by_channel(rev_by_source: dict) -> dict[str, dict]:
     rev: dict[str, dict] = {}
     for src, data in rev_by_source.items():
         ch = _SOURCE_TO_CHANNEL.get(src.lower(), "other")
@@ -672,12 +674,20 @@ def _build_channel_rows(spend: dict, rev_by_source: dict) -> list[dict]:
         agg = rev.setdefault(ch, {"revenue": 0.0, "orders": 0})
         agg["revenue"] += data["revenue"]
         agg["orders"]  += data["orders"]
+    return rev
 
-    _CHANNEL_INFO = {
-        "meta_ads":   {"nome": "Meta Ads (Facebook + Instagram)", "tipo": "meta",   "icone": "📘"},
-        "google_ads": {"nome": "Google Ads (Search + Shopping + PMax)", "tipo": "google", "icone": "🔴"},
-        "tiktok_ads": {"nome": "TikTok Ads", "tipo": "tiktok", "icone": "🎵"},
-    }
+
+def _build_channel_rows(spend: dict, rev_by_source: dict,
+                        spend_prev: Optional[dict] = None,
+                        rev_by_source_prev: Optional[dict] = None) -> list[dict]:
+    """Per-channel cards with metrics and deltas vs. the previous month."""
+    rev      = _rev_by_channel(rev_by_source)
+    rev_prev = _rev_by_channel(rev_by_source_prev or {})
+    spend_prev = spend_prev or {}
+
+    def _metric(label, valor, atual, anterior, lower_better=False):
+        d, cls = _delta(atual, anterior, lower_better=lower_better)
+        return {"label": label, "valor": valor, "delta": d, "classe": cls}
 
     rows = []
     for ch, s in sorted(spend.items(), key=lambda x: -x[1]["spend"]):
@@ -687,29 +697,254 @@ def _build_channel_rows(spend: dict, rev_by_source: dict) -> list[dict]:
         roas = round(r["revenue"] / spd, 2) if spd > 0 else None
         cpa  = round(spd / r["orders"], 2) if r["orders"] > 0 else None
         ctr  = round(s["clicks"] / s["impressions"] * 100, 2) if s["impressions"] > 0 else 0
+        cpm  = round(s["spend"] / s["impressions"] * 1000, 2) if s["impressions"] > 0 else 0
+
+        # Previous month for deltas
+        sp   = spend_prev.get(ch, {})
+        rp   = rev_prev.get(ch, {"revenue": 0.0, "orders": 0})
+        spd_p  = float(sp.get("spend") or 0)
+        roas_p = round(rp["revenue"] / spd_p, 2) if spd_p > 0 else None
+        cpa_p  = round(spd_p / rp["orders"], 2) if rp["orders"] > 0 else None
+        ctr_p  = round(int(sp.get("clicks") or 0) / int(sp.get("impressions") or 0) * 100, 2) if sp.get("impressions") else None
 
         metricas = [
-            {"label": "Receita Atribuída", "valor": _brl(r["revenue"]), "delta": "", "classe": "flat"},
-            {"label": "Pedidos",           "valor": _num(r["orders"]),   "delta": "", "classe": "flat"},
-            {"label": "CPM",               "valor": _brl(round(s["spend"] / s["impressions"] * 1000, 2) if s["impressions"] > 0 else 0), "delta": "", "classe": "flat"},
-            {"label": "CTR",               "valor": _pct(ctr),           "delta": "", "classe": "flat"},
-            {"label": "Cliques",           "valor": _num(s["clicks"]),   "delta": "", "classe": "flat"},
-            {"label": "Impressões",        "valor": _num(s["impressions"]), "delta": "", "classe": "flat"},
+            _metric("Investimento",     _brl(spd),          spd,           spd_p,         lower_better=False),
+            _metric("Receita Atribuída", _brl(r["revenue"]), r["revenue"],  rp["revenue"], lower_better=False),
+            _metric("ROAS",             _roas(roas),        roas,          roas_p,        lower_better=False),
+            _metric("Pedidos",          _num(r["orders"]),  r["orders"],   rp["orders"],  lower_better=False),
+            _metric("CPA",              _brl(cpa),          cpa,           cpa_p,         lower_better=True),
+            _metric("CTR",              _pct(ctr),          ctr,           ctr_p,         lower_better=False),
         ]
 
+        roas_pct_meta = None  # caller may set ROAS-vs-goal bar later
         rows.append({
             **info,
             "investimento":     spd,
             "investimento_fmt": _brl(spd),
             "receita":          r["revenue"],
+            "receita_fmt":      _brl(r["revenue"]),
             "pedidos":          r["orders"],
             "roas":             roas,
+            "roas_fmt":         _roas(roas),
             "destaque":         f"ROAS {_roas(roas)}" if roas else _brl(spd),
             "cpa":              cpa,
             "cpa_fmt":          _brl(cpa),
+            "cpm_fmt":          _brl(cpm),
             "metricas":         metricas,
         })
     return rows
+
+
+# ── Top campaigns per channel (Meta + Google, live) ───────────────────────────
+
+def _build_campaigns(client: dict, start_date: str, end_date: str,
+                     prev_month_label: str = "") -> tuple[list[dict], list[dict]]:
+    """
+    Fetch top campaigns from Meta + Google APIs and normalise to the template's
+    campaign-row shape. Returns (flat_list, grouped_by_channel). Best-effort:
+    any channel that fails is simply omitted — the report never breaks.
+
+    Revenue/results shown are platform-reported (Meta purchases & value; Google
+    conversions & conversions_value), which differ from our server-side
+    attribution — the template footnotes this.
+    """
+    flat: list[dict] = []
+    grouped: list[dict] = []
+
+    def _status(raw: str) -> tuple[str, str]:
+        s = (raw or "").upper()
+        if s in ("ACTIVE", "ENABLED"):
+            return "ativo", "Ativo"
+        if s in ("PAUSED",):
+            return "pausado", "Pausado"
+        return "pausado", (raw or "—").title()
+
+    # ── Meta ──
+    meta_rows: list[dict] = []
+    if client.get("meta_ad_account_id") and client.get("meta_access_token"):
+        try:
+            from . import meta_ads
+            for c in meta_ads.fetch_campaign_insights(
+                account_id = client["meta_ad_account_id"],
+                access_token = client["meta_access_token"],
+                since = start_date, until = end_date,
+            ):
+                spend = float(c.get("spend") or 0)
+                if spend < 1:
+                    continue
+                purchases = int(c.get("meta_purchases") or 0)
+                revenue   = float(c.get("meta_revenue") or 0)
+                roas      = round(revenue / spend, 2) if spend > 0 else None
+                cpa       = c.get("meta_cpa") or (round(spend / purchases, 2) if purchases else None)
+                st, st_lbl = _status(c.get("status") or c.get("effective_status") or "")
+                meta_rows.append({
+                    "canal": "meta", "canal_label": "Meta Ads", "icone": "📘",
+                    "nome": (c.get("campaign_name") or "—")[:48],
+                    "investimento": spend, "investimento_fmt": _brl(spend),
+                    "resultado_fmt": _brl(revenue),
+                    "indice_fmt": _roas(roas),
+                    "qtd_fmt": _num(purchases),
+                    "custo_fmt": _brl(cpa) if cpa else "—",
+                    "ctr_fmt": _pct(c.get("ctr")) if c.get("ctr") else "—",
+                    "status": st, "status_label": st_lbl,
+                })
+        except Exception as exc:
+            logger.warning("_build_campaigns Meta failed: %s", exc)
+    if meta_rows:
+        meta_rows.sort(key=lambda x: x["investimento"], reverse=True)
+        meta_rows = meta_rows[:6]
+        grouped.append({"canal": "meta", "canal_label": "Meta Ads", "icone": "📘", "campanhas": meta_rows})
+        flat.extend(meta_rows)
+
+    # ── Google ──
+    google_rows: list[dict] = []
+    if client.get("google_ads_customer_id") and client.get("google_ads_refresh_token"):
+        try:
+            from . import google_ads
+            for c in google_ads.fetch_campaign_insights(
+                customer_id = client["google_ads_customer_id"],
+                refresh_token = client["google_ads_refresh_token"],
+                start_date = start_date, end_date = end_date,
+                manager_id = client.get("google_ads_login_customer_id"),
+            ):
+                spend = float(c.get("spend") or 0)
+                if spend < 1:
+                    continue
+                conv  = float(c.get("conversions") or 0)
+                value = float(c.get("conversions_value") or 0)
+                st, st_lbl = _status(c.get("status") or "")
+                google_rows.append({
+                    "canal": "google", "canal_label": "Google Ads", "icone": "🔴",
+                    "nome": (c.get("campaign_name") or "—")[:48],
+                    "investimento": spend, "investimento_fmt": _brl(spend),
+                    "resultado_fmt": _brl(value),
+                    "indice_fmt": _roas(c.get("roas")),
+                    "qtd_fmt": _num(int(round(conv))),
+                    "custo_fmt": _brl(c.get("cpa")) if c.get("cpa") else "—",
+                    "ctr_fmt": _pct(c.get("ctr")) if c.get("ctr") else "—",
+                    "status": st, "status_label": st_lbl,
+                })
+        except Exception as exc:
+            logger.warning("_build_campaigns Google failed: %s", exc)
+    if google_rows:
+        google_rows.sort(key=lambda x: x["investimento"], reverse=True)
+        google_rows = google_rows[:6]
+        grouped.append({"canal": "google", "canal_label": "Google Ads", "icone": "🔴", "campanhas": google_rows})
+        flat.extend(google_rows)
+
+    flat.sort(key=lambda x: x["investimento"], reverse=True)
+    return flat, grouped
+
+
+# ── AI analysis + plan ────────────────────────────────────────────────────────
+
+def _build_ai_analysis(client_id, store_name, cur, prev, mom_delta, goal_rev, goal_roas,
+                       channels, campanhas, funil, retention, top_products,
+                       eficiencia, mes_label) -> dict:
+    """Assemble compact REAL metrics and ask the AI for the strategic analysis.
+    Returns {} on any failure — the report stays valuable with deterministic
+    fallbacks downstream."""
+    try:
+        from . import ai_analyst
+    except Exception:
+        return {}
+
+    report_metrics = {
+        "mes": mes_label,
+        "faturamento": cur["revenue"], "pedidos": cur["orders"], "ticket_medio": cur["aov"],
+        "investimento_total": cur["spend"], "roas": cur["roas"], "cpa": cur["cpa"],
+        "mom_delta_pct": mom_delta,
+        "faturamento_mes_anterior": prev["revenue"],
+        "meta_faturamento": goal_rev or None, "meta_roas": goal_roas or None,
+        "canais": [
+            {"nome": c.get("nome"), "investimento": c.get("investimento"),
+             "receita_atribuida": c.get("receita"), "roas": c.get("roas"),
+             "cpa": c.get("cpa"), "pedidos": c.get("pedidos")}
+            for c in channels
+        ],
+        "top_campanhas": [
+            {"canal": c.get("canal_label"), "nome": c.get("nome"),
+             "investimento": c.get("investimento_fmt"), "resultado": c.get("resultado_fmt"),
+             "roas": c.get("indice_fmt"), "cpa": c.get("custo_fmt")}
+            for c in (campanhas or [])[:10]
+        ],
+        "funil": funil,
+        "retencao": {
+            "novos": retention.get("novos") if isinstance(retention, dict) else None,
+            "recorrentes": retention.get("recorrentes") if isinstance(retention, dict) else None,
+            "taxa_recompra": retention.get("rep_rate_fmt") if isinstance(retention, dict) else None,
+        },
+        "eficiencia": {
+            "mer": eficiencia.get("mer_fmt") if isinstance(eficiencia, dict) else None,
+            "cac": eficiencia.get("cac_fmt") if isinstance(eficiencia, dict) else None,
+            "ltv_cac": eficiencia.get("ltv_cac_fmt") if isinstance(eficiencia, dict) else None,
+        },
+        "top_produtos": [{"nome": p.get("name"), "receita": p.get("revenue_fmt")}
+                         for p in (top_products or [])[:5]],
+    }
+    try:
+        return ai_analyst.generate_monthly_analysis(client_id, report_metrics, store_name=store_name) or {}
+    except Exception as exc:
+        logger.warning("_build_ai_analysis failed: %s", exc)
+        return {}
+
+
+def _build_destaques(ai: dict, cur, prev, top_products, prev_month) -> list[dict]:
+    """AI destaques first; deterministic fallback so the section is never empty."""
+    out: list[dict] = []
+    for item in (ai.get("destaques") or []):
+        tipo = item.get("tipo", "positivo")
+        tipo = "atencao" if tipo not in ("positivo", "atencao") else tipo
+        out.append({"tipo": tipo, "titulo": item.get("titulo", ""), "texto": item.get("texto", "")})
+    if out:
+        return out[:5]
+    # Fallback from data
+    if cur["roas"] and (prev["roas"] or 0) > 0:
+        d, cls = _delta(cur["roas"], prev["roas"])
+        out.append({"tipo": "positivo" if cls == "good" else "atencao",
+                    "titulo": "Desempenho do ROAS",
+                    "texto": f"ROAS de {_roas(cur['roas'])} no mês ({d} vs {_MESES_PT[prev_month]})."})
+    if top_products:
+        tp = top_products[0]
+        out.append({"tipo": "positivo", "titulo": "Produto destaque",
+                    "texto": f"{tp['name']} liderou as vendas com {tp['revenue_fmt']} em receita."})
+    return out
+
+
+def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
+                 channels, top_products, retention) -> tuple[Optional[dict], str, str]:
+    """Next-month plan from the AI, with a deterministic fallback built from data."""
+    ai_plano = ai.get("plano") or {}
+
+    def _fmt_roas_plain(v):
+        try: return f"{float(v):.1f}".replace(".", ",")
+        except (TypeError, ValueError): return "—"
+
+    meta_fat   = ai_plano.get("meta_faturamento") or goal_rev or (round(cur["revenue"] * 1.1, 2) if cur["revenue"] else 0)
+    meta_roas  = ai_plano.get("meta_roas") or goal_roas or cur["roas"] or 0
+    meta_cpa   = ai_plano.get("meta_cpa") or cur["cpa"] or 0
+    budget     = ai_plano.get("budget_total")
+    if not budget:
+        budget = round(float(meta_fat) / float(meta_roas), 2) if (meta_fat and meta_roas) else cur["spend"]
+
+    acoes = list(ai_plano.get("acoes") or [])
+    if not acoes:
+        best = max((c for c in channels if c.get("roas")), key=lambda c: c["roas"], default=None)
+        if best:
+            acoes.append(f"Escalar {best['nome']} — canal mais eficiente (ROAS {_roas(best['roas'])}).")
+        if top_products:
+            acoes.append(f"Manter estoque e mídia no produto destaque: {top_products[0]['name']}.")
+        if isinstance(retention, dict) and (retention.get("recorrentes") or 0) > 0:
+            acoes.append("Ativar campanha de recompra/CRM para a base de clientes recorrentes.")
+        acoes.append("Revisar criativos de menor CTR e renovar os de pior desempenho.")
+
+    plano = {
+        "mes": next_month_label,
+        "meta_roas": _fmt_roas_plain(meta_roas),
+        "meta_cpa":  _brl(meta_cpa) if meta_cpa else "—",
+        "acoes": acoes[:5],
+    }
+    return plano, _brl(meta_fat), _brl(budget)
 
 
 # ── Main builder ──────────────────────────────────────────────────────────────
@@ -725,6 +960,18 @@ def build_monthly_context(
     client: dict with DB client fields.
     """
     sb = get_supabase()
+
+    # Load the FULL client row (with decrypted secrets + ad-account ids). The
+    # caller often passes a thin dict (only logo/emails), so we self-load to be
+    # able to hit Meta/Google APIs for creatives & campaigns. Caller fields win.
+    from . import crypto
+    try:
+        _full = (sb.table("clients").select("*").eq("id", client_id).limit(1).execute().data or [{}])[0]
+        _full = crypto.decrypt_client_secrets(_full) or {}
+    except Exception as exc:
+        logger.warning("build_monthly_context: full client load failed: %s", exc)
+        _full = {}
+    client = {**_full, **(client or {})}
 
     # Date windows
     start, end   = _window(year, month)
@@ -771,13 +1018,18 @@ def build_monthly_context(
         agg["roas"]  = round(agg["revenue"] / agg["spend"], 2) if agg["spend"] > 0 else None
         agg["cpa"]   = round(agg["spend"] / agg["orders"], 2) if agg["orders"] > 0 else None
 
-    # Revenue by utm_source for channel attribution
-    rev_by_source: dict[str, dict] = {}
-    for o in orders_cur:
-        src = (o.get("utm_source") or "").lower()
-        agg2 = rev_by_source.setdefault(src, {"revenue": 0.0, "orders": 0})
-        agg2["revenue"] += float(o.get("total_price") or 0)
-        agg2["orders"]  += 1
+    # Revenue by utm_source for channel attribution (current + previous month)
+    def _rev_by_source(rows: list[dict]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for o in rows:
+            src = (o.get("utm_source") or "").lower()
+            agg2 = out.setdefault(src, {"revenue": 0.0, "orders": 0})
+            agg2["revenue"] += float(o.get("total_price") or 0)
+            agg2["orders"]  += 1
+        return out
+
+    rev_by_source      = _rev_by_source(orders_cur)
+    rev_by_source_prev = _rev_by_source(orders_prev)
 
     # Attribution funnel
     attribution = _fetch_attribution(orders_cur)
@@ -791,8 +1043,13 @@ def build_monthly_context(
     # Top products
     top_products = _fetch_top_products(sb, client_id, start, end)
 
-    # Channels
-    channels = _build_channel_rows(spend_cur, rev_by_source)
+    # Channels (with deltas vs previous month)
+    channels = _build_channel_rows(spend_cur, rev_by_source, spend_prev, rev_by_source_prev)
+
+    # Top campaigns per channel (Meta + Google, live from APIs)
+    campanhas, campanhas_por_canal = _build_campaigns(
+        client, start_date, end_date_iso, prev_month_label=_MESES_PT[prev_month],
+    )
 
     # Meta creatives performance
     meta_creatives: list[dict] = []
@@ -804,42 +1061,6 @@ def build_monthly_context(
             end_date      = end_date_iso,
             client_id     = client_id,
         )
-
-    # AI insights
-    ai_monthly  = _fetch_ai_insights(sb, client_id, "monthly_report")
-    resumo_exec = ""
-    if ai_monthly:
-        data = ai_monthly.get("data") or {}
-        resumo_exec = data.get("resumo_executivo") or data.get("summary") or ai_monthly.get("content") or ""
-        resumo_exec = resumo_exec[:800]
-
-    # Destaques from AI
-    destaques: list[dict] = []
-    if ai_monthly:
-        data = ai_monthly.get("data") or {}
-        for item in (data.get("destaques") or []):
-            destaques.append({
-                "tipo":   item.get("tipo", "positivo"),
-                "titulo": item.get("titulo", ""),
-                "texto":  item.get("texto", ""),
-            })
-
-    if not destaques:
-        # Build from data
-        if cur["roas"] and (prev["roas"] or 0) > 0:
-            d, cls = _delta(cur["roas"], prev["roas"])
-            destaques.append({
-                "tipo": "positivo" if cls == "good" else "negativo",
-                "titulo": "Desempenho do ROAS",
-                "texto": f"ROAS de {_roas(cur['roas'])} no mês ({d} vs {_MESES_PT[prev_month]}).",
-            })
-        if top_products:
-            tp = top_products[0]
-            destaques.append({
-                "tipo": "positivo",
-                "titulo": "Produto Destaque",
-                "texto": f"{tp['name']} liderou as vendas com {tp['revenue_fmt']} em receita.",
-            })
 
     # Atenções from open alerts
     open_alerts = _fetch_open_alerts(sb, client_id)
@@ -900,6 +1121,25 @@ def build_monthly_context(
 
     # Atribuição multi-toque (comparação de modelos)
     atribuicao_modelos = _fetch_attribution_models(client_id, start_date, end_date_iso)
+
+    # ── AI strategic analysis (real numbers) + next-month plan ────────────────
+    next_month       = month + 1 if month < 12 else 1
+    next_month_label = _MESES_PT[next_month]
+    ai = _build_ai_analysis(
+        client_id, client.get("name") or client.get("pixel_id") or "",
+        cur, prev, mom_delta_val, goal_rev, goal_roas, channels, campanhas,
+        funil, retention, top_products, eficiencia, mes_label,
+    )
+    resumo_exec   = (ai.get("resumo_executivo") or "")[:800]
+    analise_canais = ai.get("analise_canais") or ""
+
+    # Destaques: prefer AI, fall back to data-derived
+    destaques = _build_destaques(ai, cur, prev, top_products, prev_month)
+
+    # Plano do próximo mês: AI plan, with deterministic fallback
+    plano, plano_meta_fat_fmt, plano_budget_fmt = _build_plano(
+        ai, next_month_label, cur, goal_rev, goal_roas, channels, top_products, retention,
+    )
 
     return {
         # Identity
@@ -965,8 +1205,10 @@ def build_monthly_context(
         "criativos_meta":      meta_creatives,
         "tem_criativos_meta":  bool(meta_creatives),
 
-        # Campaigns (placeholder — populated from AI or left empty)
-        "campanhas": [],
+        # Campaigns (top per channel, live from Meta + Google)
+        "campanhas": campanhas,
+        "campanhas_por_canal": campanhas_por_canal,
+        "tem_campanhas": bool(campanhas),
 
         # Top products
         "top_produtos": top_products,
@@ -980,8 +1222,11 @@ def build_monthly_context(
         "atencoes":  atencoes,
         "tem_atencoes": bool(atencoes),
 
-        # Next month plan (from AI if available)
-        "plano": None,
-        "plano_meta_faturamento_fmt": "",
-        "plano_budget_fmt": "",
+        # AI channel analysis
+        "analise_canais": analise_canais,
+
+        # Next month plan (from AI, with deterministic fallback)
+        "plano": plano,
+        "plano_meta_faturamento_fmt": plano_meta_fat_fmt,
+        "plano_budget_fmt": plano_budget_fmt,
     }
