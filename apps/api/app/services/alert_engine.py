@@ -982,19 +982,30 @@ def _eval_spend_below_expected(rule: dict, client: dict) -> list[dict]:
     yesterday     = (now - timedelta(days=1)).date()
     week_ago      = (now - timedelta(days=8)).date()
 
-    def _daily_spend(start_date, end_date):
-        q = sb.table("ad_spend").select("spend, channel").eq("client_id", client["id"])
+    def _daily_spend_rows(start_date, end_date):
+        q = sb.table("ad_spend").select("spend, channel, date").eq("client_id", client["id"])
         if channel != "all":
             q = q.eq("channel", channel)
-        rows = q.gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).execute().data or []
-        return sum(float(r["spend"]) for r in rows)
+        return q.gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).execute().data or []
 
     try:
-        spend_yesterday = _daily_spend(yesterday, yesterday)
-        spend_7d_total  = _daily_spend(week_ago, (now - timedelta(days=2)).date())
+        yesterday_rows = _daily_spend_rows(yesterday, yesterday)
+        week_rows      = _daily_spend_rows(week_ago, (now - timedelta(days=2)).date())
     except Exception as exc:
         logger.debug("_eval_spend_below_expected(%s): %s", client.get("pixel_id"), exc)
         return []
+
+    # Sem linha de ad_spend para ontem = o sync diário ainda não rodou (roda às
+    # 06:00 UTC, enquanto o alert_engine roda a cada 30min desde 00:00 UTC). Não
+    # confundir "dado ainda não sincronizado" com "campanha pausada" — senão o
+    # alerta dispara todo dia logo após a meia-noite UTC e se auto-resolve de
+    # manhã (falso positivo). _upsert_spend grava linha mesmo com spend=0, então
+    # uma pausa real continua produzindo linha e o alerta dispara corretamente.
+    if not yesterday_rows:
+        return []
+
+    spend_yesterday = sum(float(r["spend"]) for r in yesterday_rows)
+    spend_7d_total  = sum(float(r["spend"]) for r in week_rows)
 
     spend_7d_avg = spend_7d_total / 7.0
     if spend_7d_avg < min_spend:
@@ -1152,6 +1163,13 @@ def _eval_nonpaid_spike(rule: dict, client: dict) -> list[dict]:
 
     # Se havia investimento e ele acompanhou a receita, o pico é PAGO → não alerta.
     if base_spend > 0:
+        # Sem linha de ad_spend para ontem = o sync diário (06:00 UTC) ainda não
+        # rodou. Com y_spend=0 artificial não dá pra classificar pago vs não-pago
+        # → adiar, senão vira falso "pico não-pago" toda madrugada UTC (o
+        # alert_engine roda a cada 30min desde 00:00). _upsert_spend grava linha
+        # mesmo com spend=0, então um dia realmente sem gasto continua avaliável.
+        if ydate not in spend_by_day:
+            return []
         spend_lift = (y_spend - base_spend) / base_spend
         if spend_lift >= rev_lift * spend_ratio_max:
             return []

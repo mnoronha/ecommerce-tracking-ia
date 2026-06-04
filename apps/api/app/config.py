@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     # ── App ──────────────────────────────────────────────────────────────
     APP_NAME: str = "Ecommerce Tracking API"
-    APP_VERSION: str = "2.3.0"
+    APP_VERSION: str = "2.3.1"
     DEBUG: bool = False
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
