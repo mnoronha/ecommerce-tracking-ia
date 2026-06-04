@@ -377,6 +377,63 @@ async def test_pdf_generation():
         return {"weasyprint": "error", "error": str(exc)[:300]}
 
 
+@router.get(
+    "/notifications/test/monthly-pdf/{pixel_id}",
+    summary="Renderiza o relatório mensal real → PDF (debug do PDF em branco)",
+    tags=["diagnostics"],
+)
+async def test_monthly_pdf(pixel_id: str, download: bool = Query(default=False)):
+    """Builds the real monthly context for a client and renders it through the
+    actual template→PDF pipeline. With ?download=1 returns the PDF bytes so we
+    can open it; otherwise returns sizes + an HTML-length sanity check."""
+    from fastapi.responses import Response
+    from ..services import report_builder, report_renderer
+
+    sb = get_supabase()
+    row = (
+        sb.table("clients").select("*").eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (row and row.data):
+        raise HTTPException(status_code=404, detail="Client not found")
+    client = row.data[0]
+
+    now = datetime.now(timezone.utc)
+    year  = now.year if now.month > 1 else now.year - 1
+    month = now.month - 1 if now.month > 1 else 12
+    try:
+        ctx = report_builder.build_monthly_context(
+            client_id=client["id"], client=client, year=year, month=month,
+        )
+    except Exception as exc:
+        logger.exception("test_monthly_pdf: build_monthly_context failed")
+        return {"stage": "build_context", "error": f"{type(exc).__name__}: {exc}"}
+
+    try:
+        html = report_renderer.render_monthly_html(ctx)
+    except Exception as exc:
+        logger.exception("test_monthly_pdf: render_monthly_html failed")
+        return {"stage": "render_html", "error": f"{type(exc).__name__}: {exc}"}
+
+    try:
+        from weasyprint import HTML as WP_HTML
+        pdf = WP_HTML(string=html).write_pdf()
+    except Exception as exc:
+        logger.exception("test_monthly_pdf: weasyprint failed")
+        return {"stage": "weasyprint", "html_len": len(html),
+                "error": f"{type(exc).__name__}: {exc}"}
+
+    if download and pdf:
+        return Response(content=pdf, media_type="application/pdf")
+    return {
+        "stage": "ok",
+        "html_len": len(html),
+        "html_has_body_text": "Resumo Executivo" in html,
+        "context_keys": sorted(ctx.keys()),
+        "pdf_size_bytes": len(pdf) if pdf else 0,
+        "pdf_size_kb": round(len(pdf) / 1024, 1) if pdf else 0,
+    }
+
+
 @router.post(
     "/notifications/test/email",
     summary="Envia email de teste para AGENCY_NOTIFY_EMAIL",

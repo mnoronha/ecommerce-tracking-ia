@@ -28,6 +28,7 @@ import httpx
 
 from ..config import settings
 from ..database import get_supabase
+from . import crypto
 from .google_ads import _get_access_token as _google_ads_token
 
 logger = logging.getLogger(__name__)
@@ -356,7 +357,10 @@ def run_hourly_for_all_clients() -> None:
 
     for c in clients:
         try:
-            check_all(c, persist=True)
+            # Credentials are encrypted at rest (enc:v1:). Decrypt before probing,
+            # otherwise every probe authenticates with ciphertext and fails — which
+            # silently marked every client broken each hour until a manual re-test.
+            check_all(crypto.decrypt_client_secrets(c), persist=True)
         except Exception as exc:
             logger.warning("integrations_health: %s failed: %s", c.get("pixel_id"), exc)
     logger.info("integrations_health: checked %d clients", len(clients))
