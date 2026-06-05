@@ -157,6 +157,15 @@ interface RoasData {
 
 type DrilldownKPI = 'revenue' | 'orders' | 'visitors' | 'avgOrderValue' | 'conversionRate' | 'profit'
 
+interface ChannelRevenue {
+  channel: string
+  revenue: number
+  orders: number
+  pct: number
+  colorBar: string
+  colorBadge: string
+}
+
 interface CampaignProductItem { name: string; qty: number; revenue: number }
 interface CampaignProductRow {
   campaign: string
@@ -206,6 +215,32 @@ const pct = (n: number, total: number) =>
   total > 0 ? ((n / total) * 100).toFixed(0) + '%' : '—'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+
+// ── Channel classification ────────────────────────────────────────────────────
+
+function classifyChannel(source: string | null, medium: string | null): string {
+  const s = (source || '').toLowerCase()
+  const m = (medium || '').toLowerCase()
+  if (!s) return 'Direto'
+  if (['facebook', 'instagram', 'meta', 'fb'].includes(s) || s.includes('facebook') || s.includes('instagram')) return 'Meta Ads'
+  if (s === 'google' && m === 'organic') return 'Google Orgânico'
+  if (['google', 'cpc', 'adwords', 'paid_search', 'ppc'].includes(s)) return 'Google Ads'
+  if (s.includes('tiktok') || s === 'tt') return 'TikTok Ads'
+  if (['email', 'klaviyo', 'newsletter', 'crm'].includes(s) || ['email', 'crm', 'newsletter'].includes(m)) return 'Email / CRM'
+  if (m === 'organic' || s === 'organic') return 'Orgânico'
+  return 'Outros'
+}
+
+const CHANNEL_COLORS: Record<string, { bar: string; badge: string }> = {
+  'Meta Ads':        { bar: 'bg-blue-500',    badge: 'bg-blue-500/15 text-blue-300 border border-blue-500/25' },
+  'Google Ads':      { bar: 'bg-red-400',     badge: 'bg-red-500/15 text-red-300 border border-red-500/25' },
+  'Google Orgânico': { bar: 'bg-orange-400',  badge: 'bg-orange-500/15 text-orange-300 border border-orange-500/25' },
+  'TikTok Ads':      { bar: 'bg-pink-500',    badge: 'bg-pink-500/15 text-pink-300 border border-pink-500/25' },
+  'Email / CRM':     { bar: 'bg-yellow-400',  badge: 'bg-yellow-500/15 text-yellow-300 border border-yellow-500/25' },
+  'Orgânico':        { bar: 'bg-emerald-500', badge: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/25' },
+  'Direto':          { bar: 'bg-slate-500',   badge: 'bg-slate-500/15 text-slate-400 border border-slate-500/25' },
+  'Outros':          { bar: 'bg-indigo-400',  badge: 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/25' },
+}
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -689,6 +724,7 @@ export default function DashboardPage() {
   const [retention, setRetention]       = useState<RetentionData | null>(null)
   const [heatmap, setHeatmap]           = useState<number[][]>([])
   const [cohortData, setCohortData]     = useState<CohortMonth[]>([])
+  const [channelRevenue, setChannelRevenue] = useState<ChannelRevenue[]>([])
   const [pacing, setPacing]             = useState<PacingData | null>(null)
   const [loading, setLoading]           = useState(true)
   const [lastUpdate, setLastUpdate]     = useState<Date>(new Date())
@@ -902,6 +938,27 @@ export default function DashboardPage() {
           avgTicket:  v.orders ? v.revenue / v.orders : 0,
         }
       }).sort((a, b) => b.revenue - a.revenue)
+    )
+
+    // ── Revenue by channel ────────────────────────────────────────────────────
+    const chMap: Record<string, { revenue: number; orders: number }> = {}
+    allOrders.forEach((o: any) => {
+      const ch = classifyChannel(o.utm_source, o.utm_medium)
+      if (!chMap[ch]) chMap[ch] = { revenue: 0, orders: 0 }
+      chMap[ch].revenue += o.total_price || 0
+      chMap[ch].orders  += 1
+    })
+    setChannelRevenue(
+      Object.entries(chMap)
+        .map(([channel, v]) => ({
+          channel,
+          revenue:    v.revenue,
+          orders:     v.orders,
+          pct:        totalRevenue > 0 ? (v.revenue / totalRevenue * 100) : 0,
+          colorBar:   CHANNEL_COLORS[channel]?.bar   ?? 'bg-indigo-400',
+          colorBadge: CHANNEL_COLORS[channel]?.badge ?? 'bg-indigo-500/15 text-indigo-300 border border-indigo-500/25',
+        }))
+        .sort((a, b) => b.revenue - a.revenue)
     )
 
     // ── Attribution quality ───────────────────────────────────────────────────
@@ -1240,6 +1297,53 @@ export default function DashboardPage() {
             ) : <FunnelBar steps={funnelSteps} />}
           </div>
         </div>
+
+        {/* Receita por Canal */}
+        {channelRevenue.length > 0 && (
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-300">Receita por Canal</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Origem das conversões no período · agrupado por utm_source / medium</p>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-500">
+                <span>{channelRevenue.reduce((s, c) => s + c.orders, 0)} pedidos</span>
+                <span className="text-slate-700">·</span>
+                <span>{fmt(channelRevenue.reduce((s, c) => s + c.revenue, 0))} total</span>
+              </div>
+            </div>
+            <div className="p-5 space-y-2.5">
+              {channelRevenue.map(ch => (
+                <div key={ch.channel} className="flex items-center gap-3">
+                  {/* Channel badge */}
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded w-32 shrink-0 text-center whitespace-nowrap ${ch.colorBadge}`}>
+                    {ch.channel}
+                  </span>
+                  {/* Bar */}
+                  <div className="flex-1 h-5 bg-[#0f1117] rounded overflow-hidden">
+                    <div
+                      className={`h-full rounded transition-all duration-700 ${ch.colorBar} opacity-80`}
+                      style={{ width: `${Math.max(ch.pct, ch.orders > 0 ? 1 : 0)}%` }}
+                    />
+                  </div>
+                  {/* Revenue + % */}
+                  <div className="shrink-0 w-40 text-right">
+                    <span className="text-sm font-semibold text-white">{fmt(ch.revenue)}</span>
+                    <span className="text-slate-500 text-xs ml-2 tabular-nums">{ch.pct.toFixed(0)}%</span>
+                  </div>
+                  {/* Orders */}
+                  <div className="shrink-0 w-20 text-right text-xs text-slate-500 tabular-nums">
+                    {ch.orders} pedido{ch.orders !== 1 ? 's' : ''}
+                  </div>
+                  {/* Avg ticket */}
+                  <div className="shrink-0 w-24 text-right text-xs text-slate-600 tabular-nums hidden sm:block">
+                    {fmt(ch.revenue / ch.orders)}/pedido
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Campaign Attribution Table */}
         <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
