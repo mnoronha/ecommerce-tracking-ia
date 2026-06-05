@@ -104,14 +104,15 @@ export function getPlan(id: PlanId): Plan {
   return PLANS.find(p => p.id === id) ?? PLANS[0]
 }
 
-export function planGates(planId: PlanId): Record<string, boolean> {
+export function planGates(_planId: PlanId): Record<string, boolean> {
+  // All features unlocked during testing phase
   return {
-    ai_insights:            planId !== 'rastreador',
-    ltv_bidding:            planId !== 'rastreador',
-    survey:                 planId !== 'rastreador',
-    creative_intelligence:  planId === 'predicao',
-    white_label:            planId === 'predicao',
-    unlimited_clients:      planId === 'predicao',
+    ai_insights:           true,
+    ltv_bidding:           true,
+    survey:                true,
+    creative_intelligence: true,
+    white_label:           true,
+    unlimited_clients:     true,
   }
 }
 

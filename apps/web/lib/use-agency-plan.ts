@@ -15,12 +15,12 @@ export interface AgencyPlan {
 }
 
 const DEFAULT: AgencyPlan = {
-  planId: 'rastreador',
+  planId: 'predicao',
   clientName: '',
   trialEndsAt: null,
-  ordersLimit: 2000,
-  clientLimit: 1,
-  gates: planGates('rastreador'),
+  ordersLimit: null,
+  clientLimit: Infinity,
+  gates: planGates('predicao'),
   isTrialing: false,
 }
 
