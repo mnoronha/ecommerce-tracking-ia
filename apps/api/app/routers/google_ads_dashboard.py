@@ -64,7 +64,8 @@ async def google_overview(
 
     creds = (
         sb.table("clients")
-        .select("id, google_ads_customer_id, google_ads_conversion_action_id")
+        .select("id, google_ads_customer_id, google_ads_conversion_action_id, "
+                "google_ads_refresh_token, google_ads_login_customer_id")
         .eq("pixel_id", pixel_id)
         .eq("is_active", True)
         .limit(1)
@@ -72,7 +73,8 @@ async def google_overview(
     )
     if not (creds and creds.data):
         raise HTTPException(status_code=404, detail="Client not found or inactive")
-    c         = creds.data[0]
+    from ..services import crypto
+    c         = crypto.decrypt_client_secrets(creds.data[0])
     client_id = c["id"]
     has_creds = bool(c.get("google_ads_customer_id"))
 
@@ -321,6 +323,78 @@ async def google_overview(
         except Exception as exc:
             logger.warning("google_overview: funil indisponível (%s, %sd): %s", pixel_id, days, exc)
 
+    # ── Campanhas reais do Google Ads (live via API, todas as campanhas) ──────
+    # Métricas por campanha + grupos de anúncios (hierarquia 2 níveis).
+    # Server-side (pedidos/receita/produtos) mesclado por nome de campanha.
+    # Best-effort: [] se faltar credencial ou a API falhar (não derruba o resto).
+    platform_campaigns: list[dict] = []
+    if c.get("google_ads_customer_id") and c.get("google_ads_refresh_token"):
+        try:
+            from ..services import google_ads
+
+            # Grupos de anúncios indexados por campaign_id (string)
+            adgroups_by_camp: dict = {}
+            try:
+                for ag in google_ads.fetch_adgroup_insights(
+                    customer_id   = c["google_ads_customer_id"],
+                    refresh_token = c["google_ads_refresh_token"],
+                    start_date    = str(d_start),
+                    end_date      = str(d_end),
+                    manager_id    = c.get("google_ads_login_customer_id"),
+                ):
+                    cid = ag.pop("campaign_id", "")
+                    adgroups_by_camp.setdefault(cid, []).append(ag)
+            except Exception as exc:
+                logger.warning("google_overview: ad groups (%s): %s", pixel_id, exc)
+
+            # Lookup server-side por nome de campanha (lowercase) para mesclar
+            server_by_name: dict = {
+                e["campaign"].lower(): {
+                    "orders":       e["orders"],
+                    "revenue":      e["revenue"],
+                    "gclid":        e["gclid"],
+                    "enhanced":     e["enhanced"],
+                    "top_products": e["top_products"],
+                }
+                for e in campaigns_out
+            }
+
+            for camp in google_ads.fetch_campaign_insights(
+                customer_id   = c["google_ads_customer_id"],
+                refresh_token = c["google_ads_refresh_token"],
+                start_date    = str(d_start),
+                end_date      = str(d_end),
+                manager_id    = c.get("google_ads_login_customer_id"),
+                limit         = 100,
+            ):
+                spend    = float(camp.get("spend") or 0)
+                clicks   = int(camp.get("clicks") or 0)
+                camp_id  = str(camp.get("campaign_id") or "")
+                cam_name = camp.get("campaign_name") or "—"
+                svr      = server_by_name.get(cam_name.lower(), {})
+                platform_campaigns.append({
+                    "campaign_id":       camp.get("campaign_id"),
+                    "campaign_name":     cam_name,
+                    "status":            camp.get("status") or "",
+                    "spend":             spend,
+                    "impressions":       int(camp.get("impressions") or 0),
+                    "clicks":            clicks,
+                    "ctr":               camp.get("ctr"),
+                    "cpc":               round(spend / clicks, 2) if clicks else None,
+                    "conversions":       camp.get("conversions"),
+                    "conversions_value": camp.get("conversions_value"),
+                    "roas":              camp.get("roas"),
+                    "cpa":               camp.get("cpa"),
+                    "ad_groups":         adgroups_by_camp.get(camp_id, []),
+                    "server_orders":     svr.get("orders", 0),
+                    "server_revenue":    svr.get("revenue", 0.0),
+                    "server_gclid":      svr.get("gclid", 0),
+                    "server_enhanced":   svr.get("enhanced", 0),
+                    "top_products":      svr.get("top_products", []),
+                })
+        except Exception as exc:
+            logger.warning("google_overview: platform campaigns indisponíveis (%s): %s", pixel_id, exc)
+
     return {
         "days":        days,
         "start":       str(d_start),
@@ -333,6 +407,7 @@ async def google_overview(
         "prev_totals": prev_totals,
         "deltas":      deltas,
         "campaigns":   campaigns_out,
+        "platform_campaigns": platform_campaigns,
         "daily":       daily,
         "funnel":      funnel,
         "funnel_available": funnel_available,

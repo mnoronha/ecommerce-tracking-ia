@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import {
   Loader2, RefreshCw, ChevronDown, ChevronRight,
-  TrendingUp, TrendingDown, CheckCircle, AlertCircle, Zap,
+  TrendingUp, TrendingDown, Sparkles,
 } from 'lucide-react'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
@@ -32,6 +32,25 @@ interface CampaignRow {
   top_products: Array<{ name: string; sku: string | null; units: number; revenue: number }>
 }
 
+interface AdGroupRow {
+  adgroup_id: string; adgroup_name: string; status: string
+  spend: number; impressions: number; clicks: number
+  ctr: number | null; conversions: number | null; conversions_value: number | null
+  roas: number | null; cpa: number | null
+}
+
+interface PlatformCampaign {
+  campaign_id: string | null; campaign_name: string; status: string
+  spend: number; impressions: number; clicks: number
+  ctr: number | null; cpc: number | null
+  conversions: number | null; conversions_value: number | null
+  roas: number | null; cpa: number | null
+  ad_groups: AdGroupRow[]
+  server_orders: number; server_revenue: number
+  server_gclid: number; server_enhanced: number
+  top_products: Array<{ name: string; sku: string | null; units: number; revenue: number }>
+}
+
 interface DayRow {
   date: string; orders: number; revenue: number; gclid: number; enhanced: number
   spend: number; roas: number | null
@@ -43,6 +62,7 @@ interface OverviewData {
   totals: Totals; prev_totals: { orders: number; revenue: number; gclid: number }
   deltas: Record<string, number | null>
   campaigns: CampaignRow[]
+  platform_campaigns: PlatformCampaign[]
   daily: DayRow[]
   funnel: Record<string, number | null>
   funnel_available: boolean
@@ -101,68 +121,122 @@ function MatchBar({ label, count, total, color }: { label: string; count: number
   )
 }
 
-// ── Campaign Row ──────────────────────────────────────────────────────────────
+// ── Status badge ──────────────────────────────────────────────────────────────
 
-function CampaignRowComp({ row }: { row: CampaignRow }) {
+function StatusBadge({ status, size = 'sm' }: { status: string; size?: 'xs' | 'sm' }) {
+  const active = status === 'ENABLED'
+  const label  = active ? 'Ativa' : status === 'PAUSED' ? 'Pausada' : (status || '—')
+  const cls    = active
+    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25'
+    : 'bg-slate-500/15 text-slate-400 border-slate-500/25'
+  return (
+    <span className={`${size === 'xs' ? 'text-xs px-1 py-0.5' : 'text-xs px-1.5 py-0.5'} rounded border ${cls}`}>
+      {label}
+    </span>
+  )
+}
+
+// ── Ad Group Row ──────────────────────────────────────────────────────────────
+
+function AdGroupRowComp({ ag }: { ag: AdGroupRow }) {
+  return (
+    <tr className="border-t border-[#1a1f2e] hover:bg-[#1a1f2e]/60">
+      <td className="pl-10 pr-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-400 line-clamp-1">{ag.adgroup_name}</span>
+          <StatusBadge status={ag.status} size="xs" />
+        </div>
+      </td>
+      <td />
+      <td className="px-3 py-2.5 text-right text-xs text-slate-500 tabular-nums">{fmtN(ag.impressions)}</td>
+      <td className="px-3 py-2.5 text-right text-xs text-slate-500 tabular-nums">{fmtN(ag.clicks)}</td>
+      <td className="px-3 py-2.5 text-right text-xs text-slate-500 tabular-nums">
+        {ag.ctr != null ? `${ag.ctr.toFixed(2)}%` : '—'}
+      </td>
+      <td className="px-3 py-2.5 text-right text-xs text-slate-300 tabular-nums">{fmt(ag.spend)}</td>
+      <td className="px-3 py-2.5 text-right text-xs text-emerald-400/80 tabular-nums">
+        {ag.conversions != null ? fmtN(Math.round(ag.conversions)) : '—'}
+      </td>
+      <td className="px-3 py-2.5 text-right text-xs text-emerald-400/80 tabular-nums">
+        {ag.conversions_value != null ? fmt(ag.conversions_value) : '—'}
+      </td>
+      <td className="px-3 py-2.5 text-right tabular-nums">
+        {ag.roas != null
+          ? <span className="text-xs text-slate-300">{ag.roas.toFixed(2)}x</span>
+          : <span className="text-slate-600 text-xs">—</span>}
+      </td>
+      <td className="px-3 py-2.5 text-right text-xs text-slate-500 tabular-nums">
+        {ag.cpa != null ? fmtD2(ag.cpa) : '—'}
+      </td>
+      <td />
+    </tr>
+  )
+}
+
+// ── Platform Campaign Row (expandable → ad groups) ────────────────────────────
+
+function PlatformCampaignRowComp({ row }: { row: PlatformCampaign }) {
   const [open, setOpen] = useState(false)
-  const total = row.gclid + row.enhanced
+  const hasAdGroups = row.ad_groups.length > 0
   return (
     <>
-      <tr className="border-t border-[#2a2f3e] hover:bg-[#252a3a] cursor-pointer" onClick={() => setOpen(v => !v)}>
+      <tr
+        className={`border-t border-[#2a2f3e] hover:bg-[#252a3a] ${hasAdGroups ? 'cursor-pointer' : ''}`}
+        onClick={() => hasAdGroups && setOpen(v => !v)}
+      >
         <td className="px-4 py-3">
           <div className="flex items-center gap-2">
-            {open ? <ChevronDown size={13} className="text-slate-500" /> : <ChevronRight size={13} className="text-slate-500" />}
-            <p className="text-sm text-white font-medium line-clamp-1">{row.campaign}</p>
+            {hasAdGroups
+              ? (open ? <ChevronDown size={13} className="text-slate-500 shrink-0" /> : <ChevronRight size={13} className="text-slate-500 shrink-0" />)
+              : <span className="w-[13px]" />}
+            <div className="min-w-0">
+              <p className="text-sm text-white font-medium line-clamp-1">{row.campaign_name}</p>
+              {hasAdGroups && (
+                <p className="text-xs text-slate-600">{row.ad_groups.length} grupos de anúncios</p>
+              )}
+            </div>
           </div>
         </td>
-        <td className="px-3 py-3 text-right text-sm text-emerald-400 font-semibold tabular-nums">{row.orders}</td>
-        <td className="px-3 py-3 text-right text-sm text-emerald-400 font-semibold tabular-nums">{fmt(row.revenue)}</td>
-        <td className="px-3 py-3 text-right text-sm text-slate-400 tabular-nums">
-          {row.cpa != null ? fmtD2(row.cpa) : <span className="text-slate-600">—</span>}
+        <td className="px-3 py-3 text-right">
+          <StatusBadge status={row.status} />
         </td>
-        <td className="px-3 py-3">
-          {total > 0 && (
-            <div className="flex items-center gap-2 text-xs">
-              {row.gclid > 0 && (
-                <span className="bg-blue-500/15 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/25">
-                  {row.gclid} gclid
-                </span>
-              )}
-              {row.enhanced > 0 && (
-                <span className="bg-indigo-500/15 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/25">
-                  {row.enhanced} enhanced
-                </span>
-              )}
-            </div>
+        <td className="px-3 py-3 text-right text-sm text-slate-400 tabular-nums">{fmtN(row.impressions)}</td>
+        <td className="px-3 py-3 text-right text-sm text-slate-400 tabular-nums">{fmtN(row.clicks)}</td>
+        <td className="px-3 py-3 text-right text-sm text-slate-400 tabular-nums">
+          {row.ctr != null ? `${row.ctr.toFixed(2)}%` : '—'}
+        </td>
+        <td className="px-3 py-3 text-right text-sm text-slate-300 tabular-nums font-medium">{fmt(row.spend)}</td>
+        <td className="px-3 py-3 text-right text-sm tabular-nums">
+          <span className="text-emerald-400 font-semibold">
+            {row.conversions != null ? fmtN(Math.round(row.conversions)) : '—'}
+          </span>
+          {row.server_orders > 0 && (
+            <span className="text-xs text-slate-600 ml-1" title="Server-side">({row.server_orders})</span>
           )}
         </td>
-        <td className="px-3 py-3 text-right"><Delta v={row.revenue_delta ?? null} /></td>
+        <td className="px-3 py-3 text-right text-sm tabular-nums">
+          <span className="text-emerald-400 font-semibold">
+            {row.conversions_value != null ? fmt(row.conversions_value) : '—'}
+          </span>
+          {row.server_revenue > 0 && (
+            <p className={`text-xs mt-0.5 ${Math.abs(row.server_revenue - (row.conversions_value || 0)) > 50 ? 'text-teal-400' : 'text-slate-500'}`}>
+              {fmt(row.server_revenue)} real
+            </p>
+          )}
+        </td>
+        <td className="px-3 py-3 text-right tabular-nums">
+          {row.roas != null
+            ? <span className={`text-sm font-bold ${row.roas >= 3 ? 'text-emerald-400' : row.roas >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>{row.roas.toFixed(2)}x</span>
+            : <span className="text-slate-600">—</span>}
+        </td>
+        <td className="px-3 py-3 text-right text-sm text-slate-400 tabular-nums">
+          {row.cpa != null ? fmtD2(row.cpa) : '—'}
+        </td>
+        <td className="px-3 py-3 text-right text-sm text-slate-500 tabular-nums">
+          {row.cpc != null ? fmtD2(row.cpc) : '—'}
+        </td>
       </tr>
-      {open && row.top_products.length > 0 && (
-        <tr className="border-t border-[#1a1f2e]">
-          <td colSpan={6} className="px-0 py-0">
-            <div className="bg-[#0f1117] border-b border-[#2a2f3e]">
-              <p className="px-5 pt-2.5 pb-1 text-xs uppercase tracking-wider text-slate-600 font-medium">
-                Produtos vendidos por esta campanha
-              </p>
-              <table className="w-full text-xs">
-                <tbody>
-                  {row.top_products.map((p, i) => (
-                    <tr key={i} className="border-t border-[#1a1f2e]">
-                      <td className="pl-5 pr-4 py-2 text-slate-300 max-w-xs">
-                        <p className="truncate">{p.name}</p>
-                        {p.sku && <p className="text-slate-600 font-mono">{p.sku}</p>}
-                      </td>
-                      <td className="px-4 py-2 text-right text-slate-500 tabular-nums">{p.units} un.</td>
-                      <td className="px-5 py-2 text-right text-emerald-400 font-semibold tabular-nums">{fmt(p.revenue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </td>
-        </tr>
-      )}
+      {open && row.ad_groups.map(ag => <AdGroupRowComp key={ag.adgroup_id} ag={ag} />)}
     </>
   )
 }
@@ -176,6 +250,7 @@ export default function GoogleAdsPage() {
   const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [data,    setData]    = useState<OverviewData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [campExpanded, setCampExpanded] = useState<Set<string>>(new Set())
 
   const load = useCallback(async (q: string) => {
     setLoading(true)
@@ -203,6 +278,8 @@ export default function GoogleAdsPage() {
     Compras:     d.orders,
     gclid:       d.gclid,
   }))
+
+  const campaignsWithProducts = (data?.campaigns || []).filter(c => c.orders > 0 && c.top_products.length > 0)
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -337,13 +414,13 @@ export default function GoogleAdsPage() {
             </div>
           </div>
 
-          {/* Campaign Table */}
+          {/* Platform Campaign Table — hierárquica Campanha → Grupo de anúncios */}
           <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-slate-300">Campanhas Google</h2>
+                <h2 className="text-sm font-semibold text-slate-300">Campanhas → Grupos de anúncios</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Pedidos com utm_source=google · Expanda para ver produtos vendidos
+                  Dados ao vivo da API do Google Ads · Expanda para ver grupos · Compras/Receita: Google (server-side)
                 </p>
               </div>
               {loading && <Loader2 size={14} className="animate-spin text-slate-500" />}
@@ -352,45 +429,105 @@ export default function GoogleAdsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#2a2f3e] bg-[#0f1117]">
-                    {['Campanha', 'Compras', 'Receita', 'CPA', 'Match type', '% Δ Receita'].map(h => (
-                      <th key={h} className={`px-3 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Campanha' ? 'text-left px-4' : 'text-right'}`}>{h}</th>
+                    {['Campanha / Grupo', 'Status', 'Impressões', 'Cliques', 'CTR', 'Investimento', 'Conv.', 'Receita', 'ROAS', 'CPA', 'CPC'].map(h => (
+                      <th key={h} className={`px-3 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Campanha / Grupo' ? 'text-left px-4' : 'text-right'}`}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {(data?.campaigns || []).length === 0 ? (
-                    <tr><td colSpan={6} className="py-10 text-center text-slate-500 text-sm">Nenhuma campanha Google no período</td></tr>
+                  {(data?.platform_campaigns || []).length === 0 ? (
+                    <tr><td colSpan={11} className="py-10 text-center text-slate-500 text-sm">
+                      {data?.has_creds ? 'Nenhuma campanha com investimento no período' : 'Google Ads não conectado para este cliente'}
+                    </td></tr>
                   ) : (
-                    (data?.campaigns || []).map(row => <CampaignRowComp key={row.campaign} row={row} />)
+                    (data?.platform_campaigns || []).map(row => (
+                      <PlatformCampaignRowComp key={row.campaign_id || row.campaign_name} row={row} />
+                    ))
                   )}
                 </tbody>
-                {t && t.orders > 0 && (
-                  <tfoot className="border-t-2 border-[#2a2f3e] bg-[#0f1117]">
-                    <tr>
-                      <td className="px-4 py-3 text-xs font-semibold text-slate-400">Total Google</td>
-                      <td className="px-3 py-3 text-right text-sm font-bold text-emerald-400 tabular-nums">{t.orders}</td>
-                      <td className="px-3 py-3 text-right text-sm font-bold text-emerald-400 tabular-nums">{fmt(t.revenue)}</td>
-                      <td className="px-3 py-3 text-right text-sm text-slate-300 tabular-nums">{t.cpa != null ? fmtD2(t.cpa) : '—'}</td>
-                      <td className="px-3 py-3" />
-                      <td className="px-3 py-3 text-right"><Delta v={dlt.revenue ?? null} /></td>
-                    </tr>
-                  </tfoot>
-                )}
               </table>
             </div>
+            <p className="px-5 py-3 text-xs text-slate-600 border-t border-[#2a2f3e]">
+              Conv. e Receita são os valores reportados pelo Google Ads. O número entre parênteses e "real" são nossos pedidos server-side com utm_source=google.
+            </p>
           </div>
+
+          {/* O que cada campanha vendeu */}
+          {campaignsWithProducts.length > 0 && (
+            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+              <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center gap-2">
+                <Sparkles size={14} className="text-blue-400" />
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-300">O que cada campanha vendeu</h2>
+                  <p className="text-xs text-slate-500 mt-0.5">Produtos por campanha · atribuição server-side · clique para expandir</p>
+                </div>
+              </div>
+              <div className="divide-y divide-[#2a2f3e]">
+                {campaignsWithProducts.map((c) => {
+                  const open = campExpanded.has(c.campaign)
+                  return (
+                    <div key={c.campaign}>
+                      <button
+                        onClick={() => setCampExpanded(prev => {
+                          const n = new Set(prev)
+                          open ? n.delete(c.campaign) : n.add(c.campaign)
+                          return n
+                        })}
+                        className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-[#252a3a] transition-colors text-left"
+                      >
+                        {open ? <ChevronDown size={13} className="text-slate-500 shrink-0" /> : <ChevronRight size={13} className="text-slate-500 shrink-0" />}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-white font-medium truncate">{c.campaign}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {c.gclid > 0 && (
+                              <span className="text-xs bg-blue-500/15 text-blue-300 px-1.5 py-0.5 rounded border border-blue-500/25">{c.gclid} gclid</span>
+                            )}
+                            {c.enhanced > 0 && (
+                              <span className="text-xs bg-indigo-500/15 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/25">{c.enhanced} enhanced</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-bold text-emerald-400">{fmt(c.revenue)}</p>
+                          <p className="text-xs text-slate-500">{c.orders} pedidos · CPA {c.cpa != null ? fmtD2(c.cpa) : '—'}</p>
+                        </div>
+                      </button>
+                      {open && (
+                        <div className="border-t border-[#2a2f3e] bg-[#0f1117]">
+                          <table className="w-full text-xs">
+                            <tbody>
+                              {c.top_products.map((p, i) => (
+                                <tr key={i} className="border-t border-[#2a2f3e]/50 last:border-0">
+                                  <td className="px-5 py-2 text-slate-300 max-w-xs">
+                                    <p className="truncate">{p.name}</p>
+                                    {p.sku && <p className="text-slate-600 font-mono">{p.sku}</p>}
+                                  </td>
+                                  <td className="px-5 py-2 text-right text-slate-500">{p.units} un.</td>
+                                  <td className="px-5 py-2 text-right text-emerald-400 font-semibold">{fmt(p.revenue)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Explanation */}
           <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-5 space-y-3">
             <p className="text-sm font-semibold text-blue-400">Como interpretar os dados</p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-400 leading-relaxed">
               <div>
-                <p className="text-slate-300 font-medium mb-1">Compras Google vs Conversões enviadas</p>
-                <p>"Compras Google" são pedidos com utm_source=google (tráfego pago clicou no anúncio e comprou). "Conversões enviadas" é o total de pedidos que mandamos ao Google Ads para treinar o Smart Bidding — inclui vendas de outros canais para melhorar o modelo.</p>
+                <p className="text-slate-300 font-medium mb-1">Conv. Google vs pedidos server-side</p>
+                <p>A coluna "Conv." mostra o que o Google Ads reportou. O número entre parênteses e o valor "real" em teal são nossos pedidos com utm_source=google — a diferença revela janelas de view-through ou compras por PIX que o Google não viu.</p>
               </div>
               <div>
                 <p className="text-slate-300 font-medium mb-1">gclid vs Enhanced</p>
-                <p>gclid = clique direto no anúncio Google → atribuição 100% certa. Enhanced = sem clique Google mas enviamos email/telefone hasheado para o Google cruzar. Quanto mais gclid, melhor o Smart Bidding aprende.</p>
+                <p>gclid = clique direto no anúncio → atribuição 100% certa. Enhanced = sem clique Google mas enviamos email/telefone hasheado para o Google cruzar. Quanto mais gclid, melhor o Smart Bidding aprende.</p>
               </div>
               <div>
                 <p className="text-slate-300 font-medium mb-1">PIX e compras sem utm</p>
