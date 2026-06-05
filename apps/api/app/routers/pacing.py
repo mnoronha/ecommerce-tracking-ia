@@ -107,6 +107,95 @@ async def list_goals(pixel_id: str, months: int = 6):
     return {"goals": result.data or []}
 
 
+class PersistentGoalsPayload(BaseModel):
+    revenue_goal:      Optional[float] = None
+    roas_goal:         Optional[float] = None
+    cpa_target:        Optional[float] = None
+    meta_ads_budget:   Optional[float] = None
+    google_ads_budget: Optional[float] = None
+    tiktok_ads_budget: Optional[float] = None
+
+
+@router.get("/clients/{pixel_id}/goals", summary="Metas persistentes do cliente")
+async def get_persistent_goals(pixel_id: str):
+    sb = get_supabase()
+    client = (
+        sb.table("clients")
+        .select("monthly_revenue_goal, target_roas, cpa_target, "
+                "meta_ads_budget, google_ads_budget, tiktok_ads_budget")
+        .eq("pixel_id", pixel_id)
+        .limit(1)
+        .execute()
+    )
+    if not (client and client.data):
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    c = client.data[0]
+    return {
+        "revenue_goal":      c.get("monthly_revenue_goal"),
+        "roas_goal":         c.get("target_roas"),
+        "cpa_target":        c.get("cpa_target"),
+        "meta_ads_budget":   c.get("meta_ads_budget"),
+        "google_ads_budget": c.get("google_ads_budget"),
+        "tiktok_ads_budget": c.get("tiktok_ads_budget"),
+    }
+
+
+@router.post("/clients/{pixel_id}/goals", summary="Salva metas persistentes do cliente")
+async def save_persistent_goals(pixel_id: str, body: PersistentGoalsPayload):
+    sb = get_supabase()
+    client = (
+        sb.table("clients")
+        .select("id, agency_id")
+        .eq("pixel_id", pixel_id)
+        .limit(1)
+        .execute()
+    )
+    if not (client and client.data):
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+    cid       = client.data[0]["id"]
+    agency_id = client.data[0]["agency_id"]
+
+    # Persist to clients table (permanent — survives month change)
+    update: dict = {}
+    if body.revenue_goal      is not None: update["monthly_revenue_goal"] = body.revenue_goal
+    if body.roas_goal          is not None: update["target_roas"]          = body.roas_goal
+    if body.cpa_target         is not None: update["cpa_target"]           = body.cpa_target
+    if body.meta_ads_budget    is not None: update["meta_ads_budget"]      = body.meta_ads_budget
+    if body.google_ads_budget  is not None: update["google_ads_budget"]    = body.google_ads_budget
+    if body.tiktok_ads_budget  is not None: update["tiktok_ads_budget"]    = body.tiktok_ads_budget
+
+    # Recalculate total ad spend goal from per-channel budgets
+    total_budget = sum(filter(None, [
+        body.meta_ads_budget, body.google_ads_budget, body.tiktok_ads_budget,
+    ]))
+    if total_budget > 0:
+        update["monthly_ad_spend_goal"] = round(total_budget, 2)
+
+    if update:
+        sb.table("clients").update(update).eq("id", cid).execute()
+
+    # Mirror to goals table for current month so /pacing and history still work
+    from datetime import date
+    month_key = date.today().replace(day=1).isoformat()
+    goal_payload: dict = {"agency_id": agency_id, "client_id": cid, "month": month_key}
+    if body.revenue_goal is not None: goal_payload["revenue_goal"] = body.revenue_goal
+    if body.roas_goal     is not None: goal_payload["roas_goal"]    = body.roas_goal
+    if body.cpa_target    is not None: goal_payload["cpa_target"]   = body.cpa_target
+
+    if len(goal_payload) > 3:  # has at least one metric beyond the 3 required keys
+        existing = (
+            sb.table("goals").select("id")
+            .eq("client_id", cid).eq("month", month_key)
+            .limit(1).execute()
+        )
+        if existing.data:
+            sb.table("goals").update(goal_payload).eq("id", existing.data[0]["id"]).execute()
+        else:
+            sb.table("goals").insert(goal_payload).execute()
+
+    return {"ok": True}
+
+
 @router.get(
     "/pacing/{pixel_id}",
     summary="Month-to-date pacing vs goals",
