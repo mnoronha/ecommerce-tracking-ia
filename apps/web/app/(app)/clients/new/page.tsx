@@ -93,6 +93,8 @@ function NewClientWizard() {
   // Step 3
   const [installing,    setInstalling]    = useState(false)
   const [installResult, setInstallResult] = useState<InstallResult | null>(null)
+  const [syncOnly,      setSyncOnly]      = useState(false)
+  const [enablingSyncOnly, setEnablingSyncOnly] = useState(false)
 
   // Step 4
   const [alertEmail,     setAlertEmail]     = useState('')
@@ -209,6 +211,23 @@ function NewClientWizard() {
       })
     } finally {
       setInstalling(false)
+    }
+  }
+
+  // ── Step 3 alt: skip pixel/webhooks, use API sync only ───────────────────
+  async function handleEnableSyncOnly() {
+    setEnablingSyncOnly(true)
+    try {
+      await fetch(`${API_URL}/sync/shopify/${pixelId}/enable?enabled=true`, { method: 'PATCH' })
+      await fetch(`${API_URL}/sync/shopify/${pixelId}/backfill`, { method: 'POST' })
+      setSyncOnly(true)
+      setStep(4)
+    } catch {
+      // backfill can be triggered later; still advance
+      setSyncOnly(true)
+      setStep(4)
+    } finally {
+      setEnablingSyncOnly(false)
     }
   }
 
@@ -588,12 +607,26 @@ function NewClientWizard() {
                   </ul>
 
                   {platform === 'shopify' ? (
-                    <button onClick={handleInstall} disabled={installing}
-                      className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors">
-                      {installing
-                        ? <><Loader2 size={16} className="animate-spin" /> Instalando…</>
-                        : <><Zap size={16} /> Instalar tudo automaticamente</>}
-                    </button>
+                    <div className="space-y-3">
+                      <button onClick={handleInstall} disabled={installing || enablingSyncOnly}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors">
+                        {installing
+                          ? <><Loader2 size={16} className="animate-spin" /> Instalando…</>
+                          : <><Zap size={16} /> Instalar tudo automaticamente</>}
+                      </button>
+                      <button
+                        onClick={handleEnableSyncOnly}
+                        disabled={installing || enablingSyncOnly}
+                        className="w-full py-3 border border-[#2a2f3e] text-slate-400 hover:text-white hover:border-slate-500 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                      >
+                        {enablingSyncOnly
+                          ? <><Loader2 size={14} className="animate-spin" /> Ativando sync…</>
+                          : 'Pular — usar só sincronização de pedidos via API'}
+                      </button>
+                      <p className="text-xs text-slate-600 text-center">
+                        Sem pixel nem webhooks. Pedidos importados a cada hora via Admin API.
+                      </p>
+                    </div>
                   ) : (
                     <div className="space-y-4">
                       <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-xl p-4">
@@ -804,9 +837,11 @@ function NewClientWizard() {
               <h2 className="text-2xl font-bold text-white mb-2">Tudo pronto!</h2>
               <p className="text-slate-400 text-sm max-w-sm mx-auto">
                 <span className="text-white font-semibold">{storeName}</span> está configurada.
-                {installResult?.script_tag?.status !== 'failed'
-                  ? ' O pixel está instalado em todas as páginas da loja automaticamente.'
-                  : ' Lembre de colar o snippet do pixel no tema da loja.'}
+                {syncOnly
+                  ? ' Pedidos serão sincronizados automaticamente via Shopify Admin API a cada hora.'
+                  : installResult?.script_tag?.status !== 'failed'
+                    ? ' O pixel está instalado em todas as páginas da loja automaticamente.'
+                    : ' Lembre de colar o snippet do pixel no tema da loja.'}
               </p>
             </div>
 
