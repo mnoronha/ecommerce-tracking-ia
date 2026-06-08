@@ -155,18 +155,19 @@ export default function PedidosPage() {
     })
   }, [clientId, page, debSearch, statusFilter, datePreset])
 
-  // Total revenue for current filter (all pages)
+  // Total revenue for current filter — single aggregate via RPC instead of
+  // fetching all rows and summing on the client.
   useEffect(() => {
     if (!clientId) return
     const { gte, lte } = dateRange(datePreset)
-    let q = supabase.from('orders').select('total_price')
-      .eq('client_id', clientId).gt('total_price', 0)
-    if (gte)                    q = (q as any).gte('created_at', gte)
-    if (lte)                    q = (q as any).lte('created_at', lte)
-    if (statusFilter !== 'all') q = (q as any).eq('financial_status', statusFilter)
-    if (debSearch)              q = (q as any).ilike('email', `%${debSearch}%`)
-    q.then(({ data }) => {
-      setTotalRev(((data as any[]) || []).reduce((s, o) => s + (o.total_price || 0), 0))
+    supabase.rpc('orders_revenue_sum', {
+      p_client_id:    clientId,
+      p_gte:          gte  ?? null,
+      p_lte:          lte  ?? null,
+      p_status:       statusFilter !== 'all' ? statusFilter : null,
+      p_email_search: debSearch || null,
+    }).then(({ data }) => {
+      setTotalRev(Number(data) || 0)
     })
   }, [clientId, debSearch, statusFilter, datePreset])
 

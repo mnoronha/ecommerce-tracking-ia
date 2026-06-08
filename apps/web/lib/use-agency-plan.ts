@@ -25,16 +25,22 @@ const DEFAULT: AgencyPlan = {
 }
 
 // Module-level cache keyed by pixelId — survives re-renders, resets on full page reload.
-const _cache = new Map<string, AgencyPlan>()
+// Each entry carries a fetchedAt timestamp; stale entries (> TTL) are re-fetched.
+const _cache = new Map<string, { plan: AgencyPlan; fetchedAt: number }>()
+const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
 export function useAgencyPlan(pixelId?: string): { plan: AgencyPlan; loading: boolean } {
-  const cached  = pixelId ? _cache.get(pixelId) : undefined
-  const [plan,    setPlan]    = useState<AgencyPlan>(cached ?? DEFAULT)
-  const [loading, setLoading] = useState(!cached)
+  const entry   = pixelId ? _cache.get(pixelId) : undefined
+  const isFresh = entry ? (Date.now() - entry.fetchedAt) < CACHE_TTL_MS : false
+  const [plan,    setPlan]    = useState<AgencyPlan>(isFresh ? entry!.plan : DEFAULT)
+  const [loading, setLoading] = useState(!isFresh)
 
   useEffect(() => {
     if (!pixelId) { setLoading(false); return }
-    if (_cache.has(pixelId)) { setPlan(_cache.get(pixelId)!); setLoading(false); return }
+    const e = _cache.get(pixelId)
+    if (e && (Date.now() - e.fetchedAt) < CACHE_TTL_MS) {
+      setPlan(e.plan); setLoading(false); return
+    }
 
     createSupabaseBrowserClient()
       .from('clients')
@@ -56,7 +62,7 @@ export function useAgencyPlan(pixelId?: string): { plan: AgencyPlan; loading: bo
           gates:       planGates(planId),
           isTrialing:  trialEndsAt ? new Date(trialEndsAt) > new Date() : false,
         }
-        _cache.set(pixelId, result)
+        _cache.set(pixelId, { plan: result, fetchedAt: Date.now() })
         setPlan(result)
         setLoading(false)
       })

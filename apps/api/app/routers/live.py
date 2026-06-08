@@ -95,28 +95,26 @@ async def live_stats(pixel_id: str):
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
     last_hour = now - timedelta(hours=1)
 
-    today = (
-        sb.table("orders")
-        .select("total_price, created_at")
-        .eq("client_id", client_uuid)
-        .eq("financial_status", "paid")
-        .gt("total_price", 0)
-        .gte("created_at", start_of_day.isoformat())
-        .execute()
-    ).data or []
+    # Single aggregate query instead of fetching all rows and summing in Python.
+    row = (
+        sb.rpc("live_today_stats", {
+            "p_client_id": client_uuid,
+            "p_day_start": start_of_day.isoformat(),
+            "p_last_hour": last_hour.isoformat(),
+        }).execute()
+    ).data
+    stats = (row or [{}])[0]
 
-    today_revenue = sum(float(o.get("total_price") or 0) for o in today)
-    last_hour_orders = sum(1 for o in today if o.get("created_at") >= last_hour.isoformat())
-    last_hour_revenue = sum(
-        float(o.get("total_price") or 0) for o in today
-        if o.get("created_at") >= last_hour.isoformat()
-    )
+    today_revenue    = float(stats.get("today_revenue")    or 0)
+    today_orders     = int(stats.get("today_orders")       or 0)
+    last_hour_rev    = float(stats.get("last_hour_revenue") or 0)
+    last_hour_cnt    = int(stats.get("last_hour_orders")   or 0)
 
     return {
         "today_revenue":     round(today_revenue, 2),
-        "today_orders":      len(today),
-        "today_avg_ticket":  round(today_revenue / len(today), 2) if today else 0,
-        "last_hour_orders":  last_hour_orders,
-        "last_hour_revenue": round(last_hour_revenue, 2),
+        "today_orders":      today_orders,
+        "today_avg_ticket":  round(today_revenue / today_orders, 2) if today_orders else 0,
+        "last_hour_orders":  last_hour_cnt,
+        "last_hour_revenue": round(last_hour_rev, 2),
         "now":               now.isoformat(),
     }

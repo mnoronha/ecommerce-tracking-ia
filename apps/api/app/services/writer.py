@@ -39,11 +39,19 @@ _TRACKING_EVENT_TYPE_MAP: dict[str, str] = {
 
 # ── Client resolution ─────────────────────────────────────────────────────────
 
+# In-process cache: pixel_id → client UUID. Only successful lookups are cached
+# so a new/re-activated client is picked up on the very next request.
+# The dict is bounded by the number of active clients (tens, not thousands).
+_client_uuid_cache: dict[str, str] = {}
+
+
 def resolve_client_uuid(pixel_id: str) -> Optional[str]:
     """
     Resolve pixel_id (TEXT passed in the URL) → clients.id (UUID).
     Returns None if the client is not found or inactive.
     """
+    if pixel_id in _client_uuid_cache:
+        return _client_uuid_cache[pixel_id]
     try:
         result = (
             get_supabase()
@@ -55,10 +63,17 @@ def resolve_client_uuid(pixel_id: str) -> Optional[str]:
             .execute()
         )
         if result and result.data:
-            return result.data[0]["id"]
+            uuid = result.data[0]["id"]
+            _client_uuid_cache[pixel_id] = uuid
+            return uuid
     except Exception as exc:
         logger.debug("resolve_client_uuid(%s): %s", pixel_id, exc)
     return None
+
+
+def invalidate_client_cache(pixel_id: str) -> None:
+    """Remove a client from the in-process cache (call after client updates)."""
+    _client_uuid_cache.pop(pixel_id, None)
 
 
 # ── Visitor upsert ─────────────────────────────────────────────────────────────
