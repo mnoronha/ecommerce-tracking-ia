@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
@@ -722,7 +722,8 @@ export default function DashboardPage() {
   const [insightsLoading, setInsLoading] = useState(false)
   const [generating, setGenerating]     = useState(false)
   const [retention, setRetention]       = useState<RetentionData | null>(null)
-  const [heatmap, setHeatmap]           = useState<number[][]>([])
+  // heatmap is derived from allOrdersRaw — no separate state needed
+
   const [cohortData, setCohortData]     = useState<CohortMonth[]>([])
   const [channelRevenue, setChannelRevenue] = useState<ChannelRevenue[]>([])
   const [pacing, setPacing]             = useState<PacingData | null>(null)
@@ -739,10 +740,31 @@ export default function DashboardPage() {
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
+
+  // Derived from allOrdersRaw + country filter — recomputes only when raw data
+  // or country changes, not on every unrelated setState (insights, pacing, etc.)
+  const heatmap = useMemo(() => {
+    const grid: number[][] = Array.from({ length: 7 }, () => Array(8).fill(0))
+    const filtered = country === 'all'
+      ? allOrdersRaw
+      : allOrdersRaw.filter((o: any) => o.shipping_country === country)
+    filtered.forEach((o: any) => {
+      if (!o.created_at) return
+      const d     = new Date(o.created_at)
+      const day   = d.getDay()
+      const block = Math.min(Math.floor(d.getHours() / 3), 7)
+      grid[day][block] += 1
+    })
+    return grid
+  }, [allOrdersRaw, country])
   const [productSort, setProductSort]         = useState<'purchases' | 'views'>('purchases')
 
   const params = useParams()
-  const CLIENT_PIXEL_ID = (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers'
+  // Memoized so loadData's useCallback dep array stays stable across unrelated renders
+  const CLIENT_PIXEL_ID = useMemo(
+    () => (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers',
+    [params?.clientId],
+  )
 
   // Cache clientId so we don't hit Supabase on every filter change
   const clientIdRef = useRef<string | null>(null)
@@ -995,17 +1017,6 @@ export default function DashboardPage() {
       }
     } catch (_) {}
     setRetention({ newOrders, returningOrders, total: allOrders.length })
-
-    // ── Heatmap de vendas — 7 dias × 8 blocos de 3h ──────────────────────────
-    const grid: number[][] = Array.from({ length: 7 }, () => Array(8).fill(0))
-    allOrders.forEach((o: any) => {
-      if (!o.created_at) return
-      const d     = new Date(o.created_at)
-      const day   = d.getDay()                       // 0=Dom…6=Sáb
-      const block = Math.min(Math.floor(d.getHours() / 3), 7)  // 0-7
-      grid[day][block] += 1
-    })
-    setHeatmap(grid)
 
     setLastUpdate(new Date())
     setLoading(false)

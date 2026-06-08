@@ -132,12 +132,13 @@ def _collect_metrics(client_uuid: str) -> dict:
             emails = list({o["email"] for o in (first_buyers.data or []) if o.get("email")})
             returned = 0
             if emails:
-                for email in emails[:200]:  # cap to avoid huge queries
-                    r = sb.table("orders").select("id", count="exact", head=True).eq(
-                        "client_id", client_uuid).eq("email", email).eq(
-                        "is_first_purchase", False).execute()
-                    if (r.count or 0) > 0:
-                        returned += 1
+                batch = emails[:200]
+                # Single query instead of N+1 individual lookups per email.
+                r = sb.table("orders").select("email").eq(
+                    "client_id", client_uuid).eq(
+                    "is_first_purchase", False).in_(
+                    "email", batch).execute()
+                returned = len({o["email"] for o in (r.data or []) if o.get("email")})
             cohort_data.append({
                 "mes": f"M-{months_ago}",
                 "novos_compradores": len(emails),
