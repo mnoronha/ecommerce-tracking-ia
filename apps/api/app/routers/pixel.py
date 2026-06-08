@@ -74,6 +74,19 @@ def _first_party_cookie_domain(host: Optional[str]) -> Optional[str]:
     return "." + ".".join(labels[1:])
 
 
+def _get_real_ip(request: Request) -> Optional[str]:
+    # Cloudflare terminates TLS and sets this header reliably
+    if cf := request.headers.get("CF-Connecting-IP"):
+        return cf.strip()
+    # Standard reverse-proxy header — first entry is the original client IP
+    if xff := request.headers.get("X-Forwarded-For"):
+        return xff.split(",")[0].strip()
+    # nginx direct proxy
+    if xri := request.headers.get("X-Real-IP"):
+        return xri.strip()
+    return request.client.host if request.client else None
+
+
 def _parse_device(user_agent: Optional[str]) -> str:
     """
     Coarse device classification from User-Agent. Mobile bias works well for BR
@@ -264,7 +277,7 @@ async def receive_pixel_event(
     event = _build_normalized(
         data=body,
         user_agent=request.headers.get("user-agent"),
-        ip=request.client.host if request.client else None,
+        ip=_get_real_ip(request),
     )
 
     _persist(event)
@@ -371,7 +384,7 @@ async def pixel_image_fallback(
         event = _build_normalized(
             data=body,
             user_agent=request.headers.get("user-agent"),
-            ip=request.client.host if request.client else None,
+            ip=_get_real_ip(request),
         )
         _persist(event)
 

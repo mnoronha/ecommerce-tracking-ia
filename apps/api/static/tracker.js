@@ -19,6 +19,8 @@
   var COOKIE_VISITOR    = '_etv';   // visitor ID  — 1st-party, 1 year
   var COOKIE_ATTR       = '_eta';   // UTM attribution — 30 days
   var COOKIE_GCLID      = '_etg';   // Google click ID — 90 days
+  var COOKIE_GBRAID     = '_etgb';  // Google iOS click ID (web→app) — 90 days
+  var COOKIE_WBRAID     = '_etwb';  // Google iOS click ID (app→web) — 90 days
   var COOKIE_FBP        = '_fbp';   // Meta browser ID — 90 days (Meta standard)
   var COOKIE_FBC        = '_fbc';   // Meta click ID  — 90 days (Meta standard)
   var COOKIE_TTCLID     = '_ettc';  // TikTok click ID — 90 days
@@ -155,15 +157,19 @@
     return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : null;
   }
 
-  // gclid — Google click ID (URL param, persisted 90 days)
-  function getGclid() {
-    var fresh = getQueryParam('gclid');
-    if (fresh) {
-      setCookie(COOKIE_GCLID, fresh, AD_ID_TTL_DAYS);
+  // Google click IDs — gclid (padrão) + gbraid/wbraid (iOS 14+). Valida comprimento
+  // mínimo para descartar valores truncados/corrompidos.
+  function _captureClickId(param, cookieName) {
+    var fresh = getQueryParam(param);
+    if (fresh && fresh.length >= 20) {
+      setCookie(cookieName, fresh, AD_ID_TTL_DAYS);
       return fresh;
     }
-    return getCookie(COOKIE_GCLID) || null;
+    return getCookie(cookieName) || null;
   }
+  function getGclid()  { return _captureClickId('gclid',  COOKIE_GCLID);  }
+  function getGbraid() { return _captureClickId('gbraid', COOKIE_GBRAID); }
+  function getWbraid() { return _captureClickId('wbraid', COOKIE_WBRAID); }
 
   // _fbp — Meta browser ID. If Meta Pixel is on the page, the cookie already exists;
   // otherwise we generate one in Meta's documented format.
@@ -291,7 +297,8 @@
         method:    'POST',
         headers:   { 'Content-Type': 'application/json' },
         body:      JSON.stringify(payload),
-        keepalive: true
+        keepalive: true,
+        credentials: 'include'
       }).catch(function () {});
       return true;
     } catch (e) { return false; }
@@ -626,18 +633,29 @@
     var fbp    = getFbp();
     var fbc    = getFbc();
     var gclid  = getGclid();
+    var gbraid = getGbraid();
+    var wbraid = getWbraid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
+    var utm    = getAttribution() || {};
     var fb_login = getFacebookLoginId();
     var dob    = getDateOfBirth();
 
     if (fbp)       attrs['_fbp']   = fbp;
     if (fbc)       attrs['_fbc']   = fbc;
     if (gclid)     attrs['_gclid'] = gclid;
+    if (gbraid)    attrs['_gbraid'] = gbraid;
+    if (wbraid)    attrs['_wbraid'] = wbraid;
     if (gcid)      attrs['_gcid']  = gcid;
     if (ttclid)    attrs['_ettc']  = ttclid;
     if (fb_login)  attrs['_fblogin'] = fb_login;
     if (dob)       attrs['_dob']   = dob;
+
+    if (utm.source)   attrs['_utm_source']   = utm.source;
+    if (utm.medium)   attrs['_utm_medium']   = utm.medium;
+    if (utm.campaign) attrs['_utm_campaign'] = utm.campaign;
+    if (utm.content)  attrs['_utm_content']  = utm.content;
+    if (utm.term)     attrs['_utm_term']     = utm.term;
 
     try {
       fetch('/cart/update.js', {
@@ -658,6 +676,8 @@
     getFbp:          getFbp,
     getFbc:          getFbc,
     getGclid:        getGclid,
+    getGbraid:       getGbraid,
+    getWbraid:       getWbraid,
     getGaClientId:   getGaClientId,
     showSurvey:      renderSurveyModal,
     injectCartAttrs: injectShopifyCartAttributes
