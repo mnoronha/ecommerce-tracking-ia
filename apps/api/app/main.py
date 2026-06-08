@@ -13,8 +13,8 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import alerts as alerts_router, annotations, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, meta_ads, pacing, pixel, setup
-from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, reports, retention, sessionization, spend_sync
+from .routers import alerts as alerts_router, annotations, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, meta_ads, pacing, pixel, setup, sync as sync_router
+from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, meta_attribution_sync, meta_audiences, meta_token_health, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -189,6 +189,12 @@ _scheduler.add_job(
     minute=0,  # 07:00 UTC — rede de segurança: cifra tokens novos gravados em texto puro
     id="credentials_encrypt",
 )
+_scheduler.add_job(
+    shopify_sync.run_hourly_for_all_clients,
+    "interval",
+    hours=1,
+    id="shopify_api_sync",
+)
 
 
 @app.on_event("startup")
@@ -253,6 +259,7 @@ app.include_router(google_ads_dashboard.router)
 app.include_router(klaviyo_webhook.router)
 app.include_router(lgpd.router)
 app.include_router(annotations.router)
+app.include_router(sync_router.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
