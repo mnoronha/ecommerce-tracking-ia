@@ -534,6 +534,25 @@ def _eval_zero_sales(rule: dict, client: dict) -> list[dict]:
         return []
 
     sb  = get_supabase()
+
+    # Guard: cliente sem histórico de pedidos nos últimos 30 dias não tem baseline.
+    # Evita falsos positivos para clientes dashboard-only (sem integração ecommerce).
+    try:
+        baseline_check = (
+            sb.table("orders")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .eq("financial_status", "paid")
+            .gt("total_price", 0)
+            .gte("created_at", (_now() - timedelta(days=30)).isoformat())
+            .execute()
+        ).count or 0
+        if baseline_check == 0:
+            return []
+    except Exception as exc:
+        logger.debug("_eval_zero_sales baseline(%s): %s", client.get("pixel_id"), exc)
+        return []
+
     cutoff = (_now() - timedelta(hours=threshold_hours)).isoformat()
     try:
         rows = (
