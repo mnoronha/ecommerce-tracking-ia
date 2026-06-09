@@ -40,6 +40,15 @@
   var CLIENT_ID = cfg.clientId || (script && script.getAttribute('data-client-id')) || '';
   var API_URL   = (cfg.apiUrl   || (script && script.getAttribute('data-api-url'))   || '').replace(/\/$/, '');
 
+  // EVENTS_PATH: reads _ep from the script's own src URL so that the first-party
+  // CNAME alias (/p/t.js?..._ep=/p/e) can steer events to the adblock-neutral
+  // path without any content change. Falls back to the canonical /pixel/events.
+  var _srcParams = (function () {
+    try { return (script && script.src) ? new URL(script.src).searchParams : null; }
+    catch (e) { return null; }
+  })();
+  var EVENTS_PATH = cfg.eventsPath || (_srcParams && _srcParams.get('_ep')) || '/pixel/events';
+
   // ── Cookie utilities ───────────────────────────────────────────────────────
   function setCookie(name, value, days) {
     var expires = '';
@@ -319,7 +328,7 @@
       ].join('&');
       var img   = new Image(1, 1);
       img.style.display = 'none';
-      img.src   = API_URL + '/pixel/events?' + qs;
+      img.src   = API_URL + EVENTS_PATH + '?' + qs;
       // Attach to DOM so the request fires even in some strict browsers
       var body  = document.body;
       if (body) {
@@ -337,7 +346,7 @@
       }
       return;
     }
-    var endpoint = API_URL + '/pixel/events';
+    var endpoint = API_URL + EVENTS_PATH;
     var payload  = buildPayload(eventType, data);
 
     if (!sendBeacon(endpoint, payload)) {

@@ -238,6 +238,23 @@ _static_dir = Path(__file__).parent.parent / "static"
 if _static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 
+
+@app.get("/p/t.js", include_in_schema=False)
+async def tracker_js_adblock_alias():
+    """
+    Anti-adblock alias for /static/tracker.js.
+    Served under a neutral path so EasyPrivacy's ||*/tracker.js$script rule
+    doesn't block it. Used automatically when a client has a first-party CNAME.
+    """
+    from fastapi.responses import Response as _Resp
+    _f = _static_dir / "tracker.js"
+    return _Resp(
+        content=_f.read_bytes(),
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(ecommerce_webhooks.router)
 app.include_router(pixel.router)

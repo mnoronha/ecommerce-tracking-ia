@@ -268,6 +268,7 @@ def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
     summary="Receive JS pixel events (Beacon API / fetch)",
     tags=["pixel"],
 )
+@router.post("/p/e", include_in_schema=False)
 @limiter.limit("100/minute")
 async def receive_pixel_event(
     request: Request,
@@ -365,6 +366,7 @@ async def receive_pixel_event(
     tags=["pixel"],
     response_class=Response,
 )
+@router.get("/p/e", include_in_schema=False, response_class=Response)
 async def pixel_image_fallback(
     request: Request,
     cid: str = "",

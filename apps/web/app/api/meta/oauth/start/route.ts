@@ -6,10 +6,9 @@ const META_AUTH_URL = 'https://www.facebook.com/v19.0/dialog/oauth'
 
 // Scopes for Conversions API + Custom Audiences + Ads insights
 const SCOPES = [
-  'ads_management',     // CAPI events, manage audiences
-  'ads_read',           // read campaigns, ROAS data
+  'ads_management',      // CAPI events, manage audiences
+  'ads_read',            // read campaigns, ROAS data
   'business_management', // access ad accounts
-  'email',
 ].join(',')
 
 export async function GET(req: NextRequest) {

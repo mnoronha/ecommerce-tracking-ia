@@ -40,6 +40,15 @@
   var CLIENT_ID = cfg.clientId || (script && script.getAttribute('data-client-id')) || '';
   var API_URL   = (cfg.apiUrl   || (script && script.getAttribute('data-api-url'))   || '').replace(/\/$/, '');
 
+  // EVENTS_PATH: reads _ep from the script's own src URL so that the first-party
+  // CNAME alias (/p/t.js?..._ep=/p/e) can steer events to the adblock-neutral
+  // path without any content change. Falls back to the canonical /pixel/events.
+  var _srcParams = (function () {
+    try { return (script && script.src) ? new URL(script.src).searchParams : null; }
+    catch (e) { return null; }
+  })();
+  var EVENTS_PATH = cfg.eventsPath || (_srcParams && _srcParams.get('_ep')) || '/pixel/events';
+
   // ── Cookie utilities ───────────────────────────────────────────────────────
   function setCookie(name, value, days) {
     var expires = '';
@@ -157,8 +166,10 @@
     return match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : null;
   }
 
-  // Google click IDs — gclid (padrão) + gbraid/wbraid (iOS 14+). Valida comprimento
-  // mínimo para descartar valores truncados/corrompidos.
+  // Google click IDs — gclid (padrão) + gbraid/wbraid (iOS 14+). getQueryParam
+  // já decodifica; aqui validamos o comprimento pra descartar valores
+  // truncados/corrompidos (um click ID válido tem ~70-100 chars), evitando
+  // enviar lixo ao Google — o Enhanced Conversion (email/phone) cobre o resto.
   function _captureClickId(param, cookieName) {
     var fresh = getQueryParam(param);
     if (fresh && fresh.length >= 20) {
@@ -298,6 +309,8 @@
         headers:   { 'Content-Type': 'application/json' },
         body:      JSON.stringify(payload),
         keepalive: true,
+        // credentials so the server-side first-party Set-Cookie is accepted
+        // on the CNAME (persists past Safari ITP's 7-day JS-cookie cap).
         credentials: 'include'
       }).catch(function () {});
       return true;
@@ -315,7 +328,7 @@
       ].join('&');
       var img   = new Image(1, 1);
       img.style.display = 'none';
-      img.src   = API_URL + '/pixel/events?' + qs;
+      img.src   = API_URL + EVENTS_PATH + '?' + qs;
       // Attach to DOM so the request fires even in some strict browsers
       var body  = document.body;
       if (body) {
@@ -333,7 +346,7 @@
       }
       return;
     }
-    var endpoint = API_URL + '/pixel/events';
+    var endpoint = API_URL + EVENTS_PATH;
     var payload  = buildPayload(eventType, data);
 
     if (!sendBeacon(endpoint, payload)) {
@@ -637,9 +650,9 @@
     var wbraid = getWbraid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
-    var utm    = getAttribution() || {};
     var fb_login = getFacebookLoginId();
     var dob    = getDateOfBirth();
+    var utm    = getAttribution() || {};
 
     if (fbp)       attrs['_fbp']   = fbp;
     if (fbc)       attrs['_fbc']   = fbc;
@@ -650,7 +663,8 @@
     if (ttclid)    attrs['_ettc']  = ttclid;
     if (fb_login)  attrs['_fblogin'] = fb_login;
     if (dob)       attrs['_dob']   = dob;
-
+    // UTMs survive checkout via cart attribute, so the backend can recover
+    // source/medium/campaign even when Shopify's landing_site is stale.
     if (utm.source)   attrs['_utm_source']   = utm.source;
     if (utm.medium)   attrs['_utm_medium']   = utm.medium;
     if (utm.campaign) attrs['_utm_campaign'] = utm.campaign;
@@ -676,8 +690,6 @@
     getFbp:          getFbp,
     getFbc:          getFbc,
     getGclid:        getGclid,
-    getGbraid:       getGbraid,
-    getWbraid:       getWbraid,
     getGaClientId:   getGaClientId,
     showSurvey:      renderSurveyModal,
     injectCartAttrs: injectShopifyCartAttributes

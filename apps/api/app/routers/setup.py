@@ -163,11 +163,20 @@ def _install_script_tag(shop_domain: str, access_token: str, pixel_id: str,
     events also flow through the first-party domain automatically.
     Returns {'status': 'created'|'exists'|'failed', 'id': ..., 'src': ...}
     """
-    api_base = (base_url or _api_base()).rstrip("/")
-    tag_src  = f"{api_base}/static/tracker.js?client_id={pixel_id}"
+    api_base   = (base_url or _api_base()).rstrip("/")
+    using_cname = bool(base_url)
+    if using_cname:
+        # Anti-adblock paths: neutral URL that bypasses EasyPrivacy filter lists.
+        # _ep tells tracker.js to send events to /p/e instead of /pixel/events.
+        tag_src = f"{api_base}/p/t.js?client_id={pixel_id}&_ep=/p/e"
+    else:
+        tag_src = f"{api_base}/static/tracker.js?client_id={pixel_id}"
 
     existing = _list_script_tags(shop_domain, access_token)
-    our_tags = [t for t in existing if "/static/tracker.js" in (t.get("src") or "")]
+    our_tags = [
+        t for t in existing
+        if "/static/tracker.js" in (t.get("src") or "") or "/p/t.js" in (t.get("src") or "")
+    ]
 
     # Already correctly installed
     for tag in our_tags:
@@ -329,7 +338,7 @@ async def install_shopify(pixel_id: str):
     return {
         "pixel_id":    pixel_id,
         "webhook_url": webhook_url,
-        "tracker_src": f"{(cname_base or _api_base()).rstrip('/')}/static/tracker.js?client_id={pixel_id}",
+        "tracker_src": script_tag.get("src") or f"{(cname_base or _api_base()).rstrip('/')}/static/tracker.js?client_id={pixel_id}",
         "webhooks": {
             "succeeded": webhooks_ok,
             "failed":    webhooks_fail,

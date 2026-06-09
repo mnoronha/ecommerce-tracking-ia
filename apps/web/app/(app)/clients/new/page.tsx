@@ -12,7 +12,7 @@ import {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 type Step     = 1 | 2 | 3 | 4 | 5
-type Platform = 'shopify' | 'nuvemshop' | 'woocommerce'
+type Platform = 'shopify' | 'nuvemshop' | 'woocommerce' | 'vnda' | 'wordpress'
 type AdsTab   = 'meta' | 'google' | 'tiktok' | 'pinterest' | 'ga4'
 
 type ProbeResult = { status: string; error?: string | null } | null
@@ -351,14 +351,20 @@ function NewClientWizard() {
               <div>
                 <label className={LABEL}>Plataforma</label>
                 <div className="grid grid-cols-3 gap-3">
-                  {(['shopify', 'nuvemshop', 'woocommerce'] as Platform[]).map(p => (
-                    <button key={p} type="button" onClick={() => setPlatform(p)}
+                  {([
+                    { value: 'shopify',     label: 'Shopify' },
+                    { value: 'nuvemshop',   label: 'Nuvemshop' },
+                    { value: 'woocommerce', label: 'WooCommerce' },
+                    { value: 'vnda',        label: 'Vnda' },
+                    { value: 'wordpress',   label: 'WordPress' },
+                  ] as { value: Platform; label: string }[]).map(({ value, label }) => (
+                    <button key={value} type="button" onClick={() => setPlatform(value)}
                       className={`py-3 rounded-xl border text-sm font-medium transition-colors ${
-                        platform === p
+                        platform === value
                           ? 'border-indigo-500 bg-indigo-500/10 text-indigo-300'
                           : 'border-[#2a2f3e] text-slate-400 hover:border-slate-500 hover:text-white'
                       }`}>
-                      {p === 'shopify' ? 'Shopify' : p === 'nuvemshop' ? 'Nuvemshop' : 'WooCommerce'}
+                      {label}
                     </button>
                   ))}
                 </div>
@@ -413,6 +419,17 @@ function NewClientWizard() {
                   <label className={LABEL}>URL da loja</label>
                   <input type="url" value={domain} onChange={e => setDomain(e.target.value)}
                     placeholder="https://minhaloja.com.br" className={INPUT} />
+                </div>
+              )}
+
+              {(platform === 'vnda' || platform === 'wordpress') && (
+                <div>
+                  <label className={LABEL}>URL da loja</label>
+                  <input type="url" value={domain} onChange={e => setDomain(e.target.value)}
+                    placeholder="https://minhaloja.com.br" className={INPUT} />
+                  <p className="mt-1.5 text-xs text-slate-600">
+                    Somente dashboard e relatórios — sem pixel nem webhooks por enquanto.
+                  </p>
                 </div>
               )}
 
@@ -606,7 +623,18 @@ function NewClientWizard() {
                     ))}
                   </ul>
 
-                  {platform === 'shopify' ? (
+                  {(platform === 'vnda' || platform === 'wordpress') ? (
+                    <div className="space-y-3">
+                      <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 text-sm text-indigo-300">
+                        Pixel e webhooks não disponíveis para {platform === 'vnda' ? 'Vnda' : 'WordPress'} ainda.
+                        O dashboard já está ativo com dados de anúncios.
+                      </div>
+                      <button onClick={() => setStep(4)}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl text-sm flex items-center justify-center gap-2">
+                        <ArrowRight size={14} /> Continuar
+                      </button>
+                    </div>
+                  ) : platform === 'shopify' ? (
                     <div className="space-y-3">
                       <button onClick={handleInstall} disabled={installing || enablingSyncOnly}
                         className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-4 rounded-xl text-sm flex items-center justify-center gap-2 transition-colors">
