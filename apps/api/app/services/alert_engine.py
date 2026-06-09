@@ -1213,6 +1213,143 @@ def _eval_nonpaid_spike(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+# ── GA4-based evaluators (clientes sem tracking próprio) ─────────────────────
+
+def _ga4_daily_metrics(property_id: str, refresh_token: str, days: int = 8) -> list[dict]:
+    """Busca métricas diárias GA4 dos últimos `days` dias até ontem inclusive."""
+    from .ga4_reporting import _get_token, _GA4_API_URL
+    token = _get_token(refresh_token)
+    if not token:
+        return []
+    url     = _GA4_API_URL.format(property_id=property_id)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    start   = (_now().date() - timedelta(days=days)).isoformat()
+    end     = (_now().date() - timedelta(days=1)).isoformat()
+    body = {
+        "dateRanges": [{"startDate": start, "endDate": end}],
+        "dimensions": [{"name": "date"}],
+        "metrics":    [{"name": "sessions"}, {"name": "conversions"}, {"name": "purchaseRevenue"}],
+        "orderBys":   [{"dimension": {"dimensionName": "date"}}],
+    }
+    try:
+        resp = httpx.post(url, json=body, headers=headers, timeout=15.0)
+        if resp.status_code != 200:
+            logger.debug("_ga4_daily_metrics HTTP %s — %s", resp.status_code, resp.text[:120])
+            return []
+        result = []
+        for row in resp.json().get("rows", []):
+            d    = row["dimensionValues"][0]["value"]  # YYYYMMDD
+            vals = row.get("metricValues", [])
+            result.append({
+                "date":        f"{d[:4]}-{d[4:6]}-{d[6:]}",
+                "sessions":    int(float(vals[0]["value"]))   if len(vals) > 0 else 0,
+                "conversions": float(vals[1]["value"]) if len(vals) > 1 else 0.0,
+                "revenue":     float(vals[2]["value"]) if len(vals) > 2 else 0.0,
+            })
+        return result
+    except Exception as exc:
+        logger.debug("_ga4_daily_metrics(%s): %s", property_id, exc)
+        return []
+
+
+def _eval_ga4_sessions_drop(rule: dict, client: dict) -> list[dict]:
+    """Sessões GA4 de ontem caíram X% vs mediana 7d. Para clientes GA4-only."""
+    if not client.get("ga4_reporting_enabled") or not client.get("ga4_property_id"):
+        return []
+    refresh_token = client.get("google_ads_refresh_token")
+    if not refresh_token:
+        return []
+
+    cfg             = rule.get("config") or {}
+    drop_warning    = float(cfg.get("drop_warning_pct",  20))
+    drop_critical   = float(cfg.get("drop_critical_pct", 40))
+    min_active_days = int(cfg.get("min_active_days", 5))
+    min_sessions    = int(cfg.get("min_daily_sessions", 50))
+
+    rows = _ga4_daily_metrics(client["ga4_property_id"], refresh_token, days=8)
+    if not rows:
+        return []
+
+    yesterday     = (_now().date() - timedelta(days=1)).isoformat()
+    yesterday_row = next((r for r in rows if r["date"] == yesterday), None)
+    baseline_rows = [r for r in rows if r["date"] != yesterday]
+    if not yesterday_row or not baseline_rows:
+        return []
+
+    daily = [r["sessions"] for r in baseline_rows]
+    active_days = sum(1 for v in daily if v > 0)
+    if active_days < min_active_days:
+        return []
+    baseline_ref = statistics.median(daily)
+    if baseline_ref < min_sessions:
+        return []
+
+    drop = (baseline_ref - yesterday_row["sessions"]) / baseline_ref
+    if drop < drop_warning / 100:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    sev   = "critical" if drop >= drop_critical / 100 else "warning"
+    return [{
+        "fingerprint": f"ga4_sessions_drop:{client['id']}:{yesterday}",
+        "title":       f"Queda de sessões GA4 — {pixel}",
+        "message":     (
+            f"Sessões ontem: {yesterday_row['sessions']:,} vs mediana 7d {baseline_ref:,.0f}/dia "
+            f"(queda {drop * 100:.0f}%). Verifique o site e campanhas."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": sev,
+        "data":     {"sessions_yesterday": yesterday_row["sessions"],
+                     "baseline_median": round(baseline_ref, 1),
+                     "drop_pct": round(drop * 100, 1)},
+    }]
+
+
+def _eval_ga4_zero_conversions(rule: dict, client: dict) -> list[dict]:
+    """Zero conversões GA4 ontem vs baseline 7d. Para clientes GA4-only."""
+    if not client.get("ga4_reporting_enabled") or not client.get("ga4_property_id"):
+        return []
+    refresh_token = client.get("google_ads_refresh_token")
+    if not refresh_token:
+        return []
+
+    cfg             = rule.get("config") or {}
+    min_active_days = int(cfg.get("min_active_days", 5))
+
+    rows = _ga4_daily_metrics(client["ga4_property_id"], refresh_token, days=8)
+    if not rows:
+        return []
+
+    yesterday     = (_now().date() - timedelta(days=1)).isoformat()
+    yesterday_row = next((r for r in rows if r["date"] == yesterday), None)
+    baseline_rows = [r for r in rows if r["date"] != yesterday]
+    if not yesterday_row:
+        return []
+
+    daily_conv  = [r["conversions"] for r in baseline_rows]
+    active_days = sum(1 for v in daily_conv if v > 0)
+    if active_days < min_active_days:
+        return []
+    baseline_ref = statistics.median(daily_conv)
+    if baseline_ref < 1:
+        return []
+
+    if yesterday_row["conversions"] > 0:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"ga4_zero_conversions:{client['id']}:{yesterday}",
+        "title":       f"Zero conversões GA4 ontem — {pixel}",
+        "message":     (
+            f"Nenhuma conversão GA4 ontem ({yesterday}) vs mediana 7d de "
+            f"{baseline_ref:.0f} conversões/dia. Verifique campanhas e checkout."
+        ),
+        "severity": "critical",
+        "data":     {"conversions_yesterday": yesterday_row["conversions"],
+                     "baseline_median": round(baseline_ref, 1), "date": yesterday},
+    }]
+
+
 _EVALUATORS = {
     "meta_token_expiring":      _eval_meta_token_expiring,
     "integration_unhealthy":    _eval_integration_unhealthy,
@@ -1233,6 +1370,9 @@ _EVALUATORS = {
     "spend_below_expected":     _eval_spend_below_expected,
     "utm_null_ratio":           _eval_utm_null_ratio,
     "nonpaid_spike":            _eval_nonpaid_spike,
+    # GA4-only clients
+    "ga4_sessions_drop":        _eval_ga4_sessions_drop,
+    "ga4_zero_conversions":     _eval_ga4_zero_conversions,
 }
 
 
@@ -1344,6 +1484,7 @@ def _clients_for_rule(rule: dict) -> list[dict]:
         "id, pixel_id, agency_id, slack_webhook_url, "
         "meta_token_expires_at, meta_ad_account_id, meta_access_token, "
         "meta_prepaid, google_prepaid, meta_balance_threshold, google_balance_threshold, "
+        "ga4_property_id, ga4_reporting_enabled, google_ads_refresh_token, "
         + ", ".join(_INTEGRATION_HEALTH_COLS.values())
     )
     if rule.get("client_id"):
