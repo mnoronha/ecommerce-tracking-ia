@@ -72,7 +72,7 @@ function channelColor(ch: string) {
 
 export default function GA4Page() {
   const { clientId } = useParams<{ clientId: string }>()
-  const { period, from, to } = useDatePeriod()
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
 
   const [data,    setData]    = useState<GA4Report | null>(null)
   const [loading, setLoading] = useState(true)
@@ -178,7 +178,7 @@ export default function GA4Page() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <PeriodPicker />
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
           <button onClick={load} className="p-2 text-slate-400 hover:text-white border border-[#2a2f3e] rounded-lg hover:border-slate-500 transition-colors">
             <RefreshCw size={14} />
           </button>

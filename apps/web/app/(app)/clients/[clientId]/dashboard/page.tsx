@@ -2,10 +2,11 @@
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
 import IntegrationsHealth from '@/components/IntegrationsHealth'
-import { useDatePeriod, periodLabelLong } from '@/lib/use-date-range'
+import { useDatePeriod, periodLabelLong, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -740,6 +741,7 @@ export default function DashboardPage() {
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
+  const [ga4Summary, setGa4Summary]     = useState<{ sessions: number; users: number; conversions: number; revenue: number } | null>(null)
 
   // Derived from allOrdersRaw + country filter — recomputes only when raw data
   // or country changes, not on every unrelated setState (insights, pacing, etc.)
@@ -1127,6 +1129,19 @@ export default function DashboardPage() {
     } catch (_) {}
   }, [CLIENT_PIXEL_ID])
 
+  const loadGA4 = useCallback(async () => {
+    if (period === 'custom' && (!from || !to)) return
+    try {
+      const qs = periodToQuery(period, from, to)
+      const res = await fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/report?${qs}`)
+      if (!res.ok) { setGa4Summary(null); return }
+      const data = await res.json()
+      setGa4Summary(data.summary ?? null)
+    } catch {
+      setGa4Summary(null)
+    }
+  }, [CLIENT_PIXEL_ID, period, from, to])
+
   async function addAnnotation() {
     if (!annoDate || !annoLabel.trim()) return
     await fetch(`${API_URL}/annotations/${CLIENT_PIXEL_ID}`, {
@@ -1147,6 +1162,7 @@ export default function DashboardPage() {
   useEffect(() => { loadCohort() }, [loadCohort])
   useEffect(() => { loadPacing() }, [loadPacing])
   useEffect(() => { loadAnnotations() }, [loadAnnotations])
+  useEffect(() => { loadGA4() }, [loadGA4])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1236,6 +1252,48 @@ export default function DashboardPage() {
             icon={Percent} change={kpis?.conversionRateChange}
             color="bg-pink-500/10 text-pink-400" />
         </div>
+
+        {/* GA4 summary — só aparece quando ga4_reporting_enabled=true (API retorna 403 caso contrário) */}
+        {ga4Summary && (
+          <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-5 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BarChart2 size={13} className="text-indigo-400" />
+                <span className="text-xs font-semibold text-slate-300">Google Analytics 4</span>
+                <span className="text-[10px] text-indigo-400/70 bg-indigo-500/10 border border-indigo-500/20 px-1.5 py-0.5 rounded">fonte: GA4</span>
+              </div>
+              <Link href={`/clients/${CLIENT_PIXEL_ID}/ga4`}
+                className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                Ver relatório completo →
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Sessões</p>
+                <p className="text-xl font-bold text-white">{ga4Summary.sessions.toLocaleString('pt-BR')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Usuários</p>
+                <p className="text-xl font-bold text-white">{ga4Summary.users.toLocaleString('pt-BR')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Conversões GA4</p>
+                <p className="text-xl font-bold text-white">{ga4Summary.conversions.toLocaleString('pt-BR')}</p>
+              </div>
+              {ga4Summary.revenue > 0 ? (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Receita GA4</p>
+                  <p className="text-xl font-bold text-white">{fmt(ga4Summary.revenue)}</p>
+                </div>
+              ) : (
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Receita GA4</p>
+                  <p className="text-xl font-bold text-slate-600">—</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Revenue + Funnel */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
