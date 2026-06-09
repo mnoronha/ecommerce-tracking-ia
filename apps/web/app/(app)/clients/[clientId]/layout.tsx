@@ -24,6 +24,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/journey`,     label: 'Jornada',         icon: GitBranch,       gate: null },
     { href: `/clients/${clientId}/meta-ads`,     label: 'Meta Ads',        icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/google-ads`,   label: 'Google Ads',      icon: TrendingUp,      gate: null },
+    { href: `/clients/${clientId}/ga4`,          label: 'GA4',             icon: BarChart2,       gate: null },
     { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA',  icon: Sparkles,        gate: 'creative_intelligence' },
     { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',   icon: FileText,        gate: 'ai_insights' },
     { href: `/clients/${clientId}/metas`,       label: 'Metas',           icon: Target,          gate: null },

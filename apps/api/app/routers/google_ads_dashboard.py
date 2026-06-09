@@ -412,3 +412,66 @@ async def google_overview(
         "funnel":      funnel,
         "funnel_available": funnel_available,
     }
+
+
+# ── GA4 Reporting ─────────────────────────────────────────────────────────────
+
+@router.get("/ga4/{pixel_id}/report", summary="GA4 Data API — sessões e conversões")
+async def ga4_report(
+    pixel_id: str,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+    days:  int = 30,
+):
+    """
+    Lê métricas do GA4 via Data API (analytics.readonly scope).
+    Retorna sessões, usuários, conversões e receita por canal + série diária.
+    Requer ga4_reporting_enabled=true e ga4_property_id configurados.
+    """
+    from datetime import date as date_type
+    sb = get_supabase()
+
+    row = (
+        sb.table("clients")
+        .select("id, ga4_property_id, ga4_reporting_enabled, google_ads_refresh_token")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not (row and row.data):
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    from ..services import crypto, ga4_reporting
+    c = crypto.decrypt_client_secrets(row.data[0])
+
+    if not c.get("ga4_reporting_enabled"):
+        raise HTTPException(status_code=403, detail="GA4 reporting not enabled for this client")
+    if not c.get("ga4_property_id"):
+        raise HTTPException(status_code=400, detail="ga4_property_id not configured")
+    if not c.get("google_ads_refresh_token"):
+        raise HTTPException(status_code=400, detail="Google OAuth not connected")
+
+    try:
+        if start and end:
+            start_dt = date_type.fromisoformat(start)
+            end_dt   = date_type.fromisoformat(end)
+        else:
+            from datetime import datetime, timezone
+            today    = datetime.now(timezone.utc).date()
+            end_dt   = today - timedelta(days=1)
+            start_dt = end_dt - timedelta(days=days - 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format — use YYYY-MM-DD")
+
+    result = ga4_reporting.fetch_overview(
+        property_id=c["ga4_property_id"],
+        refresh_token=c["google_ads_refresh_token"],
+        start_date=start_dt,
+        end_date=end_dt,
+    )
+
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+
+    return result

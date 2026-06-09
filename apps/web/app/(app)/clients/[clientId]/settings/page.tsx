@@ -21,6 +21,8 @@ interface ClientRow {
   meta_token_health: string | null
   ga4_measurement_id: string | null
   ga4_api_secret: string | null
+  ga4_property_id: string | null
+  ga4_reporting_enabled: boolean
   google_ads_customer_id: string | null
   google_ads_conversion_action_id: string | null
   google_ads_add_to_cart_action_id: string | null
@@ -305,6 +307,8 @@ export default function ClientSettingsPage() {
         meta_ad_account_id:              form.meta_ad_account_id || null,
         ga4_measurement_id:              form.ga4_measurement_id || null,
         ga4_api_secret:                  form.ga4_api_secret   || null,
+        ga4_property_id:                 form.ga4_property_id  || null,
+        ga4_reporting_enabled:           form.ga4_reporting_enabled ?? false,
         google_ads_customer_id:           form.google_ads_customer_id || null,
         google_ads_conversion_action_id:  form.google_ads_conversion_action_id || null,
         google_ads_add_to_cart_action_id: form.google_ads_add_to_cart_action_id || null,
@@ -623,6 +627,24 @@ export default function ClientSettingsPage() {
           <Field label="API Secret">
             <input type="password" value={form.ga4_api_secret || ''} onChange={e => set('ga4_api_secret', e.target.value)}
               placeholder="api_secret..." className={INPUT} />
+          </Field>
+          <Field label="Property ID" hint="ID numérico da propriedade — ex: 267533911 (aparece na URL do GA4)">
+            <input value={form.ga4_property_id || ''} onChange={e => set('ga4_property_id', e.target.value)}
+              placeholder="267533911" className={INPUT} />
+          </Field>
+          <Field label="Relatórios GA4 no dashboard" hint="Ativa leitura de sessões e conversões do GA4 para este cliente">
+            <button
+              type="button"
+              onClick={() => set('ga4_reporting_enabled', !form.ga4_reporting_enabled)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                form.ga4_reporting_enabled
+                  ? 'border-emerald-500 bg-emerald-500/10 text-emerald-300'
+                  : 'border-[#2a2f3e] text-slate-400 hover:border-slate-500'
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${form.ga4_reporting_enabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+              {form.ga4_reporting_enabled ? 'Ativado' : 'Desativado'}
+            </button>
           </Field>
         </Section>
 
