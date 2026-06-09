@@ -1304,6 +1304,57 @@ def _eval_ga4_sessions_drop(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+def _eval_ga4_conversions_drop(rule: dict, client: dict) -> list[dict]:
+    """Conversões GA4 de ontem caíram X% vs mediana 7d. Para clientes GA4-only."""
+    if not client.get("ga4_reporting_enabled") or not client.get("ga4_property_id"):
+        return []
+    refresh_token = client.get("google_ads_refresh_token")
+    if not refresh_token:
+        return []
+
+    cfg             = rule.get("config") or {}
+    drop_warning    = float(cfg.get("drop_warning_pct",  30))
+    drop_critical   = float(cfg.get("drop_critical_pct", 55))
+    min_active_days = int(cfg.get("min_active_days", 5))
+
+    rows = _ga4_daily_metrics(client["ga4_property_id"], refresh_token, days=8)
+    if not rows:
+        return []
+
+    yesterday     = (_now().date() - timedelta(days=1)).isoformat()
+    yesterday_row = next((r for r in rows if r["date"] == yesterday), None)
+    baseline_rows = [r for r in rows if r["date"] != yesterday]
+    if not yesterday_row or not baseline_rows:
+        return []
+
+    daily_conv  = [r["conversions"] for r in baseline_rows]
+    active_days = sum(1 for v in daily_conv if v > 0)
+    if active_days < min_active_days:
+        return []
+    baseline_ref = statistics.median(daily_conv)
+    if baseline_ref < 1:
+        return []
+
+    drop = (baseline_ref - yesterday_row["conversions"]) / baseline_ref
+    if drop < drop_warning / 100:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    sev   = "critical" if drop >= drop_critical / 100 else "warning"
+    return [{
+        "fingerprint": f"ga4_conversions_drop:{client['id']}:{yesterday}",
+        "title":       f"Queda de conversões GA4 — {pixel}",
+        "message":     (
+            f"Conversões GA4 ontem: {yesterday_row['conversions']:.0f} vs mediana 7d "
+            f"{baseline_ref:.0f}/dia (queda {drop * 100:.0f}%). Verifique campanhas e checkout."
+        ),
+        "severity": sev,
+        "data":     {"conversions_yesterday": yesterday_row["conversions"],
+                     "baseline_median": round(baseline_ref, 1),
+                     "drop_pct": round(drop * 100, 1)},
+    }]
+
+
 def _eval_ga4_zero_conversions(rule: dict, client: dict) -> list[dict]:
     """Zero conversões GA4 ontem vs baseline 7d. Para clientes GA4-only."""
     if not client.get("ga4_reporting_enabled") or not client.get("ga4_property_id"):
@@ -1372,6 +1423,7 @@ _EVALUATORS = {
     "nonpaid_spike":            _eval_nonpaid_spike,
     # GA4-only clients
     "ga4_sessions_drop":        _eval_ga4_sessions_drop,
+    "ga4_conversions_drop":     _eval_ga4_conversions_drop,
     "ga4_zero_conversions":     _eval_ga4_zero_conversions,
 }
 
