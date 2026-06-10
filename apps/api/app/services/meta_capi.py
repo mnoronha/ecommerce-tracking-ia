@@ -97,6 +97,12 @@ def _build_user_data(event: NormalizedEvent) -> dict:
             if addr.zip_code:
                 user_data["zp"] = [_sha256(addr.zip_code.replace(" ", ""))]
 
+    # For anonymous mid-funnel events (AddToCart, ViewContent) where customer data
+    # is unavailable, use the browser cookie ID as external_id. Meta uses this to
+    # stitch anonymous sessions to later purchases (+15% conversions reported).
+    if "external_id" not in user_data and event.visitor_id:
+        user_data["external_id"] = [_sha256(str(event.visitor_id))]
+
     # Browser identifiers — Meta requires these UN-hashed
     meta = event.metadata or {}
     if meta.get("fbp"):

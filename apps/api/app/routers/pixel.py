@@ -74,13 +74,23 @@ def _first_party_cookie_domain(host: Optional[str]) -> Optional[str]:
     return "." + ".".join(labels[1:])
 
 
+def _prefer_ipv6(candidates: list[str]) -> str:
+    """Return the first IPv6 address if present, otherwise the first candidate.
+    Meta CAPI recommends IPv6 when available — it matches what the browser pixel captures."""
+    for ip in candidates:
+        if ":" in ip:
+            return ip
+    return candidates[0]
+
+
 def _get_real_ip(request: Request) -> Optional[str]:
     # Cloudflare terminates TLS and sets this header reliably
     if cf := request.headers.get("CF-Connecting-IP"):
         return cf.strip()
-    # Standard reverse-proxy header — first entry is the original client IP
+    # Standard reverse-proxy header — may contain multiple IPs; prefer IPv6
     if xff := request.headers.get("X-Forwarded-For"):
-        return xff.split(",")[0].strip()
+        candidates = [ip.strip() for ip in xff.split(",") if ip.strip()]
+        return _prefer_ipv6(candidates) if candidates else None
     # nginx direct proxy
     if xri := request.headers.get("X-Real-IP"):
         return xri.strip()
