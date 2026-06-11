@@ -216,49 +216,61 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
       18 Footer
     """
 
+    # ── Helpers ───────────────────────────────────────────────────────────
     def _h(v, fallback: str = "—") -> str:
         return str(v) if v is not None else fallback
+
+    def _fmt_n(v) -> str:
+        try:
+            return f"{int(float(v)):,}".replace(",", ".")
+        except (TypeError, ValueError):
+            return "—"
 
     def _sc_color(status: str) -> str:
         return {"verde": "#10b981", "amarelo": "#f59e0b", "vermelho": "#ef4444"}.get(status, "#6366f1")
 
-    def _delta_color(cls: str) -> str:
+    def _dc(cls: str) -> str:  # delta color
         if cls == "good": return "#10b981"
         if cls == "bad":  return "#ef4444"
         return "#64748b"
 
-    def _bar_color(status: str) -> str:
+    def _bc(status: str) -> str:  # bar color
         return {"good": "#10b981", "warn": "#f59e0b", "bad": "#ef4444"}.get(status, "#6366f1")
 
     KPI_COLORS = ["#10b981", "#6366f1", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
 
     # ── Context extraction ────────────────────────────────────────────────
-    agencia            = context.get("agencia") or {}
-    cliente            = context.get("cliente") or {}
-    scorecard          = context.get("scorecard") or {}
-    kpis               = context.get("kpis") or []
-    yoy_rows           = context.get("yoy") or []
-    metas              = context.get("metas") or []
-    canais             = context.get("canais") or []
+    agencia             = context.get("agencia") or {}
+    cliente             = context.get("cliente") or {}
+    scorecard           = context.get("scorecard") or {}
+    kpis                = context.get("kpis") or []
+    yoy_rows            = context.get("yoy") or []
+    metas               = context.get("metas") or []
+    canais              = context.get("canais") or []
     campanhas_por_canal = context.get("campanhas_por_canal") or []
-    atribuicao         = context.get("atribuicao") or []
-    funil              = context.get("funil") or []
-    eficiencia         = context.get("eficiencia") or {}
-    produtos           = context.get("top_produtos") or []
-    destaques          = context.get("destaques") or []
-    atencoes           = context.get("atencoes") or []
-    plano              = context.get("plano") or {}
-    retencao           = context.get("retencao") or {}
+    atribuicao          = context.get("atribuicao") or []
+    funil               = context.get("funil") or []
+    eficiencia          = context.get("eficiencia") or {}
+    produtos            = context.get("top_produtos") or []
+    destaques           = context.get("destaques") or []
+    atencoes            = context.get("atencoes") or []
+    plano               = context.get("plano") or {}
+    retencao            = context.get("retencao") or {}
 
-    mes_label          = _h(context.get("mes_label"))
-    mes_ant_label      = _h(context.get("mes_anterior_label"), "mês anterior")
-    ano_ant_label      = _h(context.get("ano_anterior_label"), "ano anterior")
-    resumo_exec        = _h(context.get("resumo_executivo"), "")
-    analise_canais     = _h(context.get("analise_canais"), "")
-    nome_agencia       = _h(agencia.get("logo_texto") or agencia.get("nome"), "Agência")
-    nome_cliente       = _h(cliente.get("nome"), "Cliente")
-    cor_primaria       = _h(agencia.get("cor_primaria"), "#6366f1")
-    site_agencia       = _h(agencia.get("site"), "")
+    # plano meta/budget live in separate context keys (not inside plano dict)
+    plano_fat_fmt  = _h(context.get("plano_meta_faturamento_fmt"), "—")
+    plano_bud_fmt  = _h(context.get("plano_budget_fmt"), "—")
+    plano_roas_fmt = _h(plano.get("meta_roas"), "—")   # already formatted string
+
+    mes_label      = _h(context.get("mes_label"))
+    mes_ant_label  = _h(context.get("mes_anterior_label"), "mês ant.")
+    ano_ant_label  = _h(context.get("ano_anterior_label"), "ano ant.")
+    resumo_exec    = _h(context.get("resumo_executivo"), "")
+    analise_canais = _h(context.get("analise_canais"), "")
+    nome_agencia   = _h(agencia.get("logo_texto") or agencia.get("nome"), "Agência")
+    nome_cliente   = _h(cliente.get("nome"), "Cliente")
+    cor_primaria   = _h(agencia.get("cor_primaria"), "#6366f1")
+    site_agencia   = _h(agencia.get("site"), "")
 
     sc_color   = _sc_color(scorecard.get("status", ""))
     sc_emoji   = _h(scorecard.get("emoji"), "📊")
@@ -294,8 +306,8 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
         cells = ""
         for col_idx, k in enumerate(row):
             color    = KPI_COLORS[(row_start + col_idx) % len(KPI_COLORS)]
-            mom_col  = _delta_color(k.get("momClass", "flat"))
-            yoy_col  = _delta_color(k.get("yoyClass", "flat"))
+            mom_col  = _dc(k.get("momClass", "flat"))
+            yoy_col  = _dc(k.get("yoyClass", "flat"))
             mom      = k.get("mom", "")
             yoy_d    = k.get("yoy", "")
             pad_l    = "0" if col_idx == 0 else "4px"
@@ -322,7 +334,7 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     # Uses yoy_rows from context (label, atual, ant, delta, classe)
     comp_rows = ""
     for r in yoy_rows:
-        dc = _delta_color(r.get("classe", "flat"))
+        dc = _dc(r.get("classe", "flat"))
         comp_rows += (
             f'<tr>'
             f'<td style="padding:8px 8px 8px 0;color:#94a3b8;font-size:13px">{_h(r.get("label"))}</td>'
@@ -352,7 +364,7 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     metas_rows = ""
     for meta in metas:
         bar_pct = min(float(meta.get("bar_pct") or 0), 100)
-        bc      = _bar_color(meta.get("status", "warn"))
+        bc      = _bc(meta.get("status", "warn"))
         metas_rows += (
             f'<tr>'
             f'<td style="padding:7px 8px 7px 0;color:#94a3b8;font-size:13px;white-space:nowrap">'
@@ -370,46 +382,75 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
             f'</tr>'
         )
 
-    def _num_pedidos(ch: dict) -> str:
-        n = ch.get("pedidos")
-        if n is None:
-            return "—"
-        try:
-            return f'{int(n):,}'.replace(",", ".")
-        except (TypeError, ValueError):
-            return str(n)
-
     # ── 4. Canais (server-side attribution) ──────────────────────────────
-    canal_rows = ""
-    for ch in canais[:6]:
-        canal_rows += (
-            f'<tr>'
-            f'<td style="padding:9px 6px 9px 0;border-bottom:1px solid #2a2f3e;'
-            f'color:#e2e8f0;font-size:13px">{_h(ch.get("icone"),"📡")} {_h(ch.get("nome"))}</td>'
-            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">{_h(ch.get("investimento_fmt"))}</td>'
-            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#e2e8f0;font-size:13px;white-space:nowrap">{_h(ch.get("receita_fmt"))}</td>'
-            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#10b981;font-size:13px;font-weight:700;white-space:nowrap">{_h(ch.get("roas_fmt"))}</td>'
-            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">{_num_pedidos(ch)}</td>'
-            f'<td style="padding:9px 0 9px 6px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">{_h(ch.get("cpa_fmt"))}</td>'
-            f'</tr>'
-        )
-
+    # Summary row + per-channel metrics with MoM deltas
     canal_block = ""
-    if canal_rows:
+    if canais:
+        # Header table
+        canal_rows = ""
+        for ch in canais[:5]:
+            canal_rows += (
+                f'<tr>'
+                f'<td style="padding:9px 6px 9px 0;border-bottom:1px solid #2a2f3e;'
+                f'color:#e2e8f0;font-size:13px">'
+                f'{_h(ch.get("icone"),"📡")} {_h(ch.get("nome"))}</td>'
+                f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+                f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">'
+                f'{_h(ch.get("investimento_fmt"))}</td>'
+                f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+                f'text-align:right;color:#e2e8f0;font-size:13px;white-space:nowrap">'
+                f'{_h(ch.get("receita_fmt"))}</td>'
+                f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+                f'text-align:right;color:#10b981;font-size:13px;font-weight:700;white-space:nowrap">'
+                f'{_h(ch.get("roas_fmt"))}</td>'
+                f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+                f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">'
+                f'{_fmt_n(ch.get("pedidos"))}</td>'
+                f'<td style="padding:9px 0 9px 6px;border-bottom:1px solid #2a2f3e;'
+                f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">'
+                f'{_h(ch.get("cpa_fmt"))}</td>'
+                f'</tr>'
+            )
+
         canal_block = (
             f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
             f'<thead><tr>'
-            f'{_th("Canal","left")}{_th("Invest.")}{_th("Receita")}{_th("ROAS")}'
-            f'{_th("Pedidos")}{_th("CPA")}'
+            f'{_th("Canal","left")}{_th("Invest.")}{_th("Receita")}'
+            f'{_th("ROAS")}{_th("Pedidos")}{_th("CPA")}'
             f'</tr></thead>'
             f'<tbody>{canal_rows}</tbody>'
             f'</table>'
         )
+
+        # Per-channel deep dive with MoM deltas (uses metricas list)
+        detail_blocks = ""
+        for ch in canais[:3]:
+            metricas = ch.get("metricas") or []
+            if not metricas:
+                continue
+            met_html = ""
+            for m in metricas:
+                dcol = _dc(m.get("classe", "flat"))
+                delta = m.get("delta", "")
+                met_html += (
+                    f'<td style="padding:8px 6px;text-align:center;vertical-align:top;width:16%">'
+                    f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">'
+                    f'{_h(m.get("label"))}</p>'
+                    f'<p style="margin:0;font-size:13px;font-weight:600;color:#e2e8f0">{_h(m.get("valor"))}</p>'
+                    + (f'<p style="margin:1px 0 0;font-size:10px;color:{dcol}">{delta}</p>' if delta else "")
+                    + f'</td>'
+                )
+            icone = _h(ch.get("icone"), "📡")
+            nome  = _h(ch.get("nome"))
+            detail_blocks += (
+                f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
+                f'padding:12px 14px;margin-top:10px">'
+                f'<p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#94a3b8">'
+                f'{icone} {nome} — detalhamento vs {mes_ant_label}</p>'
+                f'<table width="100%" cellpadding="0" cellspacing="0"><tr>{met_html}</tr></table>'
+                f'</div>'
+            )
+        canal_block += detail_blocks
 
     # ── 5. Campanhas por canal (platform-reported) ────────────────────────
     camp_blocks = ""
@@ -461,22 +502,36 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     # ── 6. Atribuição por canal (server-side, receita por origem) ─────────
     atr_rows = ""
     atr_total = sum(float(a.get("receita") or 0) for a in atribuicao)
+    PAID_CANALS = {"Meta Ads", "Google Ads", "TikTok Ads"}
+    paid_rev = sum(
+        float(a.get("receita") or 0) for a in atribuicao
+        if a.get("canal") in PAID_CANALS
+    )
+    coverage_pct = round(paid_rev / atr_total * 100, 1) if atr_total > 0 else 0
+    CANAL_COLORS = {
+        "Meta Ads": "#0866ff", "Google Ads": "#ea4335",
+        "TikTok Ads": "#010101", "Email": "#6366f1",
+        "Orgânico": "#10b981", "Direto": "#64748b",
+    }
     for a in atribuicao[:8]:
-        rev = float(a.get("receita") or 0)
+        rev   = float(a.get("receita") or 0)
         share = round(rev / atr_total * 100, 1) if atr_total > 0 else 0
+        canal = a.get("canal", "")
+        bar_c = CANAL_COLORS.get(canal, cor_primaria)
+        peds  = a.get("pedidos", 0)
         atr_rows += (
             f'<tr>'
-            f'<td style="padding:7px 8px 7px 0;color:#94a3b8;font-size:13px;white-space:nowrap">'
-            f'{_h(a.get("canal"))}</td>'
-            f'<td style="padding:7px 6px">'
-            f'<div style="background:#2a2f3e;border-radius:3px;height:5px">'
-            f'<div style="background:{cor_primaria};border-radius:3px;height:5px;'
+            f'<td style="padding:7px 8px 7px 0;color:#e2e8f0;font-size:13px;white-space:nowrap">'
+            f'{canal}</td>'
+            f'<td style="padding:7px 6px;width:35%">'
+            f'<div style="background:#2a2f3e;border-radius:3px;height:6px">'
+            f'<div style="background:{bar_c};border-radius:3px;height:6px;'
             f'width:{min(share,100):.0f}%"></div>'
             f'</div></td>'
-            f'<td style="padding:7px 8px;text-align:right;color:#e2e8f0;font-size:13px;white-space:nowrap">'
-            f'{_h(a.get("receita_fmt"))}</td>'
+            f'<td style="padding:7px 6px;text-align:right;color:#e2e8f0;font-size:13px;'
+            f'font-weight:600;white-space:nowrap">{_h(a.get("receita_fmt"))}</td>'
             f'<td style="padding:7px 0;text-align:right;color:#64748b;font-size:12px;white-space:nowrap">'
-            f'{share:.1f}% · {_h(a.get("pedidos_fmt"))} ped.</td>'
+            f'{share:.1f}% · {_fmt_n(peds)} ped.</td>'
             f'</tr>'
         )
 
@@ -550,32 +605,38 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
 
     # ── 10. Retenção ──────────────────────────────────────────────────────
     retencao_block = ""
-    if retencao and retencao.get("novos") is not None:
+    if retencao and retencao.get("total", 0):
         novos  = retencao.get("novos", 0) or 0
         recorr = retencao.get("recorrentes", 0) or 0
-        taxa   = _h(retencao.get("taxa_recorrencia_fmt"))
-        total  = novos + recorr
-        pct_novos  = round(novos  / total * 100) if total > 0 else 0
-        pct_recorr = round(recorr / total * 100) if total > 0 else 0
+        total  = retencao.get("total", novos + recorr) or 1
+        taxa   = _h(retencao.get("rep_rate_fmt"))       # ← chave correta
+        novos_pct  = round(novos  / total * 100)
+        recorr_pct = round(recorr / total * 100)
+        rev_nov    = _h(retencao.get("rev_novos_fmt"))
+        rev_rec    = _h(retencao.get("rev_rec_fmt"))
+        tkt_nov    = _h(retencao.get("ticket_novo_fmt"))
+        tkt_rec    = _h(retencao.get("ticket_rec_fmt"))
+
+        def _ret_card(count, pct, color, label, sub_rev, sub_tkt):
+            return (
+                f'<td width="50%" style="padding-right:6px;vertical-align:top">'
+                f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;'
+                f'border-top:2px solid {color};border-radius:6px;padding:14px">'
+                f'<p style="margin:0 0 1px;font-size:26px;font-weight:700;color:{color}">{count}</p>'
+                f'<p style="margin:0 0 6px;font-size:12px;color:#94a3b8">{label} · {pct}%</p>'
+                f'<p style="margin:0;font-size:12px;color:#64748b">Receita: {sub_rev}</p>'
+                f'<p style="margin:2px 0 0;font-size:12px;color:#64748b">Ticket médio: {sub_tkt}</p>'
+                f'</div></td>'
+            )
+
         retencao_block = (
-            f'<table width="100%" cellpadding="0" cellspacing="0">'
-            f'<tr>'
-            f'<td width="50%" style="padding-right:6px">'
-            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
-            f'padding:14px;text-align:center">'
-            f'<p style="margin:0 0 2px;font-size:24px;font-weight:700;color:#e2e8f0">{novos}</p>'
-            f'<p style="margin:0 0 1px;font-size:12px;color:#64748b">Novos clientes</p>'
-            f'<p style="margin:0;font-size:11px;color:#475569">{pct_novos}% do total</p>'
-            f'</div></td>'
-            f'<td width="50%" style="padding-left:6px">'
-            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
-            f'padding:14px;text-align:center">'
-            f'<p style="margin:0 0 2px;font-size:24px;font-weight:700;color:#10b981">{recorr}</p>'
-            f'<p style="margin:0 0 1px;font-size:12px;color:#64748b">Recorrentes</p>'
-            f'<p style="margin:0;font-size:11px;color:#475569">Taxa: {taxa} · {pct_recorr}% do total</p>'
-            f'</div></td>'
-            f'</tr>'
-            f'</table>'
+            f'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+            + _ret_card(novos, novos_pct, "#e2e8f0", "Novos", rev_nov, tkt_nov)
+            + _ret_card(recorr, recorr_pct, "#10b981", "Recorrentes", rev_rec, tkt_rec).replace("padding-right:6px", "padding-left:6px")
+            + f'</tr></table>'
+            + (f'<p style="margin:8px 0 0;font-size:12px;color:#64748b">'
+               f'Taxa de recorrência: {taxa} — '
+               f'clientes que retornaram para uma segunda compra.</p>')
         )
 
     # ── 11. Destaques + Atenções (IA) ─────────────────────────────────────
@@ -610,35 +671,30 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     # ── 12. Plano próximo mês ─────────────────────────────────────────────
     plano_block = ""
     if plano:
-        acoes     = plano.get("acoes") or []
-        meta_fat  = _h(plano.get("meta_faturamento_fmt"))
-        meta_roas = _h(plano.get("meta_roas_fmt"))
-        budget    = _h(plano.get("budget_fmt"))
+        acoes      = plano.get("acoes") or []
+        next_mes   = _h(plano.get("mes"), "Próximo mês")
         acoes_html = "".join(
-            f'<p style="margin:0 0 6px;font-size:13px;color:#94a3b8;line-height:1.5">'
+            f'<p style="margin:0 0 7px;font-size:13px;color:#94a3b8;line-height:1.5">'
             f'<span style="color:{cor_primaria};font-weight:700">{i+1}.</span> {acao}</p>'
             for i, acao in enumerate(acoes[:6])
         )
+
+        def _pcard(label, val, color="#e2e8f0"):
+            return (
+                f'<td width="33%" style="padding-right:6px;vertical-align:top">'
+                f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
+                f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">{label}</p>'
+                f'<p style="margin:0;font-size:17px;font-weight:700;color:{color}">{val}</p>'
+                f'</div></td>'
+            )
+
         plano_block = (
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px">'
-            f'<tr>'
-            f'<td width="33%" style="padding-right:6px">'
-            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
-            f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">Meta Faturamento</p>'
-            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{meta_fat}</p>'
-            f'</div></td>'
-            f'<td width="33%" style="padding-right:6px">'
-            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
-            f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">Meta ROAS</p>'
-            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{meta_roas}</p>'
-            f'</div></td>'
-            f'<td width="33%">'
-            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
-            f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">Budget Total</p>'
-            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{budget}</p>'
-            f'</div></td>'
-            f'</tr>'
-            f'</table>'
+            f'<p style="margin:0 0 12px;font-size:13px;color:#64748b">Objetivos para {next_mes}</p>'
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px"><tr>'
+            + _pcard("Meta Faturamento", plano_fat_fmt, "#10b981")
+            + _pcard("Meta ROAS", plano_roas_fmt + ("x" if plano_roas_fmt not in ("—","") and not plano_roas_fmt.endswith("x") else ""))
+            + _pcard("Budget Total", plano_bud_fmt)
+            + f'</tr></table>'
             + acoes_html
         )
 
@@ -727,8 +783,12 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
       ) if camp_blocks else ""}
 
       <!-- 11. Atribuição por canal -->
-      {_section("Atribuição de Receita por Canal (server-side)",
+      {_section("Atribuição de Receita por Canal",
           f'<table width="100%" cellpadding="0" cellspacing="0">{atr_rows}</table>'
+          + (f'<p style="margin:10px 0 0;font-size:12px;color:#475569">'
+             f'Cobertura paga: {coverage_pct:.0f}% da receita atribuída a canais pagos (utm_source). '
+             f'ROAS Geral ({_h(context.get("roas_fmt"),"—")}) = MER total; ROAS por canal = '
+             f'receita atribuída ÷ investimento do canal.</p>' if atr_rows else "")
       ) if atr_rows else ""}
 
       <!-- 12. Funil de conversão -->
