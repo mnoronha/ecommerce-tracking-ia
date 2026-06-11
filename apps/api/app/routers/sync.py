@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..database import get_supabase
-from ..services import crypto, metrics_cache
+from ..services import crypto, metrics_cache, reports
 from ..services import shopify_sync
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -136,6 +136,65 @@ async def trigger_metrics_cache_client(pixel_id: str):
         "source": source,
         "synced_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.post("/reports/{pixel_id}/weekly", summary="Send weekly report preview")
+async def trigger_weekly_report(
+    pixel_id: str,
+    to: str = Query(..., description="Override recipient email address"),
+):
+    """Dispara o relatório semanal para um cliente imediatamente, enviando para o email informado."""
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select("id, pixel_id, name, logo_url, alert_email, alert_emails, whatsapp_group_jid, client_type")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Client not found")
+    c = rows[0]
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: reports._send_weekly(c["id"], c["pixel_id"], c.get("name") or pixel_id, [to], c),
+    )
+    return {"sent_to": to, "client": c.get("name"), "type": "weekly"}
+
+
+@router.post("/reports/{pixel_id}/monthly", summary="Send monthly report preview")
+async def trigger_monthly_report(
+    pixel_id: str,
+    to: str = Query(..., description="Override recipient email address"),
+    force: bool = Query(False, description="Send even if health check would hold it"),
+):
+    """Dispara o relatório mensal para um cliente imediatamente, enviando para o email informado."""
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select("id, pixel_id, name, logo_url, alert_email, alert_emails, whatsapp_group_jid, client_type")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Client not found")
+    c = rows[0]
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: reports._send_monthly(
+            c["id"], c["pixel_id"], c.get("name") or pixel_id, [to], force=force, client=c
+        ),
+    )
+    return {"client": c.get("name"), "type": "monthly", **result}
 
 
 @router.patch("/shopify/{pixel_id}/enable", summary="Enable/disable Shopify API sync")
