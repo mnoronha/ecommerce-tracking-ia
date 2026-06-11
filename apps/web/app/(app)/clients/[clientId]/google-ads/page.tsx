@@ -24,6 +24,7 @@ interface Totals {
   total_sent: number; sent_coverage_pct: number | null
   gclid: number; gbraid: number; enhanced_only: number; not_sent: number
   gclid_pct: number | null; cpa: number | null; avg_ticket: number | null
+  data_source?: string
 }
 
 interface CampaignRow {
@@ -310,6 +311,12 @@ export default function GoogleAdsPage() {
         <div className="p-6 space-y-6 max-w-[1400px]">
 
           {/* KPI Strip */}
+          {t?.data_source === 'google_api' && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs text-blue-300">
+              <Sparkles size={12} />
+              Compras e receita via Google Ads API — cliente sem integração de pedidos
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
             <KpiCard label="Investimento"     value={t?.has_spend ? fmt(t.spend) : '—'} delta={dlt.spend} invertDelta accent="rose"
               sub={t && !t.has_spend ? 'sem sync de spend' : undefined} />

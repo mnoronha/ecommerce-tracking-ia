@@ -395,6 +395,24 @@ async def google_overview(
         except Exception as exc:
             logger.warning("google_overview: platform campaigns indisponíveis (%s): %s", pixel_id, exc)
 
+    # ── Fallback para clientes sem pedidos server-side ────────────────────────
+    # Clientes que não integram pedidos via webhook (ex: Enutri, Colab55) têm
+    # orders=0 no banco. Usamos conversions/conversions_value da Google Ads API
+    # como fonte primária quando não há dados server-side.
+    if curr_agg["orders"] == 0 and platform_campaigns:
+        api_conv   = sum(float(c.get("conversions") or 0) for c in platform_campaigns)
+        api_rev    = sum(float(c.get("conversions_value") or 0) for c in platform_campaigns)
+        if api_conv > 0 or api_rev > 0:
+            totals["orders"]      = round(api_conv)
+            totals["revenue"]     = round(api_rev, 2)
+            totals["roas"]        = round(api_rev / curr_spend, 2) if curr_spend > 0 else None
+            totals["cpa"]         = round(curr_spend / api_conv, 2) if api_conv > 0 else None
+            totals["avg_ticket"]  = round(api_rev / api_conv, 2) if api_conv > 0 else None
+            totals["data_source"] = "google_api"
+            deltas["roas"]   = _delta(totals["roas"], prev_roas)
+            deltas["orders"] = _delta(totals["orders"], prev_agg["orders"])
+            deltas["revenue"]= _delta(totals["revenue"], prev_agg["revenue"])
+
     return {
         "days":        days,
         "start":       str(d_start),

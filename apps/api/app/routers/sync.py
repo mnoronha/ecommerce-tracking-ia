@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..database import get_supabase
-from ..services import crypto
+from ..services import crypto, metrics_cache
 from ..services import shopify_sync
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -93,6 +93,48 @@ async def shopify_sync_status(pixel_id: str):
         "shopify_sync_enabled":  row.get("shopify_sync_enabled", False),
         "shopify_last_sync_at":  row.get("shopify_last_sync_at"),
         "is_active":             row.get("is_active", True),
+    }
+
+
+@router.post("/metrics-cache", summary="Trigger metrics cache refresh (all clients)")
+async def trigger_metrics_cache():
+    """Atualiza manualmente o cache de métricas externas (Google Ads conversions) para todos os clientes."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, metrics_cache.run_daily_metrics_cache)
+    return {"status": "ok", "synced_at": datetime.now(timezone.utc).isoformat()}
+
+
+@router.post("/metrics-cache/{pixel_id}", summary="Trigger metrics cache refresh for one client")
+async def trigger_metrics_cache_client(pixel_id: str):
+    """Atualiza o cache de métricas externas para um cliente (GA4 se disponível, senão Google Ads)."""
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select(
+            "id, name, ga4_property_id, ga4_reporting_enabled, "
+            "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id"
+        )
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Client not found")
+    client = rows[0]
+    source = None
+    if client.get("ga4_reporting_enabled") and client.get("ga4_property_id"):
+        if metrics_cache.refresh_ga4(client):
+            source = "ga4"
+    if source is None and client.get("google_ads_customer_id"):
+        if metrics_cache.refresh_google_ads(client):
+            source = "google_ads"
+    return {
+        "pixel_id": pixel_id,
+        "updated": source is not None,
+        "source": source,
+        "synced_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

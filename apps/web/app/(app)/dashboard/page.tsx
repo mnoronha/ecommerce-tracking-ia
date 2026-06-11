@@ -262,8 +262,15 @@ function ClientTableRow({ row }: { row: ClientRow }) {
         </div>
       </td>
 
-      <td className="px-4 py-3.5 text-right tabular-nums text-sm text-slate-200">
-        {Number(row.revenue) > 0 ? fmt(Number(row.revenue), 'currency') : <span className="text-slate-600">—</span>}
+      <td className="px-4 py-3.5 text-right tabular-nums">
+        <span className="text-sm text-slate-200">
+          {Number(row.revenue) > 0 ? fmt(Number(row.revenue), 'currency') : <span className="text-slate-600">—</span>}
+        </span>
+        {Number(row.orders_count) > 0 && (
+          <p className="text-xs text-slate-500 mt-0.5">
+            {fmt(Number(row.orders_count), 'decimal')} ped · {Number(row.orders_count) > 0 ? fmt(Number(row.revenue) / Number(row.orders_count), 'currency') : '—'} ticket
+          </p>
+        )}
       </td>
 
       <td className="px-4 py-3.5 text-right tabular-nums text-sm text-slate-400">
