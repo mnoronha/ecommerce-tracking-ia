@@ -190,10 +190,30 @@ def render_to_pdf(context: dict) -> Optional[bytes]:
         return None
 
 
-def render_monthly_email_html(context: dict) -> str:
+def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     """Dark-theme HTML email for the monthly report (no PDF attachment).
 
     All CSS is inline, layout uses tables — safe for Gmail, Outlook, Apple Mail.
+
+    Sections (in order):
+      1  Header (agency + client + month)
+      2  Scorecard banner
+      3  Resumo executivo (AI)
+      4  KPIs do mês (6 cards 2×3)
+      5  Comparativo mensal + anual
+      6  Metas vs Realizado
+      7  Desempenho por canal (server-side attribution)
+      8  Análise dos canais (AI)
+      9  Campanhas Meta Ads   (platform-reported)
+      10 Campanhas Google Ads (platform-reported)
+      11 Atribuição por canal (revenue share bars)
+      12 Funil de conversão
+      13 Eficiência de mídia (MER / CAC / LTV)
+      14 Top produtos
+      15 Retenção de clientes
+      16 Destaques & Atenções (AI)
+      17 Plano próximo mês (AI)
+      18 Footer
     """
 
     def _h(v, fallback: str = "—") -> str:
@@ -202,9 +222,9 @@ def render_monthly_email_html(context: dict) -> str:
     def _sc_color(status: str) -> str:
         return {"verde": "#10b981", "amarelo": "#f59e0b", "vermelho": "#ef4444"}.get(status, "#6366f1")
 
-    def _mom_color(cls: str) -> str:
-        if cls == "good":  return "#10b981"
-        if cls == "bad":   return "#ef4444"
+    def _delta_color(cls: str) -> str:
+        if cls == "good": return "#10b981"
+        if cls == "bad":  return "#ef4444"
         return "#64748b"
 
     def _bar_color(status: str) -> str:
@@ -212,69 +232,132 @@ def render_monthly_email_html(context: dict) -> str:
 
     KPI_COLORS = ["#10b981", "#6366f1", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"]
 
-    def _kpi_color(i: int) -> str:
-        return KPI_COLORS[i % len(KPI_COLORS)]
+    # ── Context extraction ────────────────────────────────────────────────
+    agencia            = context.get("agencia") or {}
+    cliente            = context.get("cliente") or {}
+    scorecard          = context.get("scorecard") or {}
+    kpis               = context.get("kpis") or []
+    yoy_rows           = context.get("yoy") or []
+    metas              = context.get("metas") or []
+    canais             = context.get("canais") or []
+    campanhas_por_canal = context.get("campanhas_por_canal") or []
+    atribuicao         = context.get("atribuicao") or []
+    funil              = context.get("funil") or []
+    eficiencia         = context.get("eficiencia") or {}
+    produtos           = context.get("top_produtos") or []
+    destaques          = context.get("destaques") or []
+    atencoes           = context.get("atencoes") or []
+    plano              = context.get("plano") or {}
+    retencao           = context.get("retencao") or {}
 
-    agencia   = context.get("agencia") or {}
-    cliente   = context.get("cliente") or {}
-    scorecard = context.get("scorecard") or {}
-    kpis      = context.get("kpis") or []
-    metas     = context.get("metas") or []
-    canais    = context.get("canais") or []
-    produtos  = context.get("top_produtos") or []
-    destaques = context.get("destaques") or []
-    atencoes  = context.get("atencoes") or []
-    plano     = context.get("plano") or {}
-    retencao  = context.get("retencao") or {}
+    mes_label          = _h(context.get("mes_label"))
+    mes_ant_label      = _h(context.get("mes_anterior_label"), "mês anterior")
+    ano_ant_label      = _h(context.get("ano_anterior_label"), "ano anterior")
+    resumo_exec        = _h(context.get("resumo_executivo"), "")
+    analise_canais     = _h(context.get("analise_canais"), "")
+    nome_agencia       = _h(agencia.get("logo_texto") or agencia.get("nome"), "Agência")
+    nome_cliente       = _h(cliente.get("nome"), "Cliente")
+    cor_primaria       = _h(agencia.get("cor_primaria"), "#6366f1")
+    site_agencia       = _h(agencia.get("site"), "")
 
-    mes_label      = _h(context.get("mes_label"))
-    resumo_exec    = _h(context.get("resumo_executivo"), "")
-    analise_canais = _h(context.get("analise_canais"), "")
-    nome_agencia   = _h(agencia.get("logo_texto") or agencia.get("nome"), "Agência")
-    nome_cliente   = _h(cliente.get("nome"), "Cliente")
-    cor_primaria   = _h(agencia.get("cor_primaria"), "#6366f1")
-
-    sc_color  = _sc_color(scorecard.get("status", ""))
-    sc_emoji  = _h(scorecard.get("emoji"), "📊")
-    sc_label  = _h(scorecard.get("label"), "Resultado do Mês")
+    sc_color   = _sc_color(scorecard.get("status", ""))
+    sc_emoji   = _h(scorecard.get("emoji"), "📊")
+    sc_label   = _h(scorecard.get("label"), "Resultado do Mês")
     sc_verdict = _h(scorecard.get("verdict"), "")
 
-    # ── KPI grid (2 rows × 3 cols) ────────────────────────────────────────
+    # ── Section builder ───────────────────────────────────────────────────
+    def _section(title: str, body: str, note: str = "") -> str:
+        if not body:
+            return ""
+        note_html = (
+            f'<p style="margin:0 0 10px;font-size:11px;color:#475569;'
+            f'font-style:italic">{note}</p>'
+        ) if note else ""
+        return (
+            f'<tr><td style="padding:0 0 28px">'
+            f'<p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#e2e8f0;'
+            f'border-bottom:1px solid #2a2f3e;padding-bottom:8px">{title}</p>'
+            f'{note_html}{body}'
+            f'</td></tr>'
+        )
+
+    def _th(label: str, align: str = "right") -> str:
+        return (
+            f'<th align="{align}" style="padding:0 6px 8px;font-size:10px;color:#64748b;'
+            f'font-weight:400;text-transform:uppercase;white-space:nowrap">{label}</th>'
+        )
+
+    # ── 1. KPI grid (2 rows × 3 cols) ────────────────────────────────────
     kpi_rows_html = ""
     for row_start in range(0, max(len(kpis), 1), 3):
         row = kpis[row_start:row_start + 3]
         cells = ""
         for col_idx, k in enumerate(row):
-            color     = _kpi_color(row_start + col_idx)
-            mom_col   = _mom_color(k.get("momClass", "flat"))
-            mom       = k.get("mom", "")
-            pad_left  = "0" if col_idx == 0 else "4px"
-            pad_right = "0" if col_idx == 2 else "4px"
+            color    = KPI_COLORS[(row_start + col_idx) % len(KPI_COLORS)]
+            mom_col  = _delta_color(k.get("momClass", "flat"))
+            yoy_col  = _delta_color(k.get("yoyClass", "flat"))
+            mom      = k.get("mom", "")
+            yoy_d    = k.get("yoy", "")
+            pad_l    = "0" if col_idx == 0 else "4px"
+            pad_r    = "0" if col_idx == 2 else "4px"
             cells += (
-                f'<td width="33%" style="padding:0 {pad_right} 8px {pad_left};vertical-align:top">'
-                f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-top:2px solid {color};'
-                f'border-radius:6px;padding:14px 12px">'
-                f'<p style="margin:0 0 6px;font-size:11px;color:#64748b;text-transform:uppercase;'
-                f'letter-spacing:0.4px">{_h(k.get("label"))}</p>'
-                f'<p style="margin:0;font-size:20px;font-weight:700;color:#e2e8f0">{_h(k.get("valor"))}</p>'
-                + (f'<p style="margin:4px 0 0;font-size:11px;color:{mom_col}">{mom}</p>' if mom else "")
+                f'<td width="33%" style="padding:0 {pad_r} 8px {pad_l};vertical-align:top">'
+                f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;'
+                f'border-top:2px solid {color};border-radius:6px;padding:12px">'
+                f'<p style="margin:0 0 4px;font-size:10px;color:#64748b;'
+                f'text-transform:uppercase;letter-spacing:0.4px">{_h(k.get("label"))}</p>'
+                f'<p style="margin:0 0 5px;font-size:19px;font-weight:700;color:#e2e8f0">'
+                f'{_h(k.get("valor"))}</p>'
+                + (f'<p style="margin:0;font-size:11px;color:{mom_col}">'
+                   f'vs {mes_ant_label[:3]}: {mom}</p>' if mom else "")
+                + (f'<p style="margin:1px 0 0;font-size:10px;color:{yoy_col}">'
+                   f'vs {ano_ant_label[:7]}: {yoy_d}</p>' if yoy_d else "")
                 + "</div></td>"
             )
-        # Pad to 3 columns
         for _ in range(3 - len(row)):
             cells += '<td width="33%" style="padding:0 4px 8px"></td>'
         kpi_rows_html += f"<tr>{cells}</tr>"
 
-    # ── Metas / Goals ────────────────────────────────────────────────────
+    # ── 2. Comparativo mensal + anual ─────────────────────────────────────
+    # Uses yoy_rows from context (label, atual, ant, delta, classe)
+    comp_rows = ""
+    for r in yoy_rows:
+        dc = _delta_color(r.get("classe", "flat"))
+        comp_rows += (
+            f'<tr>'
+            f'<td style="padding:8px 8px 8px 0;color:#94a3b8;font-size:13px">{_h(r.get("label"))}</td>'
+            f'<td style="padding:8px;text-align:right;color:#e2e8f0;font-size:13px;font-weight:600">'
+            f'{_h(r.get("atual"))}</td>'
+            f'<td style="padding:8px;text-align:right;color:#64748b;font-size:13px">'
+            f'{_h(r.get("ant"))}</td>'
+            f'<td style="padding:8px 0;text-align:right;font-size:13px;color:{dc};white-space:nowrap">'
+            f'{_h(r.get("delta"))}</td>'
+            f'</tr>'
+        )
+    comp_block = ""
+    if comp_rows:
+        comp_block = (
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+            f'<thead><tr>'
+            f'{_th("Indicador", "left")}'
+            f'{_th(mes_label)}'
+            f'{_th(ano_ant_label)}'
+            f'{_th("Variação")}'
+            f'</tr></thead>'
+            f'<tbody>{comp_rows}</tbody>'
+            f'</table>'
+        )
+
+    # ── 3. Metas / Goals ─────────────────────────────────────────────────
     metas_rows = ""
     for meta in metas:
-        bar_pct   = min(float(meta.get("bar_pct") or 0), 100)
-        bc        = _bar_color(meta.get("status", "warn"))
+        bar_pct = min(float(meta.get("bar_pct") or 0), 100)
+        bc      = _bar_color(meta.get("status", "warn"))
         metas_rows += (
             f'<tr>'
             f'<td style="padding:7px 8px 7px 0;color:#94a3b8;font-size:13px;white-space:nowrap">'
             f'{_h(meta.get("label"))}</td>'
-            f'<td style="padding:7px 4px;width:200px">'
+            f'<td style="padding:7px 4px">'
             f'<div style="background:#2a2f3e;border-radius:4px;height:5px">'
             f'<div style="background:{bc};border-radius:4px;height:5px;width:{bar_pct:.0f}%"></div>'
             f'</div></td>'
@@ -282,164 +365,284 @@ def render_monthly_email_html(context: dict) -> str:
             f'{_h(meta.get("realizado"))}</td>'
             f'<td style="padding:7px 0;text-align:right;font-size:11px;color:#64748b;white-space:nowrap">'
             f'/ {_h(meta.get("meta"))}</td>'
-            f'<td style="padding:7px 0 7px 8px;text-align:right;font-size:11px;color:{bc};white-space:nowrap">'
+            f'<td style="padding:7px 0 7px 6px;text-align:right;font-size:12px;color:{bc};white-space:nowrap;font-weight:600">'
             f'{_h(meta.get("pct_fmt"))}</td>'
             f'</tr>'
         )
 
-    # ── Canais table ─────────────────────────────────────────────────────
+    def _num_pedidos(ch: dict) -> str:
+        n = ch.get("pedidos")
+        if n is None:
+            return "—"
+        try:
+            return f'{int(n):,}'.replace(",", ".")
+        except (TypeError, ValueError):
+            return str(n)
+
+    # ── 4. Canais (server-side attribution) ──────────────────────────────
     canal_rows = ""
     for ch in canais[:6]:
-        icone = _h(ch.get("icone"), "📡")
-        nome  = _h(ch.get("nome"))
         canal_rows += (
             f'<tr>'
-            f'<td style="padding:9px 8px 9px 0;border-bottom:1px solid #2a2f3e;'
-            f'color:#e2e8f0;font-size:13px">{icone} {nome}</td>'
-            f'<td style="padding:9px 8px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#94a3b8;font-size:13px">{_h(ch.get("investimento_fmt"))}</td>'
-            f'<td style="padding:9px 8px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#e2e8f0;font-size:13px">{_h(ch.get("receita_fmt"))}</td>'
-            f'<td style="padding:9px 8px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#10b981;font-size:13px;font-weight:600">{_h(ch.get("roas_fmt"))}</td>'
-            f'<td style="padding:9px 0 9px 8px;border-bottom:1px solid #2a2f3e;'
-            f'text-align:right;color:#94a3b8;font-size:13px">{_h(ch.get("cpa_fmt"))}</td>'
+            f'<td style="padding:9px 6px 9px 0;border-bottom:1px solid #2a2f3e;'
+            f'color:#e2e8f0;font-size:13px">{_h(ch.get("icone"),"📡")} {_h(ch.get("nome"))}</td>'
+            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+            f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">{_h(ch.get("investimento_fmt"))}</td>'
+            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+            f'text-align:right;color:#e2e8f0;font-size:13px;white-space:nowrap">{_h(ch.get("receita_fmt"))}</td>'
+            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+            f'text-align:right;color:#10b981;font-size:13px;font-weight:700;white-space:nowrap">{_h(ch.get("roas_fmt"))}</td>'
+            f'<td style="padding:9px 6px;border-bottom:1px solid #2a2f3e;'
+            f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">{_num_pedidos(ch)}</td>'
+            f'<td style="padding:9px 0 9px 6px;border-bottom:1px solid #2a2f3e;'
+            f'text-align:right;color:#94a3b8;font-size:13px;white-space:nowrap">{_h(ch.get("cpa_fmt"))}</td>'
             f'</tr>'
         )
 
-    # ── Top produtos ─────────────────────────────────────────────────────
+    canal_block = ""
+    if canal_rows:
+        canal_block = (
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+            f'<thead><tr>'
+            f'{_th("Canal","left")}{_th("Invest.")}{_th("Receita")}{_th("ROAS")}'
+            f'{_th("Pedidos")}{_th("CPA")}'
+            f'</tr></thead>'
+            f'<tbody>{canal_rows}</tbody>'
+            f'</table>'
+        )
+
+    # ── 5. Campanhas por canal (platform-reported) ────────────────────────
+    camp_blocks = ""
+    for grp in campanhas_por_canal[:3]:
+        cname   = _h(grp.get("canal_label"))
+        cicone  = _h(grp.get("icone"), "📊")
+        camp_list = grp.get("campanhas") or []
+        if not camp_list:
+            continue
+        rows = ""
+        for c in camp_list[:5]:
+            st = c.get("status", "")
+            st_color = "#10b981" if st == "ativo" else "#64748b"
+            rows += (
+                f'<tr>'
+                f'<td style="padding:8px 6px 8px 0;border-bottom:1px solid #1e2435;'
+                f'color:#e2e8f0;font-size:12px;max-width:180px">'
+                f'<span style="display:block;overflow:hidden;white-space:nowrap;'
+                f'text-overflow:ellipsis">{_h(c.get("nome"))}</span>'
+                f'<span style="font-size:10px;color:{st_color}">{_h(c.get("status_label"),"—")}</span>'
+                f'</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid #1e2435;'
+                f'text-align:right;color:#94a3b8;font-size:12px;white-space:nowrap">{_h(c.get("investimento_fmt"))}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid #1e2435;'
+                f'text-align:right;color:#e2e8f0;font-size:12px;white-space:nowrap">{_h(c.get("resultado_fmt"))}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid #1e2435;'
+                f'text-align:right;color:#10b981;font-size:12px;font-weight:700;white-space:nowrap">{_h(c.get("indice_fmt"))}</td>'
+                f'<td style="padding:8px 6px;border-bottom:1px solid #1e2435;'
+                f'text-align:right;color:#94a3b8;font-size:12px;white-space:nowrap">{_h(c.get("qtd_fmt"))}</td>'
+                f'<td style="padding:8px 0 8px 6px;border-bottom:1px solid #1e2435;'
+                f'text-align:right;color:#94a3b8;font-size:12px;white-space:nowrap">{_h(c.get("custo_fmt"))}</td>'
+                f'</tr>'
+            )
+        camp_blocks += (
+            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
+            f'padding:14px;margin-bottom:12px">'
+            f'<p style="margin:0 0 10px;font-size:13px;font-weight:600;color:#e2e8f0">'
+            f'{cicone} {cname}</p>'
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+            f'<thead><tr>'
+            f'{_th("Campanha","left")}{_th("Invest.")}{_th("Receita")}'
+            f'{_th("ROAS")}{_th("Conv.")}{_th("CPA")}'
+            f'</tr></thead>'
+            f'<tbody>{rows}</tbody>'
+            f'</table>'
+            f'</div>'
+        )
+
+    # ── 6. Atribuição por canal (server-side, receita por origem) ─────────
+    atr_rows = ""
+    atr_total = sum(float(a.get("receita") or 0) for a in atribuicao)
+    for a in atribuicao[:8]:
+        rev = float(a.get("receita") or 0)
+        share = round(rev / atr_total * 100, 1) if atr_total > 0 else 0
+        atr_rows += (
+            f'<tr>'
+            f'<td style="padding:7px 8px 7px 0;color:#94a3b8;font-size:13px;white-space:nowrap">'
+            f'{_h(a.get("canal"))}</td>'
+            f'<td style="padding:7px 6px">'
+            f'<div style="background:#2a2f3e;border-radius:3px;height:5px">'
+            f'<div style="background:{cor_primaria};border-radius:3px;height:5px;'
+            f'width:{min(share,100):.0f}%"></div>'
+            f'</div></td>'
+            f'<td style="padding:7px 8px;text-align:right;color:#e2e8f0;font-size:13px;white-space:nowrap">'
+            f'{_h(a.get("receita_fmt"))}</td>'
+            f'<td style="padding:7px 0;text-align:right;color:#64748b;font-size:12px;white-space:nowrap">'
+            f'{share:.1f}% · {_h(a.get("pedidos_fmt"))} ped.</td>'
+            f'</tr>'
+        )
+
+    # ── 7. Funil de conversão ─────────────────────────────────────────────
+    funil_rows = ""
+    for stage in funil:
+        bar = float(stage.get("bar_pct") or 0)
+        conv = stage.get("conv_fmt")
+        funil_rows += (
+            f'<tr>'
+            f'<td style="padding:7px 8px 7px 0;color:#94a3b8;font-size:13px;white-space:nowrap;width:170px">'
+            f'{_h(stage.get("label"))}</td>'
+            f'<td style="padding:7px 6px">'
+            f'<div style="background:#2a2f3e;border-radius:3px;height:7px">'
+            f'<div style="background:{cor_primaria};border-radius:3px;height:7px;width:{bar:.0f}%"></div>'
+            f'</div></td>'
+            f'<td style="padding:7px 0 7px 8px;text-align:right;color:#e2e8f0;font-size:13px;white-space:nowrap">'
+            f'{_h(stage.get("n_fmt"))}</td>'
+            + (f'<td style="padding:7px 0 7px 6px;text-align:right;font-size:11px;color:#64748b;white-space:nowrap">'
+               f'→ {conv}</td>' if conv else '<td></td>')
+            + f'</tr>'
+        )
+
+    # ── 8. Eficiência de mídia ────────────────────────────────────────────
+    ef_block = ""
+    if eficiencia:
+        ltv_cac_ok = eficiencia.get("ltv_cac_ok")
+        ltv_col    = "#10b981" if ltv_cac_ok else "#f59e0b"
+
+        def _ef_card(label, val, sub="", col="#e2e8f0"):
+            return (
+                f'<td style="padding:0 4px;vertical-align:top">'
+                f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
+                f'padding:12px;text-align:center">'
+                f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">{label}</p>'
+                f'<p style="margin:0;font-size:17px;font-weight:700;color:{col}">{val}</p>'
+                + (f'<p style="margin:2px 0 0;font-size:10px;color:#475569">{sub}</p>' if sub else "")
+                + f'</div></td>'
+            )
+
+        mer   = _h(eficiencia.get("mer_fmt"))
+        cac   = _h(eficiencia.get("cac_fmt"))
+        ltv   = _h(eficiencia.get("ltv_fmt")) if eficiencia.get("ltv") else "—"
+        ratio = _h(eficiencia.get("ltv_cac_fmt")) if eficiencia.get("ltv_cac") else "—"
+
+        ef_block = (
+            f'<table width="100%" cellpadding="0" cellspacing="0">'
+            f'<tr>'
+            f'{_ef_card("MER (ROAS geral)", mer, "receita/invest total")}'
+            f'{_ef_card("CAC", cac, "custo por novo cliente")}'
+            f'{_ef_card("LTV estimado", ltv)}'
+            f'{_ef_card("LTV:CAC", ratio, "meta: ≥ 3:1", ltv_col)}'
+            f'</tr>'
+            f'</table>'
+        )
+
+    # ── 9. Top produtos ───────────────────────────────────────────────────
     produto_rows = ""
-    for p in produtos[:5]:
+    for p in produtos[:8]:
         produto_rows += (
             f'<tr>'
-            f'<td style="padding:7px 8px 7px 0;color:#64748b;font-size:13px;width:20px">'
+            f'<td style="padding:7px 6px 7px 0;color:#64748b;font-size:12px;width:20px">'
             f'{_h(p.get("rank"))}</td>'
             f'<td style="padding:7px 4px;color:#e2e8f0;font-size:13px">{_h(p.get("name"))}</td>'
-            f'<td style="padding:7px 8px;text-align:right;color:#10b981;font-size:13px;white-space:nowrap">'
-            f'{_h(p.get("revenue_fmt"))}</td>'
+            f'<td style="padding:7px 6px;text-align:right;color:#10b981;font-size:13px;'
+            f'white-space:nowrap;font-weight:600">{_h(p.get("revenue_fmt"))}</td>'
             f'<td style="padding:7px 0;text-align:right;color:#64748b;font-size:12px;white-space:nowrap">'
             f'{_h(p.get("qty_fmt"))} un</td>'
             f'</tr>'
         )
 
-    # ── Destaques + Atenções (IA) ─────────────────────────────────────────
-    insights_html = ""
-    for d in destaques[:4]:
-        tipo  = d.get("tipo", "destaque")
-        color = "#10b981" if tipo == "destaque" else "#f59e0b"
-        titulo = _h(d.get("titulo"))
-        texto  = _h(d.get("texto"), "")
-        insights_html += (
-            f'<div style="background:#1a1f2e;border-left:3px solid {color};'
-            f'border-radius:0 6px 6px 0;padding:10px 14px;margin-bottom:8px">'
-            f'<p style="margin:0 0 2px;font-size:10px;color:{color};'
-            f'text-transform:uppercase;letter-spacing:0.5px">{tipo}</p>'
-            f'<p style="margin:0;font-size:13px;font-weight:600;color:#e2e8f0">{titulo}</p>'
-            + (f'<p style="margin:4px 0 0;font-size:13px;color:#94a3b8">{texto}</p>' if texto else "")
-            + "</div>"
-        )
-    for a in atencoes[:2]:
-        titulo = _h(a.get("titulo"))
-        texto  = _h(a.get("texto"), "")
-        insights_html += (
-            f'<div style="background:#1a1f2e;border-left:3px solid #ef4444;'
-            f'border-radius:0 6px 6px 0;padding:10px 14px;margin-bottom:8px">'
-            f'<p style="margin:0 0 2px;font-size:10px;color:#ef4444;'
-            f'text-transform:uppercase;letter-spacing:0.5px">atenção</p>'
-            f'<p style="margin:0;font-size:13px;font-weight:600;color:#e2e8f0">{titulo}</p>'
-            + (f'<p style="margin:4px 0 0;font-size:13px;color:#94a3b8">{texto}</p>' if texto else "")
-            + "</div>"
-        )
-
-    # ── Análise de canais (IA) ────────────────────────────────────────────
-    analise_block = ""
-    if analise_canais:
-        analise_block = (
-            f'<p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.6">'
-            f'{analise_canais}</p>'
-        )
-
-    # ── Resumo executivo (IA) ─────────────────────────────────────────────
-    resumo_block = ""
-    if resumo_exec:
-        resumo_block = (
-            f'<p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.6">'
-            f'{resumo_exec}</p>'
-        )
-
-    # ── Plano próximo mês ─────────────────────────────────────────────────
-    plano_block = ""
-    if plano:
-        acoes = plano.get("acoes") or []
-        meta_fat  = _h(plano.get("meta_faturamento_fmt"))
-        meta_roas = _h(plano.get("meta_roas_fmt"))
-        budget    = _h(plano.get("budget_fmt"))
-        acoes_html = "".join(
-            f'<p style="margin:0 0 5px;font-size:13px;color:#94a3b8">'
-            f'<span style="color:{cor_primaria};font-weight:700">{i+1}.</span> {acao}</p>'
-            for i, acao in enumerate(acoes[:5])
-        )
-        plano_block = (
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px">'
-            f'<tr>'
-            f'<td width="33%" style="padding-right:8px">'
-            f'<p style="margin:0 0 2px;font-size:11px;color:#64748b">Meta Faturamento</p>'
-            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{meta_fat}</p>'
-            f'</td>'
-            f'<td width="33%" style="padding-right:8px">'
-            f'<p style="margin:0 0 2px;font-size:11px;color:#64748b">Meta ROAS</p>'
-            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{meta_roas}</p>'
-            f'</td>'
-            f'<td width="33%">'
-            f'<p style="margin:0 0 2px;font-size:11px;color:#64748b">Budget Total</p>'
-            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{budget}</p>'
-            f'</td>'
-            f'</tr>'
-            f'</table>'
-            + acoes_html
-        )
-
-    # ── Retenção ──────────────────────────────────────────────────────────
+    # ── 10. Retenção ──────────────────────────────────────────────────────
     retencao_block = ""
     if retencao and retencao.get("novos") is not None:
         novos  = retencao.get("novos", 0) or 0
         recorr = retencao.get("recorrentes", 0) or 0
         taxa   = _h(retencao.get("taxa_recorrencia_fmt"))
+        total  = novos + recorr
+        pct_novos  = round(novos  / total * 100) if total > 0 else 0
+        pct_recorr = round(recorr / total * 100) if total > 0 else 0
         retencao_block = (
             f'<table width="100%" cellpadding="0" cellspacing="0">'
             f'<tr>'
             f'<td width="50%" style="padding-right:6px">'
             f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
             f'padding:14px;text-align:center">'
-            f'<p style="margin:0 0 3px;font-size:22px;font-weight:700;color:#e2e8f0">{novos}</p>'
-            f'<p style="margin:0;font-size:12px;color:#64748b">Novos clientes</p>'
-            f'</div>'
-            f'</td>'
+            f'<p style="margin:0 0 2px;font-size:24px;font-weight:700;color:#e2e8f0">{novos}</p>'
+            f'<p style="margin:0 0 1px;font-size:12px;color:#64748b">Novos clientes</p>'
+            f'<p style="margin:0;font-size:11px;color:#475569">{pct_novos}% do total</p>'
+            f'</div></td>'
             f'<td width="50%" style="padding-left:6px">'
             f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;'
             f'padding:14px;text-align:center">'
-            f'<p style="margin:0 0 3px;font-size:22px;font-weight:700;color:#10b981">{recorr}</p>'
-            f'<p style="margin:0;font-size:12px;color:#64748b">Recorrentes · {taxa}</p>'
-            f'</div>'
-            f'</td>'
+            f'<p style="margin:0 0 2px;font-size:24px;font-weight:700;color:#10b981">{recorr}</p>'
+            f'<p style="margin:0 0 1px;font-size:12px;color:#64748b">Recorrentes</p>'
+            f'<p style="margin:0;font-size:11px;color:#475569">Taxa: {taxa} · {pct_recorr}% do total</p>'
+            f'</div></td>'
             f'</tr>'
             f'</table>'
         )
 
-    # ── Section builder ───────────────────────────────────────────────────
-    def _section(title: str, body: str) -> str:
-        if not body:
-            return ""
-        return (
-            f'<tr><td style="padding:0 0 28px">'
-            f'<p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#e2e8f0;'
-            f'border-bottom:1px solid #2a2f3e;padding-bottom:8px">{title}</p>'
-            f'{body}'
-            f'</td></tr>'
+    # ── 11. Destaques + Atenções (IA) ─────────────────────────────────────
+    insights_html = ""
+    for d in destaques[:5]:
+        tipo  = d.get("tipo", "destaque")
+        col   = "#10b981" if tipo == "destaque" else "#f59e0b"
+        tit   = _h(d.get("titulo"))
+        txt   = _h(d.get("descricao") or d.get("texto"), "")
+        insights_html += (
+            f'<div style="background:#1a1f2e;border-left:3px solid {col};'
+            f'border-radius:0 6px 6px 0;padding:10px 14px;margin-bottom:8px">'
+            f'<p style="margin:0 0 2px;font-size:10px;color:{col};'
+            f'text-transform:uppercase;letter-spacing:0.5px">{tipo}</p>'
+            f'<p style="margin:0;font-size:13px;font-weight:600;color:#e2e8f0">{tit}</p>'
+            + (f'<p style="margin:4px 0 0;font-size:13px;color:#94a3b8;line-height:1.5">{txt}</p>' if txt else "")
+            + "</div>"
+        )
+    for a in atencoes[:3]:
+        tit = _h(a.get("titulo"))
+        txt = _h(a.get("descricao") or a.get("texto"), "")
+        insights_html += (
+            f'<div style="background:#1a1f2e;border-left:3px solid #ef4444;'
+            f'border-radius:0 6px 6px 0;padding:10px 14px;margin-bottom:8px">'
+            f'<p style="margin:0 0 2px;font-size:10px;color:#ef4444;'
+            f'text-transform:uppercase;letter-spacing:0.5px">atenção</p>'
+            f'<p style="margin:0;font-size:13px;font-weight:600;color:#e2e8f0">{tit}</p>'
+            + (f'<p style="margin:4px 0 0;font-size:13px;color:#94a3b8;line-height:1.5">{txt}</p>' if txt else "")
+            + "</div>"
         )
 
-    site_agencia = _h(agencia.get("site"), "")
+    # ── 12. Plano próximo mês ─────────────────────────────────────────────
+    plano_block = ""
+    if plano:
+        acoes     = plano.get("acoes") or []
+        meta_fat  = _h(plano.get("meta_faturamento_fmt"))
+        meta_roas = _h(plano.get("meta_roas_fmt"))
+        budget    = _h(plano.get("budget_fmt"))
+        acoes_html = "".join(
+            f'<p style="margin:0 0 6px;font-size:13px;color:#94a3b8;line-height:1.5">'
+            f'<span style="color:{cor_primaria};font-weight:700">{i+1}.</span> {acao}</p>'
+            for i, acao in enumerate(acoes[:6])
+        )
+        plano_block = (
+            f'<table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px">'
+            f'<tr>'
+            f'<td width="33%" style="padding-right:6px">'
+            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
+            f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">Meta Faturamento</p>'
+            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{meta_fat}</p>'
+            f'</div></td>'
+            f'<td width="33%" style="padding-right:6px">'
+            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
+            f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">Meta ROAS</p>'
+            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{meta_roas}</p>'
+            f'</div></td>'
+            f'<td width="33%">'
+            f'<div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:12px">'
+            f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">Budget Total</p>'
+            f'<p style="margin:0;font-size:17px;font-weight:700;color:#e2e8f0">{budget}</p>'
+            f'</div></td>'
+            f'</tr>'
+            f'</table>'
+            + acoes_html
+        )
 
+    # ── Render ────────────────────────────────────────────────────────────
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -450,7 +653,7 @@ def render_monthly_email_html(context: dict) -> str:
 </head>
 <body style="margin:0;padding:0;background:#0c0e14;font-family:Arial,Helvetica,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#0c0e14">
-<tr><td align="center" style="padding:24px 8px 32px">
+<tr><td align="center" style="padding:24px 8px 40px">
 
 <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%">
 
@@ -458,106 +661,110 @@ def render_monthly_email_html(context: dict) -> str:
   <tr>
     <td style="background:#1a1f2e;border-radius:12px 12px 0 0;padding:24px 28px;
                border-bottom:1px solid #2a2f3e">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td>
-            <p style="margin:0;font-size:13px;color:{cor_primaria};font-weight:600;
-               text-transform:uppercase;letter-spacing:0.8px">{nome_agencia}</p>
-            <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#f1f5f9">{nome_cliente}</p>
-          </td>
-          <td align="right">
-            <div style="background:#0c0e14;border:1px solid #2a2f3e;border-radius:8px;
-                        padding:8px 14px;display:inline-block">
-              <p style="margin:0;font-size:11px;color:#64748b">Relatório Mensal</p>
-              <p style="margin:2px 0 0;font-size:15px;font-weight:700;color:#e2e8f0">{mes_label}</p>
-            </div>
-          </td>
-        </tr>
-      </table>
+      <table width="100%" cellpadding="0" cellspacing="0"><tr>
+        <td>
+          <p style="margin:0;font-size:12px;color:{cor_primaria};font-weight:600;
+             text-transform:uppercase;letter-spacing:0.8px">{nome_agencia}</p>
+          <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#f1f5f9">{nome_cliente}</p>
+        </td>
+        <td align="right" style="vertical-align:top">
+          <div style="background:#0c0e14;border:1px solid #2a2f3e;border-radius:8px;
+                      padding:8px 14px;display:inline-block">
+            <p style="margin:0;font-size:10px;color:#64748b">Relatório Mensal</p>
+            <p style="margin:2px 0 0;font-size:15px;font-weight:700;color:#e2e8f0">{mes_label}</p>
+          </div>
+        </td>
+      </tr></table>
     </td>
   </tr>
 
-  <!-- SCORECARD BANNER -->
+  <!-- SCORECARD -->
   <tr>
-    <td style="background:{sc_color}18;border-left:4px solid {sc_color};
-               padding:16px 28px;border-top:none">
-      <table width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td>
-            <p style="margin:0 0 2px;font-size:20px">{sc_emoji} <span style="font-size:15px;font-weight:700;color:{sc_color}">{sc_label}</span></p>
-            {f'<p style="margin:0;font-size:13px;color:#94a3b8">{sc_verdict}</p>' if sc_verdict else ''}
-          </td>
-        </tr>
-      </table>
+    <td style="background:{sc_color}18;border-left:4px solid {sc_color};padding:14px 28px">
+      <p style="margin:0 0 2px;font-size:19px">{sc_emoji}
+        <span style="font-size:15px;font-weight:700;color:{sc_color}">{sc_label}</span></p>
+      {f'<p style="margin:0;font-size:13px;color:#94a3b8">{sc_verdict}</p>' if sc_verdict else ''}
     </td>
   </tr>
 
-  <!-- MAIN BODY -->
-  <tr>
-    <td style="background:#141720;padding:28px 28px 8px;border-radius:0 0 12px 12px">
-      <table width="100%" cellpadding="0" cellspacing="0">
+  <!-- BODY -->
+  <tr><td style="background:#141720;padding:28px 28px 8px;border-radius:0 0 12px 12px">
+    <table width="100%" cellpadding="0" cellspacing="0">
 
-        <!-- Resumo executivo -->
-        {_section("Resumo Executivo", resumo_block)}
+      <!-- 3. Resumo executivo -->
+      {_section("Resumo Executivo",
+          f'<p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.65">{resumo_exec}</p>'
+      ) if resumo_exec else ""}
 
-        <!-- KPIs -->
-        {_section("KPIs do Mês", f'<table width="100%" cellpadding="0" cellspacing="0">{kpi_rows_html}</table>')}
+      <!-- 4. KPIs -->
+      {_section("KPIs do Mês",
+          f'<table width="100%" cellpadding="0" cellspacing="0">{kpi_rows_html}</table>'
+      )}
 
-        <!-- Metas -->
-        {_section("Metas vs Realizado",
-            f'<table width="100%" cellpadding="0" cellspacing="0">{metas_rows}</table>'
-        ) if metas_rows else ""}
+      <!-- 5. Comparativo Anual -->
+      {_section(f"Comparativo vs Ano Anterior ({ano_ant_label})", comp_block) if comp_block else ""}
 
-        <!-- Canais -->
-        {_section("Desempenho por Canal",
-            f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
-            f'<thead><tr>'
-            f'<th align="left" style="padding:0 8px 8px 0;font-size:11px;color:#64748b;font-weight:400;text-transform:uppercase">Canal</th>'
-            f'<th align="right" style="padding:0 8px 8px;font-size:11px;color:#64748b;font-weight:400;text-transform:uppercase">Invest.</th>'
-            f'<th align="right" style="padding:0 8px 8px;font-size:11px;color:#64748b;font-weight:400;text-transform:uppercase">Receita</th>'
-            f'<th align="right" style="padding:0 8px 8px;font-size:11px;color:#64748b;font-weight:400;text-transform:uppercase">ROAS</th>'
-            f'<th align="right" style="padding:0 0 8px 8px;font-size:11px;color:#64748b;font-weight:400;text-transform:uppercase">CPA</th>'
-            f'</tr></thead>'
-            f'<tbody>{canal_rows}</tbody>'
-            f'</table>'
-            + (f'<p style="margin:10px 0 0;font-size:12px;color:#475569;line-height:1.5">{analise_block}</p>' if analise_canais else "")
-        ) if canal_rows else ""}
+      <!-- 6. Metas -->
+      {_section("Metas vs Realizado",
+          f'<table width="100%" cellpadding="0" cellspacing="0">{metas_rows}</table>'
+      ) if metas_rows else ""}
 
-        <!-- Top Produtos -->
-        {_section("Top Produtos",
-            f'<table width="100%" cellpadding="0" cellspacing="0">{produto_rows}</table>'
-        ) if produto_rows else ""}
+      <!-- 7. Canais (atribuição server-side) -->
+      {_section("Desempenho por Canal",
+          canal_block,
+          note="Receita e ROAS por atribuição server-side (nossa tracking)."
+      ) if canal_block else ""}
 
-        <!-- Retenção -->
-        {_section("Retenção de Clientes", retencao_block) if retencao_block else ""}
+      <!-- 8. Análise AI dos canais -->
+      {_section("Análise dos Canais",
+          f'<p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.65">{analise_canais}</p>'
+      ) if analise_canais else ""}
 
-        <!-- Insights -->
-        {_section("Destaques &amp; Atenções", insights_html) if insights_html else ""}
+      <!-- 9–10. Campanhas por canal (platform-reported) -->
+      {_section("Principais Campanhas",
+          camp_blocks,
+          note="Dados reportados pelas plataformas (Meta/Google). ROAS pode divergir da atribuição server-side."
+      ) if camp_blocks else ""}
 
-        <!-- Plano -->
-        {_section("Plano para o Próximo Mês", plano_block) if plano_block else ""}
+      <!-- 11. Atribuição por canal -->
+      {_section("Atribuição de Receita por Canal (server-side)",
+          f'<table width="100%" cellpadding="0" cellspacing="0">{atr_rows}</table>'
+      ) if atr_rows else ""}
 
-        <!-- Footer -->
-        <tr>
-          <td style="padding:8px 0 24px;border-top:1px solid #2a2f3e">
-            <table width="100%" cellpadding="0" cellspacing="0">
-              <tr>
-                <td>
-                  <p style="margin:0;font-size:12px;color:#475569">
-                    {nome_agencia}{f' · <a href="{site_agencia}" style="color:{cor_primaria};text-decoration:none">{site_agencia}</a>' if site_agencia else ""}
-                  </p>
-                  <p style="margin:4px 0 0;font-size:11px;color:#374151">
-                    Relatório gerado automaticamente para {nome_cliente} · {mes_label}
-                  </p>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
+      <!-- 12. Funil de conversão -->
+      {_section("Funil de Conversão",
+          f'<table width="100%" cellpadding="0" cellspacing="0">{funil_rows}</table>'
+      ) if funil_rows else ""}
 
-      </table>
-    </td>
-  </tr>
+      <!-- 13. Eficiência de mídia -->
+      {_section("Eficiência de Mídia", ef_block) if ef_block else ""}
+
+      <!-- 14. Top produtos -->
+      {_section("Top Produtos",
+          f'<table width="100%" cellpadding="0" cellspacing="0">{produto_rows}</table>'
+      ) if produto_rows else ""}
+
+      <!-- 15. Retenção -->
+      {_section("Retenção de Clientes", retencao_block) if retencao_block else ""}
+
+      <!-- 16. Destaques & Atenções -->
+      {_section("Destaques &amp; Atenções", insights_html) if insights_html else ""}
+
+      <!-- 17. Plano -->
+      {_section("Plano para o Próximo Mês", plano_block) if plano_block else ""}
+
+      <!-- Footer -->
+      <tr><td style="padding:8px 0 24px;border-top:1px solid #2a2f3e">
+        <p style="margin:0;font-size:12px;color:#475569">
+          {nome_agencia}{f' · <a href="{site_agencia}" style="color:{cor_primaria};text-decoration:none">{site_agencia}</a>' if site_agencia else ""}
+        </p>
+        <p style="margin:4px 0 0;font-size:11px;color:#374151">
+          Relatório gerado automaticamente · {nome_cliente} · {mes_label}
+        </p>
+      </td></tr>
+
+    </table>
+  </td></tr>
 
 </table>
 
