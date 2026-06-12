@@ -993,12 +993,20 @@ def build_monthly_context(
     yoy_ed      = f"{yoy_year}-{month:02d}-{(datetime(yoy_year, month + 1 if month < 12 else 1, 1) - timedelta(days=1)).day:02d}" if month < 12 else f"{yoy_year}-12-31"
 
     # Orders
-    orders_cur  = _fetch_orders(sb, client_id, start, end)
-    orders_prev = _fetch_orders(sb, client_id, prev_s, prev_e)
-    orders_yoy  = _fetch_orders(sb, client_id, yoy_s, yoy_e)
+    def _safe_fetch_orders(*a, **kw):
+        try:
+            return _fetch_orders(*a, **kw)
+        except Exception as exc:
+            logger.warning("build_monthly_context: _fetch_orders failed: %s", exc)
+            return []
+
+    orders_cur  = _safe_fetch_orders(sb, client_id, start, end)
+    orders_prev = _safe_fetch_orders(sb, client_id, prev_s, prev_e)
+    orders_yoy  = _safe_fetch_orders(sb, client_id, yoy_s, yoy_e)
+    logger.info("build_monthly_context: orders cur=%d prev=%d yoy=%d", len(orders_cur), len(orders_prev), len(orders_yoy))
 
     def agg_orders(rows):
-        rev = sum(float(o["total_price"]) for o in rows)
+        rev = sum(float(o.get("total_price") or 0) for o in rows)
         cnt = len(rows)
         return {
             "revenue": round(rev, 2),
@@ -1012,9 +1020,17 @@ def build_monthly_context(
     yoy  = agg_orders(orders_yoy)
 
     # Spend
-    spend_cur  = _fetch_spend(sb, client_id, start_date, end_date_iso)
-    spend_prev = _fetch_spend(sb, client_id, prev_sd, prev_ed)
-    spend_yoy  = _fetch_spend(sb, client_id, yoy_sd, yoy_ed)
+    def _safe_fetch_spend(*a, **kw):
+        try:
+            return _fetch_spend(*a, **kw)
+        except Exception as exc:
+            logger.warning("build_monthly_context: _fetch_spend failed: %s", exc)
+            return {}
+
+    spend_cur  = _safe_fetch_spend(sb, client_id, start_date, end_date_iso)
+    spend_prev = _safe_fetch_spend(sb, client_id, prev_sd, prev_ed)
+    spend_yoy  = _safe_fetch_spend(sb, client_id, yoy_sd, yoy_ed)
+    logger.info("build_monthly_context: spend channels cur=%s", list(spend_cur.keys()))
 
     for agg, sp in [(cur, spend_cur), (prev, spend_prev), (yoy, spend_yoy)]:
         agg["spend"] = round(sum(s["spend"] for s in sp.values()), 2)
@@ -1038,21 +1054,49 @@ def build_monthly_context(
     attribution = _fetch_attribution(orders_cur)
 
     # Daily revenue
-    daily_revenue = _fetch_daily_revenue(sb, client_id, start, end)
+    try:
+        daily_revenue = _fetch_daily_revenue(sb, client_id, start, end)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _fetch_daily_revenue failed: %s", exc)
+        daily_revenue = []
 
     # Retention
-    retention = _fetch_retention(orders_cur)
+    try:
+        retention = _fetch_retention(orders_cur)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _fetch_retention failed: %s", exc)
+        retention = {"novos": 0, "recorrentes": 0, "total": 0, "rep_rate": 0, "rep_rate_fmt": "0,0%",
+                     "novos_pct": 100, "novos_pct_fmt": "100%", "novos_fmt": "0", "recorrentes_fmt": "0",
+                     "total_fmt": "0", "bar_novos": 100, "bar_rec": 0,
+                     "rev_novos": 0.0, "rev_rec": 0.0, "rev_novos_fmt": "—", "rev_rec_fmt": "—",
+                     "rev_rec_pct": 0, "rev_rec_pct_fmt": "0%", "ticket_novo_fmt": "—", "ticket_rec_fmt": "—"}
+    logger.info("build_monthly_context: retention novos=%s recorrentes=%s", retention.get("novos"), retention.get("recorrentes"))
 
     # Top products
-    top_products = _fetch_top_products(sb, client_id, start, end)
+    try:
+        top_products = _fetch_top_products(sb, client_id, start, end)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _fetch_top_products failed: %s", exc)
+        top_products = []
+    logger.info("build_monthly_context: top_products count=%d", len(top_products))
 
     # Channels (with deltas vs previous month)
-    channels = _build_channel_rows(spend_cur, rev_by_source, spend_prev, rev_by_source_prev)
+    try:
+        channels = _build_channel_rows(spend_cur, rev_by_source, spend_prev, rev_by_source_prev)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_channel_rows failed: %s", exc)
+        channels = []
+    logger.info("build_monthly_context: channels=%d", len(channels))
 
     # Top campaigns per channel (Meta + Google, live from APIs)
-    campanhas, campanhas_por_canal = _build_campaigns(
-        client, start_date, end_date_iso, prev_month_label=_MESES_PT[prev_month],
-    )
+    try:
+        campanhas, campanhas_por_canal = _build_campaigns(
+            client, start_date, end_date_iso, prev_month_label=_MESES_PT[prev_month],
+        )
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_campaigns failed: %s", exc)
+        campanhas, campanhas_por_canal = [], []
+    logger.info("build_monthly_context: campaigns flat=%d grouped=%d", len(campanhas), len(campanhas_por_canal))
 
     # Meta creatives performance
     meta_creatives: list[dict] = []
@@ -1111,23 +1155,34 @@ def build_monthly_context(
 
     # Funil de conversão (RPC server-side)
     funil = _fetch_funnel(sb, client_id, start, end, cur["orders"])
+    logger.info("build_monthly_context: funil stages=%d", len(funil))
 
     # Eficiência de mídia (MER, CAC, LTV, LTV:CAC)
-    eficiencia = _build_efficiency(cur, retention, ltv_stats)
+    try:
+        eficiencia = _build_efficiency(cur, retention, ltv_stats)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_efficiency failed: %s", exc)
+        eficiencia = {}
 
     # Scorecard de saúde + Metas vs Realizado
     mom_delta_val = (
         round((cur["revenue"] - prev["revenue"]) / prev["revenue"] * 100, 1)
         if prev["revenue"] > 0 else None
     )
-    scorecard, metas = _build_scorecard(cur, mom_delta_val, goal_rev, goal_roas)
+    try:
+        scorecard, metas = _build_scorecard(cur, mom_delta_val, goal_rev, goal_roas)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_scorecard failed: %s", exc)
+        scorecard, metas = {"status": "verde", "emoji": "📊", "label": "Resultado do Mês", "verdict": ""}, []
 
     # Atribuição multi-toque (comparação de modelos)
     atribuicao_modelos = _fetch_attribution_models(client_id, start_date, end_date_iso)
+    logger.info("build_monthly_context: atribuicao_modelos rows=%d", len(atribuicao_modelos.get("rows") or []))
 
     # ── AI strategic analysis (real numbers) + next-month plan ────────────────
     next_month       = month + 1 if month < 12 else 1
     next_month_label = _MESES_PT[next_month]
+    logger.info("build_monthly_context: calling _build_ai_analysis")
     ai = _build_ai_analysis(
         client_id, client.get("name") or client.get("pixel_id") or "",
         cur, prev, mom_delta_val, goal_rev, goal_roas, channels, campanhas,
@@ -1135,14 +1190,24 @@ def build_monthly_context(
     )
     resumo_exec   = (ai.get("resumo_executivo") or "")[:800]
     analise_canais = ai.get("analise_canais") or ""
+    logger.info("build_monthly_context: ai done, has_resumo=%s", bool(resumo_exec))
 
     # Destaques: prefer AI, fall back to data-derived
-    destaques = _build_destaques(ai, cur, prev, top_products, prev_month)
+    try:
+        destaques = _build_destaques(ai, cur, prev, top_products, prev_month)
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_destaques failed: %s", exc)
+        destaques = []
 
     # Plano do próximo mês: AI plan, with deterministic fallback
-    plano, plano_meta_fat_fmt, plano_budget_fmt = _build_plano(
-        ai, next_month_label, cur, goal_rev, goal_roas, channels, top_products, retention,
-    )
+    try:
+        plano, plano_meta_fat_fmt, plano_budget_fmt = _build_plano(
+            ai, next_month_label, cur, goal_rev, goal_roas, channels, top_products, retention,
+        )
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_plano failed: %s", exc)
+        plano, plano_meta_fat_fmt, plano_budget_fmt = None, "—", "—"
+    logger.info("build_monthly_context: all data ready — building return dict")
 
     return {
         # Identity
