@@ -426,9 +426,12 @@ def write_order(
         try:
             prior = (
                 sb.table("orders")
-                .select("id", count="exact", head=True)
+                .select("*", count="exact")
                 .eq("client_id", client_uuid)
                 .eq("email", customer.email)
+                .eq("financial_status", "paid")
+                .neq("platform_order_id", order.id)
+                .limit(0)
                 .execute()
             )
             is_first = (prior.count or 0) == 0
