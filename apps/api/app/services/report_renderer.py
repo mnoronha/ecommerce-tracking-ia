@@ -326,6 +326,10 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     sc_label   = _h(scorecard.get("label"), "Resultado do Mês")
     sc_verdict = _h(scorecard.get("verdict"), "")
 
+    is_primeiro_mes  = bool(context.get("is_primeiro_mes"))
+    next_month_label = _h(context.get("next_month_label"), "próximo mês")
+    next_month_year  = context.get("next_month_year", "")
+
     # ── Section builder ───────────────────────────────────────────────────
     def _section(title: str, body: str, note: str = "") -> str:
         if not body:
@@ -358,7 +362,11 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
             mom_col  = _dc(k.get("momClass", "flat"))
             yoy_col  = _dc(k.get("yoyClass", "flat"))
             mom      = k.get("mom", "")
+            if mom == "→ s/ base":
+                mom = ""
             yoy_d    = k.get("yoy", "")
+            if yoy_d == "→ s/ base":
+                yoy_d = ""
             pad_l    = "0" if col_idx == 0 else "4px"
             pad_r    = "0" if col_idx == 2 else "4px"
             cells += (
@@ -396,7 +404,13 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
             f'</tr>'
         )
     comp_block = ""
-    if comp_rows:
+    if is_primeiro_mes:
+        comp_block = (
+            f'<p style="margin:0;font-size:13px;color:#64748b;font-style:italic">'
+            f'Primeiro mês de tracking na plataforma — base histórica para comparação '
+            f'disponível a partir de {next_month_label}/{next_month_year}.</p>'
+        )
+    elif comp_rows:
         comp_block = (
             f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
             f'<thead><tr>'
@@ -481,6 +495,8 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
             for m in metricas:
                 dcol = _dc(m.get("classe", "flat"))
                 delta = m.get("delta", "")
+                if delta == "→ s/ base":
+                    delta = ""
                 met_html += (
                     f'<td style="padding:8px 6px;text-align:center;vertical-align:top;width:16%">'
                     f'<p style="margin:0 0 2px;font-size:10px;color:#64748b;text-transform:uppercase">'
@@ -678,14 +694,24 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
                 f'</div></td>'
             )
 
+        if is_primeiro_mes and recorr == 0:
+            retention_note = (
+                f'<p style="margin:8px 0 0;font-size:12px;color:#64748b;font-style:italic">'
+                f'Primeiro mês de tracking — clientes recorrentes aparecem a partir de '
+                f'{next_month_label}/{next_month_year}, quando pedidos deste mês forem re-comprados.</p>'
+            )
+        else:
+            retention_note = (
+                f'<p style="margin:8px 0 0;font-size:12px;color:#64748b">'
+                f'Taxa de recorrência: {taxa} — '
+                f'clientes que retornaram para uma segunda compra.</p>'
+            )
         retencao_block = (
             f'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
             + _ret_card(novos, novos_pct, "#e2e8f0", "Novos", rev_nov, tkt_nov)
             + _ret_card(recorr, recorr_pct, "#10b981", "Recorrentes", rev_rec, tkt_rec).replace("padding-right:6px", "padding-left:6px")
             + f'</tr></table>'
-            + (f'<p style="margin:8px 0 0;font-size:12px;color:#64748b">'
-               f'Taxa de recorrência: {taxa} — '
-               f'clientes que retornaram para uma segunda compra.</p>')
+            + retention_note
         )
 
     # ── 11. Destaques + Atenções (IA) ─────────────────────────────────────

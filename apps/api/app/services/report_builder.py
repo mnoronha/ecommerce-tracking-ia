@@ -911,8 +911,85 @@ def _build_destaques(ai: dict, cur, prev, top_products, prev_month) -> list[dict
     return out
 
 
+def _build_deterministic_insights(
+    attribution: list,
+    eficiencia: dict,
+    retention: dict,
+    cur: dict,
+    is_primeiro_mes: bool,
+    next_month_label: str,
+    next_month_year: int,
+) -> list[dict]:
+    """Rule-based insight cards that fire from data thresholds — no AI credits needed."""
+    cards: list[dict] = []
+    total_rev = sum(float(a.get("receita") or 0) for a in attribution)
+
+    # Direct traffic > 35 % — investigate attribution gap vs. loyal base
+    direto = next((a for a in attribution if a.get("canal") == "Direto"), None)
+    if direto and total_rev > 0:
+        pct = float(direto.get("pct_receita") or 0)
+        if pct >= 35:
+            cards.append({
+                "tipo": "atencao",
+                "titulo": f"Tráfego Direto responde por {_pct(pct)} da receita",
+                "texto": (
+                    f"{_brl(direto.get('receita'))} em {direto.get('pedidos', 0)} pedidos chegaram "
+                    f"sem UTM rastreável. Duas hipóteses: (1) base de clientes fiéis que já digitam "
+                    f"a URL — sinal positivo de marca forte; (2) atribuição de mídia não capturada "
+                    f"(links sem UTM em bio, WhatsApp, DM) — risco de subestimar o ROAS real dos anúncios. "
+                    f"Recomendação: auditar parâmetros UTM nas campanhas e links fora das plataformas."
+                ),
+            })
+
+    # Exceptional LTV:CAC — highlight the economics
+    if isinstance(eficiencia, dict):
+        ltv_cac = eficiencia.get("ltv_cac")
+        if ltv_cac and ltv_cac >= 10:
+            cards.append({
+                "tipo": "positivo",
+                "titulo": f"LTV:CAC de {eficiencia.get('ltv_cac_fmt', '')} — economia de escala excepcional",
+                "texto": (
+                    f"Para cada {eficiencia.get('cac_fmt', '—')} investidos em adquirir um cliente, "
+                    f"o retorno estimado ao longo do tempo é de {eficiencia.get('ltv_fmt', '—')}. "
+                    f"O benchmark de mercado é ≥ 3:1 — estamos {ltv_cac:.0f}x acima disso. "
+                    f"Isso justifica agressividade no investimento em aquisição: "
+                    f"cada cliente adicional traz retorno muito superior ao custo de captura."
+                ),
+            })
+
+    # High AOV — premium positioning
+    aov = float(cur.get("aov") or 0)
+    if aov >= 2000:
+        cards.append({
+            "tipo": "positivo",
+            "titulo": f"Ticket médio de {_brl(aov)} — posicionamento premium confirmado",
+            "texto": (
+                f"Com ticket médio de {_brl(aov)}, o perfil de compra indica produtos de alto valor "
+                f"ou pedidos de múltiplos itens. Em mídia paga, isso significa que "
+                f"otimizar para conversão de alta intenção (Search, Advantage+, campanhas retargeting) "
+                f"gera retorno desproporcional: uma venda a mais paga vários cliques em campanhas de volume."
+            ),
+        })
+
+    # First month — zero recompra is expected, not a problem
+    if is_primeiro_mes and isinstance(retention, dict) and (retention.get("recorrentes") or 0) == 0:
+        novos = retention.get("novos") or retention.get("total") or 0
+        cards.append({
+            "tipo": "atencao",
+            "titulo": "Recompra: primeiro mês de tracking — sem base histórica ainda",
+            "texto": (
+                f"Os {novos} pedidos do mês foram todos classificados como primeira compra porque "
+                f"o tracking iniciou agora e ainda não há histórico de clientes anteriores no sistema. "
+                f"A taxa de recompra real começará a aparecer a partir de {next_month_label}/{next_month_year}, "
+                f"quando clientes deste mês voltarem a comprar."
+            ),
+        })
+
+    return cards
+
+
 def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
-                 channels, top_products, retention) -> tuple[Optional[dict], str, str]:
+                 channels, top_products, retention, campanhas=None) -> tuple[Optional[dict], str, str]:
     """Next-month plan from the AI, with a deterministic fallback built from data."""
     ai_plano = ai.get("plano") or {}
 
@@ -931,12 +1008,37 @@ def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
     if not acoes:
         best = max((c for c in channels if c.get("roas")), key=lambda c: c["roas"], default=None)
         if best:
-            acoes.append(f"Escalar {best['nome']} — canal mais eficiente (ROAS {_roas(best['roas'])}).")
+            acoes.append(
+                f"Escalar {best['nome']} — canal mais eficiente do mês "
+                f"(ROAS {_roas(best['roas'])}, investimento {best.get('investimento_fmt','—')}). "
+                f"Aumentar budget gradualmente em 20-30% por semana e monitorar saturação de audiência."
+            )
+        # Reference best campaign by name when available
+        if campanhas:
+            best_camp = max(campanhas, key=lambda c: float(c.get("investimento") or 0), default=None)
+            if best_camp:
+                camp_nome = (best_camp.get("nome") or "")[:45]
+                roas_txt = best_camp.get("indice_fmt") or ""
+                cond = f"ROAS {roas_txt}" if (roas_txt and roas_txt not in ("—", "")) else f"invest. {best_camp.get('investimento_fmt','—')}"
+                acoes.append(
+                    f"Priorizar campanha '{camp_nome}' ({best_camp.get('canal_label','canal')}) — "
+                    f"{cond} no período. Revisar criativos de pior CTR e pausar o que estiver abaixo da meta."
+                )
         if top_products:
-            acoes.append(f"Manter estoque e mídia no produto destaque: {top_products[0]['name']}.")
+            tp = top_products[0]
+            acoes.append(
+                f"Garantir estoque e destinar mídia para '{tp['name']}' "
+                f"— produto com maior receita ({tp['revenue_fmt']}) e {tp['qty_fmt']} unidades vendidas."
+            )
         if isinstance(retention, dict) and (retention.get("recorrentes") or 0) > 0:
-            acoes.append("Ativar campanha de recompra/CRM para a base de clientes recorrentes.")
-        acoes.append("Revisar criativos de menor CTR e renovar os de pior desempenho.")
+            acoes.append(
+                f"Ativar fluxo de recompra/CRM para os {retention.get('recorrentes', 0)} clientes "
+                f"recorrentes identificados — segmento de maior LTV."
+            )
+        acoes.append(
+            "Auditar parâmetros UTM em todos os links de campanha, bio e WhatsApp "
+            "para reduzir tráfego 'Direto' não rastreável e aumentar cobertura de atribuição."
+        )
 
     plano = {
         "mes": next_month_label,
@@ -1036,6 +1138,9 @@ def build_monthly_context(
         agg["spend"] = round(sum(s["spend"] for s in sp.values()), 2)
         agg["roas"]  = round(agg["revenue"] / agg["spend"], 2) if agg["spend"] > 0 else None
         agg["cpa"]   = round(agg["spend"] / agg["orders"], 2) if agg["orders"] > 0 else None
+
+    # First month detection — no prior orders AND no prior spend
+    is_primeiro_mes = prev["orders"] == 0 and prev["spend"] == 0
 
     # Revenue by utm_source for channel attribution (current + previous month)
     def _rev_by_source(rows: list[dict]) -> dict[str, dict]:
@@ -1181,6 +1286,7 @@ def build_monthly_context(
 
     # ── AI strategic analysis (real numbers) + next-month plan ────────────────
     next_month       = month + 1 if month < 12 else 1
+    next_month_year  = year if month < 12 else year + 1
     next_month_label = _MESES_PT[next_month]
     logger.info("build_monthly_context: calling _build_ai_analysis")
     ai = _build_ai_analysis(
@@ -1192,17 +1298,31 @@ def build_monthly_context(
     analise_canais = ai.get("analise_canais") or ""
     logger.info("build_monthly_context: ai done, has_resumo=%s", bool(resumo_exec))
 
-    # Destaques: prefer AI, fall back to data-derived
+    # Destaques: prefer AI, then inject rule-based insights
     try:
         destaques = _build_destaques(ai, cur, prev, top_products, prev_month)
     except Exception as exc:
         logger.warning("build_monthly_context: _build_destaques failed: %s", exc)
         destaques = []
 
+    try:
+        det_insights = _build_deterministic_insights(
+            attribution, eficiencia, retention, cur,
+            is_primeiro_mes, next_month_label, next_month_year,
+        )
+        # Append rule-based cards after AI destaques (or prepend when no AI)
+        if ai:
+            destaques = (destaques + det_insights)[:8]
+        else:
+            destaques = (det_insights + destaques)[:8]
+    except Exception as exc:
+        logger.warning("build_monthly_context: _build_deterministic_insights failed: %s", exc)
+
     # Plano do próximo mês: AI plan, with deterministic fallback
     try:
         plano, plano_meta_fat_fmt, plano_budget_fmt = _build_plano(
             ai, next_month_label, cur, goal_rev, goal_roas, channels, top_products, retention,
+            campanhas=campanhas,
         )
     except Exception as exc:
         logger.warning("build_monthly_context: _build_plano failed: %s", exc)
@@ -1229,6 +1349,9 @@ def build_monthly_context(
         "mes_label":        mes_label,
         "mes_anterior_label": mes_ant_label,
         "ano_anterior_label": ano_ant_label,
+        "is_primeiro_mes":  is_primeiro_mes,
+        "next_month_label": next_month_label,
+        "next_month_year":  next_month_year,
 
         # AI text
         "resumo_executivo": resumo_exec or f"Relatório de {mes_label} para {client.get('name', '')}.",
