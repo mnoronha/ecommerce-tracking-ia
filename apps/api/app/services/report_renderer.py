@@ -177,6 +177,55 @@ def render_monthly_html(context: dict) -> str:
 </body></html>"""
 
 
+def render_weekly_html(context: dict) -> str:
+    """Render semanal_uau.html Handlebars template → HTML string."""
+    try:
+        from pybars import Compiler
+    except ImportError:
+        logger.error("pybars3 not installed — cannot render weekly template")
+        return "<html><body><p>pybars3 não instalado.</p></body></html>"
+
+    template_path = _TEMPLATES_DIR / "templates" / "semanal_uau.html"
+    if not template_path.exists():
+        logger.error("Weekly UAU template not found: %s", template_path)
+        return "<html><body><p>Template semanal_uau.html não encontrado.</p></body></html>"
+
+    agencia = context.get("agencia", {})
+    css     = _load_css("semanal_uau", agencia)
+
+    compiler = Compiler()
+    partials = _load_partials()
+
+    compiled_partials = {}
+    for name, src in partials.items():
+        try:
+            compiled_partials[name] = compiler.compile(src)
+        except Exception as exc:
+            logger.warning("partial compile failed (%s): %s", name, exc)
+
+    try:
+        template_src = template_path.read_text(encoding="utf-8")
+        template     = compiler.compile(template_src)
+        html = template(
+            {**context, "css": css},
+            helpers=_make_helpers(),
+            partials=compiled_partials,
+        )
+        html_str = str(html) if not isinstance(html, str) else html
+        logger.info("render_weekly_html: %d chars", len(html_str))
+        return html_str
+    except Exception as exc:
+        logger.error("weekly template render failed: %s", exc, exc_info=True)
+        name   = context.get("cliente", {}).get("nome", "")
+        period = context.get("periodo", "")
+        return (
+            f"<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"
+            f"<h2>Relatório Semanal — {name} — {period}</h2>"
+            f"<p><em>Falha ao renderizar template: {exc}</em></p>"
+            f"</body></html>"
+        )
+
+
 def render_to_pdf(context: dict) -> Optional[bytes]:
     """Render template → HTML → PDF bytes. Returns None on failure.
     base_url points at the templates dir so local assets (fonts/images) resolve;

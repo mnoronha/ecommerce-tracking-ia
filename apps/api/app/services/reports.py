@@ -309,6 +309,91 @@ def _client_logo(sb, client_id: str) -> Optional[str]:
     return None
 
 
+def _weekly_funnel(sb, client_id: str, start: str, end: str) -> dict:
+    """Conta visitantes únicos por etapa do funil (7d) via tracking_events."""
+    try:
+        rows = (
+            sb.table("tracking_events")
+            .select("event_type, visitor_cookie_id")
+            .eq("client_id", client_id)
+            .gte("created_at", start)
+            .lt("created_at", end)
+            .execute()
+        ).data or []
+
+        def uniq(t):
+            return len({r["visitor_cookie_id"] for r in rows
+                        if r.get("event_type") == t and r.get("visitor_cookie_id")})
+
+        return {
+            "pageviews":     uniq("pageview"),
+            "product_views": uniq("view_product"),
+            "add_to_cart":   uniq("add_to_cart"),
+            "checkout":      uniq("begin_checkout"),
+        }
+    except Exception as exc:
+        logger.debug("_weekly_funnel failed: %s", exc)
+        return {}
+
+
+def _top_campaigns_weekly(sb, client_id: str, start: str, end: str) -> list[dict]:
+    """Top 5 campanhas da semana a partir de utm_source + utm_campaign nos pedidos pagos."""
+    try:
+        rows = (
+            sb.table("orders")
+            .select("utm_source, utm_campaign, total_price")
+            .eq("client_id", client_id)
+            .eq("financial_status", "paid")
+            .gte("created_at", start)
+            .lt("created_at", end)
+            .execute()
+        ).data or []
+
+        camp: dict = {}
+        for o in rows:
+            src  = o.get("utm_source") or "direto"
+            name = o.get("utm_campaign") or "—"
+            key  = (src, name)
+            if key not in camp:
+                camp[key] = {"pedidos": 0, "receita": 0.0}
+            camp[key]["pedidos"] += 1
+            camp[key]["receita"] += float(o.get("total_price") or 0)
+
+        return [
+            {"canal": k[0], "campanha": k[1], "pedidos": v["pedidos"],
+             "receita": round(v["receita"], 2)}
+            for k, v in sorted(camp.items(), key=lambda x: x[1]["receita"], reverse=True)[:5]
+        ]
+    except Exception as exc:
+        logger.debug("_top_campaigns_weekly failed: %s", exc)
+        return []
+
+
+def _client_profile_for_report(sb, client_id: str, month_start: date,
+                                goal: float, roas_goal: Optional[float]) -> dict:
+    """Perfil do cliente para o prompt da IA (nome, metas, notas)."""
+    profile: dict = {"revenue_goal": goal, "roas_goal": roas_goal}
+    try:
+        row = sb.table("clients").select("name, pixel_id, notes").eq("id", client_id).limit(1).execute()
+        if row.data:
+            d = row.data[0]
+            profile["name"]   = d.get("name") or d.get("pixel_id", "loja")
+            profile["notes"]  = d.get("notes") or ""
+    except Exception:
+        pass
+    try:
+        g = (
+            sb.table("goals").select("cpa_goal")
+            .eq("client_id", client_id).eq("month", month_start.isoformat())
+            .limit(1).execute()
+        )
+        if g.data:
+            profile["cpa_goal"] = g.data[0].get("cpa_goal")
+    except Exception:
+        pass
+    return profile
+
+
 def _header_html(client_name: str, subtitle: str,
                  client_logo: Optional[str] = None,
                  wide: bool = False) -> str:
@@ -457,9 +542,18 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
 
     conv = _visitors_conv(sb, client_id, week_start.isoformat(), week["orders"])
 
+    # Extra data for UAU content generation
+    funnel        = _weekly_funnel(sb, client_id, week_start.isoformat(), now.isoformat())
+    top_campaigns = _top_campaigns_weekly(sb, client_id, week_start.isoformat(), now.isoformat())
+    client_profile = _client_profile_for_report(sb, client_id, month_start.date(), goal, roas_goal)
+
+    # Add purchases count to funnel
+    if funnel:
+        funnel["purchases"] = week["orders"]
+
     return {
         "week_start": week_start, "now": now,
-        "week": week, "week_delta": week_delta,
+        "week": week, "prev": prev, "week_delta": week_delta,
         "spend": total_spend, "spend_delta": spend_delta,
         "roas": roas, "roas_goal": roas_goal, "cpa": cpa, "conv": conv,
         "channels": channels,
@@ -471,6 +565,9 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
         "nvr": _new_vs_returning(sb, client_id, week_start.isoformat(), now.isoformat()),
         "alerts": _open_alerts(sb, client_id),
         "ai": _latest_ai(sb, client_id, "weekly_report") or _latest_ai(sb, client_id, "recommendation"),
+        "funnel":         funnel,
+        "top_campaigns":  top_campaigns,
+        "client_profile": client_profile,
     }
 
 
@@ -498,14 +595,123 @@ def _log_report(sb, client_id: str, rtype: str, period_start, period_end,
         logger.warning("report log (versão) falhou para %s: %s", client_id, exc)
 
 
+def _build_weekly_uau_context(
+    pixel_id: str,
+    client_name: str,
+    m: dict,
+    uau: dict,
+    client_logo: Optional[str] = None,
+) -> dict:
+    """Builds the Handlebars context dict for semanal_uau.html from raw weekly data + UAU AI content."""
+    now        = m["now"]
+    week_start = m["week_start"]
+    periodo    = f"{week_start.strftime('%d/%m')} – {now.strftime('%d/%m/%Y')}"
+
+    agency_name = settings.AGENCY_NAME or "Noroia"
+
+    # Narrative: split paragraphs
+    narrative_raw = uau.get("narrative", "")
+    narrative_paragraphs = [p.strip() for p in narrative_raw.split("\n\n") if p.strip()] if narrative_raw else []
+
+    # Funnel steps with bar widths
+    funnel_data = m.get("funnel") or {}
+    funil_steps = []
+    if funnel_data.get("pageviews"):
+        max_val = funnel_data["pageviews"] or 1
+        steps = [
+            ("Visitantes",     funnel_data.get("pageviews", 0),     None),
+            ("Viram produto",  funnel_data.get("product_views", 0), funnel_data.get("pageviews")),
+            ("Add to cart",    funnel_data.get("add_to_cart", 0),   funnel_data.get("product_views")),
+            ("Checkout",       funnel_data.get("checkout", 0),      funnel_data.get("add_to_cart")),
+            ("Compras",        funnel_data.get("purchases", 0),     funnel_data.get("checkout")),
+        ]
+        for name, count, prev_count in steps:
+            rate = None
+            if prev_count and prev_count > 0:
+                rate = f"{round(count / prev_count * 100, 1):.1f}%".replace(".", ",")
+            funil_steps.append({
+                "name":       name,
+                "count":      f"{count:,}".replace(",", "."),
+                "rate":       rate,
+                "width_pct":  round(count / max_val * 100, 0) if max_val > 0 else 0,
+            })
+
+    # Projection: compute bar width from achievement_pct
+    proj_raw = uau.get("projection") or {}
+    if proj_raw:
+        pct_str = str(proj_raw.get("achievement_pct") or "")
+        try:
+            bar_w = min(int(float(pct_str.replace("%", "").strip())), 100)
+        except Exception:
+            bar_w = None
+        proj_raw = {**proj_raw, "bar_width": bar_w}
+
+    # Recado pessoal: from client settings or empty
+    recado = {"texto": "", "gestor_nome": "", "gestor_cargo": ""}
+    recado_txt = getattr(settings, "WEEKLY_MANAGER_NOTE", "")
+    if recado_txt:
+        recado = {
+            "texto":       recado_txt,
+            "gestor_nome": getattr(settings, "AGENCY_MANAGER_NAME", agency_name),
+            "gestor_cargo": "Gestor da conta",
+        }
+
+    dashboard_url = f"{settings.DASHBOARD_URL}/clients/{pixel_id}/dashboard" if settings.DASHBOARD_URL else None
+
+    return {
+        "agencia":   {"name": agency_name},
+        "cliente":   {"nome": client_name, "logo": client_logo or ""},
+        "periodo":   periodo,
+        "headline":  uau.get("headline", ""),
+        "subhead":   uau.get("subhead", ""),
+        "highlights": uau.get("highlights", []),
+        "narrative_paragraphs": narrative_paragraphs,
+        "kpis":       uau.get("kpis_narrative", []),
+        "canais":     uau.get("channels_analysis", []),
+        "funil":      funil_steps,
+        "funil_diagnosis": (uau.get("funnel") or {}).get("diagnosis", ""),
+        "insights":   uau.get("hidden_insights", []),
+        "recomendacoes": uau.get("recommendations", []),
+        "projecao":   proj_raw or None,
+        "recado":     recado,
+        "dashboard_url": dashboard_url,
+    }
+
+
 def _send_weekly(client_id: str, pixel_id: str, client_name: str,
                  recipients: list[str] | str, client: Optional[dict] = None) -> None:
+    from . import ai_analyst
     sb        = get_supabase()
     now       = datetime.now(timezone.utc)
     m         = _build_weekly(sb, client_id, now)
     logo      = (client or {}).get("logo_url") or _client_logo(sb, client_id)
-    html      = _render_weekly_html(pixel_id, client_name, m, client_logo=logo)
-    subject   = f"📊 Semana {m['week_start'].strftime('%d/%m')}–{now.strftime('%d/%m')}: {fmt_brl(m['week']['revenue'])} · {client_name}"
+
+    # ── Gerar conteúdo UAU via Claude ───────────────────────────────────────────
+    uau: dict = {}
+    try:
+        uau = ai_analyst.generate_weekly_uau_content(
+            client_uuid=client_id,
+            weekly_data=m,
+            client_profile=m.get("client_profile"),
+        )
+    except Exception as exc:
+        logger.warning("weekly UAU content generation failed for %s: %s", pixel_id, exc)
+
+    # ── Renderizar ───────────────────────────────────────────────────────────────
+    if uau.get("subject_line"):
+        try:
+            ctx  = _build_weekly_uau_context(pixel_id, client_name, m, uau, client_logo=logo)
+            html = report_renderer.render_weekly_html(ctx)
+        except Exception as exc:
+            logger.warning("UAU template render failed for %s, falling back: %s", pixel_id, exc)
+            html = _render_weekly_html(pixel_id, client_name, m, client_logo=logo)
+    else:
+        html = _render_weekly_html(pixel_id, client_name, m, client_logo=logo)
+
+    subject = (
+        uau.get("subject_line")
+        or f"📊 Semana {m['week_start'].strftime('%d/%m')}–{now.strftime('%d/%m')}: {fmt_brl(m['week']['revenue'])} · {client_name}"
+    )
 
     to_list = [recipients] if isinstance(recipients, str) else recipients
     for addr in to_list:

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relatório Semanal · {{cliente.nome}}</title>
+  <style>{{{css}}}</style>
+</head>
+<body class="body">
+<div class="wrap">
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <div class="hdr">
+    <div class="hdr-left">
+      {{#if cliente.logo}}<img src="{{cliente.logo}}" class="hdr-logo" alt="{{cliente.nome}}" />{{/if}}
+      <span class="hdr-agencia">{{agencia.name}}</span>
+    </div>
+    <div class="hdr-right">
+      <span class="hdr-periodo">{{periodo}}</span>
+      <span class="hdr-cliente">{{cliente.nome}}</span>
+    </div>
+  </div>
+
+  <!-- ── CAPA ───────────────────────────────────────────────── -->
+  <div class="capa">
+    <h1 class="capa-headline">{{{headline}}}</h1>
+    <p class="capa-subhead">{{subhead}}</p>
+  </div>
+
+  <!-- ── 3 DESTAQUES ────────────────────────────────────────── -->
+  <div class="section-label">DESTAQUES DA SEMANA</div>
+  <table class="highlights-table" cellspacing="0" cellpadding="0" width="100%">
+    <tr>
+      {{#each highlights}}
+      <td class="highlight-td {{#if @first}}highlight-td-first{{/if}} {{#if @last}}highlight-td-last{{/if}}">
+        <div class="highlight-card">
+          <div class="highlight-number">{{number}}</div>
+          <div class="highlight-label">{{label}}</div>
+          <div class="highlight-context">{{context}}</div>
+        </div>
+      </td>
+      {{/each}}
+    </tr>
+  </table>
+
+  <!-- ── O QUE ACONTECEU ────────────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">O QUE ACONTECEU</div>
+    <div class="narrative">
+      {{#each narrative_paragraphs}}
+      <p class="narrative-p">{{this}}</p>
+      {{/each}}
+    </div>
+  </div>
+
+  <!-- ── INDICADORES PRINCIPAIS ─────────────────────────────── -->
+  <div class="section">
+    <div class="section-label">INDICADORES PRINCIPAIS</div>
+    <div class="kpis-box">
+      {{#each kpis}}
+      <div class="kpi-row">
+        <div class="kpi-left">
+          <span class="kpi-metric">{{metric}}</span>
+          {{#if context}}<span class="kpi-context">{{context}}</span>{{/if}}
+        </div>
+        <div class="kpi-right">
+          <span class="kpi-value">{{value}}</span>
+          {{#if delta}}<span class="kpi-delta kpi-{{delta_direction}}">{{delta}}</span>{{/if}}
+        </div>
+      </div>
+      {{/each}}
+    </div>
+  </div>
+
+  <!-- ── PERFORMANCE POR CANAL ──────────────────────────────── -->
+  {{#if canais}}
+  <div class="section">
+    <div class="section-label">PERFORMANCE POR CANAL</div>
+    <table class="channels-table" cellspacing="0" cellpadding="0" width="100%">
+      <tr>
+        {{#each canais}}
+        <td class="channel-td {{#if @first}}channel-td-first{{/if}} {{#if @last}}channel-td-last{{/if}}">
+          <div class="channel-card">
+            <div class="channel-header">
+              <span class="channel-name">{{channel}}</span>
+              {{#if spend_pct}}<span class="channel-share">{{spend_pct}} do invest.</span>{{/if}}
+            </div>
+            <div class="channel-nums">
+              <div class="ch-num-row"><span>Investimento</span><strong>{{spend}}</strong></div>
+              <div class="ch-num-row"><span>Pedidos</span><strong>{{conversions}}</strong></div>
+              <div class="ch-num-row"><span>CPA</span><strong>{{cpa}}</strong></div>
+              <div class="ch-num-row ch-roas-row"><span>ROAS</span><strong class="ch-roas">{{roas}}</strong></div>
+            </div>
+            {{#if analysis}}<p class="channel-analysis">{{analysis}}</p>{{/if}}
+          </div>
+        </td>
+        {{/each}}
+      </tr>
+    </table>
+  </div>
+  {{/if}}
+
+  <!-- ── FUNIL DO SITE ───────────────────────────────────────── -->
+  {{#if funil}}
+  <div class="section">
+    <div class="section-label">FUNIL DO SITE</div>
+    <div class="funnel-box">
+      {{#each funil}}
+      <div class="funnel-step">
+        <div class="funnel-bar-wrap">
+          <div class="funnel-bar" style="width:{{width_pct}}%"></div>
+        </div>
+        <div class="funnel-row-meta">
+          <span class="funnel-label">{{name}}</span>
+          <span class="funnel-count">{{count}}</span>
+          {{#if rate}}<span class="funnel-rate">{{rate}}</span>{{/if}}
+        </div>
+      </div>
+      {{/each}}
+    </div>
+    {{#if funil_diagnosis}}
+    <div class="funnel-diagnosis"><p>{{funil_diagnosis}}</p></div>
+    {{/if}}
+  </div>
+  {{/if}}
+
+  <!-- ── INSIGHTS NÃO-ÓBVIOS ────────────────────────────────── -->
+  {{#if insights}}
+  <div class="section">
+    <div class="section-label">INSIGHTS NÃO-ÓBVIOS</div>
+    {{#each insights}}
+    <div class="insight-card">
+      <span class="insight-type">{{type}}</span>
+      <p class="insight-text">{{insight}}</p>
+      <div class="insight-action">
+        <span class="ia-label">AÇÃO SUGERIDA</span>
+        <span class="ia-text">{{action}}</span>
+      </div>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <!-- ── RECOMENDAÇÕES ──────────────────────────────────────── -->
+  {{#if recomendacoes}}
+  <div class="section">
+    <div class="section-label">RECOMENDAÇÕES</div>
+    {{#each recomendacoes}}
+    <div class="rec-row">
+      <div class="rec-num">{{priority}}</div>
+      <div class="rec-body">
+        <div class="rec-action">{{action}}</div>
+        {{#if why}}<div class="rec-why">{{why}}</div>{{/if}}
+        <div class="rec-footer">
+          {{#if impact}}<span class="rec-impact">{{impact}}</span>{{/if}}
+          {{#if when}}<span class="rec-when">{{when}}</span>{{/if}}
+        </div>
+      </div>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <!-- ── PROJEÇÃO DE FECHAMENTO ─────────────────────────────── -->
+  {{#if projecao}}
+  <div class="section">
+    <div class="section-label">PROJEÇÃO DE FECHAMENTO</div>
+    <div class="proj-card">
+      <div class="proj-top">
+        <div>
+          <div class="proj-value">{{projecao.monthly_estimate}}</div>
+          {{#if projecao.confidence_interval_low}}
+          <div class="proj-range">intervalo {{projecao.confidence_interval_low}} – {{projecao.confidence_interval_high}}</div>
+          {{/if}}
+        </div>
+        {{#if projecao.achievement_pct}}<div class="proj-pct">{{projecao.achievement_pct}}</div>{{/if}}
+      </div>
+      {{#if projecao.bar_width}}
+      <div class="proj-bar-track">
+        <div class="proj-bar-fill" style="width:{{projecao.bar_width}}%"></div>
+      </div>
+      <div class="proj-bar-labels">
+        <span>{{projecao.achievement_pct}} da meta</span>
+        {{#if projecao.target}}<span>meta {{projecao.target}}</span>{{/if}}
+      </div>
+      {{/if}}
+      {{#if projecao.narrative}}<p class="proj-narrative">{{projecao.narrative}}</p>{{/if}}
+    </div>
+  </div>
+  {{/if}}
+
+  <!-- ── RECADO PESSOAL DO GESTOR ───────────────────────────── -->
+  {{#if recado.texto}}
+  <div class="section">
+    <div class="section-label">RECADO DO GESTOR</div>
+    <div class="recado-card">
+      <p class="recado-texto">{{{recado.texto}}}</p>
+      <div class="recado-sig">
+        <span class="recado-nome">{{recado.gestor_nome}}</span>
+        {{#if recado.gestor_cargo}}<span class="recado-cargo"> · {{recado.gestor_cargo}}</span>{{/if}}
+      </div>
+    </div>
+  </div>
+  {{/if}}
+
+  <!-- ── FOOTER ─────────────────────────────────────────────── -->
+  <div class="footer">
+    <span class="footer-agencia">{{agencia.name}}</span> · Relatório Semanal · {{periodo}}
+    {{#if dashboard_url}}<br /><a href="{{dashboard_url}}" class="footer-link">Ver dashboard →</a>{{/if}}
+  </div>
+
+</div>
+</body>
+</html>

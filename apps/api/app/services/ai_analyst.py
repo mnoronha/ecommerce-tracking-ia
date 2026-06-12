@@ -566,6 +566,287 @@ def generate_monthly_insights(client_uuid: str) -> dict:
     return {"insights_generated": 1 if parsed else 0, "insights_saved": 1 if parsed else 0}
 
 
+# ── Weekly UAU analysis ────────────────────────────────────────────────────────
+
+_WEEKLY_UAU_SYSTEM_PROMPT = """Você é analista sênior de marketing digital de uma agência brasileira de ecommerce.
+Você está escrevendo o relatório SEMANAL para um cliente. Sua análise é o principal
+diferencial da agência — precisa ser específica, narrativa e acionável, nunca genérica.
+
+REGRAS DE ESCRITA — OBRIGATÓRIO SEGUIR:
+
+1. ESPECÍFICO: cite nomes de campanhas, números exatos, produtos, datas. Nunca generalize.
+   "A campanha X gerou Y conversões com CPA R$Z" — não "as campanhas performaram bem".
+
+2. NARRATIVO: conte a história da semana. O cliente termina sabendo o que aconteceu,
+   por que aconteceu, e o que fazer. Não apresente dados — interprete dados.
+
+3. ACIONÁVEL: cada observação leva a uma ação com verbo direto e impacto estimado.
+   Use "vamos pausar", "recomendamos aumentar", "executamos segunda". Banido: "considere",
+   "talvez", "vale avaliar".
+
+4. Se faltar dado para uma afirmação, escreva "ainda não temos dados suficientes para X".
+   Nunca invente números que não estão nos dados de entrada.
+
+Retorne EXATAMENTE este JSON (sem markdown, sem texto fora do JSON):
+
+{
+  "subject_line": "Frase de 50-70 chars que faz abrir o email. Nunca use 'Relatório semanal'. Capture o ponto mais marcante da semana.",
+  "preview_text": "Frase de 90-110 chars que complementa o subject sem repetir.",
+  "headline": "Headline narrativa da capa, até 90 chars. Conta a história da semana em uma frase.",
+  "subhead": "Frase secundária da capa, até 70 chars. O segundo ponto mais relevante.",
+  "highlights": [
+    {
+      "number": "valor formatado ex: R$87.230 ou 4,8x",
+      "label": "nome curto da métrica, ex: Receita",
+      "context": "frase de 80-120 chars explicando o que esse número significa, não só o que é"
+    },
+    {"number": "...", "label": "...", "context": "..."},
+    {"number": "...", "label": "...", "context": "..."}
+  ],
+  "narrative": "2-3 parágrafos separados por \\n\\n contando a história da semana. ~250 palavras. Cita campanhas e criativos por nome. Tom: analista experiente falando.",
+  "kpis_narrative": [
+    {
+      "metric": "nome da métrica",
+      "value": "valor formatado",
+      "delta": "+18,1% vs semana anterior",
+      "delta_direction": "up|down|stable",
+      "context": "uma frase curta contextualizando o que esse número significa"
+    }
+  ],
+  "channels_analysis": [
+    {
+      "channel": "Meta Ads",
+      "spend_pct": "68%",
+      "spend": "R$ 12.340",
+      "conversions": 218,
+      "cpa": "R$ 56,60",
+      "roas": "5,2x",
+      "analysis": "2-3 linhas sobre o que está funcionando ou precisa de atenção nesse canal."
+    }
+  ],
+  "funnel": {
+    "diagnosis": "2-3 linhas analisando onde está o vazamento, o que sugere, qual ação tomar."
+  },
+  "hidden_insights": [
+    {
+      "type": "Padrão temporal|Comportamento de compra|Cruzamento de canais|Análise de cohort|Geo-oportunidade|Cross-sell",
+      "insight": "O padrão detectado com números concretos. 2-3 linhas. Deve ser algo não-óbvio.",
+      "action": "Ação sugerida com impacto estimado em receita ou conversões."
+    },
+    {"type": "...", "insight": "...", "action": "..."},
+    {"type": "...", "insight": "...", "action": "..."}
+  ],
+  "recommendations": [
+    {
+      "priority": 1,
+      "action": "Verbo concreto + objeto. Ex: 'Pausar campanha Search Genérico no Google Ads'.",
+      "why": "Dado específico que embasa, em 1-2 linhas.",
+      "impact": "Impacto estimado em números (receita, conversões, CPA, economia).",
+      "when": "Ex: 'Executamos segunda pela manhã' ou 'Esta semana'."
+    }
+  ],
+  "projection": {
+    "monthly_estimate": "R$ 372.450",
+    "confidence_interval_low": "R$ 355.000",
+    "confidence_interval_high": "R$ 390.000",
+    "target": "R$ 400.000",
+    "achievement_pct": "93%",
+    "narrative": "Texto contextualizando a projeção e o que seria necessário para fechar a meta."
+  }
+}
+
+ATENÇÃO: Os números no texto DEVEM refletir os dados de entrada. Não invente."""
+
+
+def generate_weekly_uau_content(
+    client_uuid: str,
+    weekly_data: dict,
+    client_profile: Optional[dict] = None,
+    force: bool = False,
+) -> dict:
+    """
+    Gera o conteúdo completo do relatório semanal "UAU" via Claude Sonnet.
+
+    Retorna dict com subject_line, headline, narrative, highlights, kpis_narrative,
+    channels_analysis, hidden_insights, recommendations, projection, etc.
+
+    Reutiliza cache de 6h (unless force=True) para evitar chamadas redundantes.
+    """
+    if not settings.ANTHROPIC_API_KEY:
+        logger.warning("generate_weekly_uau_content: ANTHROPIC_API_KEY ausente")
+        return {}
+
+    sb = get_supabase()
+    if not force:
+        try:
+            cutoff = (datetime.utcnow() - timedelta(hours=6)).isoformat()
+            recent = (
+                sb.table("ai_insights").select("data, created_at")
+                .eq("client_id", client_uuid).eq("type", "weekly_uau")
+                .gte("created_at", cutoff).order("created_at", desc=True).limit(1).execute()
+            )
+            if recent.data:
+                cached = recent.data[0].get("data") or {}
+                if cached.get("subject_line"):
+                    logger.info("weekly_uau: reusing cache for %s", client_uuid)
+                    return cached
+        except Exception as exc:
+            logger.debug("weekly_uau cache check failed: %s", exc)
+
+    profile = client_profile or {}
+    store_name = profile.get("name") or _get_client_name(client_uuid)
+
+    week    = weekly_data.get("week") or {}
+    prev    = weekly_data.get("prev") or {}
+    channels = weekly_data.get("channels") or []
+    funnel  = weekly_data.get("funnel") or {}
+    campaigns = weekly_data.get("top_campaigns") or []
+    products  = weekly_data.get("top_products") or []
+    nvr     = weekly_data.get("nvr") or {}
+    alerts  = weekly_data.get("alerts") or []
+
+    def _fmt_brl(v):
+        if v is None: return "—"
+        try:
+            n = float(v)
+            s = f"{abs(n):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"R$ {s}"
+        except Exception: return "—"
+
+    channels_txt = "\n".join(
+        f"  - {c.get('label') or c.get('channel','?')}: "
+        f"Invest {_fmt_brl(c.get('spend'))} · Receita {_fmt_brl(c.get('revenue'))} · "
+        f"ROAS {round(c['roas'],2)}x · CPA {_fmt_brl(c.get('cpa'))} · "
+        f"Pedidos {c.get('orders',0)}"
+        for c in channels if c.get("spend", 0) > 0 or c.get("revenue", 0) > 0
+    ) or "  (sem dados de canais)"
+
+    funnel_txt = ""
+    if funnel.get("pageviews"):
+        steps = [
+            ("Visitantes", funnel.get("pageviews", 0), None),
+            ("Viram produto", funnel.get("product_views", 0), funnel.get("pageviews")),
+            ("Add to cart", funnel.get("add_to_cart", 0), funnel.get("product_views")),
+            ("Checkout", funnel.get("checkout", 0), funnel.get("add_to_cart")),
+            ("Compras", funnel.get("purchases", 0), funnel.get("checkout")),
+        ]
+        parts = []
+        for name, count, prev_count in steps:
+            if prev_count and prev_count > 0:
+                rate = f" ({round(count/prev_count*100,0):.0f}%)"
+            else:
+                rate = ""
+            parts.append(f"{count:,} {name}{rate}")
+        funnel_txt = " → ".join(parts)
+
+    campaigns_txt = "\n".join(
+        f"  {i+1}. {c.get('canal','?')} / {c.get('campanha','?')}: "
+        f"{c.get('pedidos',0)} pedidos · {_fmt_brl(c.get('receita'))}"
+        for i, c in enumerate(campaigns[:5])
+    ) or "  (sem dados de campanhas)"
+
+    products_txt = "\n".join(
+        f"  {i+1}. {p.get('name','?')}: {p.get('qty',0)} un · {_fmt_brl(p.get('revenue'))}"
+        for i, p in enumerate(products[:5])
+    ) or "  (sem dados de produtos)"
+
+    alerts_txt = "\n".join(f"  - [{a.get('severity','?')}] {a.get('title','?')}" for a in alerts[:3]) or "  Nenhum alerta ativo"
+
+    week_start_str = weekly_data.get("week_start")
+    if hasattr(week_start_str, "strftime"):
+        week_start_str = week_start_str.strftime("%d/%m/%Y")
+    now_str = weekly_data.get("now")
+    if hasattr(now_str, "strftime"):
+        now_str = now_str.strftime("%d/%m/%Y")
+
+    prompt = f"""Cliente: {store_name}
+
+PERFIL
+- Meta ROAS: {profile.get('roas_goal', '—')}
+- Meta receita mensal: {_fmt_brl(profile.get('revenue_goal'))}
+- Meta CPA: {_fmt_brl(profile.get('cpa_goal'))}
+
+DADOS DA SEMANA ({week_start_str} a {now_str})
+- Receita: {_fmt_brl(week.get('revenue'))}
+- Pedidos: {week.get('orders', 0)}
+- Ticket médio: {_fmt_brl(week.get('aov'))}
+- Variação receita vs semana anterior: {weekly_data.get('week_delta', '—')}%
+- Investimento: {_fmt_brl(weekly_data.get('spend'))}
+- ROAS geral: {weekly_data.get('roas', '—')}x
+- CPA geral: {_fmt_brl(weekly_data.get('cpa'))}
+- Taxa de conversão site: {weekly_data.get('conv', '—')}%
+
+POR CANAL
+{channels_txt}
+
+FUNIL DO SITE (7 dias)
+{funnel_txt or '  (sem dados de funil)'}
+
+TOP CAMPANHAS (7 dias, por utm_campaign no banco)
+{campaigns_txt}
+
+TOP PRODUTOS DA SEMANA
+{products_txt}
+
+NOVOS vs RECORRENTES
+- Novos clientes: {nvr.get('new', '—')}
+- Recorrentes: {nvr.get('returning', '—')} ({nvr.get('repeat_rate_pct', '—')}%)
+
+MTD FATURAMENTO
+- Realizado: {_fmt_brl((weekly_data.get('mtd') or {}).get('revenue'))}
+- Meta do mês: {_fmt_brl(weekly_data.get('goal'))}
+- % realizado: {weekly_data.get('pct_of_goal', '—')}%
+- Projeção: {_fmt_brl(weekly_data.get('proj_revenue'))}
+
+SEMANA ANTERIOR (comparativo)
+- Receita: {_fmt_brl(prev.get('revenue'))}
+- Pedidos: {prev.get('orders', 0)}
+- Ticket médio: {_fmt_brl(prev.get('aov'))}
+
+ALERTAS ABERTOS
+{alerts_txt}
+
+Escreva a análise semanal seguindo EXATAMENTE o formato JSON do sistema.
+Use os dados acima literalmente. Cite campanhas e canais pelo nome."""
+
+    try:
+        ai_client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        message = ai_client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=4096,
+            temperature=0.4,
+            messages=[{"role": "user", "content": prompt}],
+            system=_WEEKLY_UAU_SYSTEM_PROMPT,
+        )
+        raw = message.content[0].text.strip()
+        for fence in ("```json", "```"):
+            if raw.startswith(fence):
+                raw = raw[len(fence):]
+                break
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        parsed = json.loads(raw.strip())
+    except Exception as exc:
+        logger.error("generate_weekly_uau_content failed for %s: %s", store_name, exc)
+        return {}
+
+    # Persist
+    try:
+        sb.table("ai_insights").insert({
+            "client_id": client_uuid,
+            "type":      "weekly_uau",
+            "severity":  "info",
+            "title":     parsed.get("headline", f"Relatório semanal — {store_name}"),
+            "content":   parsed.get("subject_line", ""),
+            "data":      parsed,
+        }).execute()
+    except Exception as exc:
+        logger.warning("weekly_uau save failed for %s: %s", store_name, exc)
+
+    logger.info("weekly_uau generated for %s", store_name)
+    return parsed
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 def generate_insights(client_uuid: str) -> dict:
