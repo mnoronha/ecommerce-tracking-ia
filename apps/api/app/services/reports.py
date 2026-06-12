@@ -1145,7 +1145,8 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
         email_html = report_renderer.render_monthly_email_html(ctx)
         logger.info("monthly report: HTML email rendered (%d chars)", len(email_html))
     except Exception as exc:
-        logger.warning("monthly report: new template failed (%s) — falling back to legacy HTML", exc)
+        import traceback
+        logger.warning("monthly report: new template failed (%s)\n%s", exc, traceback.format_exc())
 
     # ── Fallback: legacy HTML template ───────────────────────────────────
     if not email_html:
