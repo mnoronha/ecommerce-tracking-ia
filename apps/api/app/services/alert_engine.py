@@ -1401,6 +1401,153 @@ def _eval_ga4_zero_conversions(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+def _eval_visibility_drop(rule: dict, client: dict) -> list[dict]:
+    """Taxa de menção em IA caiu X% vs o mês anterior."""
+    cfg          = rule.get("config") or {}
+    warn_pct     = float(cfg.get("drop_warning_pct",  20))
+    crit_pct     = float(cfg.get("drop_critical_pct", 40))
+
+    sb   = get_supabase()
+    now  = _now()
+    # Mês atual e mês anterior
+    this_month = _month_start(now)
+    prev_month = _month_start(now.replace(day=1) - timedelta(days=1))
+
+    try:
+        def _rate(month: str) -> Optional[float]:
+            rows = (
+                sb.table("ai_visibility_metrics")
+                .select("own_brand_mentioned")
+                .eq("client_id", client["id"])
+                .gte("date", month)
+                .lt("date", _month_start(
+                    datetime.fromisoformat(month).replace(day=28) + timedelta(days=4)
+                ))
+                .execute()
+            ).data or []
+            if not rows:
+                return None
+            mentioned = sum(1 for r in rows if r.get("own_brand_mentioned"))
+            return mentioned / len(rows)
+
+        rate_now  = _rate(this_month)
+        rate_prev = _rate(prev_month)
+    except Exception as exc:
+        logger.debug("_eval_visibility_drop(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if rate_now is None or rate_prev is None or rate_prev == 0:
+        return []
+
+    drop = (rate_prev - rate_now) / rate_prev
+    if drop < warn_pct / 100:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    sev   = "critical" if drop >= crit_pct / 100 else "warning"
+    return [{
+        "fingerprint": f"visibility_drop:{client['id']}:{this_month}",
+        "title":       f"Queda de visibilidade em IA — {pixel}",
+        "message":     (
+            f"Taxa de menção em IA: {rate_now * 100:.0f}% vs {rate_prev * 100:.0f}% mês anterior "
+            f"(queda de {drop * 100:.0f}%). Revise conteúdo e estratégia de SEO para IA."
+        ),
+        "severity": sev,
+        "data":     {"mention_rate": round(rate_now, 4), "prev_mention_rate": round(rate_prev, 4),
+                     "drop_pct": round(drop * 100, 1), "month": this_month},
+    }]
+
+
+def _eval_visibility_sentiment_spike(rule: dict, client: dict) -> list[dict]:
+    """Menções negativas passaram de 20% em um mês."""
+    cfg       = rule.get("config") or {}
+    threshold = float(cfg.get("negative_pct", 20))
+
+    sb  = get_supabase()
+    now = _now()
+    month = _month_start(now)
+
+    try:
+        rows = (
+            sb.table("ai_visibility_metrics")
+            .select("own_brand_mentioned,own_brand_sentiment")
+            .eq("client_id", client["id"])
+            .gte("date", month)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_visibility_sentiment_spike(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    mentioned = [r for r in rows if r.get("own_brand_mentioned")]
+    if len(mentioned) < 5:
+        return []  # sem baseline suficiente
+
+    negative_pct = (
+        sum(1 for r in mentioned if r.get("own_brand_sentiment") == "negative")
+        / len(mentioned) * 100
+    )
+    if negative_pct < threshold:
+        return []
+
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"visibility_negative_spike:{client['id']}:{month}",
+        "title":       f"Sentimento negativo em IA — {pixel}",
+        "message":     (
+            f"{negative_pct:.0f}% das menções da marca em IAs são negativas este mês "
+            f"(alerta em {threshold:.0f}%). Verifique reputação online."
+        ),
+        "severity": "critical",
+        "data":     {"negative_pct": round(negative_pct, 1), "threshold": threshold,
+                     "mentions": len(mentioned), "month": month},
+    }]
+
+
+def _eval_visibility_stale(rule: dict, client: dict) -> list[dict]:
+    """Dados de AI Visibility não atualizados há mais de 14 dias (alerta interno)."""
+    cfg        = rule.get("config") or {}
+    max_days   = int(cfg.get("max_days", 14))
+
+    sb  = get_supabase()
+    now = _now()
+    cutoff = (now - timedelta(days=max_days)).isoformat()
+
+    try:
+        last = (
+            sb.table("ai_visibility_imports")
+            .select("imported_at")
+            .eq("client_id", client["id"])
+            .eq("status", "imported")
+            .order("imported_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data
+    except Exception as exc:
+        logger.debug("_eval_visibility_stale(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if not last:
+        return []  # nunca importou — sem baseline pra alertar
+
+    last_iso = last[0].get("imported_at") or ""
+    if last_iso >= cutoff:
+        return []
+
+    days_ago = (now - datetime.fromisoformat(last_iso.replace("Z", "+00:00"))).days
+    pixel    = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"visibility_stale:{client['id']}:{now.date().isoformat()}",
+        "title":       f"AI Visibility desatualizado há {days_ago}d — {pixel}",
+        "message":     (
+            f"Último import de AI Visibility foi há {days_ago} dias. "
+            f"Exporte o CSV do Ubersuggest e faça o upload no Noro."
+        ),
+        "severity": "warning",
+        "data":     {"last_import_at": last_iso, "days_ago": days_ago, "max_days": max_days},
+    }]
+
+
 _EVALUATORS = {
     "meta_token_expiring":      _eval_meta_token_expiring,
     "integration_unhealthy":    _eval_integration_unhealthy,
@@ -1425,6 +1572,10 @@ _EVALUATORS = {
     "ga4_sessions_drop":        _eval_ga4_sessions_drop,
     "ga4_conversions_drop":     _eval_ga4_conversions_drop,
     "ga4_zero_conversions":     _eval_ga4_zero_conversions,
+    # AI Visibility
+    "visibility_drop":          _eval_visibility_drop,
+    "visibility_negative_spike": _eval_visibility_sentiment_spike,
+    "visibility_stale":         _eval_visibility_stale,
 }
 
 
