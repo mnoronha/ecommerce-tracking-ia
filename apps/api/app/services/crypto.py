@@ -83,7 +83,7 @@ SECRET_FIELDS = (
     "tiktok_access_token", "pinterest_access_token", "nuvemshop_access_token",
     "ga4_api_secret", "shopify_webhook_secret", "webhook_secret",
     "woo_consumer_key", "woo_consumer_secret", "woo_webhook_secret",
-    "tracking_cname_secret",
+    "tracking_cname_secret", "merchant_center_refresh_token",
 )
 
 

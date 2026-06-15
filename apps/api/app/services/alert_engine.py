@@ -1548,6 +1548,143 @@ def _eval_visibility_stale(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+def _eval_merchant_disapproval_spike(rule: dict, client: dict) -> list[dict]:
+    """Produtos reprovados passaram de X% do catálogo."""
+    cfg       = rule.get("config") or {}
+    threshold = float(cfg.get("disapproval_pct", 10))
+    sb        = get_supabase()
+    try:
+        snap = (
+            sb.table("merchant_feed_health_snapshots")
+            .select("snapshot_date,total_products,disapproved_products,feed_health_score")
+            .eq("client_id", client["id"])
+            .order("snapshot_date", desc=True)
+            .limit(1)
+            .execute()
+        ).data
+    except Exception as exc:
+        logger.debug("_eval_merchant_disapproval_spike(%s): %s", client.get("pixel_id"), exc)
+        return []
+    if not snap or not snap[0].get("total_products"):
+        return []
+    row      = snap[0]
+    total    = row["total_products"]
+    disapp   = row.get("disapproved_products") or 0
+    pct      = disapp / total * 100
+    if pct < threshold:
+        return []
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"merchant_disapproval_spike:{client['id']}:{row['snapshot_date']}",
+        "title":       f"Reprovações no Merchant Center — {pixel}",
+        "message":     (
+            f"{disapp} de {total} produtos estão reprovados ({pct:.0f}%) no Merchant Center "
+            f"em {row['snapshot_date']}. Feed health score: {row.get('feed_health_score', '?')}/100."
+        ),
+        "severity":    "critical" if pct >= threshold * 2 else "warning",
+        "data":        {"total_products": total, "disapproved_products": disapp,
+                        "disapproval_pct": round(pct, 1), "snapshot_date": row["snapshot_date"]},
+    }]
+
+
+def _eval_merchant_feed_health_drop(rule: dict, client: dict) -> list[dict]:
+    """Feed health score caiu X pontos em relação à semana passada."""
+    cfg        = rule.get("config") or {}
+    min_drop   = int(cfg.get("min_drop_points", 15))
+    sb         = get_supabase()
+    try:
+        snaps = (
+            sb.table("merchant_feed_health_snapshots")
+            .select("snapshot_date,feed_health_score")
+            .eq("client_id", client["id"])
+            .order("snapshot_date", desc=True)
+            .limit(8)
+            .execute()
+        ).data
+    except Exception as exc:
+        logger.debug("_eval_merchant_feed_health_drop(%s): %s", client.get("pixel_id"), exc)
+        return []
+    if len(snaps) < 2:
+        return []
+    score_now  = snaps[0].get("feed_health_score")
+    score_prev = snaps[-1].get("feed_health_score")
+    if score_now is None or score_prev is None or score_prev == 0:
+        return []
+    drop = score_prev - score_now
+    if drop < min_drop:
+        return []
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"merchant_feed_health_drop:{client['id']}:{snaps[0]['snapshot_date']}",
+        "title":       f"Feed health caiu {drop} pontos — {pixel}",
+        "message":     (
+            f"Feed health score caiu de {score_prev} para {score_now} pontos "
+            f"(queda de {drop}p) em {snaps[0]['snapshot_date']}."
+        ),
+        "severity":    "critical" if drop >= min_drop * 2 else "warning",
+        "data":        {"score_now": score_now, "score_prev": score_prev, "drop": drop,
+                        "snapshot_date": snaps[0]["snapshot_date"]},
+    }]
+
+
+def _eval_merchant_token_expired(rule: dict, client: dict) -> list[dict]:
+    """refresh_token do Merchant Center está expirado (sync falhou)."""
+    if not client.get("merchant_center_id"):
+        return []
+    health = (client.get("merchant_center_health") or "").lower()
+    if health not in {"expired", "error", "unhealthy"}:
+        return []
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"merchant_token_expired:{client['id']}",
+        "title":       f"Token Merchant Center inválido — {pixel}",
+        "message":     f"A integração com o Google Merchant Center de {pixel} está com erro ({health}). Reconecte o acesso nas configurações.",
+        "severity":    "critical",
+        "data":        {"health": health, "merchant_center_id": client.get("merchant_center_id")},
+    }]
+
+
+def _eval_merchant_feed_not_updated(rule: dict, client: dict) -> list[dict]:
+    """Feed não atualizado há mais de N dias."""
+    if not client.get("merchant_center_id"):
+        return []
+    cfg      = rule.get("config") or {}
+    max_days = int(cfg.get("max_days", 3))
+    sb       = get_supabase()
+    try:
+        snap = (
+            sb.table("merchant_feed_health_snapshots")
+            .select("snapshot_date")
+            .eq("client_id", client["id"])
+            .order("snapshot_date", desc=True)
+            .limit(1)
+            .execute()
+        ).data
+    except Exception as exc:
+        logger.debug("_eval_merchant_feed_not_updated(%s): %s", client.get("pixel_id"), exc)
+        return []
+    now = _now()
+    if snap:
+        last_date = snap[0]["snapshot_date"]
+        days_ago  = (now.date() - datetime.fromisoformat(last_date).date()).days
+    else:
+        days_ago = 9999
+        last_date = None
+    if days_ago < max_days:
+        return []
+    pixel = client.get("pixel_id") or "unknown"
+    return [{
+        "fingerprint": f"merchant_feed_not_updated:{client['id']}:{now.date().isoformat()}",
+        "title":       f"Feed Merchant Center parado há {days_ago}d — {pixel}",
+        "message":     (
+            f"Nenhum dado novo do Merchant Center em {days_ago} dias "
+            f"(último snapshot: {last_date or 'nunca'}). Verifique a conexão."
+        ),
+        "severity":    "warning",
+        "data":        {"last_snapshot_date": last_date, "days_ago": days_ago, "max_days": max_days},
+    }]
+
+
 _EVALUATORS = {
     "meta_token_expiring":      _eval_meta_token_expiring,
     "integration_unhealthy":    _eval_integration_unhealthy,
@@ -1576,6 +1713,11 @@ _EVALUATORS = {
     "visibility_drop":          _eval_visibility_drop,
     "visibility_negative_spike": _eval_visibility_sentiment_spike,
     "visibility_stale":         _eval_visibility_stale,
+    # Merchant Center
+    "merchant_disapproval_spike":  _eval_merchant_disapproval_spike,
+    "merchant_feed_health_drop":   _eval_merchant_feed_health_drop,
+    "merchant_token_expired":      _eval_merchant_token_expired,
+    "merchant_feed_not_updated":   _eval_merchant_feed_not_updated,
 }
 
 
