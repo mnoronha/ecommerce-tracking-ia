@@ -48,6 +48,8 @@ interface ClientRow {
   google_prepaid: boolean
   meta_balance_threshold: number | null
   google_balance_threshold: number | null
+  merchant_center_id: string | null
+  merchant_center_refresh_token: string | null
 }
 
 const INPUT = 'w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-indigo-500'
@@ -84,6 +86,10 @@ export default function ClientSettingsPage() {
   const [lgpdEmail,  setLgpdEmail]  = useState('')
   const [lgpdBusy,   setLgpdBusy]   = useState<'preview' | 'forget' | null>(null)
   const [lgpdResult, setLgpdResult] = useState<{ kind: 'preview' | 'forget'; data: Record<string, number | string> } | null>(null)
+  const [mcSaving,  setMcSaving]  = useState(false)
+  const [mcMsg,     setMcMsg]     = useState<{ ok: boolean; text: string } | null>(null)
+  const [mcId,      setMcId]      = useState('')
+  const [mcToken,   setMcToken]   = useState('')
 
   const load = useCallback(async () => {
     // supabase singleton
@@ -92,7 +98,10 @@ export default function ClientSettingsPage() {
       .select('*')
       .eq('pixel_id', clientId)
       .single()
-    if (data) { setClient(data); setForm(data) }
+    if (data) {
+      setClient(data); setForm(data)
+      if (data.merchant_center_id) setMcId(data.merchant_center_id)
+    }
     setLoading(false)
   }, [clientId])
 
@@ -231,6 +240,40 @@ export default function ClientSettingsPage() {
     } finally {
       setRegisteringHooks(false)
     }
+  }
+
+  async function saveMerchantCenter() {
+    if (!mcId.trim()) { setMcMsg({ ok: false, text: 'Merchant ID obrigatório' }); return }
+    if (!mcToken.trim()) { setMcMsg({ ok: false, text: 'Refresh Token obrigatório' }); return }
+    setMcSaving(true); setMcMsg(null)
+    try {
+      const res = await fetch(`${API_URL}/merchant-center/${clientId}/setup`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ merchant_id: mcId.trim(), refresh_token: mcToken.trim() }),
+      })
+      const json = await res.json()
+      if (res.ok) {
+        setMcMsg({ ok: true, text: 'Merchant Center conectado com sucesso!' })
+        setMcToken('')
+        setForm(f => ({ ...f, merchant_center_id: mcId.trim(), merchant_center_refresh_token: '••••' }))
+      } else {
+        setMcMsg({ ok: false, text: json.detail || `Erro ${res.status}` })
+      }
+    } catch {
+      setMcMsg({ ok: false, text: 'Erro de conexão' })
+    } finally {
+      setMcSaving(false)
+    }
+  }
+
+  async function handleDisconnectMerchant() {
+    await supabase
+      .from('clients')
+      .update({ merchant_center_id: null, merchant_center_refresh_token: null })
+      .eq('pixel_id', clientId)
+    setForm(f => ({ ...f, merchant_center_id: null, merchant_center_refresh_token: null }))
+    setMcId(''); setMcToken(''); setMcMsg(null)
   }
 
   async function handleDisconnectMeta() {
@@ -701,6 +744,69 @@ export default function ClientSettingsPage() {
           </Field>
         </Section>
 
+        <Section title="Google Merchant Center">
+          <Field label="Merchant ID" hint="ID numérico da conta no Google Merchant Center (ex: 123456789)">
+            <input
+              value={mcId}
+              onChange={e => { setMcId(e.target.value); setMcMsg(null) }}
+              placeholder="123456789"
+              className={INPUT}
+            />
+          </Field>
+          <Field label="Refresh Token OAuth" hint="Token com escopo https://www.googleapis.com/auth/content — gere via Google OAuth Playground">
+            {form.merchant_center_refresh_token ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between px-3 py-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-emerald-400 text-sm">
+                    <CheckCircle size={14} />
+                    Merchant Center vinculado (ID: {form.merchant_center_id})
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectMerchant}
+                    className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+                  >
+                    Desconectar
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-500">Para reconectar, preencha um novo refresh token abaixo:</p>
+                  <input
+                    type="password"
+                    value={mcToken}
+                    onChange={e => { setMcToken(e.target.value); setMcMsg(null) }}
+                    placeholder="1//0g... (novo token)"
+                    className={INPUT}
+                  />
+                </div>
+              </div>
+            ) : (
+              <input
+                type="password"
+                value={mcToken}
+                onChange={e => { setMcToken(e.target.value); setMcMsg(null) }}
+                placeholder="1//0g..."
+                className={INPUT}
+              />
+            )}
+          </Field>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              type="button"
+              onClick={saveMerchantCenter}
+              disabled={mcSaving || !mcId.trim() || !mcToken.trim()}
+              className="flex items-center gap-2 bg-[#0f1117] border border-[#2a2f3e] hover:border-indigo-500 disabled:opacity-50 text-slate-300 hover:text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              {mcSaving ? <><Loader2 size={14} className="animate-spin" />Salvando…</> : <><Save size={14} />Salvar Merchant Center</>}
+            </button>
+            {mcMsg && (
+              <span className={`text-xs ${mcMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                {mcMsg.ok ? '✓' : '✗'} {mcMsg.text}
+              </span>
+            )}
+          </div>
+        </Section>
+
         <Section title="TikTok Ads">
           <Field label="Pixel Code" hint="TikTok Pixel Code (ex: C3XXXXXXXXXXXX)">
             <input value={form.tiktok_pixel_id || ''} onChange={e => set('tiktok_pixel_id', e.target.value)}
@@ -1053,6 +1159,13 @@ function IntegrationHealth({ form }: { form: Partial<ClientRow> }) {
         : form.tracking_cname ? 'aguardando verificação'
         : 'não configurado',
     },
+    {
+      label:  'Merchant Center',
+      status: (form.merchant_center_id && form.merchant_center_refresh_token) ? 'ok' : 'inactive',
+      detail: form.merchant_center_id
+        ? `ID: ${form.merchant_center_id}`
+        : 'não configurado',
+    },
   ]
 
   const hasIssue = items.some(i => i.status === 'error' || i.status === 'warning')
@@ -1060,7 +1173,7 @@ function IntegrationHealth({ form }: { form: Partial<ClientRow> }) {
   return (
     <div className={`bg-[#1a1f2e] border rounded-xl p-4 mb-2 ${hasIssue ? 'border-yellow-500/30' : 'border-[#2a2f3e]'}`}>
       <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">Saúde das integrações</p>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {items.map(({ label, status, detail }) => (
           <div key={label} className="flex items-start gap-2">
             <div className="mt-1">{healthDot(status)}</div>
