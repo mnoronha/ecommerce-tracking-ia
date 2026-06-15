@@ -112,7 +112,7 @@ export default function AIVisibilityPage() {
   const params   = useParams()
   const router   = useRouter()
   const clientId = params.clientId as string
-  const { from, to } = useDatePeriod()
+  const { period, from, to, setPreset, setCustom } = useDatePeriod()
 
   const [summary,     setSummary]     = useState<Summary | null>(null)
   const [trend,       setTrend]       = useState<TrendPoint[]>([])
@@ -163,7 +163,7 @@ export default function AIVisibilityPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap justify-end">
-          <PeriodPicker />
+          <PeriodPicker period={period} from={from} to={to} onPreset={setPreset} onCustom={setCustom} />
           <select
             value={platform}
             onChange={e => setPlatform(e.target.value)}
