@@ -108,7 +108,7 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
     custom: dict = {"currency": "BRL"}
 
     if pin_event_name == "checkout" and event.order:
-        custom["value"] = float(event.order.total or 0)
+        custom["value"] = str(float(event.order.total or 0))
         custom["order_id"] = str(event.order.id)
         if event.order.items:
             custom["num_items"] = sum(int(i.quantity or 1) for i in event.order.items)
@@ -117,7 +117,7 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
                 {
                     "id":       str(i.product_id or ""),
                     "quantity": int(i.quantity or 1),
-                    "item_price": float(i.price or 0),
+                    "item_price": str(float(i.price or 0)),
                 }
                 for i in event.order.items
             ]
@@ -130,11 +130,11 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
         custom["contents"] = [{
             "id":         pid,
             "quantity":   int(meta.get("product_quantity") or 1),
-            "item_price": float(meta.get("product_price") or 0),
+            "item_price": str(float(meta.get("product_price") or 0)),
             "item_name":  meta.get("product_name", "")[:255],
         }]
     if meta.get("cart_total") or meta.get("product_price"):
-        custom["value"] = float(meta.get("cart_total") or meta.get("product_price") or 0)
+        custom["value"] = str(float(meta.get("cart_total") or meta.get("product_price") or 0))
     if meta.get("item_count"):
         custom["num_items"] = int(meta["item_count"])
 
@@ -216,7 +216,7 @@ def send_purchase(
 
     obj = _build_event_obj(event, "checkout", event_id, tag_id)
     if value_override is not None:
-        obj["custom_data"]["value"] = float(value_override)
+        obj["custom_data"]["value"] = str(float(value_override))
 
     return _send(ad_account_id, access_token, {"data": [obj]})
 
