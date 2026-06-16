@@ -89,6 +89,9 @@ def collect_products(client_id: str, merchant_id: str, access_token: str, snapsh
             resp = httpx.get(url, headers=_headers(access_token), params=params, timeout=20.0)
             if resp.status_code == 401:
                 raise PermissionError("merchant_center 401 — refresh token may be invalid or scope missing")
+            if resp.status_code == 403:
+                body = resp.text[:300]
+                raise PermissionError(f"merchant_center 403 — token lacks 'content' scope or no access to account {merchant_id}: {body}")
             resp.raise_for_status()
             data = resp.json()
         except PermissionError:
@@ -161,8 +164,12 @@ def collect_product_statuses(client_id: str, merchant_id: str, access_token: str
             params["pageToken"] = page_token
         try:
             resp = httpx.get(url, headers=_headers(access_token), params=params, timeout=20.0)
+            if resp.status_code in (401, 403):
+                raise PermissionError(f"merchant_center {resp.status_code} productstatuses: {resp.text[:200]}")
             resp.raise_for_status()
             data = resp.json()
+        except PermissionError:
+            raise
         except Exception as exc:
             logger.error("merchant_center collect_statuses: %s", exc)
             break
