@@ -72,7 +72,10 @@ export async function GET(req: NextRequest) {
     const resp = await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ google_ads_refresh_token: refreshToken }),
+      body: JSON.stringify({
+        google_ads_refresh_token: refreshToken,
+        merchant_center_refresh_token: refreshToken,
+      }),
     })
     if (!resp.ok) dbError = { message: `HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}` }
   } catch (e) {

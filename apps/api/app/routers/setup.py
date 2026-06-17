@@ -39,6 +39,7 @@ async def admin_encrypt_credentials(confirm: str = ""):
 _CRED_PREFIXES = (
     "meta_", "google_ads_", "ga4_", "tiktok_", "pinterest_", "shopify_",
     "woo_", "nuvemshop_", "tracking_cname", "ecommerce_platform", "webhook_secret",
+    "merchant_center_",
 )
 
 

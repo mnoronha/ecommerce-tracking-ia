@@ -6,6 +6,7 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const SCOPE = [
   'https://www.googleapis.com/auth/adwords',
   'https://www.googleapis.com/auth/analytics.readonly',
+  'https://www.googleapis.com/auth/content',
 ].join(' ')
 
 export async function GET(req: NextRequest) {
