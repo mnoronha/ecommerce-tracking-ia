@@ -73,12 +73,28 @@ def _headers(access_token: str) -> dict:
 
 # ── Collect products ──────────────────────────────────────────────────────────
 
+_BATCH_SIZE = 500
+
+
+def _batch_upsert(sb, table: str, rows: list[dict], on_conflict: str) -> int:
+    """Upsert em lotes de _BATCH_SIZE para evitar timeout."""
+    saved = 0
+    for i in range(0, len(rows), _BATCH_SIZE):
+        chunk = rows[i : i + _BATCH_SIZE]
+        try:
+            sb.table(table).upsert(chunk, on_conflict=on_conflict).execute()
+            saved += len(chunk)
+        except Exception as exc:
+            logger.warning("merchant_center batch_upsert %s chunk %d: %s", table, i, exc)
+    return saved
+
+
 def collect_products(client_id: str, merchant_id: str, access_token: str, snapshot_date: date) -> int:
     """Lista todos os produtos do feed e salva snapshot diário."""
     sb        = get_supabase()
     url       = f"{_MC_API}/{merchant_id}/products"
     page_token = None
-    saved     = 0
+    rows: list[dict] = []
 
     while True:
         params: dict = {"maxResults": _PAGE_SIZE}
@@ -103,7 +119,7 @@ def collect_products(client_id: str, merchant_id: str, access_token: str, snapsh
         for item in data.get("resources", []):
             price_info = item.get("price") or {}
             sale_info  = item.get("salePrice") or {}
-            row = {
+            rows.append({
                 "client_id":              client_id,
                 "snapshot_date":          snapshot_date.isoformat(),
                 "product_id":             item.get("id", ""),
@@ -130,21 +146,15 @@ def collect_products(client_id: str, merchant_id: str, access_token: str, snapsh
                 "custom_label_3":         item.get("customLabel3"),
                 "custom_label_4":         item.get("customLabel4"),
                 "shipping_country":       "BR",
-                "raw_data":               None,   # omit raw para economizar espaço
-            }
-            try:
-                sb.table("merchant_products").upsert(
-                    row, on_conflict="client_id,product_id,snapshot_date"
-                ).execute()
-                saved += 1
-            except Exception as exc:
-                logger.warning("merchant_center: upsert product %s failed: %s", item.get("id"), exc)
+                "raw_data":               None,
+            })
 
         page_token = data.get("nextPageToken")
         if not page_token:
             break
-        time.sleep(1)   # rate limit: ~60 req/min
+        time.sleep(0.5)
 
+    saved = _batch_upsert(sb, "merchant_products", rows, "client_id,product_id,snapshot_date")
     logger.info("merchant_center: %d products saved for %s", saved, client_id)
     return saved
 
@@ -156,7 +166,9 @@ def collect_product_statuses(client_id: str, merchant_id: str, access_token: str
     sb         = get_supabase()
     url        = f"{_MC_API}/{merchant_id}/productstatuses"
     page_token = None
-    saved_status, saved_issues = 0, 0
+    status_rows: list[dict] = []
+    issue_rows:  list[dict] = []
+    iso = snapshot_date.isoformat()
 
     while True:
         params: dict = {"maxResults": _PAGE_SIZE}
@@ -179,48 +191,42 @@ def collect_product_statuses(client_id: str, merchant_id: str, access_token: str
 
             for dest in item.get("destinationStatuses", []):
                 dest_name = dest.get("destination", "").lower().replace(" ", "_")
-                try:
-                    sb.table("merchant_product_statuses").upsert({
-                        "client_id":             client_id,
-                        "product_id":            product_id,
-                        "snapshot_date":         snapshot_date.isoformat(),
-                        "destination":           dest_name,
-                        "approval_status":       dest.get("status"),
-                        "approved_countries":    dest.get("approvedCountries"),
-                        "disapproved_countries": dest.get("disapprovedCountries"),
-                        "pending_countries":     dest.get("pendingCountries"),
-                        "servability":           dest.get("servability"),
-                    }, on_conflict="client_id,product_id,destination,snapshot_date").execute()
-                    saved_status += 1
-                except Exception as exc:
-                    logger.warning("merchant_center status upsert: %s", exc)
+                status_rows.append({
+                    "client_id":             client_id,
+                    "product_id":            product_id,
+                    "snapshot_date":         iso,
+                    "destination":           dest_name,
+                    "approval_status":       dest.get("status"),
+                    "approved_countries":    dest.get("approvedCountries"),
+                    "disapproved_countries": dest.get("disapprovedCountries"),
+                    "pending_countries":     dest.get("pendingCountries"),
+                    "servability":           dest.get("servability"),
+                })
 
             for issue in item.get("itemLevelIssues", []):
                 dest_name = (issue.get("destination") or "").lower().replace(" ", "_")
-                try:
-                    sb.table("merchant_product_issues").upsert({
-                        "client_id":          client_id,
-                        "product_id":         product_id,
-                        "snapshot_date":      snapshot_date.isoformat(),
-                        "code":               issue.get("code", "unknown"),
-                        "severity":           issue.get("resolution") and "warning" or (issue.get("servability") == "disapproved" and "error" or "warning"),
-                        "description":        issue.get("description"),
-                        "attribute_name":     issue.get("attributeName"),
-                        "destination":        dest_name,
-                        "documentation_url":  issue.get("documentation"),
-                        "affected_countries": issue.get("applicableCountries"),
-                        "resolution":         issue.get("resolution"),
-                        "is_resolved":        False,
-                    }, on_conflict="client_id,product_id,code,destination,snapshot_date").execute()
-                    saved_issues += 1
-                except Exception as exc:
-                    logger.warning("merchant_center issue upsert: %s", exc)
+                issue_rows.append({
+                    "client_id":          client_id,
+                    "product_id":         product_id,
+                    "snapshot_date":      iso,
+                    "code":               issue.get("code", "unknown"),
+                    "severity":           issue.get("resolution") and "warning" or (issue.get("servability") == "disapproved" and "error" or "warning"),
+                    "description":        issue.get("description"),
+                    "attribute_name":     issue.get("attributeName"),
+                    "destination":        dest_name,
+                    "documentation_url":  issue.get("documentation"),
+                    "affected_countries": issue.get("applicableCountries"),
+                    "resolution":         issue.get("resolution"),
+                    "is_resolved":        False,
+                })
 
         page_token = data.get("nextPageToken")
         if not page_token:
             break
-        time.sleep(1)
+        time.sleep(0.5)
 
+    saved_status = _batch_upsert(sb, "merchant_product_statuses", status_rows, "client_id,product_id,destination,snapshot_date")
+    saved_issues = _batch_upsert(sb, "merchant_product_issues",   issue_rows,  "client_id,product_id,code,destination,snapshot_date")
     logger.info("merchant_center: %d statuses, %d issues for %s", saved_status, saved_issues, client_id)
     return saved_status, saved_issues
 
