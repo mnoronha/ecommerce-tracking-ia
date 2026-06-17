@@ -13,7 +13,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .config import settings
 from .limiter import limiter
-from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pixel, setup, sync as sync_router
+from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pixel, setup, sync as sync_router
 from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
@@ -293,6 +293,7 @@ app.include_router(annotations.router)
 app.include_router(sync_router.router)
 app.include_router(ai_visibility_router.router)
 app.include_router(merchant_center_router.router)
+app.include_router(content_router.router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────

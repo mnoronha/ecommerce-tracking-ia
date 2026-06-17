@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     GOOGLE_ADS_REFRESH_TOKEN:     str = ""  # agency MCC refresh token
     GOOGLE_ADS_MANAGER_ID:        str = ""  # MCC account ID (optional)
 
+    # ── RAG / Content Production ─────────────────────────────────────────
+    VOYAGE_API_KEY: str = ""  # Voyage AI (embeddings)
+
 
 @lru_cache()
 def get_settings() -> Settings:
