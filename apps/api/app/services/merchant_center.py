@@ -368,39 +368,48 @@ def calculate_feed_health_snapshot(client_id: str, snapshot_date: date) -> int:
     sb  = get_supabase()
     iso = snapshot_date.isoformat()
 
-    # Contagens de produtos
-    products = (
-        sb.table("merchant_products")
-        .select("product_id,availability")
-        .eq("client_id", client_id)
-        .eq("snapshot_date", iso)
-        .execute()
-    ).data or []
+    def _count(table: str, filters: dict, count_col: str = "product_id") -> int:
+        q = sb.table(table).select(count_col, count="exact")
+        for k, v in filters.items():
+            q = q.eq(k, v)
+        return q.execute().count or 0
 
-    product_ids = [p["product_id"] for p in products]
-    total       = len(products)
-    out_of_stock = sum(1 for p in products if (p.get("availability") or "") in ("out_of_stock", "preorder"))
+    def _count_in(table: str, filters: dict, col: str, values: list) -> int:
+        q = sb.table(table).select(col, count="exact")
+        for k, v in filters.items():
+            q = q.eq(k, v)
+        return q.in_(col, values).execute().count or 0
 
-    # Status por produto
-    statuses = (
-        sb.table("merchant_product_statuses")
-        .select("product_id,approval_status,destination")
-        .eq("client_id", client_id)
-        .eq("snapshot_date", iso)
-        .execute()
-    ).data or []
+    base = {"client_id": client_id, "snapshot_date": iso}
 
-    approved     = len({s["product_id"] for s in statuses if s.get("approval_status") == "approved"})
-    disapproved  = len({s["product_id"] for s in statuses if s.get("approval_status") == "disapproved"})
-    pending      = len({s["product_id"] for s in statuses if s.get("approval_status") == "pending"})
+    total        = _count("merchant_products", base)
+    out_of_stock = _count_in("merchant_products", base, "availability", ["out_of_stock", "preorder"])
 
-    # Issues
+    # Distinct product_ids por status — busca apenas os distintos usando limit alto
+    def _distinct_prods_by_status(status: str) -> int:
+        rows = (
+            sb.table("merchant_product_statuses")
+            .select("product_id")
+            .eq("client_id", client_id)
+            .eq("snapshot_date", iso)
+            .eq("approval_status", status)
+            .limit(100_000)
+            .execute()
+        ).data or []
+        return len({r["product_id"] for r in rows})
+
+    approved    = _distinct_prods_by_status("approved")
+    disapproved = _distinct_prods_by_status("disapproved")
+    pending     = _distinct_prods_by_status("pending")
+
+    # Issues — só precisamos de product_id + code + severity (volume menor)
     issues = (
         sb.table("merchant_product_issues")
         .select("product_id,code,severity")
         .eq("client_id", client_id)
         .eq("snapshot_date", iso)
         .eq("is_resolved", False)
+        .limit(100_000)
         .execute()
     ).data or []
 
@@ -416,12 +425,13 @@ def calculate_feed_health_snapshot(client_id: str, snapshot_date: date) -> int:
     top_codes = sorted(code_counts.items(), key=lambda x: -x[1])[:5]
     top_codes_json = [{"code": c, "count": n} for c, n in top_codes]
 
-    # Price benchmarks
+    # Price benchmarks — volume pequeno, limite explícito por precaução
     benchmarks = (
         sb.table("merchant_price_benchmarks")
         .select("competitive_status")
         .eq("client_id", client_id)
         .eq("snapshot_date", iso)
+        .limit(100_000)
         .execute()
     ).data or []
 
