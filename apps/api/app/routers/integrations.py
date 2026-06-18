@@ -198,6 +198,88 @@ async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     return {"scanned": len(orders), "sent": sent, "failed": failed, "sample_errors": errors}
 
 
+@router.post("/{pixel_id}/pinterest/backfill", summary="Reenviar conversões pagas ao Pinterest Conversions API")
+async def pinterest_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
+    """Re-sends paid orders to Pinterest CAPI that were never delivered or failed."""
+    from datetime import datetime, timezone, timedelta
+    from ..services import pinterest_capi
+    from ..services.capi_retry import _build_event
+
+    sb = get_supabase()
+    cli = (
+        sb.table("clients")
+        .select("id, pinterest_ad_account_id, pinterest_access_token, pinterest_tag_id, value_based_bidding")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (cli and cli.data):
+        raise HTTPException(404, "Client not found")
+    c = crypto.decrypt_client_secrets(cli.data[0])
+    if not (c.get("pinterest_ad_account_id") and c.get("pinterest_access_token") and c.get("pinterest_tag_id")):
+        raise HTTPException(400, "Pinterest not fully configured for this client")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    orders = (
+        sb.table("orders")
+        .select(
+            "id, client_id, platform_order_id, platform_order_number, "
+            "platform_source, email, phone, first_name, last_name, "
+            "total_price, currency, financial_status, predicted_ltv, "
+            "visitor_id, shipping_country, shipping_state, shipping_city, zip_code, "
+            "browser_ip, browser_ua"
+        )
+        .eq("client_id", c["id"])
+        .eq("financial_status", "paid")
+        .gt("total_price", 0)
+        .neq("pinterest_sent", True)
+        .gte("created_at", cutoff)
+        .order("created_at", desc=True)
+        .limit(min(limit, 500))
+        .execute()
+    ).data or []
+
+    sent = failed = 0
+    errors: list[str] = []
+    for o in orders:
+        visitor = None
+        if o.get("visitor_id"):
+            v = (
+                sb.table("visitors")
+                .select("fbp, fbc, ga_client_id, epik")
+                .eq("id", o["visitor_id"]).limit(1).execute()
+            ).data
+            if v:
+                visitor = v[0]
+
+        value_override = None
+        if c.get("value_based_bidding") and o.get("predicted_ltv") is not None:
+            value_override = float(o["predicted_ltv"])
+
+        event = _build_event(o, visitor)
+        ok, err = pinterest_capi.send_purchase(
+            ad_account_id=c["pinterest_ad_account_id"],
+            access_token=c["pinterest_access_token"],
+            tag_id=c["pinterest_tag_id"],
+            event=event,
+            value_override=value_override,
+        )
+        upd: dict = {"pinterest_sent": ok}
+        if ok:
+            upd["pinterest_sent_at"]    = datetime.now(timezone.utc).isoformat()
+            upd["pinterest_last_error"] = None
+            sent += 1
+        else:
+            upd["pinterest_last_error"] = (err or "unknown")[:500]
+            failed += 1
+            if err and len(errors) < 3:
+                errors.append(err[:200])
+        try:
+            sb.table("orders").update(upd).eq("id", o["id"]).execute()
+        except Exception:
+            pass
+
+    return {"scanned": len(orders), "sent": sent, "failed": failed, "sample_errors": errors}
+
+
 @router.post("/{pixel_id}/tiktok/diagnose", summary="Diagnóstico TikTok: mostra payload real e raw response da API")
 async def tiktok_diagnose(pixel_id: str):
     """
