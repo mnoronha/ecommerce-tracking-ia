@@ -1,16 +1,21 @@
 /**
- * Ecommerce Tracking Pixel — tracker.js  v2.3.0
+ * Ecommerce Tracking Pixel — tracker.js  v2.4.0
  *
  * Usage:
  *   <script
  *     src="/pixel/tracker.js"
  *     data-client-id="YOUR_CLIENT_ID"
  *     data-api-url="https://api.yourdomain.com"
+ *     data-tiktok-pixel-id="OPTIONAL_TIKTOK_PIXEL_ID"
  *     async
  *   ></script>
  *
  * Or configure programmatically before the script tag:
- *   <script>window.__ETConfig = { clientId: "...", apiUrl: "..." };</script>
+ *   <script>window.__ETConfig = { clientId: "...", apiUrl: "...", tiktokPixelId: "..." };</script>
+ *
+ * When data-tiktok-pixel-id is set the TikTok base pixel is initialised
+ * automatically (no separate script tag needed). The _ttp cookie it sets is
+ * captured and forwarded to the CAPI for improved user matching.
  */
 (function (w, d) {
   'use strict';
@@ -37,8 +42,9 @@
     return scripts[scripts.length - 1];
   })();
 
-  var CLIENT_ID = cfg.clientId || (script && script.getAttribute('data-client-id')) || '';
-  var API_URL   = (cfg.apiUrl   || (script && script.getAttribute('data-api-url'))   || '').replace(/\/$/, '');
+  var CLIENT_ID       = cfg.clientId       || (script && script.getAttribute('data-client-id'))       || '';
+  var API_URL         = (cfg.apiUrl        || (script && script.getAttribute('data-api-url'))         || '').replace(/\/$/, '');
+  var TIKTOK_PIXEL_ID = cfg.tiktokPixelId  || (script && script.getAttribute('data-tiktok-pixel-id')) || '';
 
   // EVENTS_PATH: reads _ep from the script's own src URL so that the first-party
   // CNAME alias (/p/t.js?..._ep=/p/e) can steer events to the adblock-neutral
@@ -230,6 +236,53 @@
     return getCookie(COOKIE_TTCLID) || null;
   }
 
+  // _ttp — TikTok browser ID cookie, set automatically by the TikTok pixel script.
+  // Used by CAPI for user matching (equivalent of _fbp for Meta).
+  function getTtp() {
+    return getCookie('_ttp') || null;
+  }
+
+  // ── TikTok pixel initializer ───────────────────────────────────────────────
+  // Dynamically injects the TikTok base pixel (same code from TikTok Events
+  // Manager). Fires ttq.page() for PageView. Sets _ttp for CAPI matching.
+  // Clients only need data-tiktok-pixel-id on the script tag — no separate
+  // <script> block in the theme.
+  function initTiktokPixel(pixelId) {
+    if (!pixelId) return;
+    if (w.TiktokAnalyticsObject && w.ttq) {
+      try { w.ttq.page(); } catch (e) {}
+      return;
+    }
+    var t = 'ttq';
+    w.TiktokAnalyticsObject = t;
+    var ttq = w[t] = w[t] || [];
+    ttq.methods = ['page','track','identify','instances','debug','on','off','once',
+                   'ready','alias','group','enableCookie','disableCookie',
+                   'holdConsent','revokeConsent','grantConsent'];
+    ttq.setAndDefer = function (obj, method) {
+      obj[method] = function () { obj.push([method].concat(Array.prototype.slice.call(arguments, 0))); };
+    };
+    for (var i = 0; i < ttq.methods.length; i++) ttq.setAndDefer(ttq, ttq.methods[i]);
+    ttq.instance = function (id) {
+      var inst = ttq._i[id] || [];
+      for (var n = 0; n < ttq.methods.length; n++) ttq.setAndDefer(inst, ttq.methods[n]);
+      return inst;
+    };
+    ttq.load = function (id, opts) {
+      var src = 'https://analytics.tiktok.com/i18n/pixel/events.js';
+      ttq._i = ttq._i || {}; ttq._i[id] = []; ttq._i[id]._u = src;
+      ttq._t = ttq._t || {}; ttq._t[id] = +new Date();
+      ttq._o = ttq._o || {}; ttq._o[id] = opts || {};
+      var s = d.createElement('script');
+      s.type = 'text/javascript'; s.async = true;
+      s.src = src + '?sdkid=' + id + '&lib=' + t;
+      var first = d.getElementsByTagName('script')[0];
+      first.parentNode.insertBefore(s, first);
+    };
+    ttq.load(pixelId);
+    ttq.page();
+  }
+
   // GA4 client_id — extracted from the _ga cookie set by gtag.js / GA4
   // Format of _ga: GA1.{n}.{client_id_part1}.{client_id_part2}
   function getGaClientId() {
@@ -285,6 +338,7 @@
       ga_client_id:    getGaClientId(),
       gclid:           getGclid(),
       ttclid:          getTtclid(),
+      ttp:             getTtp(),
       facebook_login:  getFacebookLoginId(),
       date_of_birth:   getDateOfBirth(),
       metadata:        extra || {}
@@ -650,6 +704,7 @@
     var wbraid = getWbraid();
     var gcid   = getGaClientId();
     var ttclid = getTtclid();
+    var ttp    = getTtp();
     var fb_login = getFacebookLoginId();
     var dob    = getDateOfBirth();
     var utm    = getAttribution() || {};
@@ -661,6 +716,7 @@
     if (wbraid)    attrs['_wbraid'] = wbraid;
     if (gcid)      attrs['_gcid']  = gcid;
     if (ttclid)    attrs['_ettc']  = ttclid;
+    if (ttp)       attrs['_ttp']   = ttp;
     if (fb_login)  attrs['_fblogin'] = fb_login;
     if (dob)       attrs['_dob']   = dob;
     // UTMs survive checkout via cart attribute, so the backend can recover
@@ -696,6 +752,9 @@
   };
 
   // ── Fire initial pageview + cart injection ────────────────────────────────
+  // TikTok pixel can be initialised before DOMContentLoaded — doesn't need DOM.
+  initTiktokPixel(TIKTOK_PIXEL_ID);
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', function () {
       trackPageview();

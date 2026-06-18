@@ -66,6 +66,8 @@ def _build_user(event: NormalizedEvent, ttclid: Optional[str] = None) -> dict:
     resolved_ttclid = ttclid or meta.get("ttclid")
     if resolved_ttclid:
         user["ttclid"] = resolved_ttclid
+    if meta.get("ttp"):
+        user["ttp"] = meta["ttp"]
 
     ip = meta.get("ip")
     ua = meta.get("user_agent")
