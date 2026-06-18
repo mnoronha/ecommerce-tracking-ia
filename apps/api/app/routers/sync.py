@@ -12,7 +12,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..database import get_supabase
-from ..services import crypto, metrics_cache, reports
+from ..services import crypto, metrics_cache, reports, report_builder, report_renderer
+from ..services import resend as email_service
 from ..services import shopify_sync
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -166,13 +167,93 @@ async def trigger_weekly_report(
     return {"sent_to": to, "client": c.get("name"), "type": "weekly"}
 
 
+_TIKTOK_PINTEREST_HTML = """
+  <!-- Recomendação TikTok + Pinterest -->
+  <tr>
+    <td style="padding:0 0 28px">
+      <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#e2e8f0;
+         border-bottom:1px solid #2a2f3e;padding-bottom:8px">
+        🚀 Próxima Fronteira — TikTok Ads &amp; Pinterest Ads
+      </p>
+      <div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;
+                  border-top:2px solid #6366f1;padding:16px 18px;margin-bottom:12px">
+        <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#e2e8f0">
+          Por que retomar agora?
+        </p>
+        <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.65">
+          A LK já testou TikTok e Pinterest no passado sem conseguir medir resultados com precisão.
+          Hoje o cenário mudou: com a <strong style="color:#a5b4fc">Noro Platform</strong>, temos
+          tracking first-party real — pixel server-side via CNAME, fbp/fbc capturado, gclid e gbraid
+          funcionando. Conseguimos atribuir conversões a qualquer canal com a mesma precisão que
+          usamos hoje em Meta e Google. Isso elimina o principal motivo de abandonar esses canais.
+        </p>
+      </div>
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px">
+        <tr>
+          <td width="50%" style="padding-right:6px;vertical-align:top">
+            <div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:14px">
+              <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#e2e8f0">
+                🎵 TikTok Ads
+              </p>
+              <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6">
+                Audiência jovem (18–34) altamente engajada com moda e sneakers premium.
+                Formato de vídeo curto perfeito para mostrar tênis exclusivos em uso.
+                CPM historicamente 40–60% menor que Meta para esse segmento.
+                Com o pixel server-side da Noro, atribuímos compra a cada anúncio em tempo real.
+              </p>
+            </div>
+          </td>
+          <td width="50%" style="padding-left:6px;vertical-align:top">
+            <div style="background:#1a1f2e;border:1px solid #2a2f3e;border-radius:8px;padding:14px">
+              <p style="margin:0 0 6px;font-size:13px;font-weight:700;color:#e2e8f0">
+                📌 Pinterest Ads
+              </p>
+              <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6">
+                Plataforma de descoberta de produtos com alta intenção de compra.
+                Audiência que pesquisa moda e tem ticket médio maior. Ideal para
+                catálogo de sneakers de luxo e colabs como Versace, Loewe e On Running.
+                O Shopping Catalog do Pinterest converte como Google Shopping.
+              </p>
+            </div>
+          </td>
+        </tr>
+      </table>
+      <div style="background:#0c0e14;border:1px solid #2a2f3e;border-radius:8px;padding:14px 18px">
+        <p style="margin:0 0 8px;font-size:12px;font-weight:600;color:#6366f1;
+           text-transform:uppercase;letter-spacing:0.5px">Plano de retomada sugerido</p>
+        <p style="margin:0 0 5px;font-size:13px;color:#94a3b8;line-height:1.5">
+          <span style="color:#6366f1;font-weight:700">1.</span>
+          Instalar o pixel TikTok e Pinterest via Noro Platform (server-side + browser) — 1 dia.
+        </p>
+        <p style="margin:0 0 5px;font-size:13px;color:#94a3b8;line-height:1.5">
+          <span style="color:#6366f1;font-weight:700">2.</span>
+          Campanha teste TikTok — R$3.000/mês com vídeos dos modelos destaque (Versace collab, On Loewe).
+        </p>
+        <p style="margin:0 0 5px;font-size:13px;color:#94a3b8;line-height:1.5">
+          <span style="color:#6366f1;font-weight:700">3.</span>
+          Campanha teste Pinterest Shopping — R$2.000/mês sincronizando catálogo Shopify.
+        </p>
+        <p style="margin:0;font-size:13px;color:#94a3b8;line-height:1.5">
+          <span style="color:#6366f1;font-weight:700">4.</span>
+          Avaliar ROAS após 30 dias com dados server-side. Meta: ROAS ≥ 4x para escalar.
+        </p>
+      </div>
+    </td>
+  </tr>
+"""
+
+
 @router.post("/reports/{pixel_id}/monthly", summary="Send monthly report preview")
 async def trigger_monthly_report(
     pixel_id: str,
     to: str = Query(..., description="Override recipient email address"),
     force: bool = Query(False, description="Send even if health check would hold it"),
+    year: Optional[int] = Query(None, description="Ano do relatório (padrão: mês anterior)"),
+    month: Optional[int] = Query(None, description="Mês do relatório 1-12 (padrão: mês anterior)"),
 ):
-    """Dispara o relatório mensal para um cliente imediatamente, enviando para o email informado."""
+    """Dispara o relatório mensal para um cliente imediatamente, enviando para o email informado.
+    Quando year+month são fornecidos, gera o relatório para aquele período específico (útil para
+    relatórios de mês corrente para reuniões)."""
     sb = get_supabase()
     rows = (
         sb.table("clients")
@@ -188,6 +269,38 @@ async def trigger_monthly_report(
 
     import asyncio
     loop = asyncio.get_event_loop()
+
+    # Período customizado: gera o relatório direto via build_monthly_context
+    if year and month:
+        if not (1 <= month <= 12):
+            raise HTTPException(status_code=400, detail="month deve estar entre 1 e 12")
+        _MONTH_PT = ["", "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+
+        def _build_custom():
+            from ..services import crypto as _crypto
+            _full = (sb.table("clients").select("*").eq("id", c["id"]).limit(1).execute().data or [{}])[0]
+            client_full = _crypto.decrypt_client_secrets({**c, **_full})
+            ctx = report_builder.build_monthly_context(
+                client_id=c["id"], client=client_full, year=year, month=month,
+            )
+            html = report_renderer.render_monthly_email_html(ctx)
+            # Injetar seção TikTok + Pinterest antes do footer
+            html = html.replace(
+                "<!-- Footer -->",
+                _TIKTOK_PINTEREST_HTML + "\n      <!-- Footer -->",
+            )
+            periodo = f"{_MONTH_PT[month]}/{year}"
+            subject = (
+                f"📈 Relatório {periodo} (1–{datetime.now(timezone.utc).day:02d}/{month:02d}) · "
+                f"{c.get('name') or pixel_id}"
+            )
+            email_service.send_email(to=to, subject=subject, html_body=html)
+            return {"sent_to": to, "held": False, "period": f"{year}-{month:02d}"}
+
+        result = await loop.run_in_executor(None, _build_custom)
+        return {"client": c.get("name"), "type": "monthly", **result}
+
     result = await loop.run_in_executor(
         None,
         lambda: reports._send_monthly(
