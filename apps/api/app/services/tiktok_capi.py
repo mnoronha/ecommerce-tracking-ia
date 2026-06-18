@@ -8,11 +8,15 @@ Events sent (TikTok event names in parens):
   ViewContent       — on product.viewed   pixel event
   AddToCart         — on cart.created/updated webhook or pixel event
   InitiateCheckout  — on checkouts/create webhook or pixel begin_checkout
-  PlaceAnOrder      — on order.paid webhook
+  Purchase          — on order.paid webhook
 
-Advanced matching: every event carries hashed email + phone + external_id +
-ip + user_agent in `context.user` so TikTok can identify the visitor even
-without a fresh ttclid.
+Payload structure follows TikTok Events API v1.3:
+  POST /open_api/v1.3/event/track/
+  Headers: Access-Token: <token>
+  Body: {"pixel_code": "...", "data": [{event_dict}]}
+
+Each event_dict has: event, event_time, event_id, user (top-level), page (top-level), properties.
+The old "context: {user, page}" nesting and "timestamp" field caused 40002 errors.
 
 Docs: https://business-api.tiktok.com/portal/docs?id=1771101027431425
 """
@@ -39,24 +43,29 @@ def _sha256(value: Optional[str]) -> Optional[str]:
     return hashlib.sha256(value.strip().lower().encode("utf-8")).hexdigest()
 
 
-# ── Event builder ─────────────────────────────────────────────────────────────
+# ── User builder ──────────────────────────────────────────────────────────────
 
 def _build_user(event: NormalizedEvent, ttclid: Optional[str] = None) -> dict:
+    """
+    TikTok v1.3 user object — fields are hashed strings (not arrays),
+    placed at the top level of the event dict (not inside context).
+    """
     user: dict = {}
     customer = event.customer
     if customer:
         if customer.email:
-            user["email"] = [_sha256(customer.email.strip().lower())]
+            user["email"] = _sha256(customer.email.strip().lower())
         if customer.phone:
             phone_clean = "".join(c for c in customer.phone if c.isdigit())
             if phone_clean:
-                user["phone_number"] = [_sha256(phone_clean)]
+                user["phone_number"] = _sha256(phone_clean)
         if customer.id:
-            user["external_id"] = [_sha256(str(customer.id))]
+            user["external_id"] = _sha256(str(customer.id))
 
     meta = event.metadata or {}
-    if ttclid or meta.get("ttclid"):
-        user["ttclid"] = ttclid or meta["ttclid"]
+    resolved_ttclid = ttclid or meta.get("ttclid")
+    if resolved_ttclid:
+        user["ttclid"] = resolved_ttclid
 
     ip = meta.get("ip")
     ua = meta.get("user_agent")
@@ -67,6 +76,8 @@ def _build_user(event: NormalizedEvent, ttclid: Optional[str] = None) -> dict:
 
     return user
 
+
+# ── Contents builder ──────────────────────────────────────────────────────────
 
 def _build_contents(event: NormalizedEvent) -> list[dict]:
     order = event.order
@@ -79,8 +90,8 @@ def _build_contents(event: NormalizedEvent) -> list[dict]:
             c["content_id"] = str(item.product_id)
         if item.name:
             c["content_name"] = item.name[:255]
-        c["quantity"]   = int(item.quantity or 1)
-        c["price"]      = float(item.price or 0)
+        c["quantity"] = int(item.quantity or 1)
+        c["price"]    = float(item.price or 0)
         contents.append(c)
     return contents
 
@@ -88,12 +99,11 @@ def _build_contents(event: NormalizedEvent) -> list[dict]:
 # ── Sender ────────────────────────────────────────────────────────────────────
 
 def _send(pixel_code: str, access_token: str, event_dict: dict, max_attempts: int = 3) -> tuple[bool, Optional[str]]:
-    """Wraps a single event dict into the v1.3 data-array envelope and POSTs it."""
+    """Wraps a single event dict in the v1.3 data-array envelope and POSTs it."""
     headers = {
         "Access-Token": access_token,
         "Content-Type": "application/json",
     }
-    # TikTok Events API v1.3 uses a `data` array wrapper, not a flat payload.
     body_out = {"pixel_code": pixel_code, "data": [event_dict]}
     delay = 1.0
     last_err: Optional[str] = None
@@ -138,7 +148,7 @@ def send_purchase(
     value_override: Optional[float] = None,
 ) -> tuple[bool, Optional[str]]:
     """
-    Send PlaceAnOrder event to TikTok Events API.
+    Send Purchase event to TikTok Events API.
     Returns (success, error_message).
 
     `value_override` — when set, sent as the conversion value (used for
@@ -162,16 +172,13 @@ def send_purchase(
     value = value_override if value_override is not None else float(order.total)
     currency = order.currency or "BRL"
 
+    # v1.3 structure: user and page are top-level, field is event_time (not timestamp)
     event_dict = {
         "event":      "Purchase",
         "event_id":   event_id,
-        "timestamp":  event_time,
-        "context": {
-            "user": _build_user(event, ttclid),
-            "page": {
-                "url": meta.get("page_url") or "",
-            },
-        },
+        "event_time": event_time,
+        "user":       _build_user(event, ttclid),
+        "page":       {"url": meta.get("page_url") or ""},
         "properties": {
             "currency":  currency,
             "value":     value,
@@ -230,17 +237,16 @@ def send_pixel_event(
             }]
         properties["value"] = float(meta.get("product_price") or 0)
     elif tiktok_event_name == "InitiateCheckout":
-        properties["value"]    = float(meta.get("cart_total") or 0)
+        properties["value"]     = float(meta.get("cart_total") or 0)
         properties["num_items"] = int(meta.get("item_count") or 0)
 
+    # v1.3 structure: user and page are top-level, field is event_time (not timestamp)
     event_dict = {
         "event":      tiktok_event_name,
         "event_id":   event_id,
-        "timestamp":  int(time.time()),
-        "context": {
-            "user": _build_user(event, ttclid),
-            "page": {"url": (event.page_url or meta.get("page_url") or "")},
-        },
+        "event_time": int(time.time()),
+        "user":       _build_user(event, ttclid),
+        "page":       {"url": (event.page_url or meta.get("page_url") or "")},
         "properties": properties,
     }
     return _send(pixel_code, access_token, event_dict)
