@@ -172,13 +172,15 @@ def send_purchase(
     value = value_override if value_override is not None else float(order.total)
     currency = order.currency or "BRL"
 
-    # v1.3 structure: user and page are top-level, field is event_time (not timestamp)
+    # v1.3 data-array format: event_source_id (pixel) and event_source go inside each item
     event_dict = {
-        "event":      "Purchase",
-        "event_id":   event_id,
-        "event_time": event_time,
-        "user":       _build_user(event, ttclid),
-        "page":       {"url": meta.get("page_url") or ""},
+        "event_source_id": pixel_code,
+        "event_source":    "web",
+        "event":           "Purchase",
+        "event_id":        event_id,
+        "event_time":      event_time,
+        "user":            _build_user(event, ttclid),
+        "page":            {"url": meta.get("page_url") or ""},
         "properties": {
             "currency":  currency,
             "value":     value,
@@ -240,13 +242,15 @@ def send_pixel_event(
         properties["value"]     = float(meta.get("cart_total") or 0)
         properties["num_items"] = int(meta.get("item_count") or 0)
 
-    # v1.3 structure: user and page are top-level, field is event_time (not timestamp)
+    # v1.3 data-array format: event_source_id (pixel) and event_source go inside each item
     event_dict = {
-        "event":      tiktok_event_name,
-        "event_id":   event_id,
-        "event_time": int(time.time()),
-        "user":       _build_user(event, ttclid),
-        "page":       {"url": (event.page_url or meta.get("page_url") or "")},
-        "properties": properties,
+        "event_source_id": pixel_code,
+        "event_source":    "web",
+        "event":           tiktok_event_name,
+        "event_id":        event_id,
+        "event_time":      int(time.time()),
+        "user":            _build_user(event, ttclid),
+        "page":            {"url": (event.page_url or meta.get("page_url") or "")},
+        "properties":      properties,
     }
     return _send(pixel_code, access_token, event_dict)
