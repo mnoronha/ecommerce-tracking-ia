@@ -11,9 +11,11 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from .api.v1 import router as public_api_router
+from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
 from .limiter import limiter
-from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pixel, setup, sync as sync_router
+from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, setup, sync as sync_router, tiktok_ads
 from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
@@ -32,6 +34,9 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(NoroPlatformError, noro_error_handler)
+from fastapi import HTTPException as _HTTPException
+app.add_exception_handler(_HTTPException, http_exception_handler)
 
 _STARTED_AT = datetime.now(timezone.utc)
 _JOB_RUNS: dict = {}   # job_id → {last_run, last_status} para o /health
@@ -294,6 +299,11 @@ app.include_router(sync_router.router)
 app.include_router(ai_visibility_router.router)
 app.include_router(merchant_center_router.router)
 app.include_router(content_router.router)
+app.include_router(tiktok_ads.router)
+app.include_router(pinterest_ads.router)
+
+# ── Noro Platform Public REST API (v1) ────────────────────────────────────────
+app.include_router(public_api_router)
 
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────

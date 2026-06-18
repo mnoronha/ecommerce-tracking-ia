@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
-import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store } from 'lucide-react'
+import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -22,11 +22,14 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/audiencias`,  label: 'Audiências',      icon: Layers,          gate: null },
     { href: `/clients/${clientId}/attribution`, label: 'Atribuição',      icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/journey`,     label: 'Jornada',         icon: GitBranch,       gate: null },
-    { href: `/clients/${clientId}/meta-ads`,     label: 'Meta Ads',        icon: TrendingUp,      gate: null },
+    { href: `/clients/${clientId}/meta-ads`,      label: 'Meta Ads',        icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/google-ads`,   label: 'Google Ads',      icon: TrendingUp,      gate: null },
+    { href: `/clients/${clientId}/tiktok-ads`,   label: 'TikTok Ads',      icon: TrendingUp,      gate: null },
+    { href: `/clients/${clientId}/pinterest-ads`, label: 'Pinterest Ads',  icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/ga4`,          label: 'GA4',             icon: BarChart2,       gate: null },
     { href: `/clients/${clientId}/ai-visibility`,    label: 'AI Visibility',   icon: BrainCircuit,    gate: null },
     { href: `/clients/${clientId}/merchant-center`,  label: 'Merchant Center', icon: Store,            gate: null },
+    { href: `/clients/${clientId}/content`,          label: 'Conteúdo IA',     icon: PenLine,          gate: null },
     { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA',  icon: Sparkles,        gate: 'creative_intelligence' },
     { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',   icon: FileText,        gate: 'ai_insights' },
     { href: `/clients/${clientId}/metas`,       label: 'Metas',           icon: Target,          gate: null },
