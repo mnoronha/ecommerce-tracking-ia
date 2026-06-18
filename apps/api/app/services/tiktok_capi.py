@@ -87,21 +87,24 @@ def _build_contents(event: NormalizedEvent) -> list[dict]:
 
 # ── Sender ────────────────────────────────────────────────────────────────────
 
-def _send(pixel_code: str, access_token: str, payload: dict, max_attempts: int = 3) -> tuple[bool, Optional[str]]:
+def _send(pixel_code: str, access_token: str, event_dict: dict, max_attempts: int = 3) -> tuple[bool, Optional[str]]:
+    """Wraps a single event dict into the v1.3 data-array envelope and POSTs it."""
     headers = {
         "Access-Token": access_token,
         "Content-Type": "application/json",
     }
+    # TikTok Events API v1.3 uses a `data` array wrapper, not a flat payload.
+    body_out = {"pixel_code": pixel_code, "data": [event_dict]}
     delay = 1.0
     last_err: Optional[str] = None
 
     for attempt in range(max_attempts):
         try:
-            resp = httpx.post(_TIKTOK_EVENTS_URL, json=payload, headers=headers, timeout=10.0)
+            resp = httpx.post(_TIKTOK_EVENTS_URL, json=body_out, headers=headers, timeout=10.0)
             body = resp.json()
             code = body.get("code", -1)
             if resp.status_code == 200 and code == 0:
-                logger.info("tiktok_capi sent Purchase for pixel %s — code=%s", pixel_code, code)
+                logger.info("tiktok_capi sent event for pixel %s — code=%s", pixel_code, code)
                 return True, None
             if 400 <= resp.status_code < 500:
                 err = f"HTTP {resp.status_code} code={code}: {body.get('message', '')[:200]}"
@@ -159,9 +162,8 @@ def send_purchase(
     value = value_override if value_override is not None else float(order.total)
     currency = order.currency or "BRL"
 
-    payload = {
-        "pixel_code": pixel_code,
-        "event":      "PlaceAnOrder",
+    event_dict = {
+        "event":      "Purchase",
         "event_id":   event_id,
         "timestamp":  event_time,
         "context": {
@@ -179,7 +181,7 @@ def send_purchase(
         },
     }
 
-    return _send(pixel_code, access_token, payload)
+    return _send(pixel_code, access_token, event_dict)
 
 
 # ── Funnel events ─────────────────────────────────────────────────────────────
@@ -231,8 +233,7 @@ def send_pixel_event(
         properties["value"]    = float(meta.get("cart_total") or 0)
         properties["num_items"] = int(meta.get("item_count") or 0)
 
-    payload = {
-        "pixel_code": pixel_code,
+    event_dict = {
         "event":      tiktok_event_name,
         "event_id":   event_id,
         "timestamp":  int(time.time()),
@@ -242,4 +243,4 @@ def send_pixel_event(
         },
         "properties": properties,
     }
-    return _send(pixel_code, access_token, payload)
+    return _send(pixel_code, access_token, event_dict)

@@ -210,10 +210,11 @@ def check_tiktok(access_token: Optional[str], pixel_code: Optional[str] = None) 
             return {"status": "invalid", "error": "empty response — token may be invalid"}
         body = r.json()
         code = body.get("code", -1)
-        # Auth errors → invalid token
-        if code in (40003, 40004, 40005):
+        # TikTok auth error codes: 40100=auth failed, 40101=expired, 40102=missing,
+        # 40103=revoked, 40104=empty. 40004=expired (legacy range).
+        if code in (40004, 40100, 40101, 40102, 40103, 40104):
             return {"status": "invalid", "error": body.get("message", f"auth error code={code}")[:200]}
-        # Any other code (including 40001 "no data") means auth passed → healthy
+        # Any other code (including 40001/40002 "no data/invalid pixel") means auth passed → healthy
         return {"status": "healthy"}
     except Exception as exc:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
