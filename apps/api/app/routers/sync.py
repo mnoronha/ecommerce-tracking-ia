@@ -250,10 +250,11 @@ async def trigger_monthly_report(
     force: bool = Query(False, description="Send even if health check would hold it"),
     year: Optional[int] = Query(None, description="Ano do relatório (padrão: mês anterior)"),
     month: Optional[int] = Query(None, description="Mês do relatório 1-12 (padrão: mês anterior)"),
+    online_only: bool = Query(False, description="True = exclui pedidos POS/loja física (só e-commerce)"),
 ):
     """Dispara o relatório mensal para um cliente imediatamente, enviando para o email informado.
     Quando year+month são fornecidos, gera o relatório para aquele período específico (útil para
-    relatórios de mês corrente para reuniões)."""
+    relatórios de mês corrente para reuniões). online_only=true exclui vendas de loja física."""
     sb = get_supabase()
     rows = (
         sb.table("clients")
@@ -283,6 +284,7 @@ async def trigger_monthly_report(
             client_full = _crypto.decrypt_client_secrets({**c, **_full})
             ctx = report_builder.build_monthly_context(
                 client_id=c["id"], client=client_full, year=year, month=month,
+                online_only=online_only,
             )
             html = report_renderer.render_monthly_email_html(ctx)
             # Injetar seção TikTok + Pinterest antes do footer
@@ -291,12 +293,13 @@ async def trigger_monthly_report(
                 _TIKTOK_PINTEREST_HTML + "\n      <!-- Footer -->",
             )
             periodo = f"{_MONTH_PT[month]}/{year}"
+            canal_tag = " · Somente E-commerce" if online_only else ""
             subject = (
-                f"📈 Relatório {periodo} (1–{datetime.now(timezone.utc).day:02d}/{month:02d}) · "
-                f"{c.get('name') or pixel_id}"
+                f"📈 Relatório {periodo} (1–{datetime.now(timezone.utc).day:02d}/{month:02d})"
+                f"{canal_tag} · {c.get('name') or pixel_id}"
             )
             email_service.send_email(to=to, subject=subject, html_body=html)
-            return {"sent_to": to, "held": False, "period": f"{year}-{month:02d}"}
+            return {"sent_to": to, "held": False, "period": f"{year}-{month:02d}", "online_only": online_only}
 
         result = await loop.run_in_executor(None, _build_custom)
         return {"client": c.get("name"), "type": "monthly", **result}

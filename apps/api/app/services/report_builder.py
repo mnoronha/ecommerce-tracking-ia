@@ -67,6 +67,9 @@ def _delta(atual, anterior, lower_better=False) -> tuple[str, str]:
 
 # ── DB queries ────────────────────────────────────────────────────────────────
 
+_OFFLINE_SOURCES = ["pos", "in_store", "offline", "draft_order", "draft"]
+
+
 def _window(year: int, month: int):
     """Returns (start_iso, end_iso) for the given month in UTC."""
     s = datetime(year, month, 1, 0, 0, 0, tzinfo=timezone.utc)
@@ -77,8 +80,8 @@ def _window(year: int, month: int):
     return s.isoformat(), e.isoformat()
 
 
-def _fetch_orders(sb, client_id: str, start: str, end: str) -> list[dict]:
-    r = (
+def _fetch_orders(sb, client_id: str, start: str, end: str, online_only: bool = False) -> list[dict]:
+    q = (
         sb.table("orders")
         .select("total_price, financial_status, is_first_purchase, utm_source, utm_medium, created_at, platform_order_number")
         .eq("client_id", client_id)
@@ -88,9 +91,10 @@ def _fetch_orders(sb, client_id: str, start: str, end: str) -> list[dict]:
         .lt("created_at", end)
         .not_.is_("platform_order_number", "null")
         .neq("platform_order_number", "")
-        .execute()
     )
-    return r.data or []
+    if online_only:
+        q = q.not_.in_("utm_source", _OFFLINE_SOURCES)
+    return q.execute().data or []
 
 
 def _fetch_spend(sb, client_id: str, start_date: str, end_date: str) -> dict:
@@ -114,8 +118,8 @@ def _fetch_spend(sb, client_id: str, start_date: str, end_date: str) -> dict:
     return out
 
 
-def _fetch_top_products(sb, client_id: str, start: str, end: str, limit=10) -> list[dict]:
-    r = (
+def _fetch_top_products(sb, client_id: str, start: str, end: str, limit=10, online_only: bool = False) -> list[dict]:
+    q = (
         sb.table("orders")
         .select("order_items(name, quantity, line_total)")
         .eq("client_id", client_id)
@@ -123,8 +127,10 @@ def _fetch_top_products(sb, client_id: str, start: str, end: str, limit=10) -> l
         .gt("total_price", 0)
         .gte("created_at", start)
         .lt("created_at", end)
-        .execute()
     )
+    if online_only:
+        q = q.not_.in_("utm_source", _OFFLINE_SOURCES)
+    r = q.execute()
     prod: dict = {}
     for o in (r.data or []):
         for it in (o.get("order_items") or []):
@@ -142,8 +148,8 @@ def _fetch_top_products(sb, client_id: str, start: str, end: str, limit=10) -> l
     return rows
 
 
-def _fetch_daily_revenue(sb, client_id: str, start: str, end: str) -> list[dict]:
-    r = (
+def _fetch_daily_revenue(sb, client_id: str, start: str, end: str, online_only: bool = False) -> list[dict]:
+    q = (
         sb.table("orders")
         .select("total_price, created_at")
         .eq("client_id", client_id)
@@ -151,8 +157,10 @@ def _fetch_daily_revenue(sb, client_id: str, start: str, end: str) -> list[dict]
         .gt("total_price", 0)
         .gte("created_at", start)
         .lt("created_at", end)
-        .execute()
     )
+    if online_only:
+        q = q.not_.in_("utm_source", _OFFLINE_SOURCES)
+    r = q.execute()
     daily: dict[str, float] = {}
     for o in (r.data or []):
         # Convert UTC to BRT (UTC-3) for date bucketing
@@ -1056,10 +1064,12 @@ def build_monthly_context(
     client: dict,
     year: int,
     month: int,
+    online_only: bool = False,
 ) -> dict:
     """
     Fetches all data and returns the full template context dict.
     client: dict with DB client fields.
+    online_only: when True, excludes POS/store orders (utm_source in pos/in_store/offline/draft).
     """
     sb = get_supabase()
 
@@ -1102,9 +1112,9 @@ def build_monthly_context(
             logger.warning("build_monthly_context: _fetch_orders failed: %s", exc)
             return []
 
-    orders_cur  = _safe_fetch_orders(sb, client_id, start, end)
-    orders_prev = _safe_fetch_orders(sb, client_id, prev_s, prev_e)
-    orders_yoy  = _safe_fetch_orders(sb, client_id, yoy_s, yoy_e)
+    orders_cur  = _safe_fetch_orders(sb, client_id, start, end, online_only=online_only)
+    orders_prev = _safe_fetch_orders(sb, client_id, prev_s, prev_e, online_only=online_only)
+    orders_yoy  = _safe_fetch_orders(sb, client_id, yoy_s, yoy_e, online_only=online_only)
     logger.info("build_monthly_context: orders cur=%d prev=%d yoy=%d", len(orders_cur), len(orders_prev), len(orders_yoy))
 
     def agg_orders(rows):
@@ -1160,7 +1170,7 @@ def build_monthly_context(
 
     # Daily revenue
     try:
-        daily_revenue = _fetch_daily_revenue(sb, client_id, start, end)
+        daily_revenue = _fetch_daily_revenue(sb, client_id, start, end, online_only=online_only)
     except Exception as exc:
         logger.warning("build_monthly_context: _fetch_daily_revenue failed: %s", exc)
         daily_revenue = []
@@ -1179,7 +1189,7 @@ def build_monthly_context(
 
     # Top products
     try:
-        top_products = _fetch_top_products(sb, client_id, start, end)
+        top_products = _fetch_top_products(sb, client_id, start, end, online_only=online_only)
     except Exception as exc:
         logger.warning("build_monthly_context: _fetch_top_products failed: %s", exc)
         top_products = []
