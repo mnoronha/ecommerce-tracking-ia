@@ -101,12 +101,17 @@ def _build_contents(event: NormalizedEvent) -> list[dict]:
 # ── Sender ────────────────────────────────────────────────────────────────────
 
 def _send(pixel_code: str, access_token: str, event_dict: dict, max_attempts: int = 3) -> tuple[bool, Optional[str]]:
-    """POSTs a single event to TikTok Events API v1.3 (data-array format)."""
+    """POSTs a single event to TikTok Events API v1.3 (data-array format).
+
+    TikTok renamed pixel_code → event_source_id (with event_source: "web").
+    The old pixel_code field is ignored by the backend and event_source_id
+    arrives as null → 40002 "not a valid string".
+    """
     headers = {
         "Access-Token": access_token,
         "Content-Type": "application/json",
     }
-    body_out = {"pixel_code": pixel_code, "data": [event_dict]}
+    body_out = {"event_source": "web", "event_source_id": pixel_code, "data": [event_dict]}
     delay = 1.0
     last_err: Optional[str] = None
 

@@ -228,7 +228,8 @@ async def tiktok_diagnose(pixel_id: str):
 
     event_id = hashlib.sha256(f"diag_{pixel_id}_{int(time.time())}".encode()).hexdigest()[:32]
     payload = {
-        "pixel_code": pixel_code,
+        "event_source":    "web",
+        "event_source_id": pixel_code,
         "data": [{
             "event":      "Purchase",
             "event_id":   event_id,
