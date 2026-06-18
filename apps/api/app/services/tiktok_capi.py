@@ -99,12 +99,13 @@ def _build_contents(event: NormalizedEvent) -> list[dict]:
 # ── Sender ────────────────────────────────────────────────────────────────────
 
 def _send(pixel_code: str, access_token: str, event_dict: dict, max_attempts: int = 3) -> tuple[bool, Optional[str]]:
-    """Wraps a single event dict in the v1.3 data-array envelope and POSTs it."""
+    """POSTs a single event to TikTok Events API v1.3 flat format."""
     headers = {
         "Access-Token": access_token,
         "Content-Type": "application/json",
     }
-    body_out = {"pixel_code": pixel_code, "data": [event_dict]}
+    # Flat format: pixel_code at top level, event fields inline (not data array)
+    body_out = {"pixel_code": pixel_code, **event_dict}
     delay = 1.0
     last_err: Optional[str] = None
 
@@ -172,15 +173,14 @@ def send_purchase(
     value = value_override if value_override is not None else float(order.total)
     currency = order.currency or "BRL"
 
-    # v1.3 data-array format: event_source_id (pixel) and event_source go inside each item
     event_dict = {
-        "event_source_id": pixel_code,
-        "event_source":    "web",
-        "event":           "Purchase",
-        "event_id":        event_id,
-        "event_time":      event_time,
-        "user":            _build_user(event, ttclid),
-        "page":            {"url": meta.get("page_url") or ""},
+        "event":     "Purchase",
+        "event_id":  event_id,
+        "timestamp": str(event_time),
+        "context": {
+            "user": _build_user(event, ttclid),
+            "page": {"url": meta.get("page_url") or ""},
+        },
         "properties": {
             "currency":  currency,
             "value":     value,
@@ -242,15 +242,14 @@ def send_pixel_event(
         properties["value"]     = float(meta.get("cart_total") or 0)
         properties["num_items"] = int(meta.get("item_count") or 0)
 
-    # v1.3 data-array format: event_source_id (pixel) and event_source go inside each item
     event_dict = {
-        "event_source_id": pixel_code,
-        "event_source":    "web",
-        "event":           tiktok_event_name,
-        "event_id":        event_id,
-        "event_time":      int(time.time()),
-        "user":            _build_user(event, ttclid),
-        "page":            {"url": (event.page_url or meta.get("page_url") or "")},
-        "properties":      properties,
+        "event":     tiktok_event_name,
+        "event_id":  event_id,
+        "timestamp": str(int(time.time())),
+        "context": {
+            "user": _build_user(event, ttclid),
+            "page": {"url": (event.page_url or meta.get("page_url") or "")},
+        },
+        "properties": properties,
     }
     return _send(pixel_code, access_token, event_dict)
