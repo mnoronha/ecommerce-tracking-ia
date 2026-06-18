@@ -24,10 +24,11 @@ from ..services import crypto
 
 logger = logging.getLogger(__name__)
 
-_GOOGLE_ADS_API = "https://googleads.googleapis.com/v21"
-_TOKEN_URL      = "https://oauth2.googleapis.com/token"
-_TIKTOK_REPORT  = "https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/"
-_META_INSIGHTS  = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
+_GOOGLE_ADS_API      = "https://googleads.googleapis.com/v21"
+_TOKEN_URL           = "https://oauth2.googleapis.com/token"
+_TIKTOK_REPORT       = "https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/"
+_META_INSIGHTS       = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
+_PINTEREST_ANALYTICS = "https://api.pinterest.com/v5/ad_accounts/{ad_account_id}/analytics"
 
 _token_cache: dict = {}
 
@@ -211,6 +212,48 @@ def _fetch_meta_spend(ad_account_id: str, access_token: str, target_date: date) 
         return None
 
 
+# ── Pinterest Ads spend ───────────────────────────────────────────────────────
+
+def _fetch_pinterest_spend(ad_account_id: str, access_token: str, target_date: date) -> Optional[dict]:
+    """
+    Query Pinterest Ads Analytics API v5 for account-level spend on target_date.
+    Returns dict with spend/impressions/clicks/conversions or None on failure.
+
+    Pinterest returns values in the account's currency (usually BRL for BR accounts).
+    SPEND_IN_DOLLAR field name is misleading — it's in account currency, not USD.
+    """
+    url     = _PINTEREST_ANALYTICS.format(ad_account_id=ad_account_id)
+    date_str = target_date.isoformat()
+    try:
+        resp = httpx.get(
+            url,
+            params={
+                "start_date":  date_str,
+                "end_date":    date_str,
+                "columns":     "SPEND_IN_DOLLAR,IMPRESSION_1,OUTBOUND_CLICK_1,TOTAL_CHECKOUT",
+                "granularity": "DAY",
+            },
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("pinterest_spend: HTTP %s for %s: %s", resp.status_code, ad_account_id, resp.text[:200])
+            return None
+        rows = resp.json()
+        if not rows:
+            return {"spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0}
+        row = rows[0]
+        return {
+            "spend":       round(float(row.get("SPEND_IN_DOLLAR") or 0), 2),
+            "impressions": int(row.get("IMPRESSION_1") or 0),
+            "clicks":      int(row.get("OUTBOUND_CLICK_1") or 0),
+            "conversions": round(float(row.get("TOTAL_CHECKOUT") or 0), 2),
+        }
+    except Exception as exc:
+        logger.warning("pinterest_spend: fetch failed for %s: %s", ad_account_id, exc)
+        return None
+
+
 # ── Upsert helper ─────────────────────────────────────────────────────────────
 
 def _upsert_spend(client_id: str, channel: str, target_date: date, metrics: dict) -> None:
@@ -248,7 +291,8 @@ def run_daily_spend_sync() -> None:
                 "id, pixel_id, "
                 "meta_ad_account_id, meta_access_token, "
                 "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
-                "tiktok_advertiser_id, tiktok_access_token"
+                "tiktok_advertiser_id, tiktok_access_token, "
+                "pinterest_ad_account_id, pinterest_access_token"
             )
             .eq("is_active", True)
             .execute()
@@ -296,6 +340,17 @@ def run_daily_spend_sync() -> None:
                 _upsert_spend(c["id"], "tiktok_ads", yesterday, metrics)
                 logger.info("spend_sync: tiktok_ads %s → R$%.2f", pixel, metrics["spend"])
 
+        # ── Pinterest ─────────────────────────────────────────────────────
+        if c.get("pinterest_ad_account_id") and c.get("pinterest_access_token"):
+            metrics = _fetch_pinterest_spend(
+                ad_account_id = c["pinterest_ad_account_id"],
+                access_token  = c["pinterest_access_token"],
+                target_date   = yesterday,
+            )
+            if metrics is not None:
+                _upsert_spend(c["id"], "pinterest_ads", yesterday, metrics)
+                logger.info("spend_sync: pinterest_ads %s → R$%.2f", pixel, metrics["spend"])
+
 
 # ── Historical backfill ───────────────────────────────────────────────────────
 
@@ -311,7 +366,8 @@ def backfill_spend_range(client_id: str, pixel_id: str, start_date: date, end_da
             "id, pixel_id, "
             "meta_ad_account_id, meta_access_token, "
             "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
-            "tiktok_advertiser_id, tiktok_access_token"
+            "tiktok_advertiser_id, tiktok_access_token, "
+            "pinterest_ad_account_id, pinterest_access_token"
         )
         .eq("id", client_id)
         .limit(1)
@@ -321,7 +377,7 @@ def backfill_spend_range(client_id: str, pixel_id: str, start_date: date, end_da
         return {"error": "cliente não encontrado"}
 
     c       = crypto.decrypt_client_secrets(client_row.data[0])
-    results = {"meta_ads": [], "google_ads": [], "tiktok_ads": [], "errors": []}
+    results = {"meta_ads": [], "google_ads": [], "tiktok_ads": [], "pinterest_ads": [], "errors": []}
     manager = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None
 
     current = start_date
@@ -351,6 +407,17 @@ def backfill_spend_range(client_id: str, pixel_id: str, start_date: date, end_da
             if m is not None:
                 _upsert_spend(client_id, "tiktok_ads", d, m)
                 results["tiktok_ads"].append({"date": d.isoformat(), "spend": m["spend"]})
+            else:
+                results["errors"].append(f"tiktok_ads {d}: fetch failed")
+
+        if c.get("pinterest_ad_account_id") and c.get("pinterest_access_token"):
+            m = _fetch_pinterest_spend(c["pinterest_ad_account_id"], c["pinterest_access_token"], d)
+            if m is not None:
+                _upsert_spend(client_id, "pinterest_ads", d, m)
+                results["pinterest_ads"].append({"date": d.isoformat(), "spend": m["spend"]})
+                logger.info("backfill: pinterest_ads %s %s → R$%.2f", pixel_id, d, m["spend"])
+            else:
+                results["errors"].append(f"pinterest_ads {d}: fetch failed")
 
         current += timedelta(days=1)
 

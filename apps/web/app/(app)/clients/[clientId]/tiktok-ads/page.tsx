@@ -17,13 +17,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Totals  { orders: number; revenue: number; avg_ticket: number }
+interface Totals  { orders: number; revenue: number; avg_ticket: number; spend: number; roas: number | null; cpa: number | null }
 interface DayRow  { date: string; orders: number; revenue: number }
 interface CampRow { campaign: string; orders: number; revenue: number; avg_ticket: number }
 interface Capi    { total: number; sent: number; failed: number; sent_pct: number }
 
 interface OverviewData {
-  has_data: boolean
+  has_data: boolean; has_spend: boolean
   start: string; end: string; prev_start: string; prev_end: string
   pixel_id: string
   totals: Totals; prev_totals: Totals; deltas: Record<string, number | null>
@@ -201,11 +201,15 @@ export default function TikTokAdsPage() {
           )}
 
           {/* KPI Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <KpiCard label="Pedidos TikTok"  value={t ? String(t.orders) : '—'}       delta={dlt.orders}     accent="cyan" />
-            <KpiCard label="Receita"         value={t ? fmt(t.revenue) : '—'}          delta={dlt.revenue}    accent="emerald" />
-            <KpiCard label="Ticket Médio"    value={t ? fmtDec(t.avg_ticket) : '—'}    delta={dlt.avg_ticket} accent="teal" />
-            <KpiCard label="CAPI Enviados"   value={capi ? String(capi.sent) : '—'}    sub={capi ? `de ${capi.total}` : undefined} />
+          <div className={`grid gap-3 ${data?.has_spend ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'}`}>
+            <KpiCard label="Pedidos TikTok"  value={t ? String(t.orders) : '—'}        delta={dlt.orders}     accent="cyan" />
+            <KpiCard label="Receita"         value={t ? fmt(t.revenue) : '—'}           delta={dlt.revenue}    accent="emerald" />
+            <KpiCard label="Ticket Médio"    value={t ? fmtDec(t.avg_ticket) : '—'}     delta={dlt.avg_ticket} accent="teal" />
+            {data?.has_spend && <>
+              <KpiCard label="Investimento"  value={t ? fmt(t.spend) : '—'}             delta={dlt.spend}      accent="indigo" />
+              <KpiCard label="ROAS"          value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'} delta={dlt.roas} accent={t?.roas != null && t.roas >= 3 ? 'emerald' : t?.roas != null && t.roas >= 1.5 ? 'teal' : 'orange'} />
+              <KpiCard label="CPA"           value={t?.cpa != null ? fmtDec(t.cpa) : '—'} delta={dlt.cpa != null ? -(dlt.cpa) : null} />
+            </>}
             <KpiCard
               label="Taxa CAPI"
               value={capi ? `${capi.sent_pct.toFixed(1)}%` : '—'}
@@ -341,16 +345,17 @@ export default function TikTokAdsPage() {
             </div>
           </div>
 
-          {/* Spend note */}
-          <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-5 text-xs text-slate-400 leading-relaxed">
-            <p className="text-cyan-400 font-semibold text-sm mb-2">Sem dados de investimento</p>
-            <p>
-              ROAS e CPA não estão disponíveis porque a sincronização com a API do TikTok Ads não está configurada.
-              Os dados acima mostram apenas atribuição por UTM (pedidos que vieram de cliques nos anúncios do TikTok)
-              e a cobertura do TikTok Events API (CAPI) para otimização de lances.
-              Para ativar ROAS/CPA, é necessário conectar a conta de anúncios via API.
-            </p>
-          </div>
+          {/* Spend note (only when no spend data) */}
+          {!data?.has_spend && (
+            <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-5 text-xs text-slate-400 leading-relaxed">
+              <p className="text-cyan-400 font-semibold text-sm mb-2">Sem dados de investimento</p>
+              <p>
+                ROAS e CPA não estão disponíveis ainda. Configure o <strong className="text-slate-300">TikTok Advertiser ID</strong> nas
+                Configurações do cliente para ativar a sincronização de spend via TikTok Marketing API.
+                Os dados acima mostram atribuição por UTM e cobertura do CAPI.
+              </p>
+            </div>
+          )}
 
         </div>
       )}

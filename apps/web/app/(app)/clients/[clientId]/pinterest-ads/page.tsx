@@ -17,13 +17,13 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Totals  { orders: number; revenue: number; avg_ticket: number }
+interface Totals  { orders: number; revenue: number; avg_ticket: number; spend: number; roas: number | null; cpa: number | null }
 interface DayRow  { date: string; orders: number; revenue: number }
 interface CampRow { campaign: string; orders: number; revenue: number; avg_ticket: number }
 interface Capi    { total: number; sent: number; failed: number; sent_pct: number }
 
 interface OverviewData {
-  has_data: boolean
+  has_data: boolean; has_spend: boolean
   start: string; end: string; prev_start: string; prev_end: string
   tag_id: string
   totals: Totals; prev_totals: Totals; deltas: Record<string, number | null>
@@ -186,11 +186,15 @@ export default function PinterestAdsPage() {
           )}
 
           {/* KPI Strip */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <KpiCard label="Pedidos Pinterest" value={t ? String(t.orders) : '—'}       delta={dlt.orders}     accent="rose" />
-            <KpiCard label="Receita"           value={t ? fmt(t.revenue) : '—'}          delta={dlt.revenue}    accent="emerald" />
-            <KpiCard label="Ticket Médio"      value={t ? fmtDec(t.avg_ticket) : '—'}    delta={dlt.avg_ticket} accent="teal" />
-            <KpiCard label="CAPI Enviados"     value={capi ? String(capi.sent) : '—'}    sub={capi ? `de ${capi.total}` : undefined} />
+          <div className={`grid gap-3 ${data?.has_spend ? 'grid-cols-2 sm:grid-cols-4 lg:grid-cols-7' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'}`}>
+            <KpiCard label="Pedidos Pinterest" value={t ? String(t.orders) : '—'}        delta={dlt.orders}     accent="rose" />
+            <KpiCard label="Receita"           value={t ? fmt(t.revenue) : '—'}           delta={dlt.revenue}    accent="emerald" />
+            <KpiCard label="Ticket Médio"      value={t ? fmtDec(t.avg_ticket) : '—'}     delta={dlt.avg_ticket} accent="teal" />
+            {data?.has_spend && <>
+              <KpiCard label="Investimento"    value={t ? fmt(t.spend) : '—'}             delta={dlt.spend}      accent="red" />
+              <KpiCard label="ROAS"            value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'} delta={dlt.roas} accent={t?.roas != null && t.roas >= 3 ? 'emerald' : t?.roas != null && t.roas >= 1.5 ? 'teal' : 'rose'} />
+              <KpiCard label="CPA"             value={t?.cpa != null ? fmtDec(t.cpa) : '—'} delta={dlt.cpa != null ? -(dlt.cpa) : null} />
+            </>}
             <KpiCard
               label="Taxa CAPI"
               value={capi ? `${capi.sent_pct.toFixed(1)}%` : '—'}
@@ -322,16 +326,17 @@ export default function PinterestAdsPage() {
             </div>
           </div>
 
-          {/* Spend note */}
-          <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-5 text-xs text-slate-400 leading-relaxed">
-            <p className="text-rose-400 font-semibold text-sm mb-2">Sem dados de investimento</p>
-            <p>
-              ROAS e CPA não estão disponíveis porque a sincronização com a API do Pinterest Ads não está configurada.
-              Os dados acima mostram atribuição por UTM (pedidos que vieram de cliques nos pins) e a cobertura
-              do Pinterest Conversions API para otimização de lances.
-              Para ativar ROAS/CPA, é necessário conectar a conta de anúncios via API.
-            </p>
-          </div>
+          {/* Spend note (only when no spend data) */}
+          {!data?.has_spend && (
+            <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-5 text-xs text-slate-400 leading-relaxed">
+              <p className="text-rose-400 font-semibold text-sm mb-2">Sem dados de investimento</p>
+              <p>
+                ROAS e CPA não estão disponíveis ainda. O spend sync do Pinterest Ads está ativo — ele sincronizará
+                automaticamente quando a conta de anúncios estiver configurada (campos <strong className="text-slate-300">Pinterest Ad Account ID</strong> e
+                token OAuth nas Configurações do cliente).
+              </p>
+            </div>
+          )}
 
         </div>
       )}

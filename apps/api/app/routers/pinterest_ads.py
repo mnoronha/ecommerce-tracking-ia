@@ -41,17 +41,21 @@ def _safe_delta(curr: float, prev: float) -> Optional[float]:
     return None
 
 
-def _agg(orders: list[dict]) -> dict:
+def _agg(orders: list[dict], spend: float = 0.0) -> dict:
     n   = len(orders)
     rev = sum(float(o.get("total_price") or 0) for o in orders)
     return {
         "orders":     n,
         "revenue":    round(rev, 2),
         "avg_ticket": round(rev / n, 2) if n else 0.0,
+        "spend":      round(spend, 2),
+        "roas":       round(rev / spend, 2) if spend > 0 else None,
+        "cpa":        round(spend / n, 2)   if spend > 0 and n > 0 else None,
     }
 
 
-def _daily(orders: list[dict]) -> list[dict]:
+def _daily(orders: list[dict], spend_rows: list[dict]) -> list[dict]:
+    spend_by: dict[str, float] = {r["date"]: float(r.get("spend") or 0) for r in spend_rows}
     by: dict[str, dict] = {}
     for o in orders:
         d = str(o["created_at"])[:10]
@@ -59,9 +63,16 @@ def _daily(orders: list[dict]) -> list[dict]:
             by[d] = {"date": d, "orders": 0, "revenue": 0.0}
         by[d]["orders"]  += 1
         by[d]["revenue"] += float(o.get("total_price") or 0)
-    for v in by.values():
-        v["revenue"] = round(v["revenue"], 2)
-    return sorted(by.values(), key=lambda x: x["date"])
+    all_dates = set(by.keys()) | set(spend_by.keys())
+    result = []
+    for d in sorted(all_dates):
+        row = by.get(d, {"date": d, "orders": 0, "revenue": 0.0})
+        row["revenue"] = round(row["revenue"], 2)
+        sp = spend_by.get(d, 0.0)
+        row["spend"] = round(sp, 2)
+        row["roas"]  = round(row["revenue"] / sp, 2) if sp > 0 and row["revenue"] > 0 else None
+        result.append(row)
+    return result
 
 
 def _campaigns(orders: list[dict]) -> list[dict]:
@@ -125,12 +136,32 @@ async def pinterest_overview(
     curr  = _q(d_start,    end_excl)
     prev  = _q(prev_start, prev_end_excl)
 
-    totals      = _agg(curr)
-    prev_totals = _agg(prev)
+    # ── Ad spend from ad_spend table ─────────────────────────────────────────
+    def _spend_rows(s: date, e_excl: str) -> list[dict]:
+        return (
+            sb.table("ad_spend")
+            .select("date, spend, impressions, clicks, conversions")
+            .eq("client_id", client_uuid)
+            .eq("channel",   "pinterest_ads")
+            .gte("date", s.isoformat())
+            .lt("date",  e_excl)
+            .execute()
+        ).data or []
+
+    curr_spend = _spend_rows(d_start,    end_excl)
+    prev_spend = _spend_rows(prev_start, prev_end_excl)
+
+    total_spend      = sum(float(r.get("spend") or 0) for r in curr_spend)
+    prev_total_spend = sum(float(r.get("spend") or 0) for r in prev_spend)
+
+    totals      = _agg(curr, total_spend)
+    prev_totals = _agg(prev, prev_total_spend)
     deltas = {
         "orders":     _safe_delta(totals["orders"],     prev_totals["orders"]),
         "revenue":    _safe_delta(totals["revenue"],    prev_totals["revenue"]),
         "avg_ticket": _safe_delta(totals["avg_ticket"], prev_totals["avg_ticket"]),
+        "spend":      _safe_delta(total_spend,          prev_total_spend),
+        "roas":       _safe_delta(totals["roas"] or 0,  prev_totals["roas"] or 0) if (totals["roas"] and prev_totals["roas"]) else None,
     }
 
     # ── CAPI health — all paid online orders in period ────────────────────────
@@ -182,7 +213,8 @@ async def pinterest_overview(
         "totals":      totals,
         "prev_totals": prev_totals,
         "deltas":      deltas,
-        "daily":       _daily(curr),
+        "has_spend":   total_spend > 0,
+        "daily":       _daily(curr, curr_spend),
         "campaigns":   _campaigns(curr),
         "capi": {
             "total":    capi_total,
