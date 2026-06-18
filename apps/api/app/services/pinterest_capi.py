@@ -103,12 +103,19 @@ def _build_user_data(event: NormalizedEvent) -> dict:
 
 
 def _price_float(val) -> float:
-    """Convert any price-like value to a clean float rounded to 2 decimal places.
-    Pinterest v5 expects numeric types for value and item_price fields."""
+    """Convert any price-like value to float. Pinterest v5 requires float for item_price."""
     try:
         return round(float(val or 0), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _price_str(val) -> str:
+    """Convert any price-like value to string. Pinterest v5 requires string for value."""
+    try:
+        return str(round(float(val or 0), 2))
+    except (TypeError, ValueError):
+        return "0.0"
 
 
 def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
@@ -117,9 +124,8 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
     custom: dict = {"currency": "BRL"}
 
     if pin_event_name == "checkout" and event.order:
-        # Pinterest v5 API requires value as a number (float) when contents is present.
-        # Sending as string causes 400 "not of type 'string'" when contents array is non-empty.
-        custom["value"] = _price_float(event.order.total)
+        # Pinterest v5: value must be a string ("12.99"), item_price must be a float (12.99).
+        custom["value"] = _price_str(event.order.total)
         custom["order_id"] = str(event.order.id)
         if event.order.items:
             custom["num_items"] = sum(int(i.quantity or 1) for i in event.order.items)
@@ -145,7 +151,7 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
             "item_name":  meta.get("product_name", "")[:255],
         }]
     if meta.get("cart_total") or meta.get("product_price"):
-        custom["value"] = _price_float(meta.get("cart_total") or meta.get("product_price"))
+        custom["value"] = _price_str(meta.get("cart_total") or meta.get("product_price"))
     if meta.get("item_count"):
         custom["num_items"] = int(meta["item_count"])
 
@@ -227,7 +233,7 @@ def send_purchase(
 
     obj = _build_event_obj(event, "checkout", event_id, tag_id)
     if value_override is not None:
-        obj["custom_data"]["value"] = _price_float(value_override)
+        obj["custom_data"]["value"] = _price_str(value_override)
 
     return _send(ad_account_id, access_token, {"data": [obj]})
 
