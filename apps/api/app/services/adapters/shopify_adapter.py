@@ -456,6 +456,7 @@ class ShopifyAdapter(BaseAdapter):
                 "ga_client_id":      nattr.get("_gcid"),
                 "ttclid":            nattr.get("_ettc"),
                 "ttp":               nattr.get("_ttp"),
+                "epik":              nattr.get("_epik"),
                 # Facebook Login ID & Date of Birth — improves Meta CAPI EMQ (+8% and +6%)
                 "facebook_login":    nattr.get("_fblogin"),
                 "date_of_birth":     nattr.get("_dob"),

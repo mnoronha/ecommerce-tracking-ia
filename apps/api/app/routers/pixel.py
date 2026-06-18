@@ -143,6 +143,7 @@ class PixelEventRequest(BaseModel):
     gclid:        Optional[str] = None  # Google click ID (gclid URL param)
     ttclid:       Optional[str] = None  # TikTok click ID (ttclid URL param)
     ttp:          Optional[str] = None  # TikTok browser ID (_ttp cookie, set by TikTok pixel)
+    epik:         Optional[str] = None  # Pinterest click ID (?epik= URL param)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -175,6 +176,7 @@ def _build_normalized(
             "gclid":        data.gclid,
             "ttclid":       data.ttclid,
             "ttp":          data.ttp,
+            "epik":         data.epik,
         },
     )
 
@@ -310,6 +312,7 @@ async def receive_pixel_event(
         ga_client_id=body.ga_client_id,
         ttclid=body.ttclid,
         ttp=body.ttp,
+        epik=body.epik,
     )
     writer.write_tracking_event(client_uuid, visitor_uuid, event)
     writer.write_cart_event(client_uuid, visitor_uuid, event)

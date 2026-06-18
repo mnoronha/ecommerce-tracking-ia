@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v3.7 + TikTok pixel + _ttp CAPI
+  Ecommerce Tracking IA — Shopify Snippet  v3.8 + Pinterest Tag + TikTok pixel
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -58,6 +58,8 @@
   var GOOGLE_ADS_AW_ID  = '';
   // TikTok Pixel — deixa '' para desabilitar
   var TIKTOK_PIXEL_ID   = 'D8Q3UBJC77U2I8M6LR50';
+  // Pinterest Tag — deixa '' para desabilitar
+  var PINTEREST_TAG_ID  = '2613108888112';
 
   // ── Constantes ──────────────────────────────────────────────────────────────
   var COOKIE_VISITOR  = '_etv';
@@ -180,6 +182,14 @@
   }
 
   // ── TikTok identifiers ────────────────────────────────────────────────────────
+  // ── Pinterest identifiers ─────────────────────────────────────────────────────
+  function getEpik() {
+    var fresh = (location.search.match(/[?&]epik=([^&#]*)/) || [])[1];
+    if (fresh) { try { fresh = decodeURIComponent(fresh); } catch(e) {} }
+    if (fresh && fresh.length >= 6) { setCookie('_epik', fresh, 90); return fresh; }
+    return getCookie('_epik') || null;
+  }
+
   function getTtclid() {
     var fresh = (location.search.match(/[?&]ttclid=([^&#]*)/) || [])[1];
     if (fresh) { try { fresh = decodeURIComponent(fresh); } catch(e) {} }
@@ -233,7 +243,25 @@
     }
   }
 
-  // ── Map nosso event_type → nome do evento padrão Meta ──────────────────────
+  // ── Maps de evento para cada plataforma browser-side ─────────────────────────
+  var PIN_EVENT_MAP = {
+    'pageview':         'pagevisit',
+    'product_viewed':   'pagevisit',
+    'add_to_cart':      'addtocart',
+    'checkout_started': 'checkout'
+  };
+
+  function buildPinParams(eventType, extra) {
+    extra = extra || {};
+    if (eventType === 'product_viewed' || eventType === 'add_to_cart') {
+      return { line_items: [{ product_id: String(extra.product_id || ''), product_name: extra.product_name || '', product_price: Number(extra.product_price || 0) }] };
+    }
+    if (eventType === 'checkout_started') {
+      return { value: Number(extra.cart_total || 0), currency: 'BRL', order_quantity: Number(extra.item_count || 0) };
+    }
+    return {};
+  }
+
   var META_EVENT_MAP = {
     'pageview':         'PageView',
     'product_viewed':   'ViewContent',
@@ -295,6 +323,7 @@
       gclid:        getGclid(),
       ttclid:       getTtclid(),
       ttp:          getTtp(),
+      epik:         getEpik(),
       metadata:     extra || {}
     });
 
@@ -304,6 +333,12 @@
       try {
         w.fbq('track', metaName, buildMetaParams(eventType, extra), { eventID: eventId });
       } catch(e) {}
+    }
+
+    // Browser-side Pinterest Tag
+    var pinName = PIN_EVENT_MAP[eventType];
+    if (pinName && w.pintrk) {
+      try { w.pintrk('track', pinName, buildPinParams(eventType, extra)); } catch(e) {}
     }
   }
 
@@ -330,6 +365,7 @@
       '_wbraid': getWbraid() || '',
       '_ettc':   getTtclid() || '',
       '_ttp':    getTtp()    || '',
+      '_epik':   getEpik()   || '',
       '_fblogin': getCookie('_fblogin') || '',
       '_dob':    getCookie('_dob') || '',
       '_utm_source':   utm.source   || '',
@@ -397,6 +433,25 @@
       ttq.load(TIKTOK_PIXEL_ID);
       ttq.page();
     }(w,d,'ttq');
+  }
+
+  // ── Pinterest Tag base ────────────────────────────────────────────────────────
+  // Carrega o Pinterest Tag (browser pixel). Seta `_epik` para CAPI matching.
+  // pintrk('load') com enhanced_match vazio — email é preenchido em checkout
+  // quando disponível via Shopify.customer. Dispara 'page' automático.
+  if (PINTEREST_TAG_ID) {
+    !function(e){
+      if(!w.pintrk){w.pintrk=function(){w.pintrk.queue.push(Array.prototype.slice.call(arguments));};
+      var n=w.pintrk;n.queue=[];n.version='3.0';
+      var t=d.createElement('script');t.async=!0;t.src=e;
+      var r=d.getElementsByTagName('script')[0];r.parentNode.insertBefore(t,r);}
+    }('https://s.pinimg.com/ct/core.js');
+    {% if customer %}
+    w.pintrk('load', PINTEREST_TAG_ID, { em: {{ customer.email | json }} });
+    {% else %}
+    w.pintrk('load', PINTEREST_TAG_ID);
+    {% endif %}
+    w.pintrk('page');
   }
 
   // ── Google Ads remarketing snippet (minimal) ─────────────────────────────────
@@ -671,12 +726,27 @@
       gclid:        getGclid(),
       ttclid:       getTtclid(),
       ttp:          getTtp(),
+      epik:         getEpik(),
       metadata:     extra || {}
     });
     var metaName = META_EVENT_MAP[eventType];
     if (metaName && w.fbq) {
       try {
         w.fbq('track', metaName, buildMetaParams(eventType, extra), { eventID: eventId });
+      } catch(e) {}
+    }
+    // Pinterest Purchase event
+    if (eventType === 'purchase' && w.pintrk) {
+      try {
+        w.pintrk('track', 'checkout', {
+          value:          Number((extra || {}).value || 0),
+          currency:       (extra || {}).currency || 'BRL',
+          order_id:       String((extra || {}).order_id || ''),
+          order_quantity: ((extra || {}).items || []).length || 1,
+          line_items:     ((extra || {}).items || []).map(function(it) {
+            return { product_id: String(it.product_id || ''), product_name: it.name || '', product_price: Number(it.price || 0), product_quantity: Number(it.quantity || 1) };
+          })
+        });
       } catch(e) {}
     }
   }

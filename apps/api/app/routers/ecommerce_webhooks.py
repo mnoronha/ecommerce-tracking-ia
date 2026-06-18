@@ -816,6 +816,7 @@ async def receive_webhook(
         ga_client_id=meta.get("ga_client_id"),
         ttclid=meta.get("ttclid"),
         ttp=meta.get("ttp"),
+        epik=meta.get("epik"),
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)

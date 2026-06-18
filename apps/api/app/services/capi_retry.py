@@ -73,7 +73,8 @@ def _build_event(order: dict, visitor: Optional[dict]) -> NormalizedEvent:
     if visitor:
         if visitor.get("fbp") and not metadata.get("fbp"): metadata["fbp"] = visitor["fbp"]
         if visitor.get("fbc") and not metadata.get("fbc"): metadata["fbc"] = visitor["fbc"]
-        if visitor.get("ttp"):                             metadata["ttp"] = visitor["ttp"]
+        if visitor.get("ttp"):                             metadata["ttp"]  = visitor["ttp"]
+        if visitor.get("epik"):                            metadata["epik"] = visitor["epik"]
 
     return NormalizedEvent(
         event_id=f"retry_{order['id']}",
@@ -157,7 +158,7 @@ def retry_failed_capi() -> None:
             if order.get("visitor_id"):
                 v_row = (
                     sb.table("visitors")
-                    .select("fbp, fbc, ga_client_id, ttclid, ttp")
+                    .select("fbp, fbc, ga_client_id, ttclid, ttp, epik")
                     .eq("id", order["visitor_id"])
                     .limit(1)
                     .execute()
@@ -300,7 +301,7 @@ def retry_failed_tiktok() -> None:
             if order.get("visitor_id"):
                 v_row = (
                     sb.table("visitors")
-                    .select("ttclid, ttp")
+                    .select("ttclid, ttp, epik")
                     .eq("id", order["visitor_id"])
                     .limit(1)
                     .execute()

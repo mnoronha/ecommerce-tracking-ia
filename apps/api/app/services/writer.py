@@ -93,10 +93,11 @@ def upsert_visitor_by_cookie(
     ga_client_id: Optional[str] = None,
     ttclid: Optional[str] = None,
     ttp: Optional[str] = None,
+    epik: Optional[str] = None,
 ) -> Optional[str]:
     """
     Upsert visitor keyed on (client_id, visitor_id).
-    Also persists gclid/fbclid/ttclid/ttp for Google Ads / Meta / TikTok attribution.
+    Also persists gclid/fbclid/ttclid/ttp/epik for Google Ads / Meta / TikTok / Pinterest attribution.
     Returns the visitor UUID or None on failure.
     """
     if not visitor_cookie_id:
@@ -105,7 +106,7 @@ def upsert_visitor_by_cookie(
         sb = get_supabase()
         existing = (
             sb.table("visitors")
-            .select("id,total_pageviews,gclid,fbclid,fbp,fbc,cart_token,ga_client_id,ttclid,ttp,utm_history")
+            .select("id,total_pageviews,gclid,fbclid,fbp,fbc,cart_token,ga_client_id,ttclid,ttp,epik,utm_history")
             .eq("client_id", client_uuid)
             .eq("visitor_id", visitor_cookie_id)
             .limit(1)
@@ -126,6 +127,7 @@ def upsert_visitor_by_cookie(
             if ga_client_id and not row.get("ga_client_id"): update["ga_client_id"] = ga_client_id
             if ttclid       and not row.get("ttclid"):       update["ttclid"]       = ttclid
             if ttp          and not row.get("ttp"):          update["ttp"]          = ttp
+            if epik         and not row.get("epik"):         update["epik"]         = epik
             # Append to utm_history for multi-touch attribution
             if utm_source:
                 history = row.get("utm_history") or []
@@ -162,6 +164,7 @@ def upsert_visitor_by_cookie(
         if ga_client_id: insert_row["ga_client_id"] = ga_client_id
         if ttclid:       insert_row["ttclid"]       = ttclid
         if ttp:          insert_row["ttp"]          = ttp
+        if epik:         insert_row["epik"]         = epik
 
         insert_result = sb.table("visitors").insert(insert_row).execute()
         if insert_result and insert_result.data:
@@ -185,6 +188,7 @@ def upsert_visitor_by_email(
     ga_client_id: Optional[str] = None,
     ttclid: Optional[str] = None,
     ttp: Optional[str] = None,
+    epik: Optional[str] = None,
 ) -> Optional[str]:
     """
     Find or create a visitor from an order's customer email/phone.
@@ -235,6 +239,7 @@ def upsert_visitor_by_email(
                 if ga_client_id and not row.get("ga_client_id"): update["ga_client_id"] = ga_client_id
                 if ttclid and not row.get("ttclid"):             update["ttclid"]       = ttclid
                 if ttp and not row.get("ttp"):                   update["ttp"]          = ttp
+                if epik and not row.get("epik"):                 update["epik"]         = epik
                 sb.table("visitors").update(update).eq("id", row["id"]).execute()
                 logger.debug("visitor %s matched by _etv cookie", row["id"])
                 return row["id"]
@@ -261,6 +266,7 @@ def upsert_visitor_by_email(
                 if ga_client_id and not row.get("ga_client_id"): update["ga_client_id"] = ga_client_id
                 if ttclid and not row.get("ttclid"):             update["ttclid"]       = ttclid
                 if ttp and not row.get("ttp"):                   update["ttp"]          = ttp
+                if epik and not row.get("epik"):                 update["epik"]         = epik
                 sb.table("visitors").update(update).eq("id", row["id"]).execute()
                 return row["id"]
 
@@ -310,6 +316,7 @@ def upsert_visitor_by_email(
         if cart_token:   insert_row["cart_token"]   = cart_token
         if ttclid:       insert_row["ttclid"]       = ttclid
         if ttp:          insert_row["ttp"]          = ttp
+        if epik:         insert_row["epik"]         = epik
         insert_result = sb.table("visitors").insert(insert_row).execute()
         if insert_result and insert_result.data:
             return insert_result.data[0]["id"]
