@@ -114,6 +114,90 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
             "skipped_no_identifiers": skipped, "sample_errors": errors}
 
 
+@router.post("/{pixel_id}/tiktok/backfill", summary="Reenviar conversões pagas recentes ao TikTok Events API")
+async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
+    """
+    Re-sends paid orders to TikTok Events API that were never delivered
+    (e.g. while the integration was being configured). Targets paid orders
+    in the last `hours` where tiktok_sent is not true.
+    TikTok deduplicates by event_id, so re-sending is safe.
+    """
+    from datetime import datetime, timezone, timedelta
+    from ..services import tiktok_capi
+    from ..services.capi_retry import _build_event
+
+    sb = get_supabase()
+    cli = (
+        sb.table("clients")
+        .select("id, tiktok_pixel_id, tiktok_access_token")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (cli and cli.data):
+        raise HTTPException(404, "Client not found")
+    c = crypto.decrypt_client_secrets(cli.data[0])
+    if not (c.get("tiktok_pixel_id") and c.get("tiktok_access_token")):
+        raise HTTPException(400, "TikTok not fully configured for this client")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+    orders = (
+        sb.table("orders")
+        .select(
+            "id, client_id, platform_order_id, platform_order_number, "
+            "platform_source, email, phone, first_name, last_name, "
+            "total_price, currency, financial_status, "
+            "visitor_id, shipping_country, shipping_state, shipping_city, zip_code, "
+            "browser_ip, browser_ua"
+        )
+        .eq("client_id", c["id"])
+        .eq("financial_status", "paid")
+        .gt("total_price", 0)
+        .neq("tiktok_sent", True)
+        .or_("utm_source.is.null,utm_source.not.in.(pos,draft)")
+        .gte("created_at", cutoff)
+        .order("created_at", desc=True)
+        .limit(min(limit, 500))
+        .execute()
+    ).data or []
+
+    sent = failed = 0
+    errors: list[str] = []
+    for o in orders:
+        visitor = None
+        if o.get("visitor_id"):
+            v = (
+                sb.table("visitors")
+                .select("fbp, fbc, ga_client_id, ttclid, gclid")
+                .eq("id", o["visitor_id"]).limit(1).execute()
+            ).data
+            if v:
+                visitor = v[0]
+
+        ttclid = (visitor or {}).get("ttclid")
+        event = _build_event(o, visitor)
+        ok, err = tiktok_capi.send_purchase(
+            pixel_code=c["tiktok_pixel_id"],
+            access_token=c["tiktok_access_token"],
+            event=event,
+            ttclid=ttclid,
+        )
+        upd: dict = {"tiktok_sent": ok}
+        if ok:
+            upd["tiktok_sent_at"]   = datetime.now(timezone.utc).isoformat()
+            upd["tiktok_last_error"] = None
+            sent += 1
+        else:
+            upd["tiktok_last_error"] = (err or "unknown")[:500]
+            failed += 1
+            if err and len(errors) < 3:
+                errors.append(err[:200])
+        try:
+            sb.table("orders").update(upd).eq("id", o["id"]).execute()
+        except Exception:
+            pass
+
+    return {"scanned": len(orders), "sent": sent, "failed": failed, "sample_errors": errors}
+
+
 @router.get("/{pixel_id}/google/conversion-actions",
             summary="Listar conversion actions do Google Ads (diagnóstico)")
 async def google_conversion_actions(pixel_id: str):
@@ -273,7 +357,7 @@ async def probe_one(pixel_id: str, platform: str):
             client.get("ga4_api_secret"),
         )
     elif platform == "tiktok":
-        result = integrations_health.check_tiktok(client.get("tiktok_access_token"))
+        result = integrations_health.check_tiktok(client.get("tiktok_access_token"), client.get("tiktok_pixel_id"))
     elif platform == "pinterest":
         result = integrations_health.check_pinterest(
             client.get("pinterest_ad_account_id"),

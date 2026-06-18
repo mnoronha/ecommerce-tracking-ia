@@ -185,19 +185,35 @@ def check_ga4(measurement_id: Optional[str], api_secret: Optional[str]) -> dict:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
 
 
-def check_tiktok(access_token: Optional[str]) -> dict:
-    """Calls /oauth2/access_token_info/ — TikTok's debug endpoint."""
+def check_tiktok(access_token: Optional[str], pixel_code: Optional[str] = None) -> dict:
+    """Validates a TikTok Events API Business Token.
+
+    Uses the Events API with an empty data array — the correct validation method for
+    Business tokens (the /oauth2/access_token_info/ endpoint only accepts OAuth2 tokens
+    and returns an empty body for Business tokens, causing JSONDecodeError).
+
+    Expected outcome when token is valid: TikTok returns code 40001 (empty data array)
+    or similar validation error — which confirms the token authenticated successfully.
+    Auth errors (40003/40004) indicate an invalid or expired token.
+    """
     if not access_token:
         return {"status": "unknown", "error": "no token configured"}
+    _pixel = pixel_code or "HEALTH_CHECK"
     try:
         r = httpx.post(
-            "https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token_info/",
-            json={"access_token": access_token},
+            "https://business-api.tiktok.com/open_api/v1.3/event/track/",
+            headers={"Access-Token": access_token, "Content-Type": "application/json"},
+            json={"pixel_code": _pixel, "data": []},
             timeout=_TIMEOUT,
         )
+        if not r.text:
+            return {"status": "invalid", "error": "empty response — token may be invalid"}
         body = r.json()
-        if r.status_code != 200 or body.get("code") not in (0, "0"):
-            return {"status": "invalid", "error": body.get("message") or r.text[:200]}
+        code = body.get("code", -1)
+        # Auth errors → invalid token
+        if code in (40003, 40004, 40005):
+            return {"status": "invalid", "error": body.get("message", f"auth error code={code}")[:200]}
+        # Any other code (including 40001 "no data") means auth passed → healthy
         return {"status": "healthy"}
     except Exception as exc:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
@@ -286,7 +302,7 @@ def check_all(client: dict, persist: bool = True) -> dict:
         client.get("google_ads_login_customer_id"),
     )
     results["ga4"]        = check_ga4(client.get("ga4_measurement_id"), client.get("ga4_api_secret"))
-    results["tiktok"]     = check_tiktok(client.get("tiktok_access_token"))
+    results["tiktok"]     = check_tiktok(client.get("tiktok_access_token"), client.get("tiktok_pixel_id"))
     results["pinterest"]  = check_pinterest(
         client.get("pinterest_ad_account_id"), client.get("pinterest_access_token"),
     )
@@ -344,7 +360,7 @@ def run_hourly_for_all_clients() -> None:
                 "id, pixel_id, meta_access_token, meta_pixel_id, "
                 "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
                 "ga4_measurement_id, ga4_api_secret, "
-                "tiktok_access_token, "
+                "tiktok_pixel_id, tiktok_access_token, "
                 "pinterest_ad_account_id, pinterest_access_token, "
                 "shopify_store_domain, shopify_domain, shopify_access_token"
             )
