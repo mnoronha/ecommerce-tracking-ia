@@ -231,6 +231,7 @@ async def pinterest_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
         .eq("financial_status", "paid")
         .gt("total_price", 0)
         .neq("pinterest_sent", True)
+        .or_("utm_source.is.null,utm_source.not.in.(pos,draft)")
         .gte("created_at", cutoff)
         .order("created_at", desc=True)
         .limit(min(limit, 500))
