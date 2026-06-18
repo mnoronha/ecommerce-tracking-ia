@@ -102,16 +102,8 @@ def _build_user_data(event: NormalizedEvent) -> dict:
     return ud
 
 
-def _price_float(val) -> float:
-    """Convert any price-like value to float. Pinterest v5 requires float for item_price."""
-    try:
-        return round(float(val or 0), 2)
-    except (TypeError, ValueError):
-        return 0.0
-
-
 def _price_str(val) -> str:
-    """Convert any price-like value to string. Pinterest v5 requires string for value."""
+    """Convert any price-like value to string. Pinterest v5 requires strings for value and item_price."""
     try:
         return str(round(float(val or 0), 2))
     except (TypeError, ValueError):
@@ -124,7 +116,7 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
     custom: dict = {"currency": "BRL"}
 
     if pin_event_name == "checkout" and event.order:
-        # Pinterest v5: value must be a string ("12.99"), item_price must be a float (12.99).
+        # Pinterest v5: both value and item_price must be strings ("12.99"), not floats.
         custom["value"] = _price_str(event.order.total)
         custom["order_id"] = str(event.order.id)
         if event.order.items:
@@ -134,7 +126,7 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
                 {
                     "id":         str(i.product_id or ""),
                     "quantity":   int(i.quantity or 1),
-                    "item_price": _price_float(i.price),
+                    "item_price": _price_str(i.price),
                 }
                 for i in event.order.items
             ]
@@ -147,7 +139,7 @@ def _build_custom_data(event: NormalizedEvent, pin_event_name: str) -> dict:
         custom["contents"] = [{
             "id":         pid,
             "quantity":   int(meta.get("product_quantity") or 1),
-            "item_price": _price_float(meta.get("product_price")),
+            "item_price": _price_str(meta.get("product_price")),
             "item_name":  meta.get("product_name", "")[:255],
         }]
     if meta.get("cart_total") or meta.get("product_price"):
