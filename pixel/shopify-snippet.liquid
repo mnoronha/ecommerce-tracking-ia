@@ -1,6 +1,6 @@
 {% comment %}
   =====================================================================
-  Ecommerce Tracking IA — Shopify Snippet  v3.6 + click-id robusto (gclid/gbraid/wbraid)
+  Ecommerce Tracking IA — Shopify Snippet  v3.7 + TikTok pixel + _ttp CAPI
   Arquivo: snippets/et-tracker.liquid
 
   INSTALAÇÃO:
@@ -56,6 +56,8 @@
   var META_PIXEL_ID     = '1018779385487104';
   // Google Ads AW-ID para remarketing (deixe '' para desativar)
   var GOOGLE_ADS_AW_ID  = '';
+  // TikTok Pixel — deixa '' para desabilitar
+  var TIKTOK_PIXEL_ID   = 'D8Q3UBJC77U2I8M6LR50';
 
   // ── Constantes ──────────────────────────────────────────────────────────────
   var COOKIE_VISITOR  = '_etv';
@@ -177,6 +179,15 @@
     return null;
   }
 
+  // ── TikTok identifiers ────────────────────────────────────────────────────────
+  function getTtclid() {
+    var fresh = (location.search.match(/[?&]ttclid=([^&#]*)/) || [])[1];
+    if (fresh) { try { fresh = decodeURIComponent(fresh); } catch(e) {} }
+    if (fresh && fresh.length >= 10) { setCookie('_ettc', fresh, 90); return fresh; }
+    return getCookie('_ettc') || null;
+  }
+  function getTtp() { return getCookie('_ttp') || null; }
+
   // ── Google click IDs (gclid + gbraid + wbraid) ───────────────────────────────
   // gbraid/wbraid são os click IDs do iOS 14+ (quando o gclid não é setado).
   // Sem capturá-los, todo o tráfego pago de iPhone fica sem atribuição Google.
@@ -282,6 +293,8 @@
       fbc:          meta.fbc,
       ga_client_id: getGaClientId(),
       gclid:        getGclid(),
+      ttclid:       getTtclid(),
+      ttp:          getTtp(),
       metadata:     extra || {}
     });
 
@@ -315,6 +328,8 @@
       '_gclid':  getGclid() || '',
       '_gbraid': getGbraid() || '',
       '_wbraid': getWbraid() || '',
+      '_ettc':   getTtclid() || '',
+      '_ttp':    getTtp()    || '',
       '_fblogin': getCookie('_fblogin') || '',
       '_dob':    getCookie('_dob') || '',
       '_utm_source':   utm.source   || '',
@@ -355,6 +370,33 @@
       s.parentNode.insertBefore(t,s);
     }(w, d, 'script', 'https://connect.facebook.net/en_US/fbevents.js');
     w.fbq('init', META_PIXEL_ID);
+  }
+
+  // ── TikTok pixel base ─────────────────────────────────────────────────────────
+  // Inicializa o pixel TikTok (equivalente ao Meta pixel base code).
+  // Seta o cookie _ttp (usado pelo CAPI para match rate), dispara PageView,
+  // e habilita ttq.track() para funil client-side.
+  if (TIKTOK_PIXEL_ID) {
+    !function(w,d,t){
+      w.TiktokAnalyticsObject=t;var ttq=w[t]=w[t]||[];
+      ttq.methods=['page','track','identify','instances','debug','on','off','once',
+                   'ready','alias','group','enableCookie','disableCookie',
+                   'holdConsent','revokeConsent','grantConsent'];
+      ttq.setAndDefer=function(obj,m){obj[m]=function(){obj.push([m].concat(Array.prototype.slice.call(arguments,0)));};};
+      for(var i=0;i<ttq.methods.length;i++)ttq.setAndDefer(ttq,ttq.methods[i]);
+      ttq.instance=function(id){var e=ttq._i[id]||[];for(var n=0;n<ttq.methods.length;n++)ttq.setAndDefer(e,ttq.methods[n]);return e;};
+      ttq.load=function(id,opts){
+        var src='https://analytics.tiktok.com/i18n/pixel/events.js';
+        ttq._i=ttq._i||{};ttq._i[id]=[];ttq._i[id]._u=src;
+        ttq._t=ttq._t||{};ttq._t[id]=+new Date();
+        ttq._o=ttq._o||{};ttq._o[id]=opts||{};
+        var s=d.createElement('script');s.type='text/javascript';s.async=!0;
+        s.src=src+'?sdkid='+id+'&lib='+t;
+        var f=d.getElementsByTagName('script')[0];f.parentNode.insertBefore(s,f);
+      };
+      ttq.load(TIKTOK_PIXEL_ID);
+      ttq.page();
+    }(w,d,'ttq');
   }
 
   // ── Google Ads remarketing snippet (minimal) ─────────────────────────────────
@@ -627,6 +669,8 @@
       fbc:          meta.fbc,
       ga_client_id: getGaClientId(),
       gclid:        getGclid(),
+      ttclid:       getTtclid(),
+      ttp:          getTtp(),
       metadata:     extra || {}
     });
     var metaName = META_EVENT_MAP[eventType];
