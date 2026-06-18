@@ -198,6 +198,69 @@ async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     return {"scanned": len(orders), "sent": sent, "failed": failed, "sample_errors": errors}
 
 
+@router.post("/{pixel_id}/tiktok/diagnose", summary="Diagnóstico TikTok: mostra payload real e raw response da API")
+async def tiktok_diagnose(pixel_id: str):
+    """
+    Sends a minimal Purchase event to TikTok and returns the full raw response
+    body, credential preview (token length + first 8 chars), and exact payload sent.
+    Use to identify whether the 40002 error is a token/pixel permission issue
+    or a payload format issue.
+    """
+    import hashlib
+    import time
+
+    import httpx
+
+    sb = get_supabase()
+    cli = (
+        sb.table("clients")
+        .select("id, tiktok_pixel_id, tiktok_access_token")
+        .eq("pixel_id", pixel_id).limit(1).execute()
+    )
+    if not (cli and cli.data):
+        raise HTTPException(404, "Client not found")
+    c = crypto.decrypt_client_secrets(cli.data[0])
+    pixel_code    = c.get("tiktok_pixel_id") or ""
+    access_token  = c.get("tiktok_access_token") or ""
+
+    token_preview = (access_token[:8] + "…") if len(access_token) > 8 else repr(access_token)
+    pixel_stripped = pixel_code.strip()
+
+    event_id = hashlib.sha256(f"diag_{pixel_id}_{int(time.time())}".encode()).hexdigest()[:32]
+    payload = {
+        "pixel_code": pixel_code,
+        "data": [{
+            "event":      "Purchase",
+            "event_id":   event_id,
+            "event_time": int(time.time()),
+            "user":       {"ip": "1.2.3.4"},
+            "page":       {"url": "https://example.com"},
+            "properties": {"currency": "BRL", "value": 1.0},
+        }],
+    }
+    try:
+        resp = httpx.post(
+            "https://business-api.tiktok.com/open_api/v1.3/event/track/",
+            json=payload,
+            headers={"Access-Token": access_token, "Content-Type": "application/json"},
+            timeout=10.0,
+        )
+        tiktok_body = resp.json() if resp.text else "(empty)"
+    except Exception as exc:
+        return {"error": str(exc)}
+
+    return {
+        "pixel_code":              pixel_code,
+        "pixel_len":               len(pixel_code),
+        "pixel_has_whitespace":    pixel_code != pixel_stripped,
+        "token_len":               len(access_token),
+        "token_preview":           token_preview,
+        "http_status":             resp.status_code,
+        "tiktok_response":         tiktok_body,
+        "payload_sent":            payload,
+    }
+
+
 @router.get("/{pixel_id}/google/conversion-actions",
             summary="Listar conversion actions do Google Ads (diagnóstico)")
 async def google_conversion_actions(pixel_id: str):

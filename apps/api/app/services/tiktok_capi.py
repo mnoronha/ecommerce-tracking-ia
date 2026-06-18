@@ -99,13 +99,12 @@ def _build_contents(event: NormalizedEvent) -> list[dict]:
 # ── Sender ────────────────────────────────────────────────────────────────────
 
 def _send(pixel_code: str, access_token: str, event_dict: dict, max_attempts: int = 3) -> tuple[bool, Optional[str]]:
-    """POSTs a single event to TikTok Events API v1.3 flat format."""
+    """POSTs a single event to TikTok Events API v1.3 (data-array format)."""
     headers = {
         "Access-Token": access_token,
         "Content-Type": "application/json",
     }
-    # Flat format: pixel_code at top level, event fields inline (not data array)
-    body_out = {"pixel_code": pixel_code, **event_dict}
+    body_out = {"pixel_code": pixel_code, "data": [event_dict]}
     delay = 1.0
     last_err: Optional[str] = None
 
@@ -174,13 +173,11 @@ def send_purchase(
     currency = order.currency or "BRL"
 
     event_dict = {
-        "event":     "Purchase",
-        "event_id":  event_id,
-        "timestamp": str(event_time),
-        "context": {
-            "user": _build_user(event, ttclid),
-            "page": {"url": meta.get("page_url") or ""},
-        },
+        "event":      "Purchase",
+        "event_id":   event_id,
+        "event_time": event_time,
+        "user":       _build_user(event, ttclid),
+        "page":       {"url": meta.get("page_url") or ""},
         "properties": {
             "currency":  currency,
             "value":     value,
@@ -243,13 +240,11 @@ def send_pixel_event(
         properties["num_items"] = int(meta.get("item_count") or 0)
 
     event_dict = {
-        "event":     tiktok_event_name,
-        "event_id":  event_id,
-        "timestamp": str(int(time.time())),
-        "context": {
-            "user": _build_user(event, ttclid),
-            "page": {"url": (event.page_url or meta.get("page_url") or "")},
-        },
+        "event":      tiktok_event_name,
+        "event_id":   event_id,
+        "event_time": int(time.time()),
+        "user":       _build_user(event, ttclid),
+        "page":       {"url": (event.page_url or meta.get("page_url") or "")},
         "properties": properties,
     }
     return _send(pixel_code, access_token, event_dict)
