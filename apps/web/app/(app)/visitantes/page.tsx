@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { Search, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, X, ShoppingBag } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -179,12 +179,16 @@ export default function VisitantesPage() {
   const [selected, setSelected]         = useState<Visitor | null>(null)
   const [panelEvents, setPanelEvents]   = useState<TrackingEvent[]>([])
   const [panelLoading, setPanelLoading] = useState(false)
+  const [trackingEnabled, setTrackingEnabled] = useState<boolean | null>(null)
 
   // Resolve client UUID once
   useEffect(() => {
-    supabase.from('clients').select('id')
+    supabase.from('clients').select('id, tracking_enabled')
       .eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
-      .then(({ data }) => setClientId(data?.id ?? null))
+      .then(({ data }) => {
+        setClientId(data?.id ?? null)
+        setTrackingEnabled(data?.tracking_enabled ?? true)
+      })
   }, [])
 
   // Debounce search
@@ -255,6 +259,19 @@ export default function VisitantesPage() {
       </div>
 
       <div className="p-6">
+        {trackingEnabled === false && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl px-4 py-4 border bg-sky-500/10 border-sky-500/20">
+            <ShoppingBag size={16} className="text-sky-400 mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-sky-300">Tracking nativo Shopify ativo</p>
+              <p className="text-xs text-slate-400 mt-1">
+                O pixel Noro está desativado para este cliente. Os dados de visitantes, pageviews e
+                identificadores (fbp/gclid) não são coletados. As conversões continuam sendo enviadas
+                via CAPI através dos webhooks da Shopify.
+              </p>
+            </div>
+          </div>
+        )}
         <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

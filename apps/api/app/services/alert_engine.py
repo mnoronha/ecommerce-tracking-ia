@@ -262,6 +262,8 @@ def _eval_budget_overspent(rule: dict, client: dict) -> list[dict]:
 
 def _eval_tracking_stopped(rule: dict, client: dict) -> list[dict]:
     """No tracking_event for the client in the last threshold_hours."""
+    if client.get("tracking_enabled") is False:
+        return []
     threshold_hours = int((rule.get("config") or {}).get("threshold_hours", 24))
     try:
         rows = (
@@ -460,6 +462,8 @@ def _eval_revenue_drop(rule: dict, client: dict) -> list[dict]:
 
 def _eval_views_drop(rule: dict, client: dict) -> list[dict]:
     """Pageviews das últimas 2h caíram X% vs média das últimas 7 dias no mesmo horário."""
+    if client.get("tracking_enabled") is False:
+        return []
     threshold = float((rule.get("config") or {}).get("drop_pct", 60))
     window_h  = 2
 
@@ -588,6 +592,8 @@ def _eval_zero_sales(rule: dict, client: dict) -> list[dict]:
 
 def _eval_checkout_drop(rule: dict, client: dict) -> list[dict]:
     """begin_checkout das últimas 2h caiu X% vs média 7d no mesmo horário."""
+    if client.get("tracking_enabled") is False:
+        return []
     threshold = float((rule.get("config") or {}).get("drop_pct", 70))
     window_h  = 2
 
@@ -1826,7 +1832,7 @@ def _clients_for_rule(rule: dict) -> list[dict]:
     """
     sb = get_supabase()
     cols = (
-        "id, pixel_id, agency_id, slack_webhook_url, "
+        "id, pixel_id, agency_id, slack_webhook_url, tracking_enabled, "
         "meta_token_expires_at, meta_ad_account_id, meta_access_token, "
         "meta_prepaid, google_prepaid, meta_balance_threshold, google_balance_threshold, "
         "ga4_property_id, ga4_reporting_enabled, google_ads_refresh_token, "

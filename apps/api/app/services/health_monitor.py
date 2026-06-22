@@ -234,17 +234,23 @@ def _evaluate_client(client: dict, day_start: str, day_end: str) -> dict:
     client_id = client["id"]
     pixel_id  = client.get("pixel_id") or client_id
 
-    try:
-        snippet = _collect_snippet_health(sb, client_id, day_start, day_end)
-    except Exception as exc:
-        logger.warning("health_monitor: snippet query failed for %s: %s", pixel_id, exc)
-        snippet = {"total": 0, "counts": {}, "pageviews": 0, "daily_avg": 0, "drop_pct": None}
+    tracking_enabled = client.get("tracking_enabled", True)
 
-    try:
-        visitors = _collect_visitor_coverage(sb, client_id, day_start, day_end)
-    except Exception as exc:
-        logger.warning("health_monitor: visitor query failed for %s: %s", pixel_id, exc)
+    if tracking_enabled is False:
+        snippet  = {"total": 0, "counts": {}, "pageviews": 0, "daily_avg": 0, "drop_pct": None}
         visitors = {"total": 0, "fbp": 0, "fbc": 0, "gclid": 0, "ga": 0, "pct_fbp": 0, "pct_gclid": 0}
+    else:
+        try:
+            snippet = _collect_snippet_health(sb, client_id, day_start, day_end)
+        except Exception as exc:
+            logger.warning("health_monitor: snippet query failed for %s: %s", pixel_id, exc)
+            snippet = {"total": 0, "counts": {}, "pageviews": 0, "daily_avg": 0, "drop_pct": None}
+
+        try:
+            visitors = _collect_visitor_coverage(sb, client_id, day_start, day_end)
+        except Exception as exc:
+            logger.warning("health_monitor: visitor query failed for %s: %s", pixel_id, exc)
+            visitors = {"total": 0, "fbp": 0, "fbc": 0, "gclid": 0, "ga": 0, "pct_fbp": 0, "pct_gclid": 0}
 
     try:
         orders = _collect_orders_health(sb, client_id, day_start, day_end)
@@ -261,9 +267,11 @@ def _evaluate_client(client: dict, day_start: str, day_end: str) -> dict:
     # ── build findings ───────────────────────────────────────────────────
     findings: list[dict] = []
 
-    # 1) Snippet volume
+    # 1) Snippet volume — skip entirely for clients using native Shopify tracking
     drop = snippet.get("drop_pct")
-    if snippet["total"] < 50 and snippet["daily_avg"] >= _MIN_EVENTS_BASELINE:
+    if tracking_enabled is False:
+        pass  # no pixel deployed — snippet metrics not applicable
+    elif snippet["total"] < 50 and snippet["daily_avg"] >= _MIN_EVENTS_BASELINE:
         findings.append({
             "severity": "critical", "check": "snippet_volume",
             "message": f"Apenas {snippet['total']} eventos ontem (média 7d: {snippet['daily_avg']:.0f}). Snippet pode estar fora.",
@@ -507,7 +515,7 @@ def run_daily_health_check(target_date: Optional[str] = None) -> list[dict]:
     try:
         clients = (
             sb.table("clients")
-            .select("id, pixel_id, name, is_active")
+            .select("id, pixel_id, name, is_active, tracking_enabled")
             .eq("is_active", True)
             .execute()
         )

@@ -15,7 +15,7 @@ from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
 from .limiter import limiter
-from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, setup, sync as sync_router, tiktok_ads
+from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, tiktok_ads
 from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
@@ -80,12 +80,14 @@ _scheduler.add_job(
     hours=6,
     id="meta_token_health",
 )
-_scheduler.add_job(
-    capi_retry.retry_failed_capi,
-    "interval",
-    minutes=30,
-    id="capi_retry",
-)
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# _scheduler.add_job(
+#     capi_retry.retry_failed_capi,
+#     "interval",
+#     minutes=30,
+#     id="capi_retry",
+# )
 _scheduler.add_job(
     anomalies.run_daily_anomaly_check,
     "cron",
@@ -93,12 +95,14 @@ _scheduler.add_job(
     minute=0,
     id="anomalies_daily",
 )
-_scheduler.add_job(
-    anomalies.run_capi_health_check_all_clients,
-    "interval",
-    hours=1,
-    id="capi_health_hourly",
-)
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# _scheduler.add_job(
+#     anomalies.run_capi_health_check_all_clients,
+#     "interval",
+#     hours=1,
+#     id="capi_health_hourly",
+# )
 _scheduler.add_job(
     integrations_health.run_hourly_for_all_clients,
     "interval",
@@ -112,19 +116,23 @@ _scheduler.add_job(
     minute=0,
     id="meta_attribution_sync",
 )
-_scheduler.add_job(
-    cart_abandonment.run_hourly,
-    "interval",
-    hours=1,
-    id="cart_abandonment",
-)
-_scheduler.add_job(
-    sessionization.run_daily,
-    "cron",
-    hour=4,   # 04 UTC = 01:00 BRT — well after the previous UTC day closed
-    minute=0,
-    id="sessionization",
-)
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# _scheduler.add_job(
+#     cart_abandonment.run_hourly,
+#     "interval",
+#     hours=1,
+#     id="cart_abandonment",
+# )
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# _scheduler.add_job(
+#     sessionization.run_daily,
+#     "cron",
+#     hour=4,   # 04 UTC = 01:00 BRT — well after the previous UTC day closed
+#     minute=0,
+#     id="sessionization",
+# )
 _scheduler.add_job(
     ltv_predictor.run_daily_for_all_clients,
     "cron",
@@ -153,12 +161,14 @@ _scheduler.add_job(
     minutes=30,
     id="alert_engine",
 )
-_scheduler.add_job(
-    capi_retry.retry_failed_tiktok,
-    "interval",
-    minutes=30,
-    id="tiktok_retry",
-)
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# _scheduler.add_job(
+#     capi_retry.retry_failed_tiktok,
+#     "interval",
+#     minutes=30,
+#     id="tiktok_retry",
+# )
 _scheduler.add_job(
     spend_sync.run_daily_spend_sync,
     "cron",
@@ -275,8 +285,10 @@ async def tracker_js_adblock_alias():
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(ecommerce_webhooks.router)
-app.include_router(pixel.router)
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# app.include_router(ecommerce_webhooks.router)
+# app.include_router(pixel.router)
 app.include_router(insights.router)
 app.include_router(meta_ads.router)
 app.include_router(audiences.router)
@@ -301,6 +313,8 @@ app.include_router(merchant_center_router.router)
 app.include_router(content_router.router)
 app.include_router(tiktok_ads.router)
 app.include_router(pinterest_ads.router)
+app.include_router(search_console_router.router)
+app.include_router(shopify_revenue_router.router)
 
 # ── Noro Platform Public REST API (v1) ────────────────────────────────────────
 app.include_router(public_api_router)

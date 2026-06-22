@@ -28,7 +28,7 @@ async def get_diagnostics(pixel_id: str):
 
     client_row = (
         sb.table("clients")
-        .select("id, name, pixel_id, meta_pixel_id, ga4_measurement_id, google_ads_customer_id, tiktok_pixel_id, is_active")
+        .select("id, name, pixel_id, meta_pixel_id, ga4_measurement_id, google_ads_customer_id, tiktok_pixel_id, is_active, tracking_enabled")
         .eq("pixel_id", pixel_id)
         .limit(1)
         .execute()
@@ -176,11 +176,46 @@ async def get_diagnostics(pixel_id: str):
     alert_critical = sum(1 for a in alert_rows if a.get("severity") == "critical")
     alert_warning  = sum(1 for a in alert_rows if a.get("severity") == "warning")
 
+    tracking_enabled = c.get("tracking_enabled", True)
+
+    # ── Shopify sync status (always useful; critical when tracking disabled) ──
+    all_orders_24h_q = (
+        sb.table("orders")
+        .select("id", count="exact", head=True)
+        .eq("client_id", cid)
+        .gte("created_at", t24h)
+        .execute()
+    )
+    all_orders_7d_q = (
+        sb.table("orders")
+        .select("id", count="exact", head=True)
+        .eq("client_id", cid)
+        .gte("created_at", t7d)
+        .execute()
+    )
+    last_order_q = (
+        sb.table("orders")
+        .select("created_at")
+        .eq("client_id", cid)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    last_order_at = (last_order_q.data[0]["created_at"] if last_order_q.data else None)
+
     return {
-        "pixel_id":       pixel_id,
-        "client_name":    c.get("name"),
-        "is_active":      c.get("is_active"),
-        "now":            now.isoformat(),
+        "pixel_id":        pixel_id,
+        "client_name":     c.get("name"),
+        "is_active":       c.get("is_active"),
+        "tracking_enabled": tracking_enabled,
+        "now":             now.isoformat(),
+        # ── Shopify sync ────────────────────────────────────────────────────
+        "shopify_sync": {
+            "orders_24h":    all_orders_24h_q.count or 0,
+            "orders_7d":     all_orders_7d_q.count  or 0,
+            "orders_30d":    len(orders),  # paid only for CAPI; reuse
+            "last_order_at": last_order_at,
+        },
         # ── Tracking events ────────────────────────────────────────────────
         "last_event_at":  last_event_at,
         "events_24h":     ev_24h.count  or 0,

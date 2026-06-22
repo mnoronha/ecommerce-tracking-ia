@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
-import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine } from 'lucide-react'
+import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -15,10 +15,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const clientName = plan.clientName || clientId
 
   const NAV = [
-    { href: `/clients/${clientId}/dashboard`,   label: 'Dashboard',       icon: LayoutDashboard, gate: null },
-    { href: `/clients/${clientId}/live`,        label: 'Ao vivo',         icon: Radio,           gate: null },
-    { href: `/clients/${clientId}/visitantes`,  label: 'Visitantes',      icon: Users,           gate: null },
-    { href: `/clients/${clientId}/pedidos`,     label: 'Pedidos',         icon: ShoppingBag,     gate: null },
+    { href: `/clients/${clientId}/dashboard`,        label: 'Dashboard',       icon: LayoutDashboard, gate: null },
+    { href: `/clients/${clientId}/shopify-revenue`, label: 'Faturamento',     icon: ShoppingBag,     gate: null },
+    { href: `/clients/${clientId}/live`,            label: 'Ao vivo',         icon: Radio,           gate: null },
+    { href: `/clients/${clientId}/visitantes`,      label: 'Visitantes',      icon: Users,           gate: null },
+    { href: `/clients/${clientId}/pedidos`,         label: 'Pedidos',         icon: ShoppingBag,     gate: null },
     { href: `/clients/${clientId}/audiencias`,  label: 'Audiências',      icon: Layers,          gate: null },
     { href: `/clients/${clientId}/attribution`, label: 'Atribuição',      icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/journey`,     label: 'Jornada',         icon: GitBranch,       gate: null },
@@ -26,7 +27,8 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/google-ads`,   label: 'Google Ads',      icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/tiktok-ads`,   label: 'TikTok Ads',      icon: TrendingUp,      gate: null },
     { href: `/clients/${clientId}/pinterest-ads`, label: 'Pinterest Ads',  icon: TrendingUp,      gate: null },
-    { href: `/clients/${clientId}/ga4`,          label: 'GA4',             icon: BarChart2,       gate: null },
+    { href: `/clients/${clientId}/ga4`,             label: 'GA4',             icon: BarChart2,       gate: null },
+    { href: `/clients/${clientId}/search-console`,   label: 'Search Console',  icon: Search,          gate: null },
     { href: `/clients/${clientId}/ai-visibility`,    label: 'AI Visibility',   icon: BrainCircuit,    gate: null },
     { href: `/clients/${clientId}/merchant-center`,  label: 'Merchant Center', icon: Store,            gate: null },
     { href: `/clients/${clientId}/content`,          label: 'Conteúdo IA',     icon: PenLine,          gate: null },

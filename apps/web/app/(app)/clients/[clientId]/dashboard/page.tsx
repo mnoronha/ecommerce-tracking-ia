@@ -1240,16 +1240,32 @@ export default function DashboardPage() {
             spark={revenueData.map(p => p.orders)}
             color="bg-blue-500/10 text-blue-400"
             onClick={() => setDrilldown('orders')} />
-          <KPICard title="Visitantes"   value={kpis ? kpis.totalVisitors.toString() : '—'}
-            icon={Users} change={kpis?.visitorsChange}
+          <KPICard
+            title={kpis?.totalVisitors === 0 && ga4Summary ? 'Sessões (GA4)' : 'Visitantes'}
+            value={
+              kpis?.totalVisitors === 0 && ga4Summary
+                ? ga4Summary.sessions.toLocaleString('pt-BR')
+                : (kpis ? kpis.totalVisitors.toLocaleString('pt-BR') : '—')
+            }
+            icon={Users}
+            change={kpis?.visitorsChange}
+            hint={kpis?.totalVisitors === 0 && ga4Summary ? 'via Google Analytics 4' : undefined}
             color="bg-purple-500/10 text-purple-400" />
           <KPICard title="Ticket Médio" value={kpis ? fmt(kpis.avgOrderValue) : '—'}
             icon={Activity} change={kpis?.avgOrderValueChange}
             spark={revenueData.map(p => p.orders > 0 ? p.revenue / p.orders : 0)}
             color="bg-orange-500/10 text-orange-400"
             onClick={() => setDrilldown('avgOrderValue')} />
-          <KPICard title="Conversão"    value={kpis ? kpis.conversionRate.toFixed(1) + '%' : '—'}
-            icon={Percent} change={kpis?.conversionRateChange}
+          <KPICard
+            title="Conversão"
+            value={
+              kpis?.totalVisitors === 0 && ga4Summary && ga4Summary.sessions > 0
+                ? ((kpis.totalOrders / ga4Summary.sessions) * 100).toFixed(1) + '%'
+                : (kpis ? kpis.conversionRate.toFixed(1) + '%' : '—')
+            }
+            icon={Percent}
+            change={kpis?.conversionRateChange}
+            hint={kpis?.totalVisitors === 0 && ga4Summary ? 'pedidos ÷ sessões GA4' : undefined}
             color="bg-pink-500/10 text-pink-400" />
         </div>
 
@@ -1362,7 +1378,20 @@ export default function DashboardPage() {
           <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
             <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão</h2>
             {funnelSteps.length === 0 || funnelSteps[0].count === 0 ? (
-              <p className="text-slate-500 text-sm">Sem dados de eventos</p>
+              <div className="space-y-3">
+                <p className="text-slate-500 text-sm">Tracking nativo Shopify ativo</p>
+                <p className="text-xs text-slate-600">O funil completo (sessões → ATC → checkout → compra) está disponível no relatório GA4.</p>
+                <div className="flex flex-col gap-2 mt-1">
+                  <Link href={`/clients/${CLIENT_PIXEL_ID}/ga4`}
+                    className="inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
+                    <BarChart2 size={11} /> Ver funil GA4 →
+                  </Link>
+                  <Link href={`/clients/${CLIENT_PIXEL_ID}/shopify-revenue`}
+                    className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 transition-colors">
+                    <ShoppingBag size={11} /> Ver faturamento Shopify →
+                  </Link>
+                </div>
+              </div>
             ) : <FunnelBar steps={funnelSteps} />}
           </div>
         </div>

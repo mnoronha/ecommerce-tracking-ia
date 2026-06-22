@@ -50,6 +50,7 @@ interface ClientRow {
   google_balance_threshold: number | null
   merchant_center_id: string | null
   merchant_center_refresh_token: string | null
+  search_console_site_url: string | null
 }
 
 const INPUT = 'w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-indigo-500'
@@ -374,6 +375,7 @@ export default function ClientSettingsPage() {
         google_prepaid:                  form.google_prepaid        ?? false,
         meta_balance_threshold:          form.meta_balance_threshold ?? 200,
         google_balance_threshold:        form.google_balance_threshold ?? 200,
+        search_console_site_url:         (form as { search_console_site_url?: string | null }).search_console_site_url || null,
       })
       .eq('pixel_id', clientId)
 
@@ -674,6 +676,10 @@ export default function ClientSettingsPage() {
           <Field label="Property ID" hint="ID numérico da propriedade — ex: 267533911 (aparece na URL do GA4)">
             <input value={form.ga4_property_id || ''} onChange={e => set('ga4_property_id', e.target.value)}
               placeholder="267533911" className={INPUT} />
+          </Field>
+          <Field label="URL do Search Console" hint="ex: sc-domain:lksneakers.com.br ou https://www.loja.com.br/ — obrigatório para a aba Search Console">
+            <input value={(form as { search_console_site_url?: string }).search_console_site_url || ''} onChange={e => set('search_console_site_url', e.target.value)}
+              placeholder="sc-domain:seudominio.com.br" className={INPUT} />
           </Field>
           <Field label="Relatórios GA4 no dashboard" hint="Ativa leitura de sessões e conversões do GA4 para este cliente">
             <button

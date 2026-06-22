@@ -245,6 +245,64 @@ async def get_roas(pixel_id: str, days: int = 30):
 
 
 @router.get(
+    "/meta-ads/{pixel_id}/breakdowns",
+    summary="Breakdown por idade/gênero/dispositivo/plataforma das campanhas Meta Ads",
+    tags=["meta_ads"],
+)
+async def get_breakdowns(
+    pixel_id:  str,
+    breakdown: str  = "age",
+    days:      int  = 30,
+    start:     str | None = None,
+    end:       str | None = None,
+):
+    """
+    Segmenta campanhas por breakdown demográfico ou de dispositivo.
+    breakdown: age | gender | device | placement
+    """
+    if breakdown not in ("age", "gender", "device", "placement"):
+        raise HTTPException(status_code=400, detail="breakdown must be age, gender, device or placement")
+
+    sb    = get_supabase()
+    creds = (
+        sb.table("clients")
+        .select("id, meta_ad_account_id, meta_access_token")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not (creds and creds.data):
+        raise HTTPException(status_code=404, detail="Client not found or inactive")
+    c = crypto.decrypt_client_secrets(creds.data[0])
+
+    if not c.get("meta_ad_account_id") or not c.get("meta_access_token"):
+        raise HTTPException(status_code=400, detail="Meta Ads credentials not configured")
+
+    if start and end:
+        d_since, d_until = start, end
+    else:
+        today   = datetime.now(timezone.utc).date()
+        d_until = str(today)
+        d_since = str(today - timedelta(days=days - 1))
+
+    data = meta_ads_svc.fetch_campaign_breakdowns(
+        account_id=c["meta_ad_account_id"],
+        access_token=c["meta_access_token"],
+        since=d_since,
+        until=d_until,
+        breakdown=breakdown,
+    )
+
+    return {
+        "breakdown": breakdown,
+        "start":     d_since,
+        "end":       d_until,
+        "data":      data,
+    }
+
+
+@router.get(
     "/meta-ads/{pixel_id}/overview",
     summary="Dashboard Meta Ads completo — usa meta_ad_attributions (sync diário)",
     tags=["meta_ads"],

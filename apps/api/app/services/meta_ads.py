@@ -114,6 +114,79 @@ def fetch_campaign_insights(
         return []
 
 
+_BREAKDOWN_FIELDS = {
+    "age":       "age",
+    "gender":    "gender",
+    "device":    "impression_device",
+    "placement": "publisher_platform",
+}
+
+
+def fetch_campaign_breakdowns(
+    account_id: str,
+    access_token: str,
+    since: str,
+    until: str,
+    breakdown: str = "age",
+) -> list[dict]:
+    """
+    Busca insights de campanhas segmentados por demographic/device.
+    breakdown: "age" | "gender" | "device" | "placement"
+    """
+    bd_field = _BREAKDOWN_FIELDS.get(breakdown, "age")
+    clean_id  = account_id.removeprefix("act_")
+    try:
+        resp = httpx.get(
+            _ADS_URL.format(account_id=clean_id),
+            params={
+                "fields":       "campaign_name,campaign_id,spend,impressions,clicks,reach,actions,action_values",
+                "time_range":   f'{{"since":"{since}","until":"{until}"}}',
+                "level":        "campaign",
+                "breakdowns":   bd_field,
+                "access_token": access_token,
+            },
+            timeout=20.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("meta_ads breakdowns HTTP %s: %s", resp.status_code, resp.text[:400])
+            return []
+
+        result = []
+        for row in resp.json().get("data", []):
+            spend = float(row.get("spend") or 0)
+            impr  = int(row.get("impressions") or 0)
+            clks  = int(row.get("clicks") or 0)
+            purch = _pick_action(row.get("actions") or [], (
+                "purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase",
+            ))
+            rev   = _pick_action(row.get("action_values") or [], (
+                "purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase",
+            ))
+            result.append({
+                "campaign_id":    row.get("campaign_id", ""),
+                "campaign_name":  row.get("campaign_name", ""),
+                "breakdown_type": breakdown,
+                "breakdown_val":  row.get(bd_field, "unknown"),
+                "spend":          round(spend, 2),
+                "impressions":    impr,
+                "clicks":         clks,
+                "reach":          int(row.get("reach") or 0),
+                "purchases":      int(purch or 0),
+                "revenue":        round(float(rev or 0), 2),
+                "ctr":            round(clks / impr * 100, 2) if impr > 0 else None,
+                "cpa":            round(spend / float(purch), 2) if purch and purch > 0 and spend > 0 else None,
+                "roas":           round(float(rev or 0) / spend, 2) if spend > 0 and rev else None,
+            })
+        logger.info("meta_ads breakdowns: %d rows for act_%s breakdown=%s", len(result), clean_id, breakdown)
+        return result
+    except httpx.TimeoutException:
+        logger.warning("meta_ads breakdowns timeout for act_%s", clean_id)
+        return []
+    except Exception as exc:
+        logger.error("meta_ads breakdowns error: %s", exc)
+        return []
+
+
 def fetch_account_balance(account_id: str, access_token: str) -> dict:
     """
     Busca saldo da conta Meta Ads (relevante para contas pre-pagas).

@@ -23,7 +23,9 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 _PLATFORM_KEYS = {"meta", "google_ads", "ga4", "tiktok", "pinterest", "shopify"}
 
 
-@router.post("/{pixel_id}/google/backfill", summary="Reenviar conversões pagas recentes ao Google Ads")
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# @router.post("/{pixel_id}/google/backfill", summary="Reenviar conversões pagas recentes ao Google Ads")
 async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     """
     Re-sends paid orders to Google Ads that were never delivered (e.g. while
@@ -114,7 +116,9 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
             "skipped_no_identifiers": skipped, "sample_errors": errors}
 
 
-@router.post("/{pixel_id}/tiktok/backfill", summary="Reenviar conversões pagas recentes ao TikTok Events API")
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# @router.post("/{pixel_id}/tiktok/backfill", summary="Reenviar conversões pagas recentes ao TikTok Events API")
 async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     """
     Re-sends paid orders to TikTok Events API that were never delivered
@@ -198,7 +202,9 @@ async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     return {"scanned": len(orders), "sent": sent, "failed": failed, "sample_errors": errors}
 
 
-@router.post("/{pixel_id}/pinterest/backfill", summary="Reenviar conversões pagas ao Pinterest Conversions API")
+# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# Noro Platform agora consome dados via APIs. Manter código para referência futura.
+# @router.post("/{pixel_id}/pinterest/backfill", summary="Reenviar conversões pagas ao Pinterest Conversions API")
 async def pinterest_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     """Re-sends paid orders to Pinterest CAPI that were never delivered or failed."""
     from datetime import datetime, timezone, timedelta

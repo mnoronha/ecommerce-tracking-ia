@@ -493,3 +493,107 @@ async def ga4_report(
         raise HTTPException(status_code=502, detail=result["error"])
 
     return result
+
+
+# ── GA4 Extended Endpoints ─────────────────────────────────────────────────────
+
+def _get_ga4_creds(pixel_id: str):
+    """Shared helper — returns decrypted client dict or raises HTTPException."""
+    from ..services import crypto, ga4_reporting as _ga4_mod
+    sb  = get_supabase()
+    row = (
+        sb.table("clients")
+        .select("id, ga4_property_id, ga4_reporting_enabled, google_ads_refresh_token")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    )
+    if not (row and row.data):
+        raise HTTPException(status_code=404, detail="Client not found")
+    c = crypto.decrypt_client_secrets(row.data[0])
+    if not c.get("ga4_reporting_enabled"):
+        raise HTTPException(status_code=403, detail="GA4 reporting not enabled")
+    if not c.get("ga4_property_id"):
+        raise HTTPException(status_code=400, detail="ga4_property_id not configured")
+    if not c.get("google_ads_refresh_token"):
+        raise HTTPException(status_code=400, detail="Google OAuth not connected")
+    return c, _ga4_mod
+
+
+def _resolve_dates(start: Optional[str], end: Optional[str], days: int):
+    from datetime import date as _date, datetime as _dt
+    if start and end:
+        try:
+            return _date.fromisoformat(start), _date.fromisoformat(end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date — use YYYY-MM-DD")
+    today    = _dt.now(timezone.utc).date()
+    end_dt   = today - timedelta(days=1)
+    start_dt = end_dt - timedelta(days=days - 1)
+    return start_dt, end_dt
+
+
+@router.get("/ga4/{pixel_id}/funnel", summary="GA4 — funil de conversão por canal", tags=["ga4"])
+async def ga4_funnel(
+    pixel_id: str,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+    days:  int = 30,
+):
+    """Sessões → add_to_cart → checkout → purchase segmentado por canal de aquisição."""
+    c, ga4 = _get_ga4_creds(pixel_id)
+    s, e   = _resolve_dates(start, end, days)
+    result  = ga4.fetch_conversion_funnel(c["ga4_property_id"], c["google_ads_refresh_token"], s, e)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
+
+
+@router.get("/ga4/{pixel_id}/ai-traffic", summary="GA4 — tráfego de ferramentas de IA", tags=["ga4"])
+async def ga4_ai_traffic(
+    pixel_id: str,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+    days:  int = 30,
+):
+    """Sessões vindas de ChatGPT, Perplexity, Gemini, Claude etc."""
+    c, ga4 = _get_ga4_creds(pixel_id)
+    s, e   = _resolve_dates(start, end, days)
+    result  = ga4.fetch_ai_traffic(c["ga4_property_id"], c["google_ads_refresh_token"], s, e)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
+
+
+@router.get("/ga4/{pixel_id}/top-pages", summary="GA4 — top páginas de produto", tags=["ga4"])
+async def ga4_top_pages(
+    pixel_id: str,
+    start:  Optional[str] = None,
+    end:    Optional[str] = None,
+    days:   int = 30,
+    limit:  int = 25,
+):
+    """Páginas de produto com mais sessões e conversões."""
+    c, ga4 = _get_ga4_creds(pixel_id)
+    s, e   = _resolve_dates(start, end, days)
+    result  = ga4.fetch_top_product_pages(c["ga4_property_id"], c["google_ads_refresh_token"], s, e, limit=limit)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
+
+
+@router.get("/ga4/{pixel_id}/audience", summary="GA4 — novos vs recorrentes", tags=["ga4"])
+async def ga4_audience(
+    pixel_id: str,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+    days:  int = 30,
+):
+    """Cohorts novos vs recorrentes: usuários, conversões, ticket médio e série diária."""
+    c, ga4 = _get_ga4_creds(pixel_id)
+    s, e   = _resolve_dates(start, end, days)
+    result  = ga4.fetch_new_vs_returning(c["ga4_property_id"], c["google_ads_refresh_token"], s, e)
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
