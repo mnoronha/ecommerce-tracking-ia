@@ -51,6 +51,7 @@ interface ClientRow {
   merchant_center_id: string | null
   merchant_center_refresh_token: string | null
   search_console_site_url: string | null
+  shopify_sync_enabled: boolean
 }
 
 const INPUT = 'w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-sm text-white placeholder-slate-600 outline-none transition-colors focus:border-indigo-500'
@@ -375,7 +376,8 @@ export default function ClientSettingsPage() {
         google_prepaid:                  form.google_prepaid        ?? false,
         meta_balance_threshold:          form.meta_balance_threshold ?? 200,
         google_balance_threshold:        form.google_balance_threshold ?? 200,
-        search_console_site_url:         (form as { search_console_site_url?: string | null }).search_console_site_url || null,
+        search_console_site_url:         (form as any).search_console_site_url || null,
+        shopify_sync_enabled:            (form as any).shopify_sync_enabled ?? false,
       })
       .eq('pixel_id', clientId)
 
@@ -527,6 +529,20 @@ export default function ClientSettingsPage() {
                     </p>
                   )}
                 </div>
+              </Field>
+              <Field label="Shopify Sync" hint="importa pedidos pagos via API a cada hora — necessário quando o pixel Noro está desativado">
+                <button
+                  type="button"
+                  onClick={() => set('shopify_sync_enabled', !(form as any).shopify_sync_enabled)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                    (form as any).shopify_sync_enabled
+                      ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-300'
+                      : 'border-[#2a2f3e] text-slate-500 hover:border-slate-500 hover:text-white'
+                  }`}
+                >
+                  <span className={`w-2 h-2 rounded-full ${(form as any).shopify_sync_enabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                  {(form as any).shopify_sync_enabled ? 'Ativado — sincroniza a cada hora' : 'Desativado'}
+                </button>
               </Field>
             </>
           )}
