@@ -598,6 +598,10 @@ def write_order(
         "total_price":           order.total,
         "currency":              order.currency or "BRL",
         "financial_status":      effective_status,
+        # Shopify order creation time — critical for correct date filtering in dashboard.
+        # Without this the DB default (NOW()) is used, grouping bulk-synced orders under
+        # the sync run date instead of the actual purchase date.
+        "created_at":            event.timestamp.isoformat(),
         "utm_source":   effective_utm_source,
         "utm_medium":   effective_utm_medium,
         "utm_campaign": effective_utm_campaign,
