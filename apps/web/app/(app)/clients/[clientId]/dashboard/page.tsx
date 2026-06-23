@@ -4,16 +4,18 @@ import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2 } from 'lucide-react'
+import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2, Target, Globe, UserX, DollarSign } from 'lucide-react'
 import IntegrationsHealth from '@/components/IntegrationsHealth'
 import { useDatePeriod, periodLabelLong, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine,
+  ResponsiveContainer, ReferenceLine, Line,
 } from 'recharts'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+type Tab = 'overview' | 'traffic' | 'campaigns' | 'clients'
 
 
 interface KPIs {
@@ -31,7 +33,14 @@ interface KPIs {
   marginPct:     number | null
 }
 
-interface RevenuePoint { date: string; revenue: number; orders: number }
+interface RevenuePoint { date: string; revenue: number; orders: number; prevRevenue?: number }
+
+interface Ga4Channel { channel: string; sessions: number; users: number; conversions: number; revenue: number }
+interface Ga4Funnel { sessions: number; add_to_cart: number; begin_checkout: number; purchases: number; atc_rate: number; checkout_rate: number; purchase_rate: number }
+interface Ga4TopPage { path: string; title: string; sessions: number; conversions: number; revenue: number; conv_rate: number; bounce_rate: number }
+interface AdsTotals { spend: number; roas: number | null; cpa: number | null; purchases: number; revenue: number }
+interface LtvCustomer { email: string; total: number; orders: number }
+interface LtvStats { avgLtv: number; topCustomers: LtvCustomer[]; atRisk: number; totalCustomers: number }
 
 interface Order {
   id: string
@@ -742,6 +751,15 @@ export default function DashboardPage() {
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
   const [ga4Summary, setGa4Summary]     = useState<{ sessions: number; users: number; conversions: number; revenue: number } | null>(null)
+  const [activeTab, setActiveTab]       = useState<Tab>('overview')
+  const [loadedTabs, setLoadedTabs]     = useState<Set<Tab>>(new Set(['overview']))
+  const [metaSummary, setMetaSummary]   = useState<AdsTotals | null>(null)
+  const [googleSummary, setGoogleSummary] = useState<AdsTotals | null>(null)
+  const [ga4Channels, setGa4Channels]   = useState<Ga4Channel[]>([])
+  const [ga4Funnel, setGa4Funnel]       = useState<Ga4Funnel | null>(null)
+  const [ga4TopPages, setGa4TopPages]   = useState<Ga4TopPage[]>([])
+  const [ltvStats, setLtvStats]         = useState<LtvStats | null>(null)
+  const [refundsSummary, setRefundsSummary] = useState<{ count: number; total: number; rate_pct: number } | null>(null)
 
   // Derived from allOrdersRaw + country filter — recomputes only when raw data
   // or country changes, not on every unrelated setState (insights, pacing, etc.)
@@ -819,6 +837,7 @@ export default function DashboardPage() {
       funnelResult,
       prevFunnelResult,
       nrResult,
+      { data: refundOrders },
     ] = await Promise.all([
       supabase.from('orders')
         .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
@@ -830,7 +849,7 @@ export default function DashboardPage() {
         .order('created_at', { ascending: false })
         .limit(5000),
       supabase.from('orders')
-        .select('total_price')
+        .select('total_price, created_at')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
         .gt('total_price', 0)
@@ -861,6 +880,13 @@ export default function DashboardPage() {
         p_start:     startDate.toISOString(),
         p_end:       endDate.toISOString(),
       })).catch(() => ({ data: null })),
+      supabase.from('orders')
+        .select('total_price')
+        .eq('client_id', clientId)
+        .eq('financial_status', 'refunded')
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
+        .limit(500),
     ])
 
     const funnelJson     = (funnelResult     as any)?.data ?? null
@@ -927,7 +953,25 @@ export default function DashboardPage() {
       const label = fmtDate(d.toISOString())
       points.push({ date: label, ...(byDay[label] || { revenue: 0, orders: 0 }) })
     }
-    setRevenueData(points)
+    // Overlay prev period shifted forward by `days` for comparison line
+    const prevByDay: Record<string, number> = {}
+    prevOrders.forEach((o: any) => {
+      if (!o.created_at) return
+      const shifted = new Date(o.created_at)
+      shifted.setDate(shifted.getDate() + days)
+      const key = fmtDate(shifted.toISOString())
+      prevByDay[key] = (prevByDay[key] || 0) + (o.total_price || 0)
+    })
+    setRevenueData(points.map(p => ({ ...p, prevRevenue: prevByDay[p.date] ?? 0 })))
+
+    // ── Refunds summary ───────────────────────────────────────────────────────
+    if (refundOrders && refundOrders.length > 0) {
+      const refTotal = refundOrders.reduce((s: number, r: any) => s + (r.total_price || 0), 0)
+      const revForRate = allOrders.reduce((s, o) => s + (o.total_price || 0), 0)
+      setRefundsSummary({ count: refundOrders.length, total: refTotal, rate_pct: revForRate > 0 ? (refTotal / revForRate) * 100 : 0 })
+    } else {
+      setRefundsSummary(null)
+    }
 
     // ── Conversion funnel — Supabase RPC funnel_stats returns fields directly
     const fd   = funnelJson || {}
@@ -1137,10 +1181,91 @@ export default function DashboardPage() {
       if (!res.ok) { setGa4Summary(null); return }
       const data = await res.json()
       setGa4Summary(data.summary ?? null)
+      setGa4Channels(data.by_channel || [])
     } catch {
       setGa4Summary(null)
+      setGa4Channels([])
     }
   }, [CLIENT_PIXEL_ID, period, from, to])
+
+  const loadAds = useCallback(async () => {
+    if (!CLIENT_PIXEL_ID) return
+    const qs = periodToQuery(period, from, to)
+    const [metaRes, googleRes] = await Promise.all([
+      fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/overview?${qs}`).catch(() => null),
+      fetch(`${API_URL}/google-ads/${CLIENT_PIXEL_ID}/overview?${qs}`).catch(() => null),
+    ])
+    if (metaRes?.ok) {
+      const data = await metaRes.json()
+      const t = data.totals
+      if (t) setMetaSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.purchases ?? 0, revenue: t.revenue ?? 0 })
+    }
+    if (googleRes?.ok) {
+      const data = await googleRes.json()
+      const t = data.totals
+      if (t) setGoogleSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.orders ?? t.purchases ?? 0, revenue: t.revenue ?? 0 })
+    }
+  }, [CLIENT_PIXEL_ID, period, from, to])
+
+  const loadTrafficTab = useCallback(async () => {
+    if (!CLIENT_PIXEL_ID) return
+    const qs = periodToQuery(period, from, to)
+    const [funnelRes, pagesRes] = await Promise.all([
+      fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/funnel?${qs}`).catch(() => null),
+      fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/top-pages?${qs}`).catch(() => null),
+    ])
+    if (funnelRes?.ok) {
+      const data = await funnelRes.json()
+      setGa4Funnel(data ?? null)
+    }
+    if (pagesRes?.ok) {
+      const data = await pagesRes.json()
+      setGa4TopPages(Array.isArray(data) ? data : (data.pages || []))
+    }
+  }, [CLIENT_PIXEL_ID, period, from, to])
+
+  const loadClientsTab = useCallback(async () => {
+    if (!CLIENT_PIXEL_ID) return
+    let cid = clientIdRef.current
+    if (!cid) {
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(CLIENT_PIXEL_ID)
+      const { data: cd } = isUUID
+        ? await supabase.from('clients').select('id').eq('id', CLIENT_PIXEL_ID).limit(1).single()
+        : await supabase.from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+      if (!cd) return
+      cid = cd.id
+      clientIdRef.current = cid
+    }
+    const { data: allOrders } = await supabase
+      .from('orders')
+      .select('email, total_price, created_at')
+      .eq('client_id', cid)
+      .eq('financial_status', 'paid')
+      .gt('total_price', 0)
+      .not('email', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(10000)
+    if (!allOrders) return
+    const custMap: Record<string, { total: number; orders: number; lastOrder: string }> = {}
+    allOrders.forEach((o: any) => {
+      if (!o.email) return
+      if (!custMap[o.email]) custMap[o.email] = { total: 0, orders: 0, lastOrder: o.created_at }
+      custMap[o.email].total += o.total_price || 0
+      custMap[o.email].orders += 1
+    })
+    const customers = Object.entries(custMap).map(([email, v]) => ({ email, ...v }))
+    const totalRev = customers.reduce((s, c) => s + c.total, 0)
+    const avgLtv = customers.length > 0 ? totalRev / customers.length : 0
+    const sixtyDaysAgo = new Date(); sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)
+    const atRisk = customers.filter(c => new Date(c.lastOrder) < sixtyDaysAgo).length
+    const topCustomers = [...customers].sort((a, b) => b.total - a.total).slice(0, 5).map(c => ({ email: c.email, total: c.total, orders: c.orders }))
+    setLtvStats({ avgLtv, topCustomers, atRisk, totalCustomers: customers.length })
+  }, [CLIENT_PIXEL_ID])
+
+  const handleTabChange = useCallback((tab: Tab) => {
+    setActiveTab(tab)
+    setLoadedTabs(prev => new Set([...prev, tab]))
+  }, [])
 
   async function addAnnotation() {
     if (!annoDate || !annoLabel.trim()) return
@@ -1163,6 +1288,13 @@ export default function DashboardPage() {
   useEffect(() => { loadPacing() }, [loadPacing])
   useEffect(() => { loadAnnotations() }, [loadAnnotations])
   useEffect(() => { loadGA4() }, [loadGA4])
+  useEffect(() => { loadAds() }, [loadAds])
+  useEffect(() => {
+    if (activeTab === 'traffic') loadTrafficTab()
+  }, [activeTab, loadTrafficTab])
+  useEffect(() => {
+    if (activeTab === 'clients') loadClientsTab()
+  }, [activeTab, loadClientsTab])
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -1206,14 +1338,37 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Tab Navigation */}
+      <div className="border-b border-[#2a2f3e] px-6">
+        <nav className="flex gap-1">
+          {([
+            { id: 'overview' as Tab, label: 'Visão Geral' },
+            { id: 'traffic'   as Tab, label: 'Tráfego & SEO' },
+            { id: 'campaigns' as Tab, label: 'Campanhas' },
+            { id: 'clients'   as Tab, label: 'Clientes' },
+          ]).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => handleTabChange(tab.id)}
+              className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
+                activeTab === tab.id
+                  ? 'border-indigo-500 text-indigo-400'
+                  : 'border-transparent text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+      </div>
+
       <div className="p-6 space-y-6">
 
-        {/* Saúde das integrações — só aparece se algo precisar de atenção
-            ou se forçarmos via reload. Card ocupa pouco espaço quando tudo
-            está verde, então deixamos sempre visível. */}
+        {/* ── OVERVIEW TAB ─────────────────────────────────────────────────── */}
+        {activeTab === 'overview' && <>
+
         {CLIENT_PIXEL_ID && <IntegrationsHealth pixelId={CLIENT_PIXEL_ID} />}
 
-        {/* Pacing — month-to-date vs goal */}
         {pacing && pacing.monthly_revenue_goal && (
           <PacingWidget pacing={pacing} />
         )}
@@ -1268,6 +1423,74 @@ export default function DashboardPage() {
             hint={kpis?.totalVisitors === 0 && ga4Summary ? 'pedidos ÷ sessões GA4' : undefined}
             color="bg-pink-500/10 text-pink-400" />
         </div>
+
+        {/* Ads Summary — Meta + Google side by side */}
+        {(metaSummary || googleSummary) && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {metaSummary && (
+              <div className="bg-[#1a1f2e] rounded-xl border border-blue-500/20 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-1.5 rounded bg-blue-500/10"><Target size={13} className="text-blue-400" /></div>
+                  <span className="text-sm font-semibold text-slate-300">Meta Ads</span>
+                  <span className="text-[10px] text-blue-400/70 bg-blue-500/10 border border-blue-500/20 px-1.5 py-0.5 rounded ml-auto">
+                    {periodLabelLong(period, from, to)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Gasto</p>
+                    <p className="text-xl font-bold text-white">{fmt(metaSummary.spend)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">ROAS</p>
+                    <p className={`text-xl font-bold ${(metaSummary.roas ?? 0) >= 3 ? 'text-emerald-400' : (metaSummary.roas ?? 0) >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {metaSummary.roas != null ? `${metaSummary.roas.toFixed(2)}x` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">CPA</p>
+                    <p className="text-xl font-bold text-white">{metaSummary.cpa != null ? fmt(metaSummary.cpa) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Compras</p>
+                    <p className="text-xl font-bold text-white">{metaSummary.purchases}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {googleSummary && (
+              <div className="bg-[#1a1f2e] rounded-xl border border-red-500/20 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-1.5 rounded bg-red-500/10"><Target size={13} className="text-red-400" /></div>
+                  <span className="text-sm font-semibold text-slate-300">Google Ads</span>
+                  <span className="text-[10px] text-red-400/70 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded ml-auto">
+                    {periodLabelLong(period, from, to)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Gasto</p>
+                    <p className="text-xl font-bold text-white">{fmt(googleSummary.spend)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">ROAS</p>
+                    <p className={`text-xl font-bold ${(googleSummary.roas ?? 0) >= 3 ? 'text-emerald-400' : (googleSummary.roas ?? 0) >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {googleSummary.roas != null ? `${googleSummary.roas.toFixed(2)}x` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">CPA</p>
+                    <p className="text-xl font-bold text-white">{googleSummary.cpa != null ? fmt(googleSummary.cpa) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Pedidos</p>
+                    <p className="text-xl font-bold text-white">{googleSummary.purchases}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* GA4 summary — só aparece quando ga4_reporting_enabled=true (API retorna 403 caso contrário) */}
         {ga4Summary && (
@@ -1342,13 +1565,17 @@ export default function DashboardPage() {
                 <YAxis tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={v => `R$${v}`} />
                 <Tooltip
                   contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
-                  formatter={(v) => [fmt(Number(v)), 'Receita']}
+                  formatter={(v, name) => [fmt(Number(v)), name === 'prevRevenue' ? 'Período anterior' : 'Receita']}
                 />
                 {annotations.filter(a => revenueData.some(p => p.date === a.date)).map(a => (
                   <ReferenceLine key={a.id} x={a.date} stroke="#f59e0b" strokeDasharray="4 4"
                     label={{ value: '📌', position: 'top', fontSize: 11 }} />
                 ))}
                 <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="url(#colorRevenue)" strokeWidth={2} />
+                {revenueData.some(p => (p.prevRevenue ?? 0) > 0) && (
+                  <Line type="monotone" dataKey="prevRevenue" stroke="#475569" strokeWidth={1.5}
+                    strokeDasharray="4 4" dot={false} name="Período anterior" />
+                )}
               </AreaChart>
             </ResponsiveContainer>
 
@@ -1443,124 +1670,396 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Campaign Attribution Table */}
-        <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-300">Atribuição de Campanhas</h2>
-            {attribution && attribution.total > 0 && (
-              <div className="flex items-center gap-4 text-xs">
-                <span className="flex items-center gap-1.5 text-slate-400">
-                  <CheckCircle size={12} className={attribution.ordersWithUtm / attribution.total >= 0.5 ? 'text-emerald-400' : 'text-yellow-400'} />
-                  {pct(attribution.ordersWithUtm, attribution.total)} com UTM
-                </span>
-                <span className="flex items-center gap-1.5 text-slate-400">
-                  <CheckCircle size={12} className={attribution.ordersWithEmail / attribution.total >= 0.9 ? 'text-emerald-400' : 'text-yellow-400'} />
-                  {pct(attribution.ordersWithEmail, attribution.total)} com email
-                </span>
+        {/* Recent Orders + Refunds */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+            <h2 className="text-sm font-semibold text-slate-300 mb-4">Pedidos Recentes</h2>
+            <div className="space-y-2 overflow-auto max-h-[280px]">
+              {recentOrders.length === 0 ? (
+                <p className="text-slate-500 text-sm">Nenhum pedido ainda</p>
+              ) : recentOrders.map(order => (
+                <div key={order.id} className="flex items-center justify-between py-2 border-b border-[#2a2f3e] last:border-0">
+                  <div className="min-w-0">
+                    <p className="text-sm text-slate-200 truncate">{order.email || '—'}</p>
+                    <p className="text-xs text-slate-500">
+                      {fmtDate(order.created_at)} ·{' '}
+                      {order.utm_source ? <span className="text-indigo-400">{order.utm_source}</span> : 'direto'}
+                    </p>
+                  </div>
+                  <div className="text-right ml-4 shrink-0">
+                    <p className="text-sm font-medium text-emerald-400">{fmt(order.total_price)}</p>
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${order.financial_status === 'paid' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                      {order.financial_status || 'pendente'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {refundsSummary ? (
+            <div className="bg-[#1a1f2e] rounded-xl p-5 border border-orange-500/20">
+              <div className="flex items-center gap-2 mb-4">
+                <DollarSign size={13} className="text-orange-400" />
+                <h2 className="text-sm font-semibold text-slate-300">Reembolsos</h2>
+                <span className="text-[10px] text-orange-400/70 bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 rounded ml-auto">{periodLabelLong(period, from, to)}</span>
               </div>
-            )}
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#2a2f3e]">
-                  {['Origem', 'Mídia', 'Campanha', 'Pedidos', 'Receita', '% Total', 'Ticket Médio'].map(h => (
-                    <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {campaigns.length === 0 ? (
-                  <tr><td colSpan={7} className="py-8 text-center text-slate-500 text-sm">Sem dados no período</td></tr>
-                ) : campaigns.map((c, i) => (
-                  <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
-                    <td className="px-4 py-3">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                        c.source === 'direto'    ? 'bg-slate-500/10 text-slate-400' :
-                        ['facebook','instagram','meta'].includes(c.source) ? 'bg-blue-500/10 text-blue-400' :
-                        c.source === 'google'   ? 'bg-red-500/10 text-red-400' :
-                        'bg-indigo-500/10 text-indigo-400'
-                      }`}>{c.source}</span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">{c.medium !== '—' ? c.medium : <span className="text-slate-600">—</span>}</td>
-                    <td className="px-4 py-3 text-xs text-slate-300 max-w-[180px]">
-                      <p className="truncate">{c.campaign !== '—' ? c.campaign : <span className="text-slate-600">—</span>}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-200 font-medium">{c.orders}</td>
-                    <td className="px-4 py-3 text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-14 h-1.5 bg-[#0f1117] rounded overflow-hidden">
-                          <div className="h-full bg-indigo-500 rounded" style={{ width: `${Math.min(c.pctRevenue, 100)}%` }} />
-                        </div>
-                        <span className="text-slate-400 text-xs">{c.pctRevenue.toFixed(0)}%</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{fmt(c.avgTicket)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Pedidos</p>
+                  <p className="text-2xl font-bold text-orange-400">{refundsSummary.count}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">Total</p>
+                  <p className="text-2xl font-bold text-white">{fmt(refundsSummary.total)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 mb-1">% Receita</p>
+                  <p className={`text-2xl font-bold ${refundsSummary.rate_pct > 5 ? 'text-red-400' : refundsSummary.rate_pct > 2 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                    {refundsSummary.rate_pct.toFixed(1)}%
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e] flex items-center justify-center">
+              <p className="text-slate-600 text-sm">Nenhum reembolso no período</p>
+            </div>
+          )}
         </div>
 
-        {/* Novos vs Recorrentes */}
-        {retention && retention.total > 0 && (
-          <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
-            <h2 className="text-sm font-semibold text-slate-300 mb-4">Novos vs Recorrentes</h2>
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div>
-                <p className="text-2xl font-bold text-emerald-400">{retention.newOrders}</p>
-                <p className="text-xs text-slate-500 mt-0.5">Novos clientes</p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {retention.total > 0 ? ((retention.newOrders / retention.total) * 100).toFixed(0) : 0}% dos pedidos
-                </p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-indigo-400">{retention.returningOrders}</p>
-                <p className="text-xs text-slate-500 mt-0.5">Recorrentes</p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {retention.total > 0 ? ((retention.returningOrders / retention.total) * 100).toFixed(0) : 0}% dos pedidos
-                </p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-slate-200">{retention.total}</p>
-                <p className="text-xs text-slate-500 mt-0.5">Total no período</p>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  {retention.total - retention.newOrders - retention.returningOrders > 0
-                    ? `${retention.total - retention.newOrders - retention.returningOrders} sem dado`
-                    : ''}
-                </p>
-              </div>
+        </>} {/* end overview tab */}
+
+        {/* ── TRAFFIC & SEO TAB ───────────────────────────────────────────────── */}
+        {activeTab === 'traffic' && <>
+          {!ga4Summary ? (
+            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-10 text-center">
+              <Globe size={32} className="text-slate-600 mx-auto mb-3" />
+              <p className="text-slate-400 text-sm font-medium">GA4 não configurado</p>
+              <p className="text-slate-600 text-xs mt-1">Configure a integração Google Analytics 4 nas configurações do cliente</p>
             </div>
-            <div className="h-2.5 bg-[#0f1117] rounded-full overflow-hidden flex">
-              <div
-                className="h-full bg-emerald-500 transition-all duration-700"
-                style={{ width: `${retention.total > 0 ? (retention.newOrders / retention.total) * 100 : 0}%` }}
-              />
-              <div
-                className="h-full bg-indigo-500 transition-all duration-700"
-                style={{ width: `${retention.total > 0 ? (retention.returningOrders / retention.total) * 100 : 0}%` }}
-              />
-            </div>
-            <div className="flex items-center gap-4 mt-2">
-              <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Novos
-              </span>
-              <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />Recorrentes
-              </span>
-              {retention.total - retention.newOrders - retention.returningOrders > 0 && (
-                <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                  <span className="w-2 h-2 rounded-full bg-slate-600 inline-block" />Sem dado
-                </span>
+          ) : (
+            <>
+              {/* GA4 overview stats */}
+              <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-5 py-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <BarChart2 size={13} className="text-indigo-400" />
+                    <span className="text-xs font-semibold text-slate-300">Google Analytics 4 — {periodLabelLong(period, from, to)}</span>
+                  </div>
+                  <Link href={`/clients/${CLIENT_PIXEL_ID}/ga4`} className="text-xs text-indigo-400 hover:text-indigo-300">
+                    Relatório completo →
+                  </Link>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div><p className="text-xs text-slate-500 mb-1">Sessões</p><p className="text-2xl font-bold text-white">{ga4Summary.sessions.toLocaleString('pt-BR')}</p></div>
+                  <div><p className="text-xs text-slate-500 mb-1">Usuários</p><p className="text-2xl font-bold text-white">{ga4Summary.users.toLocaleString('pt-BR')}</p></div>
+                  <div><p className="text-xs text-slate-500 mb-1">Conversões</p><p className="text-2xl font-bold text-white">{ga4Summary.conversions.toLocaleString('pt-BR')}</p></div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Receita GA4</p>
+                    <p className="text-2xl font-bold text-white">{ga4Summary.revenue > 0 ? fmt(ga4Summary.revenue) : '—'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* GA4 by channel */}
+              {ga4Channels.length > 0 && (
+                <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+                  <div className="px-5 py-4 border-b border-[#2a2f3e]">
+                    <h2 className="text-sm font-semibold text-slate-300">Tráfego por Canal (GA4)</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Sessões, usuários e conversões por canal de aquisição</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[#2a2f3e]">
+                          {['Canal', 'Sessões', 'Usuários', 'Conversões', 'Receita'].map(h => (
+                            <th key={h} className={`px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Canal' ? 'text-left' : 'text-right'}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ga4Channels.map((ch, i) => (
+                          <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
+                            <td className="px-4 py-3 text-slate-200 text-xs font-medium">{ch.channel}</td>
+                            <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{ch.sessions.toLocaleString('pt-BR')}</td>
+                            <td className="px-4 py-3 text-right text-slate-400 tabular-nums">{ch.users.toLocaleString('pt-BR')}</td>
+                            <td className="px-4 py-3 text-right text-indigo-400 tabular-nums font-medium">{ch.conversions.toLocaleString('pt-BR')}</td>
+                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{ch.revenue > 0 ? fmt(ch.revenue) : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* GA4 Funnel */}
+              {ga4Funnel ? (
+                <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-5">
+                  <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão GA4</h2>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                    {[
+                      { label: 'Sessões', value: ga4Funnel.sessions, rate: null },
+                      { label: 'Add ao Carrinho', value: ga4Funnel.add_to_cart, rate: ga4Funnel.atc_rate },
+                      { label: 'Checkout', value: ga4Funnel.begin_checkout, rate: ga4Funnel.checkout_rate },
+                      { label: 'Compras', value: ga4Funnel.purchases, rate: ga4Funnel.purchase_rate },
+                    ].map((step, i) => (
+                      <div key={i} className="bg-[#0f1117] rounded-xl p-4">
+                        <p className="text-xs text-slate-500 mb-2">{step.label}</p>
+                        <p className="text-2xl font-bold text-white">{step.value.toLocaleString('pt-BR')}</p>
+                        {step.rate != null && (
+                          <p className={`text-xs mt-1 font-medium ${step.rate >= 3 ? 'text-emerald-400' : step.rate >= 1 ? 'text-yellow-400' : 'text-red-400'}`}>
+                            {step.rate.toFixed(1)}% de conversão
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="h-2 bg-[#0f1117] rounded-full overflow-hidden flex gap-0.5">
+                    {[ga4Funnel.sessions, ga4Funnel.add_to_cart, ga4Funnel.begin_checkout, ga4Funnel.purchases].map((v, i) => {
+                      const colors = ['bg-indigo-500', 'bg-purple-500', 'bg-pink-500', 'bg-emerald-500']
+                      const pctW = ga4Funnel.sessions > 0 ? (v / ga4Funnel.sessions) * 100 : 0
+                      return <div key={i} className={`h-full ${colors[i]} transition-all duration-700`} style={{ width: `${pctW}%` }} />
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-8 text-center">
+                  <Loader2 size={20} className="text-slate-600 mx-auto mb-2 animate-spin" />
+                  <p className="text-slate-500 text-sm">Carregando funil GA4…</p>
+                </div>
+              )}
+
+              {/* GA4 Top Pages */}
+              {ga4TopPages.length > 0 && (
+                <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+                  <div className="px-5 py-4 border-b border-[#2a2f3e]">
+                    <h2 className="text-sm font-semibold text-slate-300">Top Páginas (GA4)</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Páginas com mais sessões no período</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[#2a2f3e]">
+                          {['Página', 'Sessões', 'Conversões', 'Receita', 'Conv. %'].map(h => (
+                            <th key={h} className={`px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Página' ? 'text-left' : 'text-right'}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ga4TopPages.slice(0, 10).map((pg, i) => (
+                          <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
+                            <td className="px-4 py-3 max-w-[260px]">
+                              <p className="text-slate-200 text-xs truncate">{pg.title || pg.path}</p>
+                              <p className="text-slate-600 text-xs truncate">{pg.path}</p>
+                            </td>
+                            <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{pg.sessions.toLocaleString('pt-BR')}</td>
+                            <td className="px-4 py-3 text-right text-indigo-400 tabular-nums">{pg.conversions.toLocaleString('pt-BR')}</td>
+                            <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{pg.revenue > 0 ? fmt(pg.revenue) : '—'}</td>
+                            <td className="px-4 py-3 text-right text-slate-400 tabular-nums">{pg.conv_rate != null ? pg.conv_rate.toFixed(1) + '%' : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </>}
+
+        {/* ── CAMPAIGNS TAB ───────────────────────────────────────────────────── */}
+        {activeTab === 'campaigns' && <>
+          {/* Campaign Attribution Table */}
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-slate-300">Atribuição de Campanhas</h2>
+              {attribution && attribution.total > 0 && (
+                <div className="flex items-center gap-4 text-xs">
+                  <span className="flex items-center gap-1.5 text-slate-400">
+                    <CheckCircle size={12} className={attribution.ordersWithUtm / attribution.total >= 0.5 ? 'text-emerald-400' : 'text-yellow-400'} />
+                    {pct(attribution.ordersWithUtm, attribution.total)} com UTM
+                  </span>
+                  <span className="flex items-center gap-1.5 text-slate-400">
+                    <CheckCircle size={12} className={attribution.ordersWithEmail / attribution.total >= 0.9 ? 'text-emerald-400' : 'text-yellow-400'} />
+                    {pct(attribution.ordersWithEmail, attribution.total)} com email
+                  </span>
+                </div>
               )}
             </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#2a2f3e]">
+                    {['Origem', 'Mídia', 'Campanha', 'Pedidos', 'Receita', '% Total', 'Ticket Médio'].map(h => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.length === 0 ? (
+                    <tr><td colSpan={7} className="py-8 text-center text-slate-500 text-sm">Sem dados no período</td></tr>
+                  ) : campaigns.map((c, i) => (
+                    <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
+                      <td className="px-4 py-3">
+                        <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                          c.source === 'direto' ? 'bg-slate-500/10 text-slate-400' :
+                          ['facebook','instagram','meta'].includes(c.source) ? 'bg-blue-500/10 text-blue-400' :
+                          c.source === 'google' ? 'bg-red-500/10 text-red-400' :
+                          'bg-indigo-500/10 text-indigo-400'
+                        }`}>{c.source}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-400">{c.medium !== '—' ? c.medium : <span className="text-slate-600">—</span>}</td>
+                      <td className="px-4 py-3 text-xs text-slate-300 max-w-[180px]"><p className="truncate">{c.campaign !== '—' ? c.campaign : <span className="text-slate-600">—</span>}</p></td>
+                      <td className="px-4 py-3 text-slate-200 font-medium">{c.orders}</td>
+                      <td className="px-4 py-3 text-emerald-400 font-semibold whitespace-nowrap">{fmt(c.revenue)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-14 h-1.5 bg-[#0f1117] rounded overflow-hidden">
+                            <div className="h-full bg-indigo-500 rounded" style={{ width: `${Math.min(c.pctRevenue, 100)}%` }} />
+                          </div>
+                          <span className="text-slate-400 text-xs">{c.pctRevenue.toFixed(0)}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-slate-300 whitespace-nowrap">{fmt(c.avgTicket)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        )}
 
-        {/* Product Performance + Recent Orders */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Heatmap de vendas */}
+          {heatmap.length > 0 && <SalesHeatmap grid={heatmap} />}
+        </>}
+
+        {/* ── CLIENTS TAB ─────────────────────────────────────────────────────── */}
+        {activeTab === 'clients' && <>
+
+          {/* LTV + At-risk */}
+          {ltvStats ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+                <p className="text-xs text-slate-500 mb-1">LTV Médio</p>
+                <p className="text-3xl font-bold text-white">{fmt(ltvStats.avgLtv)}</p>
+                <p className="text-xs text-slate-500 mt-1">{ltvStats.totalCustomers.toLocaleString('pt-BR')} clientes únicos (all-time)</p>
+              </div>
+              <div className={`bg-[#1a1f2e] rounded-xl p-5 border ${ltvStats.atRisk > 0 ? 'border-orange-500/30' : 'border-[#2a2f3e]'}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <UserX size={13} className={ltvStats.atRisk > 0 ? 'text-orange-400' : 'text-slate-500'} />
+                  <p className="text-xs text-slate-500">Em Risco (60d+)</p>
+                </div>
+                <p className={`text-3xl font-bold ${ltvStats.atRisk > 0 ? 'text-orange-400' : 'text-white'}`}>{ltvStats.atRisk}</p>
+                <p className="text-xs text-slate-500 mt-1">clientes sem compra em 60+ dias</p>
+              </div>
+              <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+                <p className="text-xs text-slate-500 mb-1">Top Cliente (LTV)</p>
+                {ltvStats.topCustomers[0] ? (
+                  <>
+                    <p className="text-sm font-bold text-white truncate">{ltvStats.topCustomers[0].email}</p>
+                    <p className="text-2xl font-bold text-emerald-400 mt-1">{fmt(ltvStats.topCustomers[0].total)}</p>
+                    <p className="text-xs text-slate-500 mt-1">{ltvStats.topCustomers[0].orders} pedidos</p>
+                  </>
+                ) : <p className="text-slate-600 text-sm mt-2">—</p>}
+              </div>
+            </div>
+          ) : (
+            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-8 text-center">
+              <Loader2 size={20} className="text-slate-600 mx-auto mb-2 animate-spin" />
+              <p className="text-slate-500 text-sm">Calculando LTV…</p>
+            </div>
+          )}
+
+          {/* Top Customers table */}
+          {ltvStats && ltvStats.topCustomers.length > 0 && (
+            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+              <div className="px-5 py-4 border-b border-[#2a2f3e]">
+                <h2 className="text-sm font-semibold text-slate-300">Top Clientes por LTV</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Clientes com maior valor acumulado (all-time)</p>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[#2a2f3e]">
+                    {['#', 'Email', 'Pedidos', 'LTV Total'].map(h => (
+                      <th key={h} className={`px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider ${h === 'Email' ? 'text-left' : 'text-right'}`}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {ltvStats.topCustomers.map((c, i) => (
+                    <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
+                      <td className="px-4 py-3 text-right text-slate-600 text-xs w-8">{i + 1}</td>
+                      <td className="px-4 py-3 text-slate-200 text-xs">{c.email}</td>
+                      <td className="px-4 py-3 text-right text-slate-400 tabular-nums">{c.orders}</td>
+                      <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{fmt(c.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* New vs Returning */}
+          {retention && retention.total > 0 && (
+            <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
+              <h2 className="text-sm font-semibold text-slate-300 mb-4">Novos vs Recorrentes</h2>
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                <div>
+                  <p className="text-2xl font-bold text-emerald-400">{retention.newOrders}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Novos clientes</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{retention.total > 0 ? ((retention.newOrders / retention.total) * 100).toFixed(0) : 0}% dos pedidos</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-indigo-400">{retention.returningOrders}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Recorrentes</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{retention.total > 0 ? ((retention.returningOrders / retention.total) * 100).toFixed(0) : 0}% dos pedidos</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-slate-200">{retention.total}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Total no período</p>
+                </div>
+              </div>
+              <div className="h-2.5 bg-[#0f1117] rounded-full overflow-hidden flex">
+                <div className="h-full bg-emerald-500 transition-all duration-700" style={{ width: `${retention.total > 0 ? (retention.newOrders / retention.total) * 100 : 0}%` }} />
+                <div className="h-full bg-indigo-500 transition-all duration-700" style={{ width: `${retention.total > 0 ? (retention.returningOrders / retention.total) * 100 : 0}%` }} />
+              </div>
+              <div className="flex items-center gap-4 mt-2">
+                <span className="flex items-center gap-1.5 text-xs text-slate-500"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Novos</span>
+                <span className="flex items-center gap-1.5 text-xs text-slate-500"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />Recorrentes</span>
+              </div>
+            </div>
+          )}
+
+          {/* Cohort Retention */}
+          {cohortData.length > 0 && cohortData.some(c => c.newBuyers > 0) && (
+            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-5">
+              <div className="mb-4">
+                <h2 className="text-sm font-semibold text-slate-300">Retenção por Coorte Mensal</h2>
+                <p className="text-xs text-slate-500 mt-0.5">% de novos compradores de cada mês que fizeram uma segunda compra</p>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                {cohortData.map(c => (
+                  <div key={c.label} className="bg-[#0f1117] rounded-xl p-4">
+                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">{c.label}</p>
+                    <div className="flex items-end gap-3 mb-3">
+                      <div>
+                        <p className={`text-2xl font-bold ${c.retPct >= 20 ? 'text-emerald-400' : c.retPct >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>{c.retPct}%</p>
+                        <p className="text-xs text-slate-500">retornaram</p>
+                      </div>
+                      <div className="text-right ml-auto">
+                        <p className="text-sm font-medium text-white">{c.newBuyers}</p>
+                        <p className="text-xs text-slate-600">novos</p>
+                      </div>
+                    </div>
+                    <div className="h-1.5 bg-[#1a1f2e] rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all duration-700 ${c.retPct >= 20 ? 'bg-emerald-500' : c.retPct >= 10 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(c.retPct, 100)}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Product Performance */}
           <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
@@ -1569,9 +2068,7 @@ export default function DashboardPage() {
               <div className="flex gap-1 bg-[#0f1117] rounded-lg p-0.5">
                 {(['purchases', 'views'] as const).map(s => (
                   <button key={s} onClick={() => setProductSort(s)}
-                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                      productSort === s ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'
-                    }`}>
+                    className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${productSort === s ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:text-slate-300'}`}>
                     {s === 'purchases' ? 'Vendas' : 'Visitas'}
                   </button>
                 ))}
@@ -1591,16 +2088,10 @@ export default function DashboardPage() {
                 <tbody>
                   {[...products].sort((a, b) => productSort === 'purchases' ? b.purchases - a.purchases : b.views - a.views).map((p, i) => (
                     <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
-                      <td className="px-4 py-3">
-                        <p className="text-slate-200 truncate max-w-[180px] text-xs">{p.name}</p>
-                      </td>
+                      <td className="px-4 py-3"><p className="text-slate-200 truncate max-w-[200px] text-xs">{p.name}</p></td>
                       <td className="px-4 py-3 text-center text-slate-400">{p.views}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={p.cartAdds > 0 ? 'text-yellow-400' : 'text-slate-600'}>{p.cartAdds}</span>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={p.purchases > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-600'}>{p.purchases}</span>
-                      </td>
+                      <td className="px-4 py-3 text-center"><span className={p.cartAdds > 0 ? 'text-yellow-400' : 'text-slate-600'}>{p.cartAdds}</span></td>
+                      <td className="px-4 py-3 text-center"><span className={p.purchases > 0 ? 'text-emerald-400 font-semibold' : 'text-slate-600'}>{p.purchases}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1608,119 +2099,40 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Recent Orders */}
-          <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
-            <h2 className="text-sm font-semibold text-slate-300 mb-4">Pedidos Recentes</h2>
-            <div className="space-y-2 overflow-auto max-h-[280px]">
-              {recentOrders.length === 0 ? (
-                <p className="text-slate-500 text-sm">Nenhum pedido ainda</p>
-              ) : recentOrders.map(order => (
-                <div key={order.id} className="flex items-center justify-between py-2 border-b border-[#2a2f3e] last:border-0">
-                  <div className="min-w-0">
-                    <p className="text-sm text-slate-200 truncate">{order.email || '—'}</p>
-                    <p className="text-xs text-slate-500">
-                      {fmtDate(order.created_at)} ·{' '}
-                      {order.utm_source
-                        ? <span className="text-indigo-400">{order.utm_source}</span>
-                        : 'direto'}
-                    </p>
-                  </div>
-                  <div className="text-right ml-4 shrink-0">
-                    <p className="text-sm font-medium text-emerald-400">{fmt(order.total_price)}</p>
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      order.financial_status === 'paid'
-                        ? 'bg-emerald-500/10 text-emerald-400'
-                        : 'bg-yellow-500/10 text-yellow-400'
-                    }`}>{order.financial_status || 'pendente'}</span>
-                  </div>
+          {/* AI Insights */}
+          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+            <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles size={15} className="text-indigo-400" />
+                <h2 className="text-sm font-semibold text-slate-300">Insights IA</h2>
+                {insights.filter(i => !i.is_read).length > 0 && (
+                  <span className="bg-indigo-600 text-white text-xs px-1.5 py-0.5 rounded-full font-medium">
+                    {insights.filter(i => !i.is_read).length} novo{insights.filter(i => !i.is_read).length > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <button onClick={generateInsights} disabled={generating}
+                className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors font-medium">
+                {generating ? <><Loader2 size={12} className="animate-spin" /> Analisando…</> : <><Sparkles size={12} /> Gerar análise</>}
+              </button>
+            </div>
+            <div className="p-5">
+              {insightsLoading ? (
+                <div className="flex items-center gap-2 text-slate-500 text-sm"><Loader2 size={14} className="animate-spin" /> Carregando insights…</div>
+              ) : insights.length === 0 ? (
+                <div className="text-center py-8">
+                  <Sparkles size={32} className="text-slate-600 mx-auto mb-3" />
+                  <p className="text-slate-400 text-sm font-medium">Nenhum insight gerado ainda</p>
+                  <p className="text-slate-600 text-xs mt-1">Clique em "Gerar análise" para o Claude analisar seus dados</p>
                 </div>
-              ))}
-            </div>
-          </div>
-
-        </div>
-
-        {/* Heatmap de vendas */}
-        {heatmap.length > 0 && <SalesHeatmap grid={heatmap} />}
-
-        {/* Cohort Retention */}
-        {cohortData.length > 0 && cohortData.some(c => c.newBuyers > 0) && (
-          <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-5">
-            <div className="mb-4">
-              <h2 className="text-sm font-semibold text-slate-300">Retenção por Coorte Mensal</h2>
-              <p className="text-xs text-slate-500 mt-0.5">% de novos compradores de cada mês que fizeram uma segunda compra</p>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              {cohortData.map(c => (
-                <div key={c.label} className="bg-[#0f1117] rounded-xl p-4">
-                  <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">{c.label}</p>
-                  <div className="flex items-end gap-3 mb-3">
-                    <div>
-                      <p className={`text-2xl font-bold ${c.retPct >= 20 ? 'text-emerald-400' : c.retPct >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>
-                        {c.retPct}%
-                      </p>
-                      <p className="text-xs text-slate-500">retornaram</p>
-                    </div>
-                    <div className="text-right ml-auto">
-                      <p className="text-sm font-medium text-white">{c.newBuyers}</p>
-                      <p className="text-xs text-slate-600">novos</p>
-                    </div>
-                  </div>
-                  <div className="h-1.5 bg-[#1a1f2e] rounded-full overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all duration-700 ${c.retPct >= 20 ? 'bg-emerald-500' : c.retPct >= 10 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                      style={{ width: `${Math.min(c.retPct, 100)}%` }}
-                    />
-                  </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                  {insights.map(insight => <InsightCard key={insight.id} insight={insight} onRead={markRead} />)}
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* AI Insights */}
-        <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
-          <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Sparkles size={15} className="text-indigo-400" />
-              <h2 className="text-sm font-semibold text-slate-300">Insights IA</h2>
-              {insights.filter(i => !i.is_read).length > 0 && (
-                <span className="bg-indigo-600 text-white text-xs px-1.5 py-0.5 rounded-full font-medium">
-                  {insights.filter(i => !i.is_read).length} novo{insights.filter(i => !i.is_read).length > 1 ? 's' : ''}
-                </span>
               )}
             </div>
-            <button
-              onClick={generateInsights}
-              disabled={generating}
-              className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors font-medium"
-            >
-              {generating
-                ? <><Loader2 size={12} className="animate-spin" /> Analisando…</>
-                : <><Sparkles size={12} /> Gerar análise</>
-              }
-            </button>
           </div>
-          <div className="p-5">
-            {insightsLoading ? (
-              <div className="flex items-center gap-2 text-slate-500 text-sm">
-                <Loader2 size={14} className="animate-spin" /> Carregando insights…
-              </div>
-            ) : insights.length === 0 ? (
-              <div className="text-center py-8">
-                <Sparkles size={32} className="text-slate-600 mx-auto mb-3" />
-                <p className="text-slate-400 text-sm font-medium">Nenhum insight gerado ainda</p>
-                <p className="text-slate-600 text-xs mt-1">Clique em "Gerar análise" para o Claude analisar seus dados</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {insights.map(insight => (
-                  <InsightCard key={insight.id} insight={insight} onRead={markRead} />
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        </>}
 
       </div>
 
