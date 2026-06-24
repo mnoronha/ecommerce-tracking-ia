@@ -313,6 +313,61 @@ async def trigger_monthly_report(
     return {"client": c.get("name"), "type": "monthly", **result}
 
 
+@router.get("/shopify/{pixel_id}/note-attributes", summary="Inspect raw note_attributes from Shopify (GTM tag validation)")
+async def inspect_note_attributes(
+    pixel_id: str,
+    limit: int = Query(5, ge=1, le=20, description="Número de pedidos recentes a inspecionar"),
+):
+    """
+    Busca os pedidos mais recentes diretamente da Shopify Admin API e retorna
+    os note_attributes crus. Usado para validar se a tag GTM está escrevendo
+    _utm_*, _fbp, _fbc, _gclid nos atributos do carrinho.
+    """
+    import httpx
+    row = _get_client(pixel_id)
+    client = crypto.decrypt_client_secrets(row)
+
+    domain = (client.get("shopify_domain") or "").strip().rstrip("/")
+    token  = client.get("shopify_access_token") or ""
+    if not domain or not token:
+        raise HTTPException(status_code=400, detail="Client has no Shopify domain/token")
+
+    url = f"https://{domain}/admin/api/2024-10/orders.json"
+    params = {
+        "financial_status": "any",
+        "status": "any",
+        "limit": limit,
+        "fields": "id,name,created_at,note_attributes,source_name,landing_site",
+        "order": "created_at DESC",
+    }
+    try:
+        resp = httpx.get(url, headers={"X-Shopify-Access-Token": token}, params=params, timeout=15.0)
+        resp.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Shopify API error: {exc}")
+
+    orders = resp.json().get("orders", [])
+    result = []
+    for o in orders:
+        attrs = {a["name"]: a["value"] for a in (o.get("note_attributes") or [])}
+        noro_keys = {k: v for k, v in attrs.items() if k.startswith("_utm_") or k in ("_gclid", "_gbraid", "_wbraid", "_fbclid", "_fbp", "_fbc", "_etv")}
+        result.append({
+            "order_id":       o.get("id"),
+            "name":           o.get("name"),
+            "created_at":     o.get("created_at"),
+            "source_name":    o.get("source_name"),
+            "landing_site":   o.get("landing_site"),
+            "noro_attrs":     noro_keys,
+            "all_attr_keys":  list(attrs.keys()),
+        })
+
+    return {
+        "pixel_id": pixel_id,
+        "orders_inspected": len(result),
+        "orders": result,
+    }
+
+
 @router.patch("/shopify/{pixel_id}/enable", summary="Enable/disable Shopify API sync")
 async def toggle_shopify_sync(pixel_id: str, enabled: bool = Query(...)):
     """Ativa ou desativa o polling horário para um cliente."""
