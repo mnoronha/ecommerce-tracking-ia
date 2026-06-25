@@ -8,6 +8,8 @@ import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCirc
 import IntegrationsHealth from '@/components/IntegrationsHealth'
 import { useDatePeriod, periodLabelLong, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
+import { EmptyState } from '@/components/ui/empty-state'
+import { ColHeader, SourceBadge } from '@/components/ui/metric-tooltip'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Line,
@@ -1379,6 +1381,7 @@ export default function DashboardPage() {
             icon={TrendingUp} change={kpis?.revenueChange}
             spark={revenueData.map(p => p.revenue)}
             color="bg-emerald-500/10 text-emerald-400"
+            hint={period === '1d' ? `⚠ parcial — ${Math.round((new Date().getHours() * 60 + new Date().getMinutes()) / 1440 * 100)}% do dia decorrido` : undefined}
             onClick={() => setDrilldown('revenue')} />
           {kpis?.totalProfit != null && (
             <KPICard
@@ -1404,7 +1407,13 @@ export default function DashboardPage() {
             }
             icon={Users}
             change={kpis?.visitorsChange}
-            hint={kpis?.totalVisitors === 0 && ga4Summary ? 'via Google Analytics 4' : undefined}
+            hint={
+              kpis?.totalVisitors === 0 && ga4Summary
+                ? 'via Google Analytics 4'
+                : kpis?.totalVisitors === 0
+                ? '⚠ Pixel sem dados · verificar tracking'
+                : undefined
+            }
             color="bg-purple-500/10 text-purple-400" />
           <KPICard title="Ticket Médio" value={kpis ? fmt(kpis.avgOrderValue) : '—'}
             icon={Activity} change={kpis?.avgOrderValueChange}
@@ -1416,11 +1425,21 @@ export default function DashboardPage() {
             value={
               kpis?.totalVisitors === 0 && ga4Summary && ga4Summary.sessions > 0
                 ? ((kpis.totalOrders / ga4Summary.sessions) * 100).toFixed(1) + '%'
+                : kpis && kpis.totalVisitors === 0 && !ga4Summary
+                ? '—'
                 : (kpis ? kpis.conversionRate.toFixed(1) + '%' : '—')
             }
             icon={Percent}
-            change={kpis?.conversionRateChange}
-            hint={kpis?.totalVisitors === 0 && ga4Summary ? 'pedidos ÷ sessões GA4' : undefined}
+            change={
+              kpis?.totalVisitors === 0 && !ga4Summary ? undefined : kpis?.conversionRateChange
+            }
+            hint={
+              kpis?.totalVisitors === 0 && ga4Summary
+                ? 'pedidos ÷ sessões GA4'
+                : kpis?.totalVisitors === 0
+                ? 'Sem dados de sessões — verificar pixel'
+                : undefined
+            }
             color="bg-pink-500/10 text-pink-400" />
         </div>
 
@@ -1605,20 +1624,13 @@ export default function DashboardPage() {
           <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
             <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão</h2>
             {funnelSteps.length === 0 || funnelSteps[0].count === 0 ? (
-              <div className="space-y-3">
-                <p className="text-slate-500 text-sm">Tracking nativo Shopify ativo</p>
-                <p className="text-xs text-slate-600">O funil completo (sessões → ATC → checkout → compra) está disponível no relatório GA4.</p>
-                <div className="flex flex-col gap-2 mt-1">
-                  <Link href={`/clients/${CLIENT_PIXEL_ID}/ga4`}
-                    className="inline-flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors">
-                    <BarChart2 size={11} /> Ver funil GA4 →
-                  </Link>
-                  <Link href={`/clients/${CLIENT_PIXEL_ID}/shopify-revenue`}
-                    className="inline-flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 transition-colors">
-                    <ShoppingBag size={11} /> Ver faturamento Shopify →
-                  </Link>
-                </div>
-              </div>
+              <EmptyState
+                type="setup"
+                title="Funil via GA4 ou Shopify"
+                description="Não recebemos eventos de sessão do pixel Noro neste período. O funil completo (sessões → carrinho → checkout → compra) está disponível no GA4."
+                link={{ label: 'Ver funil GA4', href: `/clients/${CLIENT_PIXEL_ID}/ga4` }}
+                compact
+              />
             ) : <FunnelBar steps={funnelSteps} />}
           </div>
         </div>
@@ -1628,8 +1640,16 @@ export default function DashboardPage() {
           <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
             <div className="px-5 py-4 border-b border-[#2a2f3e] flex items-center justify-between flex-wrap gap-2">
               <div>
-                <h2 className="text-sm font-semibold text-slate-300">Receita por Canal</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Origem das conversões no período · agrupado por utm_source / medium</p>
+                <h2 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                  Receita Real por Canal
+                  <ColHeader
+                    label=""
+                    right={false}
+                    tooltip="Receita atribuída por UTM last-click no momento do checkout. Fonte: pedidos Shopify com utm_source. Difere da 'Receita Meta' (que usa janela de 7 dias + view-through) e da 'Receita Google Ads' (conversões reportadas). Use esta coluna para decisões de budget — é o ground truth."
+                  />
+                  <SourceBadge source="shopify" />
+                </h2>
+                <p className="text-xs text-slate-500 mt-0.5">Last-click attribution · utm_source no checkout · pedidos pagos no Shopify</p>
               </div>
               <div className="flex items-center gap-3 text-xs text-slate-500">
                 <span>{channelRevenue.reduce((s, c) => s + c.orders, 0)} pedidos</span>
@@ -1676,7 +1696,12 @@ export default function DashboardPage() {
             <h2 className="text-sm font-semibold text-slate-300 mb-4">Pedidos Recentes</h2>
             <div className="space-y-2 overflow-auto max-h-[280px]">
               {recentOrders.length === 0 ? (
-                <p className="text-slate-500 text-sm">Nenhum pedido ainda</p>
+                <EmptyState
+                  type="neutral"
+                  title="Nenhum pedido no período"
+                  description="Sem pedidos pagos ou pendentes no intervalo selecionado."
+                  compact
+                />
               ) : recentOrders.map(order => (
                 <div key={order.id} className="flex items-center justify-between py-2 border-b border-[#2a2f3e] last:border-0">
                   <div className="min-w-0">
@@ -1722,8 +1747,13 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e] flex items-center justify-center">
-              <p className="text-slate-600 text-sm">Nenhum reembolso no período</p>
+            <div className="p-0">
+              <EmptyState
+                type="neutral"
+                title="Nenhum reembolso no período"
+                description="Ótimo sinal — nenhum pedido foi reembolsado neste intervalo."
+                compact
+              />
             </div>
           )}
         </div>
@@ -1733,11 +1763,12 @@ export default function DashboardPage() {
         {/* ── TRAFFIC & SEO TAB ───────────────────────────────────────────────── */}
         {activeTab === 'traffic' && <>
           {!ga4Summary ? (
-            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-10 text-center">
-              <Globe size={32} className="text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400 text-sm font-medium">GA4 não configurado</p>
-              <p className="text-slate-600 text-xs mt-1">Configure a integração Google Analytics 4 nas configurações do cliente</p>
-            </div>
+            <EmptyState
+              type="setup"
+              title="GA4 não configurado"
+              description="Configure a integração Google Analytics 4 nas configurações do cliente para visualizar dados de tráfego, funil e origem de visitantes."
+              link={{ label: 'Ir para Configurações', href: `/clients/${CLIENT_PIXEL_ID}/settings` }}
+            />
           ) : (
             <>
               {/* GA4 overview stats */}
@@ -2024,9 +2055,18 @@ export default function DashboardPage() {
                 <div className="h-full bg-emerald-500 transition-all duration-700" style={{ width: `${retention.total > 0 ? (retention.newOrders / retention.total) * 100 : 0}%` }} />
                 <div className="h-full bg-indigo-500 transition-all duration-700" style={{ width: `${retention.total > 0 ? (retention.returningOrders / retention.total) * 100 : 0}%` }} />
               </div>
-              <div className="flex items-center gap-4 mt-2">
+              <div className="flex items-center gap-4 mt-2 flex-wrap">
                 <span className="flex items-center gap-1.5 text-xs text-slate-500"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Novos</span>
                 <span className="flex items-center gap-1.5 text-xs text-slate-500"><span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />Recorrentes</span>
+                {retention.total - retention.newOrders - retention.returningOrders > 0 && (
+                  <span
+                    className="flex items-center gap-1 text-xs text-slate-600 cursor-help"
+                    title="Pedidos sem email no checkout — não é possível identificar se são novos ou recorrentes. Verifique se o campo de email está obrigatório na loja."
+                  >
+                    <AlertTriangle size={10} className="text-orange-400" />
+                    {retention.total - retention.newOrders - retention.returningOrders} sem identificação
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -2039,24 +2079,52 @@ export default function DashboardPage() {
                 <p className="text-xs text-slate-500 mt-0.5">% de novos compradores de cada mês que fizeram uma segunda compra</p>
               </div>
               <div className="grid grid-cols-3 gap-4">
-                {cohortData.map(c => (
-                  <div key={c.label} className="bg-[#0f1117] rounded-xl p-4">
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-3">{c.label}</p>
-                    <div className="flex items-end gap-3 mb-3">
-                      <div>
-                        <p className={`text-2xl font-bold ${c.retPct >= 20 ? 'text-emerald-400' : c.retPct >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>{c.retPct}%</p>
-                        <p className="text-xs text-slate-500">retornaram</p>
+                {cohortData.map((c, i) => {
+                  const monthsAgo = 2 - i
+                  const cohortStart = new Date()
+                  cohortStart.setDate(1)
+                  cohortStart.setMonth(cohortStart.getMonth() - monthsAgo)
+                  cohortStart.setHours(0, 0, 0, 0)
+                  const cohortAgeDays = Math.floor((Date.now() - cohortStart.getTime()) / 86_400_000)
+                  const isForming = cohortAgeDays < 60
+                  const isMatureNoReturn = !isForming && c.retPct === 0 && c.newBuyers > 0
+                  return (
+                    <div key={c.label} className="bg-[#0f1117] rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs text-slate-500 uppercase tracking-wider">{c.label}</p>
+                        {isForming && c.retPct === 0 && (
+                          <span
+                            className="text-xs text-slate-600 cursor-help"
+                            title="Coorte em formação — clientes novos têm em média 30-60 dias para fazer a segunda compra. Compare com coortes mais antigos."
+                          >
+                            ⏳ em formação
+                          </span>
+                        )}
+                        {isMatureNoReturn && (
+                          <span
+                            className="text-xs text-red-400 font-medium cursor-help"
+                            title={`Coorte de ${c.label} com mais de 60 dias e ainda sem recompras. Considere uma campanha de retenção para estes clientes.`}
+                          >
+                            ⚠ sem recompras
+                          </span>
+                        )}
                       </div>
-                      <div className="text-right ml-auto">
-                        <p className="text-sm font-medium text-white">{c.newBuyers}</p>
-                        <p className="text-xs text-slate-600">novos</p>
+                      <div className="flex items-end gap-3 mb-3">
+                        <div>
+                          <p className={`text-2xl font-bold ${c.retPct >= 20 ? 'text-emerald-400' : c.retPct >= 10 ? 'text-yellow-400' : 'text-red-400'}`}>{c.retPct}%</p>
+                          <p className="text-xs text-slate-500">retornaram</p>
+                        </div>
+                        <div className="text-right ml-auto">
+                          <p className="text-sm font-medium text-white">{c.newBuyers}</p>
+                          <p className="text-xs text-slate-600">novos</p>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-[#1a1f2e] rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-700 ${c.retPct >= 20 ? 'bg-emerald-500' : c.retPct >= 10 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(c.retPct, 100)}%` }} />
                       </div>
                     </div>
-                    <div className="h-1.5 bg-[#1a1f2e] rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full transition-all duration-700 ${c.retPct >= 20 ? 'bg-emerald-500' : c.retPct >= 10 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${Math.min(c.retPct, 100)}%` }} />
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -2075,7 +2143,14 @@ export default function DashboardPage() {
               </div>
             </div>
             {products.length === 0 ? (
-              <p className="p-5 text-slate-500 text-sm">Sem dados de produto no período</p>
+              <div className="p-4">
+                <EmptyState
+                  type="neutral"
+                  title="Sem movimentação de produtos no período"
+                  description="Nenhum evento de visualização ou compra de produto registrado. Tente expandir o período ou verificar se o pixel está capturando eventos de produto."
+                  compact
+                />
+              </div>
             ) : (
               <table className="w-full text-sm">
                 <thead>

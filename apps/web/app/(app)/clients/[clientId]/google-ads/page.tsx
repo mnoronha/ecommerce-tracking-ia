@@ -6,12 +6,15 @@ import {
   Loader2, RefreshCw, ChevronDown, ChevronRight,
   TrendingUp, TrendingDown, Sparkles,
 } from 'lucide-react'
+import { detectOutlier, type OutlierResult } from '@/lib/outlier-detection'
+import { OutlierBadge, outlierRowLeftBorder } from '@/components/outlier-badge'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
+import { ColHeader } from '@/components/ui/metric-tooltip'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -176,25 +179,36 @@ function AdGroupRowComp({ ag }: { ag: AdGroupRow }) {
 
 // ── Platform Campaign Row (expandable → ad groups) ────────────────────────────
 
-function PlatformCampaignRowComp({ row }: { row: PlatformCampaign }) {
+function PlatformCampaignRowComp({ row, roasOutlier }: { row: PlatformCampaign; roasOutlier?: OutlierResult }) {
   const [open, setOpen] = useState(false)
   const hasAdGroups = row.ad_groups.length > 0
+  const leftBorder = outlierRowLeftBorder(roasOutlier)
+  const roasTooltip = roasOutlier?.isOutlier
+    ? roasOutlier.direction === 'positive'
+      ? `ROAS ${row.roas?.toFixed(2)}x — campanha acima da média.`
+      : `ROAS ${row.roas?.toFixed(2) ?? '—'} — campanha abaixo da média.`
+    : undefined
   return (
     <>
       <tr
         className={`border-t border-[#2a2f3e] hover:bg-[#252a3a] ${hasAdGroups ? 'cursor-pointer' : ''}`}
         onClick={() => hasAdGroups && setOpen(v => !v)}
       >
-        <td className="px-4 py-3">
+        <td className="px-4 py-3" style={{ borderLeft: leftBorder }}>
           <div className="flex items-center gap-2">
             {hasAdGroups
               ? (open ? <ChevronDown size={13} className="text-slate-500 shrink-0" /> : <ChevronRight size={13} className="text-slate-500 shrink-0" />)
               : <span className="w-[13px]" />}
             <div className="min-w-0">
               <p className="text-sm text-white font-medium line-clamp-1">{row.campaign_name}</p>
-              {hasAdGroups && (
-                <p className="text-xs text-slate-600">{row.ad_groups.length} grupos de anúncios</p>
-              )}
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {hasAdGroups && (
+                  <p className="text-xs text-slate-600">{row.ad_groups.length} grupos de anúncios</p>
+                )}
+                {roasOutlier?.isOutlier && (
+                  <OutlierBadge outlier={roasOutlier} tooltip={roasTooltip} />
+                )}
+              </div>
             </div>
           </div>
         </td>
@@ -269,6 +283,7 @@ export default function GoogleAdsPage() {
 
   const t   = data?.totals
   const dlt = data?.deltas || {}
+  const platformRoasValues = (data?.platform_campaigns || []).map(c => c.roas ?? 0)
   const funnel = data?.funnel || {}
   const fTop   = funnel.pageview || 1
 
@@ -436,8 +451,22 @@ export default function GoogleAdsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#2a2f3e] bg-[#0f1117]">
-                    {['Campanha / Grupo', 'Status', 'Impressões', 'Cliques', 'CTR', 'Investimento', 'Conv.', 'Receita', 'ROAS', 'CPA', 'CPC'].map(h => (
-                      <th key={h} className={`px-3 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Campanha / Grupo' ? 'text-left px-4' : 'text-right'}`}>{h}</th>
+                    {([
+                      { h: 'Campanha / Grupo', tip: undefined, left: true },
+                      { h: 'Status',       tip: 'Status da campanha reportado pelo Google Ads.' },
+                      { h: 'Impressões',   tip: 'Impressões reportadas pelo Google Ads.' },
+                      { h: 'Cliques',      tip: 'Cliques reportados pelo Google Ads.' },
+                      { h: 'CTR',          tip: 'Taxa de clique: Cliques ÷ Impressões. Fonte: Google Ads API.' },
+                      { h: 'Investimento', tip: 'Custo total da campanha no período. Fonte: Google Ads API.' },
+                      { h: 'Conv. Google', tip: 'Conversões de Purchase reportadas pelo Google Ads. Inclui enhanced conversions (email hashed). Pode diferir de Pedidos Shopify.' },
+                      { h: 'Receita Google', tip: 'Receita reportada pelo Google Ads. Usa janela de atribuição do Google (padrão: 30 dias por clique). Para receita real, veja Dashboard.' },
+                      { h: 'ROAS',         tip: 'Receita Google ÷ Investimento. Usa a receita reportada pelo Google Ads.' },
+                      { h: 'CPA',          tip: 'Investimento ÷ Conv. Google.' },
+                      { h: 'CPC',          tip: 'Custo por clique médio.' },
+                    ] as { h: string; tip?: string; left?: boolean }[]).map(({ h, tip, left }) => (
+                      <th key={h} className={`px-3 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${left ? 'text-left px-4' : 'text-right'}`}>
+                        <ColHeader label={h} tooltip={tip} right={!left} />
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -448,7 +477,11 @@ export default function GoogleAdsPage() {
                     </td></tr>
                   ) : (
                     (data?.platform_campaigns || []).map(row => (
-                      <PlatformCampaignRowComp key={row.campaign_id || row.campaign_name} row={row} />
+                      <PlatformCampaignRowComp
+                        key={row.campaign_id || row.campaign_name}
+                        row={row}
+                        roasOutlier={detectOutlier(row.roas ?? 0, platformRoasValues)}
+                      />
                     ))
                   )}
                 </tbody>

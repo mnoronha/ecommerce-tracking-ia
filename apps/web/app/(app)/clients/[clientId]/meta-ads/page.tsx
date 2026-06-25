@@ -5,14 +5,17 @@ import { useParams } from 'next/navigation'
 import {
   Loader2, RefreshCw, ChevronDown, ChevronRight,
   TrendingUp, TrendingDown, Minus, ShoppingBag, DollarSign,
-  MousePointerClick, Eye, Sparkles,
+  MousePointerClick, Eye, Sparkles, Info,
 } from 'lucide-react'
+import { detectOutlier, type OutlierResult } from '@/lib/outlier-detection'
+import { OutlierBadge, outlierRowLeftBorder } from '@/components/outlier-badge'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
+import { ColHeader, ReconciliationBox } from '@/components/ui/metric-tooltip'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -84,13 +87,21 @@ function Delta({ v }: { v: number | null }) {
   )
 }
 
-function KpiCard({ label, value, delta, sub, accent }: {
-  label: string; value: string; delta?: number | null; sub?: string; accent?: 'emerald' | 'teal' | 'indigo' | 'orange'
+function KpiCard({ label, value, delta, sub, accent, tooltip }: {
+  label: string; value: string; delta?: number | null; sub?: string
+  accent?: 'emerald' | 'teal' | 'indigo' | 'orange'; tooltip?: string
 }) {
   const c = accent === 'emerald' ? 'text-emerald-400' : accent === 'teal' ? 'text-teal-400' : accent === 'orange' ? 'text-orange-400' : accent === 'indigo' ? 'text-indigo-400' : 'text-white'
   return (
     <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl px-4 py-3">
-      <p className="text-xs text-slate-500 mb-1">{label}</p>
+      <p className="text-xs text-slate-500 mb-1 flex items-center gap-1">
+        {label}
+        {tooltip && (
+          <span className="cursor-help text-slate-700 hover:text-slate-500 transition-colors" title={tooltip}>
+            <Info size={10} />
+          </span>
+        )}
+      </p>
       <p className={`text-lg font-bold ${c}`}>{value}</p>
       <div className="flex items-center gap-2 mt-0.5">
         {delta !== undefined && <Delta v={delta ?? null} />}
@@ -187,18 +198,37 @@ function AdsetRowComp({ adset }: { adset: AdsetRow }) {
   )
 }
 
-function CampaignRowComp({ row }: { row: CampaignRow }) {
+function CampaignRowComp({ row, roasOutlier }: { row: CampaignRow; roasOutlier?: OutlierResult }) {
   const [open, setOpen] = useState(false)
   const serverDiff = row.server_orders - row.purchases
+  const leftBorder = outlierRowLeftBorder(roasOutlier)
+  const roasTooltip = roasOutlier?.isOutlier
+    ? roasOutlier.direction === 'positive'
+      ? `ROAS ${row.roas?.toFixed(2)}x — campanha acima da média. Considere aumentar orçamento.`
+      : `ROAS ${row.roas?.toFixed(2) ?? '—'} — campanha abaixo da média. Verifique criativos e público.`
+    : undefined
   return (
     <>
       <tr className="border-t border-[#2a2f3e] hover:bg-[#252a3a] cursor-pointer" onClick={() => setOpen(v => !v)}>
-        <td className="px-4 py-3">
+        <td className="px-4 py-3" style={{ borderLeft: leftBorder }}>
           <div className="flex items-center gap-2">
             {open ? <ChevronDown size={13} className="text-slate-500" /> : <ChevronRight size={13} className="text-slate-500" />}
-            <div className="min-w-0">
-              <p className="text-sm text-white font-medium line-clamp-1">{row.campaign_name}</p>
-              <p className="text-xs text-slate-600">{row.adsets.length} conjuntos</p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <p className="text-sm text-white font-medium line-clamp-1">{row.campaign_name}</p>
+                {row.roas_delta !== null && row.roas_delta < -50 && (
+                  <span title={`ROAS caiu ${Math.abs(row.roas_delta).toFixed(0)}% vs período anterior`} className="text-xs cursor-help">⚠️</span>
+                )}
+                {row.roas_delta !== null && row.roas_delta > 100 && (
+                  <span title={`ROAS subiu ${row.roas_delta.toFixed(0)}% vs período anterior`} className="text-xs cursor-help">🚀</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <p className="text-xs text-slate-600">{row.adsets.length} conjuntos</p>
+                {roasOutlier?.isOutlier && (
+                  <OutlierBadge outlier={roasOutlier} tooltip={roasTooltip} />
+                )}
+              </div>
             </div>
           </div>
         </td>
@@ -289,6 +319,7 @@ export default function MetaAdsPage() {
   const t = data?.totals
   const pt = data?.prev_totals
   const dlt = data?.deltas || {}
+  const campaignRoasValues = (data?.campaigns || []).map(c => c.roas ?? 0)
 
   const chartData = (data?.daily || []).map(d => ({
     date: fmtD(d.date),
@@ -343,16 +374,22 @@ export default function MetaAdsPage() {
 
           {/* KPI Strip */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-10 gap-3">
-            <KpiCard label="Investimento" value={t ? fmt(t.spend) : '—'}     delta={dlt.spend}       accent="indigo" />
-            <KpiCard label="Receita Meta" value={t ? fmt(t.revenue) : '—'}   delta={dlt.revenue}     accent="emerald" />
-            <KpiCard label="ROAS"         value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'} delta={dlt.roas} accent="teal" />
-            <KpiCard label="Compras"      value={t ? String(t.purchases) : '—'} delta={dlt.purchases} />
-            <KpiCard label="CPA"          value={t?.cpa != null ? fmtDec(t.cpa) : '—'} delta={dlt.cpa != null ? -(dlt.cpa) : null} />
+            <KpiCard label="Investimento" value={t ? fmt(t.spend) : '—'}     delta={dlt.spend}       accent="indigo"
+              tooltip="Total investido no Meta Ads (Facebook + Instagram) no período. Fonte: Meta Marketing API." />
+            <KpiCard label="Receita Meta" value={t ? fmt(t.revenue) : '—'}   delta={dlt.revenue}     accent="emerald"
+              tooltip="Receita reportada pelo Meta Ads. Inclui atribuição de 7 dias por clique e 1 dia por visualização. Pode divergir da receita real (server-side) — veja reconciliação abaixo." />
+            <KpiCard label="ROAS"         value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'} delta={dlt.roas} accent="teal"
+              tooltip="ROAS = Receita Meta ÷ Investimento. Usa receita reportada pelo Meta (padrão da indústria). Para ROAS com receita real (Shopify), veja o dashboard principal." />
+            <KpiCard label="Compras Meta" value={t ? String(t.purchases) : '—'} delta={dlt.purchases}
+              tooltip="Eventos de Purchase reportados pelo Meta pixel/CAPI no período. Pode incluir view-through e conversões de janela de 7 dias. Diferente de Pedidos Shopify (server-side)." />
+            <KpiCard label="CPA"          value={t?.cpa != null ? fmtDec(t.cpa) : '—'} delta={dlt.cpa != null ? -(dlt.cpa) : null}
+              tooltip="Custo por aquisição = Investimento ÷ Compras Meta. Baseado nas compras reportadas pelo Meta." />
             <KpiCard label="Impressões"   value={t ? fmtN(t.impressions) : '—'} delta={dlt.impressions} />
             <KpiCard label="Clicks"       value={t ? fmtN(t.clicks) : '—'}   delta={dlt.clicks} />
             <KpiCard label="CTR"          value={t?.ctr != null ? `${t.ctr.toFixed(2)}%` : '—'} delta={dlt.ctr} />
             <KpiCard label="CPC"          value={t?.cpc != null ? fmtDec(t.cpc) : '—'} delta={dlt.cpc != null ? -(dlt.cpc) : null} />
-            <KpiCard label="Ticket Médio" value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'} delta={dlt.avg_ticket} accent="orange" />
+            <KpiCard label="Ticket Médio" value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'} delta={dlt.avg_ticket} accent="orange"
+              tooltip="Receita Meta ÷ Compras Meta. Ticket médio das conversões atribuídas ao Meta." />
           </div>
 
           {/* Charts + Funnel */}
@@ -421,8 +458,20 @@ export default function MetaAdsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[#2a2f3e] bg-[#0f1117]">
-                    {['Campanha / Conjunto / Anúncio', 'Impressões', 'Clicks', 'Investimento', 'Compras', 'Receita', 'ROAS', 'CPA', '% Δ ROAS'].map(h => (
-                      <th key={h} className={`px-3 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Campanha / Conjunto / Anúncio' ? 'text-left' : 'text-right'}`}>{h}</th>
+                    {([
+                      { h: 'Campanha / Conjunto / Anúncio', tip: undefined, left: true },
+                      { h: 'Impressões',  tip: 'Impressões reportadas pelo Meta Ads.' },
+                      { h: 'Clicks',      tip: 'Cliques no link reportados pelo Meta Ads.' },
+                      { h: 'Investimento',tip: 'Valor investido no Meta Ads nesta campanha/conjunto/anúncio.' },
+                      { h: 'Compras Meta',tip: 'Eventos de Purchase atribuídos pelo Meta (pixel + CAPI). Inclui view-through e janela de 7 dias por clique.' },
+                      { h: 'Receita Meta',tip: 'Receita reportada pelo Meta. A linha teal abaixo mostra a receita real server-side (Shopify) quando diverge.' },
+                      { h: 'ROAS',        tip: 'Receita Meta ÷ Investimento. Usa a receita reportada pelo Meta.' },
+                      { h: 'CPA',         tip: 'Investimento ÷ Compras Meta.' },
+                      { h: '% Δ ROAS',    tip: 'Variação percentual do ROAS vs período anterior.' },
+                    ] as { h: string; tip?: string; left?: boolean }[]).map(({ h, tip, left }) => (
+                      <th key={h} className={`px-3 py-2.5 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${left ? 'text-left' : 'text-right'}`}>
+                        <ColHeader label={h} tooltip={tip} right={!left} />
+                      </th>
                     ))}
                   </tr>
                 </thead>
@@ -430,7 +479,13 @@ export default function MetaAdsPage() {
                   {(data?.campaigns || []).length === 0 ? (
                     <tr><td colSpan={9} className="py-10 text-center text-slate-500 text-sm">Nenhuma campanha com dados no período</td></tr>
                   ) : (
-                    (data?.campaigns || []).map(row => <CampaignRowComp key={row.campaign_id} row={row} />)
+                    (data?.campaigns || []).map(row => (
+                      <CampaignRowComp
+                        key={row.campaign_id}
+                        row={row}
+                        roasOutlier={detectOutlier(row.roas ?? 0, campaignRoasValues)}
+                      />
+                    ))
                   )}
                 </tbody>
                 {t && (
@@ -455,6 +510,24 @@ export default function MetaAdsPage() {
               </table>
             </div>
           </div>
+
+          {/* Reconciliação Meta vs Server-side */}
+          {t && (() => {
+            const campaigns = data?.campaigns || []
+            const serverRev = campaigns.reduce((s, c) => s + (c.server_revenue ?? 0), 0)
+            const serverOrd = campaigns.reduce((s, c) => s + (c.server_orders ?? 0), 0)
+            return (
+              <ReconciliationBox
+                platformLabel="Meta Ads"
+                platformRevenue={t.revenue}
+                serverRevenue={serverRev}
+                platformOrders={t.purchases}
+                serverOrders={serverOrd}
+                windowNote="7 dias por clique · 1 dia por visualização"
+                fmt={fmt}
+              />
+            )
+          })()}
 
           {/* O que cada anúncio vendeu */}
           {adData.length > 0 && (
@@ -511,22 +584,14 @@ export default function MetaAdsPage() {
             </div>
           )}
 
-          {/* Diferencial vs Looker */}
-          <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-5 text-xs text-slate-400 leading-relaxed">
-            <p className="text-indigo-400 font-semibold text-sm mb-2">✦ Além do Looker</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <p className="text-slate-300 font-medium">Receita real vs Meta</p>
-                <p>A coluna "Receita" mostra o que o Meta reportou. Quando nosso servidor registrou um valor diferente (ex: compra por PIX que o Meta não viu), aparece em teal logo abaixo — a diferença que o Looker não captura.</p>
-              </div>
-              <div>
-                <p className="text-slate-300 font-medium">Compras reconciliadas</p>
-                <p>O número entre parênteses nas compras é o que nosso servidor viu. Diferença positiva = Meta atribuiu vendas que não temos via UTM (janela de view). Negativa = capturamos por PIX/webhook.</p>
-              </div>
-              <div>
-                <p className="text-slate-300 font-medium">Produtos por anúncio</p>
-                <p>A seção "O que cada anúncio vendeu" mostra exatamente quais SKUs cada criativo converteu — granularidade que o Looker não tem acesso.</p>
-              </div>
+          {/* Legenda de leitura */}
+          <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl px-5 py-4 text-xs text-slate-500 leading-relaxed">
+            <p className="text-indigo-400 font-semibold mb-2">✦ Como ler esta tabela</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5">
+              <p><span className="text-teal-400 font-medium">Linha teal</span> abaixo de Receita Meta = receita real server-side (Shopify) quando diverge do Meta.</p>
+              <p><span className="text-slate-300 font-medium">Compras Meta</span> inclui view-through (1 dia) e clique (7 dias) — pode ser maior que Pedidos Shopify.</p>
+              <p><span className="text-slate-300 font-medium">"O que cada anúncio vendeu"</span> abaixo = SKUs exatos por criativo (não disponível no Looker).</p>
+              <p>Reconciliação com números absolutos: veja o painel acima ↑</p>
             </div>
           </div>
 
