@@ -68,7 +68,8 @@ export default function OperationsDashboardPage() {
     setLoading(true)
     try {
       const r = await fetch(`${API}/technical/${selClient}/time-logs?limit=50`)
-      setLogs(Array.isArray(await r.json()) ? await fetch(`${API}/technical/${selClient}/time-logs?limit=50`).then(r => r.json()) : [])
+      const d = await r.json()
+      setLogs(Array.isArray(d) ? d : [])
     } catch { setLogs([]) }
     finally { setLoading(false) }
   }, [selClient])

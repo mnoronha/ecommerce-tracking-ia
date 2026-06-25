@@ -147,7 +147,7 @@ def get_pipeline_status(client_id: str) -> dict:
     sb = get_supabase()
 
     def count(table: str, filters: dict) -> int:
-        q = sb.table(table).select("id", count="exact", head=True)
+        q = sb.table(table).select("id", count="exact")
         for k, v in filters.items():
             q = q.eq(k, v)
         r = q.execute()
@@ -162,7 +162,7 @@ def get_pipeline_status(client_id: str) -> dict:
         .execute()
     ).data
     rag_kb_id   = kb[0]["id"] if kb else None
-    rag_docs    = count("rag_documents", {"knowledge_base_id": rag_kb_id, "status": "indexed"}) if rag_kb_id else 0
+    rag_docs    = count("rag_documents", {"knowledge_base_id": rag_kb_id, "processing_status": "indexed"}) if rag_kb_id else 0
 
     # AI Visibility prompts
     prompts = count("ai_visibility_prompts", {"client_id": client_id})

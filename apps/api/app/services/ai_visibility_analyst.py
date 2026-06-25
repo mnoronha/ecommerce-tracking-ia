@@ -34,7 +34,7 @@ def send_monthly_import_reminder() -> None:
             get_supabase()
             .table("clients")
             .select("id, name")
-            .eq("active", True)
+            .eq("is_active", True)
             .execute()
         ).data or []
 
