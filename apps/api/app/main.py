@@ -16,7 +16,7 @@ from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error
 from .config import settings
 from .limiter import limiter
 from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, tiktok_ads
-from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
+from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -223,6 +223,19 @@ _scheduler.add_job(
     hour=5,   # 05 UTC = 02:00 BRT — após dados do dia anterior fecharem
     minute=0,
     id="merchant_center_daily_sync",
+)
+_scheduler.add_job(
+    content_approval.run_auto_approve_check,
+    "interval",
+    hours=2,  # checa a cada 2h — deadline pode ser intraday
+    id="content_auto_approve",
+)
+_scheduler.add_job(
+    content_approval.send_deadline_reminders,
+    "cron",
+    hour=10,  # 10 UTC = 07:00 BRT — manhã antes do dia de trabalho
+    minute=0,
+    id="content_deadline_reminders",
 )
 
 

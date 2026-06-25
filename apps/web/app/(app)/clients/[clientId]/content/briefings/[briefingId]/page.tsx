@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft, Loader2, Sparkles, Eye, CheckCircle,
-  Tag, Calendar, Users, Search, AlignLeft, Edit3, Save,
+  Tag, Calendar, Users, Search, AlignLeft, Edit3, Save, Send, Globe,
 } from 'lucide-react'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -100,6 +100,9 @@ export default function BriefingDetailPage() {
   const [editing, setEditing]     = useState(false)
   const [saving, setSaving]       = useState(false)
   const [form, setForm]           = useState<Partial<Briefing>>({})
+  const [approvalEmail, setApprovalEmail] = useState('')
+  const [sendingApproval, setSendingApproval] = useState(false)
+  const [approvalSent, setApprovalSent] = useState(false)
 
   const base = `${API}/content/${clientId}`
 
@@ -152,6 +155,20 @@ export default function BriefingDetailPage() {
 
   function setF<K extends keyof Briefing>(k: K, v: Briefing[K]) {
     setForm(f => ({ ...f, [k]: v }))
+  }
+
+  async function sendForApproval(pieceId: string) {
+    if (!approvalEmail.trim()) return
+    setSendingApproval(true)
+    try {
+      const r = await fetch(`${base}/pieces/${pieceId}/send-for-approval`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ sent_to_email: approvalEmail.trim() }),
+      })
+      if (r.ok) { setApprovalSent(true); setApprovalEmail('') }
+    } catch { /* ignore */ }
+    finally { setSendingApproval(false) }
   }
 
   if (loading) return (
@@ -446,6 +463,40 @@ export default function BriefingDetailPage() {
                     {generating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
                     {generating ? 'Gerando nova versão…' : 'Gerar nova versão'}
                   </button>
+                  {['reviewed', 'approved'].includes(latestPiece.status) && !approvalSent && (
+                    <div className="pt-2 border-t border-[#2a2f3e] space-y-1.5">
+                      <p className="text-xs text-slate-500">Enviar para aprovação do cliente</p>
+                      <input
+                        type="email"
+                        value={approvalEmail}
+                        onChange={e => setApprovalEmail(e.target.value)}
+                        placeholder="cliente@empresa.com"
+                        className="w-full bg-[#0f1117] border border-[#2a2f3e] rounded-md px-2.5 py-1.5 text-white text-xs focus:border-indigo-500 focus:outline-none"
+                      />
+                      <button
+                        onClick={() => sendForApproval(latestPiece.id)}
+                        disabled={sendingApproval || !approvalEmail.trim()}
+                        className="flex items-center justify-center gap-1.5 w-full text-xs bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 px-3 py-2 rounded-md transition-colors disabled:opacity-50"
+                      >
+                        {sendingApproval ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+                        {sendingApproval ? 'Enviando…' : 'Enviar link de aprovação'}
+                      </button>
+                    </div>
+                  )}
+                  {approvalSent && (
+                    <div className="flex items-center gap-1.5 text-xs text-emerald-400 pt-2 justify-center">
+                      <CheckCircle size={12} /> Link enviado com sucesso
+                    </div>
+                  )}
+                  {latestPiece.status === 'published' && (
+                    <a
+                      href={(latestPiece as Piece & { url_published?: string }).url_published || '#'}
+                      target="_blank" rel="noopener"
+                      className="flex items-center justify-center gap-1.5 w-full text-xs bg-emerald-900/30 hover:bg-emerald-900/50 text-emerald-300 px-3 py-2 rounded-md transition-colors"
+                    >
+                      <Globe size={11} /> Ver publicado
+                    </a>
+                  )}
                 </div>
               </div>
             ) : (

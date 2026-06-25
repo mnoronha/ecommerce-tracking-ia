@@ -38,7 +38,7 @@ from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, Uplo
 from pydantic import BaseModel
 
 from ..database import get_supabase
-from ..services import content_generator, content_factchecker, rag_indexer
+from ..services import content_generator, content_factchecker, rag_indexer, content_approval
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/content", tags=["content"])
@@ -486,6 +486,63 @@ async def trigger_factcheck(pixel_id: str, piece_id: str, bg: BackgroundTasks):
     return {"ok": True, "message": "fact-check iniciado em background"}
 
 
+# ── Approval workflow ─────────────────────────────────────────────────────────
+
+class SendApprovalPayload(BaseModel):
+    sent_to_email: str
+    deadline_days: int  = 5
+    auto_approve:  bool = True
+
+
+@router.post("/{pixel_id}/pieces/{piece_id}/send-for-approval")
+async def send_for_approval(pixel_id: str, piece_id: str, body: SendApprovalPayload):
+    c      = _get_client(pixel_id)
+    result = content_approval.send_for_approval(
+        piece_id=piece_id,
+        client_id=c["id"],
+        sent_to_email=body.sent_to_email,
+        deadline_days=body.deadline_days,
+        auto_approve=body.auto_approve,
+    )
+    if not result["ok"]:
+        raise HTTPException(400, result["error"])
+    return result
+
+
+@router.get("/{pixel_id}/approvals")
+async def list_approvals(
+    pixel_id: str,
+    status:   Optional[str] = Query(None),
+    page:     int = Query(1, ge=1),
+    per_page: int = Query(30, ge=5, le=100),
+):
+    c   = _get_client(pixel_id)
+    sb  = get_supabase()
+    q   = (
+        sb.table("content_approvals")
+        .select(
+            "id,piece_id,version_id,sent_to_email,sent_at,deadline,"
+            "auto_approve_on_deadline,status,responded_at,feedback,created_at"
+        )
+        .eq("client_id", c["id"])
+    )
+    if status:
+        q = q.eq("status", status)
+    offset = (page - 1) * per_page
+    rows   = q.order("created_at", desc=True).offset(offset).limit(per_page).execute().data or []
+
+    piece_ids = list({r["piece_id"] for r in rows if r.get("piece_id")})
+    titles: dict[str, str] = {}
+    if piece_ids:
+        p_rows = sb.table("content_pieces").select("id,final_title").in_("id", piece_ids).execute().data or []
+        titles = {r["id"]: r.get("final_title") or "Sem título" for r in p_rows}
+
+    for r in rows:
+        r["piece_title"] = titles.get(r["piece_id"], "Sem título")
+
+    return {"approvals": rows, "page": page, "per_page": per_page}
+
+
 @router.get("/{pixel_id}/pieces/{piece_id}/factcheck")
 async def get_factcheck(pixel_id: str, piece_id: str):
     _get_client(pixel_id)
@@ -575,23 +632,45 @@ async def get_approval_page(token: str):
     if not rows:
         raise HTTPException(404, "link de aprovação inválido ou expirado")
     approval = rows[0]
+
+    # Busca nome do cliente
+    client_name = "Cliente"
+    if approval.get("client_id"):
+        cr = sb.table("clients").select("name").eq("id", approval["client_id"]).limit(1).execute().data
+        if cr:
+            client_name = cr[0]["name"]
+
+    # Já respondido
     if approval["status"] != "pending":
-        return {"status": approval["status"], "responded_at": approval["responded_at"]}
-    # Busca peça e versão
+        return {
+            "status":        approval["status"],
+            "responded_at":  approval["responded_at"],
+            "already_decided": True,
+            "decision":      approval["status"],
+            "client_name":   client_name,
+        }
+
+    # Versão aprovada
     version_rows = (
         sb.table("content_piece_versions")
-        .select("title,body_markdown,body_html")
+        .select("title,body_markdown,word_count")
         .eq("id", approval["version_id"])
         .limit(1)
         .execute()
     ).data
     version = version_rows[0] if version_rows else {}
+
     return {
-        "status":     "pending",
-        "deadline":   approval.get("deadline"),
-        "title":      version.get("title"),
-        "body_html":  version.get("body_html"),
-        "body_markdown": version.get("body_markdown"),
+        "status":          "pending",
+        "already_decided": False,
+        "decision":        None,
+        "deadline":        approval.get("deadline"),
+        "expires_at":      approval.get("deadline"),
+        "client_name":     client_name,
+        "title":           version.get("title"),
+        "final_title":     version.get("title"),
+        "body_markdown":   version.get("body_markdown"),
+        "word_count":      version.get("word_count"),
     }
 
 
@@ -601,18 +680,42 @@ class ApprovalResponse(BaseModel):
 
 
 @router.post("/approve/{token}")
-async def respond_approval(token: str, body: ApprovalResponse):
+async def respond_approval(token: str, body: ApprovalResponse, bg: BackgroundTasks):
     sb   = get_supabase()
-    rows = sb.table("content_approvals").select("id,piece_id").eq("approval_link_token", token).eq("status", "pending").limit(1).execute().data
+    rows = (
+        sb.table("content_approvals")
+        .select("id,piece_id,client_id")
+        .eq("approval_link_token", token)
+        .eq("status", "pending")
+        .limit(1)
+        .execute()
+    ).data
     if not rows:
         raise HTTPException(400, "link inválido, expirado ou já respondido")
     approval = rows[0]
     now = datetime.now(timezone.utc).isoformat()
+
     sb.table("content_approvals").update({
         "status":       body.decision,
         "responded_at": now,
         "feedback":     body.feedback,
     }).eq("id", approval["id"]).execute()
+
     if body.decision == "approved":
         sb.table("content_pieces").update({"status": "approved", "updated_at": now}).eq("id", approval["piece_id"]).execute()
+        bg.add_task(
+            content_approval.handle_approved,
+            approval["id"],
+            approval["piece_id"],
+            approval["client_id"],
+        )
+    elif body.decision == "requested_changes":
+        bg.add_task(
+            content_approval.handle_changes_requested,
+            approval["id"],
+            approval["piece_id"],
+            body.feedback or "",
+            approval["client_id"],
+        )
+
     return {"ok": True, "status": body.decision}

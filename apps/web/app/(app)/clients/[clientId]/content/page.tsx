@@ -6,7 +6,7 @@ import {
   PenLine, BookOpen, FileText, Layers, DollarSign,
   Plus, Loader2, RefreshCw, CheckCircle, AlertCircle,
   XCircle, Clock, Upload, Trash2, ChevronRight, Sparkles,
-  Eye, BarChart2, Edit3, Send, FileUp,
+  Eye, BarChart2, Edit3, Send, FileUp, Globe,
 } from 'lucide-react'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -65,7 +65,7 @@ interface CostSummary {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-type Tab = 'kb' | 'briefings' | 'pieces' | 'costs'
+type Tab = 'kb' | 'briefings' | 'pieces' | 'approvals' | 'costs'
 
 const CONTENT_TYPES: Record<string, string> = {
   comparison:    'Comparativo',
@@ -164,6 +164,11 @@ export default function ContentPage() {
   // Pieces
   const [pieces, setPieces] = useState<Piece[]>([])
   const [pieceFilter, setPieceFilter] = useState('')
+
+  // Send-for-approval modal
+  const [approvalPiece, setApprovalPiece] = useState<Piece | null>(null)
+  const [approvalEmail, setApprovalEmail] = useState('')
+  const [sendingApproval, setSendingApproval] = useState(false)
 
   // Costs
   const [costs, setCosts] = useState<CostSummary | null>(null)
@@ -354,6 +359,23 @@ export default function ContentPage() {
     }
   }
 
+  async function sendForApproval() {
+    if (!approvalPiece || !approvalEmail.trim()) return
+    setSendingApproval(true)
+    try {
+      const r = await fetch(`${base}/pieces/${approvalPiece.id}/send-for-approval`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ sent_to_email: approvalEmail.trim() }),
+      })
+      if (!r.ok) throw new Error('Erro ao enviar')
+      setApprovalPiece(null)
+      setApprovalEmail('')
+      await loadPieces()
+    } catch { /* ignore */ }
+    finally { setSendingApproval(false) }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -363,10 +385,11 @@ export default function ContentPage() {
   )
 
   const TABS = [
-    { key: 'kb' as Tab,        label: 'Base de Conhecimento', icon: BookOpen   },
-    { key: 'briefings' as Tab, label: 'Briefings',            icon: FileText   },
-    { key: 'pieces' as Tab,    label: 'Peças',                icon: Layers     },
-    { key: 'costs' as Tab,     label: 'Custos IA',            icon: DollarSign },
+    { key: 'kb' as Tab,         label: 'Base de Conhecimento', icon: BookOpen   },
+    { key: 'briefings' as Tab,  label: 'Briefings',            icon: FileText   },
+    { key: 'pieces' as Tab,     label: 'Peças',                icon: Layers     },
+    { key: 'approvals' as Tab,  label: 'Aprovações',           icon: Send       },
+    { key: 'costs' as Tab,      label: 'Custos IA',            icon: DollarSign },
   ]
 
   return (
@@ -686,6 +709,34 @@ export default function ContentPage() {
       {/* ── Briefings Tab ──────────────────────────────────────────────────── */}
       {tab === 'briefings' && (
         <div className="space-y-4">
+          {/* Pipeline visual */}
+          <div className="bg-[#1a1f2e] rounded-xl p-4">
+            <div className="flex items-center gap-1">
+              {[
+                { stage: 'briefed',         label: 'Briefed',     color: 'bg-slate-600' },
+                { stage: 'generated',       label: 'Gerado',      color: 'bg-blue-600'  },
+                { stage: 'reviewing',       label: 'Revisão',     color: 'bg-yellow-600'},
+                { stage: 'pending_client',  label: 'No cliente',  color: 'bg-orange-600'},
+                { stage: 'approved',        label: 'Aprovado',    color: 'bg-emerald-600'},
+                { stage: 'published',       label: 'Publicado',   color: 'bg-emerald-800'},
+              ].map((s, i) => {
+                const count = briefings.filter(b => b.status === s.stage).length
+                return (
+                  <div key={s.stage} className="flex items-center flex-1 min-w-0">
+                    <button
+                      onClick={() => setBriefingFilter(s.stage)}
+                      className={`flex-1 min-w-0 ${s.color} bg-opacity-30 hover:bg-opacity-50 border border-white/10 rounded-lg px-2 py-2 text-center transition-colors`}
+                    >
+                      <p className="text-white font-bold text-base">{count}</p>
+                      <p className="text-xs text-white/70 truncate">{s.label}</p>
+                    </button>
+                    {i < 5 && <ChevronRight size={12} className="text-slate-600 shrink-0 mx-0.5" />}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between gap-3">
             <div className="flex gap-2">
               {['', 'briefed', 'generating', 'generated', 'reviewing', 'approved', 'published'].map(s => (
@@ -938,6 +989,23 @@ export default function ContentPage() {
                           >
                             <Edit3 size={11} /> Editar
                           </button>
+                          {['reviewed', 'approved'].includes(p.status) && (
+                            <button
+                              onClick={() => { setApprovalPiece(p); setApprovalEmail('') }}
+                              className="flex items-center gap-1 text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-2 py-1 rounded-md transition-colors"
+                            >
+                              <Send size={11} /> Enviar
+                            </button>
+                          )}
+                          {p.status === 'published' && (p as Piece & { url_published?: string }).url_published && (
+                            <a
+                              href={(p as Piece & { url_published?: string }).url_published}
+                              target="_blank" rel="noopener"
+                              className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300 px-2 py-1 rounded-md hover:bg-[#2a2f3e] transition-colors"
+                            >
+                              <Globe size={11} /> Ver
+                            </a>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -946,6 +1014,20 @@ export default function ContentPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Approvals Tab ─────────────────────────────────────────────────────── */}
+      {tab === 'approvals' && (
+        <div className="flex flex-col items-center justify-center py-16 text-slate-500 gap-3">
+          <Send size={32} className="opacity-40" />
+          <p className="text-sm">Gerencie aprovações de conteúdo com clientes.</p>
+          <button
+            onClick={() => router.push(`/clients/${clientId}/content/approvals`)}
+            className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-md transition-colors"
+          >
+            <Send size={12} /> Abrir painel de aprovações
+          </button>
         </div>
       )}
 
@@ -1005,6 +1087,49 @@ export default function ContentPage() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* ── Send-for-approval modal ───────────────────────────────────────────── */}
+      {approvalPiece && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 px-4">
+          <div className="bg-[#1a1f2e] rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <h2 className="text-lg font-bold text-white mb-1">Enviar para aprovação</h2>
+            <p className="text-slate-400 text-sm mb-5 truncate">
+              {approvalPiece.final_title || 'Sem título'}
+            </p>
+            <label className="text-xs text-slate-400 uppercase tracking-wide mb-1.5 block">
+              Email do cliente *
+            </label>
+            <input
+              type="email"
+              value={approvalEmail}
+              onChange={e => setApprovalEmail(e.target.value)}
+              placeholder="cliente@empresa.com"
+              autoFocus
+              className="w-full bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2.5 text-white text-sm focus:border-indigo-500 focus:outline-none mb-4"
+            />
+            <p className="text-xs text-slate-500 mb-5">
+              O cliente receberá um link para aprovar ou solicitar revisão.
+              Prazo padrão: 5 dias úteis (auto-aprovação ao expirar).
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setApprovalPiece(null); setApprovalEmail('') }}
+                className="text-sm text-slate-400 hover:text-white px-4 py-2"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={sendForApproval}
+                disabled={sendingApproval || !approvalEmail.trim()}
+                className="flex items-center gap-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {sendingApproval ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                {sendingApproval ? 'Enviando…' : 'Enviar link'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
