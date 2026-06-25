@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
   PenLine, BookOpen, FileText, Layers, DollarSign,
   Plus, Loader2, RefreshCw, CheckCircle, AlertCircle,
   XCircle, Clock, Upload, Trash2, ChevronRight, Sparkles,
-  Eye, BarChart2, Edit3, Send,
+  Eye, BarChart2, Edit3, Send, FileUp,
 } from 'lucide-react'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -143,6 +143,12 @@ export default function ContentPage() {
   const [showDocForm, setShowDocForm] = useState(false)
   const [docForm, setDocForm] = useState({ title: '', category: 'brand_identity', raw_text: '', source_type: 'manual_entry' })
   const [saving, setSaving]   = useState(false)
+  const [docMode, setDocMode] = useState<'text' | 'file'>('text')
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadCategory, setUploadCategory] = useState('other')
+  const [dragOver, setDragOver] = useState(false)
+  const [indexingIds, setIndexingIds] = useState<Set<string>>(new Set())
+  const pollingRefs = useRef<Record<string, ReturnType<typeof setInterval>>>({})
 
   // Briefings
   const [briefings, setBriefings]   = useState<Briefing[]>([])
@@ -173,14 +179,21 @@ export default function ContentPage() {
         fetch(`${base}/documents`).then(r => r.json()),
       ])
       setKb(kbRes)
-      setDocs(docsRes.documents || [])
+      const fetchedDocs: Document[] = docsRes.documents || []
+      setDocs(fetchedDocs)
       setKbForm({
         brand_voice:      kbRes.brand_voice || '',
         brand_dos:        (kbRes.brand_dos || []).join('\n'),
         brand_donts:      (kbRes.brand_donts || []).join('\n'),
         forbidden_terms:  (kbRes.forbidden_terms || []).join(', '),
       })
+      // Auto-poll docs that are currently processing
+      const IN_PROGRESS = ['pending', 'extracting', 'chunking', 'embedding']
+      fetchedDocs
+        .filter(d => IN_PROGRESS.includes(d.processing_status))
+        .forEach(d => startPolling(d.id))
     } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base])
 
   const loadBriefings = useCallback(async () => {
@@ -258,9 +271,50 @@ export default function ContentPage() {
     }
   }
 
+  function startPolling(docId: string) {
+    if (pollingRefs.current[docId]) return
+    setIndexingIds(prev => new Set(prev).add(docId))
+    const iv = setInterval(async () => {
+      try {
+        const d = await fetch(`${base}/documents/${docId}/status`).then(r => r.json())
+        if (d.processing_status === 'completed' || d.processing_status === 'failed') {
+          clearInterval(pollingRefs.current[docId])
+          delete pollingRefs.current[docId]
+          setIndexingIds(prev => { const s = new Set(prev); s.delete(docId); return s })
+          await loadKb()
+        }
+      } catch { /* ignore */ }
+    }, 3000)
+    pollingRefs.current[docId] = iv
+  }
+
+  async function uploadFileDoc() {
+    if (!uploadFile) return
+    setSaving(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', uploadFile)
+      const res = await fetch(`${base}/documents/upload?category=${uploadCategory}`, {
+        method: 'POST', body: fd,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        alert(err.detail || 'Erro ao fazer upload')
+        return
+      }
+      const data = await res.json()
+      setUploadFile(null)
+      setShowDocForm(false)
+      if (data.document_id) startPolling(data.document_id)
+      await loadKb()
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function reindexDoc(docId: string) {
     await fetch(`${base}/documents/${docId}/index`, { method: 'POST' })
-    setTimeout(loadKb, 2000)
+    startPolling(docId)
   }
 
   async function deleteDoc(docId: string) {
@@ -454,15 +508,90 @@ export default function ContentPage() {
           <div className="bg-[#1a1f2e] rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-semibold text-white">Documentos ({docs.length})</h2>
-              <button
-                onClick={() => setShowDocForm(true)}
-                className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md transition-colors"
-              >
-                <Plus size={13} /> Adicionar
-              </button>
+              {!showDocForm && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setDocMode('file'); setShowDocForm(true) }}
+                    className="flex items-center gap-1.5 text-xs bg-[#0f1117] hover:bg-[#2a2f3e] border border-[#2a2f3e] text-slate-300 px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    <FileUp size={13} /> Upload PDF/DOCX
+                  </button>
+                  <button
+                    onClick={() => { setDocMode('text'); setShowDocForm(true) }}
+                    className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md transition-colors"
+                  >
+                    <Plus size={13} /> Colar texto
+                  </button>
+                </div>
+              )}
             </div>
 
-            {showDocForm && (
+            {showDocForm && docMode === 'file' && (
+              <div className="mb-4 p-4 bg-[#0f1117] rounded-lg border border-[#2a2f3e] space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-white">Upload de arquivo</p>
+                  <span className="text-xs text-slate-500">PDF, DOCX ou TXT · máx 20 MB</span>
+                </div>
+                {/* Drag-and-drop zone */}
+                <div
+                  onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={e => {
+                    e.preventDefault(); setDragOver(false)
+                    const f = e.dataTransfer.files[0]
+                    if (f) setUploadFile(f)
+                  }}
+                  className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
+                    dragOver ? 'border-indigo-500 bg-indigo-500/10' : 'border-[#2a2f3e] hover:border-indigo-600/50'
+                  }`}
+                  onClick={() => document.getElementById('file-input')?.click()}
+                >
+                  <input
+                    id="file-input"
+                    type="file"
+                    accept=".pdf,.docx,.doc,.txt,.md"
+                    className="sr-only"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) setUploadFile(f) }}
+                  />
+                  {uploadFile ? (
+                    <div className="space-y-1">
+                      <FileUp size={24} className="mx-auto text-indigo-400" />
+                      <p className="text-sm text-white font-medium">{uploadFile.name}</p>
+                      <p className="text-xs text-slate-500">{(uploadFile.size / 1024).toFixed(0)} KB</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <Upload size={24} className="mx-auto text-slate-600" />
+                      <p className="text-sm text-slate-400">Arraste o arquivo aqui ou clique para selecionar</p>
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400 mb-1 block">Categoria</label>
+                  <select
+                    value={uploadCategory}
+                    onChange={e => setUploadCategory(e.target.value)}
+                    className="w-full bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg px-3 py-2 text-sm text-white"
+                  >
+                    {Object.entries(CATEGORY_LABELS).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => { setShowDocForm(false); setUploadFile(null) }} className="text-xs text-slate-400 hover:text-white px-3 py-1.5">Cancelar</button>
+                  <button
+                    onClick={uploadFileDoc}
+                    disabled={saving || !uploadFile}
+                    className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-md disabled:opacity-50"
+                  >
+                    {saving ? <><Loader2 size={11} className="animate-spin inline mr-1" />Enviando…</> : 'Enviar e Indexar'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {showDocForm && docMode === 'text' && (
               <div className="mb-4 p-4 bg-[#0f1117] rounded-lg border border-[#2a2f3e] space-y-3">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -517,29 +646,37 @@ export default function ContentPage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {docs.map(doc => (
-                  <div key={doc.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-[#0f1117] transition-colors group">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span>{PROC_ICON[doc.processing_status] || <Clock size={13} className="text-slate-500" />}</span>
-                      <div className="min-w-0">
-                        <p className="text-sm text-white truncate">{doc.title}</p>
-                        <p className="text-xs text-slate-500">
-                          {CATEGORY_LABELS[doc.category] || doc.category}
-                          {doc.word_count ? ` · ${fmt(doc.word_count)} palavras` : ''}
-                          {' · '}{fmtDate(doc.uploaded_at)}
-                        </p>
+                {docs.map(doc => {
+                  const isPolling = indexingIds.has(doc.id)
+                  const statusIcon = isPolling
+                    ? <Loader2 size={13} className="text-indigo-400 animate-spin" />
+                    : (PROC_ICON[doc.processing_status] || <Clock size={13} className="text-slate-500" />)
+                  return (
+                    <div key={doc.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-[#0f1117] transition-colors group">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="shrink-0">{statusIcon}</span>
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">{doc.title}</p>
+                          <p className="text-xs text-slate-500">
+                            {CATEGORY_LABELS[doc.category] || doc.category}
+                            {doc.word_count ? ` · ${fmt(doc.word_count)} palavras` : ''}
+                            {' · '}{fmtDate(doc.uploaded_at)}
+                            {isPolling && <span className="ml-2 text-indigo-400">indexando…</span>}
+                            {doc.processing_status === 'failed' && <span className="ml-2 text-red-400">falhou</span>}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button onClick={() => reindexDoc(doc.id)} className="text-slate-400 hover:text-indigo-400" title="Re-indexar">
+                          <RefreshCw size={13} />
+                        </button>
+                        <button onClick={() => deleteDoc(doc.id)} className="text-slate-400 hover:text-red-400" title="Remover">
+                          <Trash2 size={13} />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                      <button onClick={() => reindexDoc(doc.id)} className="text-slate-400 hover:text-indigo-400" title="Re-indexar">
-                        <RefreshCw size={13} />
-                      </button>
-                      <button onClick={() => deleteDoc(doc.id)} className="text-slate-400 hover:text-red-400" title="Remover">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>

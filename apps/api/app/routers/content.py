@@ -30,10 +30,11 @@ Content Production router.
 """
 
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from ..database import get_supabase
@@ -172,6 +173,85 @@ async def create_document(pixel_id: str, body: DocumentPayload, bg: BackgroundTa
         bg.add_task(rag_indexer.index_document, row["id"])
 
     return {"document_id": row["id"], "indexing": bool(body.raw_text)}
+
+
+@router.post("/{pixel_id}/documents/upload")
+async def upload_document(
+    pixel_id: str,
+    bg: BackgroundTasks,
+    file: UploadFile = File(...),
+    title: str = Query(""),
+    category: str = Query("other"),
+):
+    """
+    Upload de arquivo PDF/DOCX/TXT para indexação.
+    Armazena no Supabase Storage (bucket rag-documents) e dispara indexação em background.
+    """
+    c  = _get_client(pixel_id)
+    kb = _get_or_create_kb(c["id"])
+    sb = get_supabase()
+
+    _ALLOWED = {
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+        "text/plain",
+        "text/markdown",
+    }
+    mime = file.content_type or "application/octet-stream"
+    if mime not in _ALLOWED:
+        raise HTTPException(status_code=400, detail=f"Tipo não suportado: {mime}. Use PDF, DOCX ou TXT.")
+
+    raw_bytes = await file.read()
+    if len(raw_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Arquivo muito grande (máx 20 MB)")
+
+    file_name = file.filename or "documento"
+    file_path = f"{c['id']}/{_uuid.uuid4()}/{file_name}"
+
+    try:
+        sb.storage.from_("rag-documents").upload(
+            file_path,
+            raw_bytes,
+            {"content-type": mime},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar arquivo: {exc}")
+
+    doc_title = title.strip() or file_name.rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
+    row = (
+        sb.table("rag_documents").insert({
+            "knowledge_base_id": kb["id"],
+            "client_id":         c["id"],
+            "title":             doc_title,
+            "category":          category,
+            "source_type":       "file_upload",
+            "file_path":         file_path,
+            "file_size_bytes":   len(raw_bytes),
+            "file_mime_type":    mime,
+            "processing_status": "pending",
+        }).execute()
+    ).data[0]
+
+    bg.add_task(rag_indexer.index_document, row["id"])
+    return {"document_id": row["id"], "indexing": True, "file_path": file_path}
+
+
+@router.get("/{pixel_id}/documents/{doc_id}/status")
+async def document_status(pixel_id: str, doc_id: str):
+    """Retorna status de processamento do documento (para polling de progresso)."""
+    _get_client(pixel_id)
+    rows = (
+        get_supabase()
+        .table("rag_documents")
+        .select("id,processing_status,processing_error,word_count,processed_at")
+        .eq("id", doc_id)
+        .limit(1)
+        .execute()
+    ).data
+    if not rows:
+        raise HTTPException(status_code=404, detail="documento não encontrado")
+    return rows[0]
 
 
 @router.post("/{pixel_id}/documents/{doc_id}/index")
