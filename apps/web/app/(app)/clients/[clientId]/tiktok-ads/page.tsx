@@ -57,10 +57,11 @@ function KpiCard({ label, value, delta, sub, accent }: {
   label: string; value: string; delta?: number | null; sub?: string
   accent?: 'cyan' | 'teal' | 'emerald' | 'indigo' | 'orange'
 }) {
-  const c = {
+  const colorMap = {
     cyan: 'text-cyan-400', teal: 'text-teal-400', emerald: 'text-emerald-400',
     indigo: 'text-indigo-400', orange: 'text-orange-400',
-  }[accent ?? ''] ?? 'text-white'
+  } as const
+  const c = accent ? colorMap[accent] : 'text-white'
   return (
     <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl px-4 py-3">
       <p className="text-xs text-slate-500 mb-1">{label}</p>

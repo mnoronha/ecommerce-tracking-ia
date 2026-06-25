@@ -141,10 +141,10 @@ function OverviewTab({ data }: { data: RevenueData }) {
               <Tooltip
                 contentStyle={{ background: '#1a1f2e', border: '1px solid #2a2f3e', borderRadius: 8 }}
                 labelStyle={{ color: '#94a3b8' }}
-                formatter={(v: number, name: string) => [
-                  name === 'revenue' ? fmt(v) : fmtN(v),
+                formatter={(v, name) => [
+                  name === 'revenue' ? fmt(v as number) : fmtN(v as number),
                   name === 'revenue' ? 'Receita' : 'Pedidos',
-                ]}
+                ] as [string, string]}
               />
               <Area
                 type="monotone"
