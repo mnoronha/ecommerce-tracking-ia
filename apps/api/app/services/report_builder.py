@@ -83,14 +83,12 @@ def _window(year: int, month: int):
 def _fetch_orders(sb, client_id: str, start: str, end: str, online_only: bool = False) -> list[dict]:
     q = (
         sb.table("orders")
-        .select("total_price, financial_status, is_first_purchase, utm_source, utm_medium, created_at, platform_order_number")
+        .select("total_price, financial_status, is_first_purchase, utm_source, utm_medium, created_at, platform_order_id")
         .eq("client_id", client_id)
         .eq("financial_status", "paid")
         .gt("total_price", 0)
         .gte("created_at", start)
         .lt("created_at", end)
-        .not_.is_("platform_order_number", "null")
-        .neq("platform_order_number", "")
     )
     if online_only:
         q = q.not_.in_("utm_source", _OFFLINE_SOURCES)
