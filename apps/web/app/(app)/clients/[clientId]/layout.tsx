@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname, useParams } from 'next/navigation'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
+import { CriticalAlertsBar } from '@/components/alerts/critical-alerts-bar'
 import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
@@ -97,7 +98,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </Link>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto">{children}</main>
+      <main className="flex-1 overflow-auto">
+        <CriticalAlertsBar clientId={clientId} />
+        {children}
+      </main>
     </div>
   )
 }

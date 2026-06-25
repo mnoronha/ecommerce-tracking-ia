@@ -22,11 +22,14 @@ from typing import Optional
 def _deterministic_purchase_id(platform: str, order_id: str) -> str:
     """
     Gera event_id estável para Purchase CAPI.
-    Mesmo pedido + plataforma → mesmo ID → Meta deduplica automaticamente
-    mesmo que o webhook seja disparado mais de uma vez.
+
+    Usamos o Shopify order ID numérico diretamente porque o pixel browser nativo
+    do Shopify também usa o order ID como event_id no evento Purchase. Isso permite
+    que o Meta deduplique automaticamente browser pixel + CAPI, evitando
+    dupla contagem para pedidos pagos. O argumento `platform` é mantido para
+    compatibilidade mas não altera o resultado.
     """
-    raw = f"purchase_{platform}_{order_id}"
-    return hashlib.sha256(raw.encode()).hexdigest()
+    return str(order_id)
 
 import httpx
 

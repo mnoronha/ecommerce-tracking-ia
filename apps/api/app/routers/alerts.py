@@ -11,7 +11,7 @@ Alerts router.
 
 import logging
 from typing import Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -173,6 +173,22 @@ async def update_rule(rule_id: str, body: RuleUpdate):
     if not (result and result.data):
         raise HTTPException(status_code=404, detail="rule not found")
     return result.data[0]
+
+
+@router.post("/{alert_id}/silence", summary="Silence an alert for 24 hours")
+async def silence_alert(alert_id: str):
+    sb    = get_supabase()
+    until = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    result = (
+        sb.table("alerts")
+        .update({"silenced_until": until})
+        .eq("id", alert_id)
+        .is_("resolved_at", "null")
+        .execute()
+    )
+    if not (result and result.data):
+        raise HTTPException(status_code=404, detail="alert not found or already resolved")
+    return {"silenced": True, "silenced_until": until}
 
 
 @router.post("/{alert_id}/resolve", summary="Manually resolve an alert")

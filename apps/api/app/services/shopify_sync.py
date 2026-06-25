@@ -17,12 +17,15 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from ..database import get_supabase
-from ..services import crypto, writer
+from ..services import crypto, meta_capi, writer
 from ..services.adapters.shopify_adapter import ShopifyAdapter
 
 logger = logging.getLogger(__name__)
 
 _SHOPIFY_API_VERSION = "2024-10"
+
+# POS and draft sources that never go to Meta CAPI
+_OFFLINE_SOURCE_NAMES = frozenset({"pos", "iphone", "android", "shopify_draft_order"})
 _PAGE_SIZE           = 250
 _ORDER_FIELDS        = (
     "id,name,email,phone,total_price,currency,financial_status,fulfillment_status,"
@@ -30,6 +33,99 @@ _ORDER_FIELDS        = (
     "line_items,customer,shipping_address,billing_address,note_attributes,"
     "browser_ip,client_details"
 )
+
+
+
+def _cancel_voided_in_meta(client: dict) -> int:
+    """Poll recently-voided Shopify orders and send $0 CAPI to Meta.
+
+    When a customer abandons a PIX/boleto payment the Shopify browser pixel
+    has already fired Purchase on the thank-you page. This function sends a
+    matching CAPI event with value=0 using the same order_id as event_id so
+    Meta replaces the false R$X conversion with R$0.
+
+    Returns the number of cancellation events successfully sent.
+    """
+    client_uuid = client["id"]
+    domain      = (client.get("shopify_domain") or "").strip().rstrip("/")
+    token       = client.get("shopify_access_token") or ""
+    pixel_id    = client.get("meta_pixel_id") or ""
+    capi_token  = client.get("meta_access_token") or ""
+
+    if not all([domain, token, pixel_id, capi_token]):
+        return 0
+
+    since = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    url = f"https://{domain}/admin/api/{_SHOPIFY_API_VERSION}/orders.json"
+    params = {
+        "financial_status": "voided",
+        "status":           "any",
+        "limit":            50,
+        "fields": (
+            "id,name,source_name,landing_site,note_attributes,"
+            "total_price,currency,email,phone,customer,line_items,created_at"
+        ),
+        "updated_at_min": since,
+    }
+    headers = {"X-Shopify-Access-Token": token}
+
+    try:
+        resp = httpx.get(url, headers=headers, params=params, timeout=20.0)
+        resp.raise_for_status()
+        orders = resp.json().get("orders", [])
+    except Exception as exc:
+        logger.warning("_cancel_voided_in_meta: Shopify fetch failed for %s: %s", client_uuid, exc)
+        return 0
+
+    adapter   = ShopifyAdapter()
+    cancelled = 0
+
+    for order in orders:
+        source_name = (order.get("source_name") or "").lower()
+        if source_name in _OFFLINE_SOURCE_NAMES:
+            continue
+
+        # Only cancel orders that originated from Meta channels
+        attrs   = {a["name"]: a["value"] for a in (order.get("note_attributes") or [])}
+        landing = order.get("landing_site") or ""
+        has_meta_signal = (
+            attrs.get("_fbp")
+            or attrs.get("_fbc")
+            or attrs.get("_fbclid")
+            or "fbclid=" in landing
+            or "facebook.com" in landing
+            or "instagram.com" in landing
+        )
+        if not has_meta_signal:
+            continue
+
+        try:
+            event = adapter.normalize(
+                payload=order,
+                client_id=client_uuid,
+                headers={"x-shopify-topic": "orders/paid"},
+            )
+            ok, err = meta_capi.send_purchase(
+                pixel_id, capi_token, event, value_override=0.0
+            )
+            if ok:
+                cancelled += 1
+                logger.info(
+                    "shopify_sync: voided order %s — $0 CAPI sent to Meta",
+                    order.get("id"),
+                )
+            else:
+                logger.warning(
+                    "shopify_sync: $0 CAPI failed for voided order %s: %s",
+                    order.get("id"), err,
+                )
+        except Exception as exc:
+            logger.warning(
+                "shopify_sync: error processing voided order %s: %s",
+                order.get("id"), exc,
+            )
+
+    return cancelled
 
 
 def _parse_next_link(link_header: str) -> Optional[str]:
@@ -175,7 +271,8 @@ def run_hourly_for_all_clients() -> None:
             sb.table("clients")
             .select(
                 "id, shopify_domain, shopify_access_token, "
-                "shopify_last_sync_at, shopify_sync_enabled"
+                "shopify_last_sync_at, shopify_sync_enabled, "
+                "meta_pixel_id, meta_access_token"
             )
             .eq("is_active", True)
             .eq("shopify_sync_enabled", True)
@@ -189,6 +286,12 @@ def run_hourly_for_all_clients() -> None:
             try:
                 client = crypto.decrypt_client_secrets(row)
                 sync_client(client)
+                cancelled = _cancel_voided_in_meta(client)
+                if cancelled:
+                    logger.info(
+                        "shopify_sync: %d voided order(s) cancelled in Meta for client %s",
+                        cancelled, row.get("id"),
+                    )
             except Exception as exc:
                 logger.error("shopify_sync: error for client %s: %s", row.get("id"), exc)
 

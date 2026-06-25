@@ -7,6 +7,8 @@ import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanGate } from '@/components/plan-gate'
 import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
+import { detectOutlier } from '@/lib/outlier-detection'
+import { OutlierBadge, outlierCardBorder } from '@/components/outlier-badge'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -63,6 +65,7 @@ export default function CreativesPage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [sort, setSort] = useState<'spend' | 'roas' | 'ctr'>('spend')
+  const [showOnlyOutliers, setShowOnlyOutliers] = useState(false)
 
   const load = useCallback(async () => {
     if (period === 'custom' && (!from || !to)) return
@@ -124,6 +127,24 @@ export default function CreativesPage() {
     if (sort === 'ctr')  return (b.ctr  || 0) - (a.ctr  || 0)
     return b.spend - a.spend
   })
+
+  // ── Outlier detection ──────────────────────────────────────────────────────
+  const roasValues = creatives
+    .filter(c => c.spend > 0 && c.roas != null)
+    .map(c => c.roas as number)
+
+  const outlierMap = new Map(
+    creatives.map(c => [
+      c.ad_id,
+      c.spend > 0 && c.roas != null
+        ? detectOutlier(c.roas, roasValues)
+        : { isOutlier: false, direction: null, magnitude: null, percentile: 0.5 },
+    ])
+  )
+
+  const displayed = showOnlyOutliers
+    ? sorted.filter(c => outlierMap.get(c.ad_id)?.isOutlier)
+    : sorted
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -231,7 +252,7 @@ export default function CreativesPage() {
           <p className="text-xs uppercase tracking-wider text-slate-500 font-medium">
             Galeria de criativos
           </p>
-          <div className="flex gap-1 text-xs">
+          <div className="flex items-center gap-1 text-xs">
             {(['spend', 'roas', 'ctr'] as const).map(s => (
               <button key={s} onClick={() => setSort(s)}
                 className={`px-2 py-1 rounded ${
@@ -240,6 +261,17 @@ export default function CreativesPage() {
                 {s.toUpperCase()}
               </button>
             ))}
+            <span className="w-px h-4 bg-[#2a2f3e] mx-1" />
+            <button
+              onClick={() => setShowOnlyOutliers(v => !v)}
+              className={`px-2 py-1 rounded ${
+                showOnlyOutliers
+                  ? 'bg-amber-500/20 text-amber-200 border border-amber-500/30'
+                  : 'text-slate-500 hover:text-white'
+              }`}
+            >
+              Outliers
+            </button>
           </div>
         </div>
 
@@ -251,33 +283,50 @@ export default function CreativesPage() {
           <p className="text-slate-500 text-sm text-center py-12">
             Sem criativos sincronizados. Clique <span className="text-slate-300">"Sincronizar criativos"</span>.
           </p>
+        ) : displayed.length === 0 ? (
+          <p className="text-slate-500 text-sm text-center py-12">
+            Nenhum criativo com ROAS fora da curva no período.
+          </p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-            {sorted.map(c => (
-              <div key={c.ad_id} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
-                {c.image_url ? (
-                  <div className="h-52 bg-[#0f1117] overflow-hidden">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={c.image_url} alt={c.ad_name || ''} className="w-full h-full object-cover" />
-                  </div>
-                ) : (
-                  <div className="h-52 bg-[#0f1117] flex items-center justify-center text-slate-700 text-xs">sem imagem</div>
-                )}
-                <div className="p-3">
-                  <p className="text-xs font-medium text-white truncate" title={c.ad_name || ''}>
-                    {c.ad_name || '—'}
-                  </p>
-                  {c.headline && (
-                    <p className="text-xs text-slate-400 mt-1 line-clamp-2">{c.headline}</p>
+            {displayed.map(c => {
+              const outlier = outlierMap.get(c.ad_id)!
+              const tooltip = outlier.isOutlier
+                ? outlier.direction === 'positive'
+                  ? `ROAS ${c.roas?.toFixed(2)}x — ${outlier.magnitude === 'extreme' ? 'top 1%' : 'top 10%'} da galeria. Invest. ${fmt(c.spend)} → receita ${fmt(c.revenue)}.`
+                  : `ROAS ${c.roas?.toFixed(2) ?? '0'}x com gasto de ${fmt(c.spend)} — verifique este criativo.`
+                : undefined
+              return (
+                <div key={c.ad_id} className={`bg-[#1a1f2e] rounded-xl overflow-hidden ${outlierCardBorder(outlier.direction, outlier.magnitude)}`}>
+                  {c.image_url ? (
+                    <div className="h-52 bg-[#0f1117] overflow-hidden">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={c.image_url} alt={c.ad_name || ''} className="w-full h-full object-cover" />
+                    </div>
+                  ) : (
+                    <div className="h-52 bg-[#0f1117] flex items-center justify-center text-slate-700 text-xs">sem imagem</div>
                   )}
-                  <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-[#2a2f3e]">
-                    <Stat label="Invest." value={fmt(c.spend)} />
-                    <Stat label="ROAS"  value={c.roas != null ? c.roas.toFixed(2) + 'x' : '—'} accent={c.roas && c.roas >= 2 ? 'emerald' : c.roas && c.roas < 1 ? 'rose' : undefined} />
-                    <Stat label="CTR"   value={c.ctr  != null ? c.ctr.toFixed(2)  + '%' : '—'} />
+                  <div className="p-3">
+                    <p className="text-xs font-medium text-white truncate" title={c.ad_name || ''}>
+                      {c.ad_name || '—'}
+                    </p>
+                    {c.headline && (
+                      <p className="text-xs text-slate-400 mt-1 line-clamp-2">{c.headline}</p>
+                    )}
+                    <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-[#2a2f3e]">
+                      <Stat label="Invest." value={fmt(c.spend)} />
+                      <Stat label="ROAS"  value={c.roas != null ? c.roas.toFixed(2) + 'x' : '—'} accent={c.roas && c.roas >= 2 ? 'emerald' : c.roas && c.roas < 1 ? 'rose' : undefined} />
+                      <Stat label="CTR"   value={c.ctr  != null ? c.ctr.toFixed(2)  + '%' : '—'} />
+                    </div>
+                    {outlier.isOutlier && (
+                      <div className="mt-2 flex items-center gap-1.5">
+                        <OutlierBadge outlier={outlier} tooltip={tooltip} />
+                      </div>
+                    )}
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

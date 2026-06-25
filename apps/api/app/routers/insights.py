@@ -45,9 +45,10 @@ async def get_insights(
     offset: int = 0,
     type: str | None = None,
     severity: str | None = None,
+    include_read: bool = False,
 ):
     """
-    Retorna os insights do cliente com suporte a paginação e filtros.
+    Retorna os insights do cliente. Por padrão só retorna não-lidos (include_read=false).
     """
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:
@@ -61,6 +62,8 @@ async def get_insights(
             .eq("client_id", client_uuid)
             .order("created_at", desc=True)
         )
+        if not include_read:
+            q = q.eq("is_read", False)
         if type:
             q = q.eq("type", type)
         if severity:

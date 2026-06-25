@@ -7,6 +7,8 @@ import {
   Loader2, RefreshCw, Store, TrendingUp, ShoppingBag, Users,
   AlertTriangle, RotateCcw, ArrowUpRight,
 } from 'lucide-react'
+import { detectOutlier } from '@/lib/outlier-detection'
+import { OutlierBadge } from '@/components/outlier-badge'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, BarChart, Bar, Cell,
@@ -212,6 +214,7 @@ function OverviewTab({ data }: { data: RevenueData }) {
 
 function ProductsTab({ data }: { data: RevenueData }) {
   const totalRevenue = data.summary.gmv || 1
+  const productUnitValues = data.top_products.map(p => p.units)
   return (
     <Card className="overflow-hidden">
       <CardHeader title="Top produtos por receita" sub={`${data.period.start} → ${data.period.end}`} />
@@ -230,11 +233,25 @@ function ProductsTab({ data }: { data: RevenueData }) {
               </tr>
             </thead>
             <tbody>
-              {data.top_products.map((p, i) => (
+              {data.top_products.map((p, i) => {
+                const outlier = detectOutlier(p.units, productUnitValues)
+                return (
                 <tr key={i} className="border-b border-[#1a1f2e] hover:bg-[#1a1f2e] transition-colors">
                   <td className="px-4 py-3 text-slate-600 text-xs">{i + 1}</td>
                   <td className="px-4 py-3 text-slate-300 max-w-xs">
-                    <p className="truncate font-medium">{p.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="truncate font-medium">{p.name}</p>
+                      {outlier.isOutlier && (
+                        <OutlierBadge
+                          outlier={outlier}
+                          tooltip={
+                            outlier.direction === 'positive'
+                              ? `${p.units} unidades — produto acima da média de vendas do período.`
+                              : `${p.units} unidades — produto abaixo da média.`
+                          }
+                        />
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-slate-500 text-xs">{p.sku || '—'}</td>
                   <td className="px-4 py-3 text-slate-300">{fmtN(p.units)}</td>
@@ -253,7 +270,8 @@ function ProductsTab({ data }: { data: RevenueData }) {
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -265,6 +283,7 @@ function ProductsTab({ data }: { data: RevenueData }) {
 // ── Tab: Channels ─────────────────────────────────────────────────────────────
 
 function ChannelsTab({ data }: { data: RevenueData }) {
+  const channelRevenueValues = data.channels.map(c => c.revenue)
   return (
     <div className="space-y-6">
       {/* Channel summary */}
@@ -280,7 +299,9 @@ function ChannelsTab({ data }: { data: RevenueData }) {
               </tr>
             </thead>
             <tbody>
-              {data.channels.map((ch, i) => (
+              {data.channels.map((ch, i) => {
+                const outlier = detectOutlier(ch.revenue, channelRevenueValues)
+                return (
                 <tr key={i} className="border-b border-[#1a1f2e] hover:bg-[#1a1f2e] transition-colors">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
@@ -289,6 +310,16 @@ function ChannelsTab({ data }: { data: RevenueData }) {
                         style={{ backgroundColor: CHANNEL_COLORS[ch.channel] || '#94a3b8' }}
                       />
                       <span className="text-slate-300 font-medium">{ch.channel}</span>
+                      {outlier.isOutlier && (
+                        <OutlierBadge
+                          outlier={outlier}
+                          tooltip={
+                            outlier.direction === 'positive'
+                              ? `${ch.channel} representa ${ch.pct}% da receita — canal dominante no período.`
+                              : `${ch.channel} com receita abaixo da média dos canais.`
+                          }
+                        />
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-slate-300">{fmtN(ch.orders)}</td>
@@ -311,7 +342,8 @@ function ChannelsTab({ data }: { data: RevenueData }) {
                     {ch.orders > 0 ? fmt(ch.revenue / ch.orders) : '—'}
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>

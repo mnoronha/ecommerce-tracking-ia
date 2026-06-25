@@ -423,7 +423,8 @@ def run_daily_insights_all_clients() -> None:
         clients = sb.table("clients").select("id, pixel_id").execute()
         for row in (clients.data or []):
             try:
-                generate_daily_insights(row["id"])
+                # Rule-based always runs; Claude runs on top if credits available
+                generate_insights(row["id"])
             except Exception as exc:
                 logger.error("daily insights failed for %s: %s", row.get("pixel_id"), exc)
     except Exception as exc:
@@ -851,25 +852,36 @@ Use os dados acima literalmente. Cite campanhas e canais pelo nome."""
 
 def generate_insights(client_uuid: str) -> dict:
     """
-    Coleta métricas, chama Claude, persiste e retorna os insights gerados.
-    Raises on fatal errors (no API key, client not found).
+    Coleta métricas, chama Claude (se disponível) + regras, persiste e retorna os insights.
+    Nunca levanta exceção por falta de API key — sempre gera ao menos os insights de regra.
     """
-    if not settings.ANTHROPIC_API_KEY:
-        raise ValueError("ANTHROPIC_API_KEY não configurada")
+    from . import ai_auto_insights
 
-    store_name = _get_client_name(client_uuid)
-    logger.info("Coletando métricas para %s (%s)", store_name, client_uuid)
-    metrics = _collect_metrics(client_uuid)
+    # Always run rule-based detectors (no Claude dependency)
+    rule_result = ai_auto_insights.generate_rule_based_insights(client_uuid)
 
-    logger.info("Chamando Claude %s para análise de %s", settings.ANTHROPIC_MODEL, store_name)
-    insights = _call_claude(metrics, store_name)
+    # Try Claude on top if API key is configured
+    claude_saved = 0
+    claude_count = 0
+    if settings.ANTHROPIC_API_KEY:
+        try:
+            store_name = _get_client_name(client_uuid)
+            logger.info("Chamando Claude %s para %s", settings.ANTHROPIC_MODEL, store_name)
+            metrics  = _collect_metrics(client_uuid)
+            insights = _call_claude(metrics, store_name)
+            claude_saved = _save_insights(client_uuid, insights)
+            claude_count = len(insights)
+        except Exception as exc:
+            logger.warning("Claude unavailable for %s (%s) — rule-based only", client_uuid, exc)
+    else:
+        logger.info("ANTHROPIC_API_KEY não configurada — apenas insights de regra para %s", client_uuid)
 
-    saved = _save_insights(client_uuid, insights)
-    logger.info("Insights gerados=%d salvos=%d", len(insights), saved)
+    total_saved = rule_result["insights_saved"] + claude_saved
+    logger.info("Insights para %s: regras=%d claude=%d salvos=%d",
+                client_uuid, rule_result["insights_found"], claude_count, total_saved)
 
     return {
-        "insights_generated": len(insights),
-        "insights_saved":     saved,
-        "insights":           insights,
-        "metrics_snapshot":   metrics,
+        "insights_generated": rule_result["insights_found"] + claude_count,
+        "insights_saved":     total_saved,
+        "rule_insights":      rule_result,
     }

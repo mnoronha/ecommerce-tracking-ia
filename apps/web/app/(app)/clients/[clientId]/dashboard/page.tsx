@@ -586,26 +586,32 @@ const SEVERITY_ICON_COLOR: Record<string, string> = {
   critical: 'text-red-400',
 }
 
-function InsightCard({ insight, onRead }: { insight: Insight; onRead: (id: string) => void }) {
-  const [expanded, setExpanded] = useState(false)
+function InsightCard({
+  insight, onDismiss, autoExpand = false,
+}: {
+  insight: Insight
+  onDismiss: (id: string) => void
+  autoExpand?: boolean
+}) {
+  const [expanded, setExpanded] = useState(autoExpand)
   const Icon = INSIGHT_ICON[insight.type] || Lightbulb
 
   return (
-    <div
-      className={`rounded-xl border p-4 transition-all ${SEVERITY_STYLE[insight.severity] || SEVERITY_STYLE.info} ${insight.is_read ? 'opacity-60' : ''}`}
-    >
+    <div className={`rounded-xl border p-4 transition-all ${SEVERITY_STYLE[insight.severity] || SEVERITY_STYLE.info}`}>
       <div className="flex items-start gap-3">
         <div className={`mt-0.5 shrink-0 ${SEVERITY_ICON_COLOR[insight.severity]}`}>
           <Icon size={16} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
-            <p className={`text-sm font-semibold ${insight.is_read ? 'text-slate-400' : 'text-white'}`}>
-              {insight.title}
-            </p>
-            {!insight.is_read && (
-              <span className="shrink-0 w-2 h-2 rounded-full bg-indigo-400 mt-1" />
-            )}
+            <p className="text-sm font-semibold text-white">{insight.title}</p>
+            <button
+              onClick={() => onDismiss(insight.id)}
+              className="shrink-0 text-slate-600 hover:text-slate-400 transition-colors text-xs leading-none mt-0.5"
+              title="Dispensar"
+            >
+              ✕
+            </button>
           </div>
 
           {expanded ? (
@@ -619,29 +625,19 @@ function InsightCard({ insight, onRead }: { insight: Insight; onRead: (id: strin
                   <p className="text-xs text-slate-300">{insight.data.recommendation}</p>
                 </div>
               )}
-              <div className="flex items-center gap-3 mt-3">
-                <button
-                  onClick={() => setExpanded(false)}
-                  className="text-xs text-slate-500 hover:text-slate-300"
-                >
-                  Fechar
-                </button>
-                {!insight.is_read && (
-                  <button
-                    onClick={() => onRead(insight.id)}
-                    className="text-xs text-indigo-400 hover:text-indigo-300"
-                  >
-                    Marcar como lido
-                  </button>
-                )}
-              </div>
+              <button
+                onClick={() => setExpanded(false)}
+                className="text-xs text-slate-500 hover:text-slate-300 mt-3"
+              >
+                Recolher
+              </button>
             </>
           ) : (
             <button
-              onClick={() => { setExpanded(true); if (!insight.is_read) onRead(insight.id) }}
+              onClick={() => setExpanded(true)}
               className="text-xs text-slate-500 hover:text-slate-300 mt-1"
             >
-              Ver análise completa →
+              Ver análise →
             </button>
           )}
         </div>
@@ -1072,14 +1068,22 @@ export default function DashboardPage() {
 
   const loadInsights = useCallback(async () => {
     setInsLoading(true)
-    const { data } = await supabase
+    let cid = clientIdRef.current
+    if (!cid) {
+      const { data: cd } = await supabase.from('clients').select('id').eq('pixel_id', CLIENT_PIXEL_ID).limit(1).single()
+      if (cd) { cid = cd.id; clientIdRef.current = cid }
+    }
+    const q = supabase
       .from('ai_insights')
       .select('id, type, severity, title, content, data, is_read, created_at')
+      .eq('is_read', false)
       .order('created_at', { ascending: false })
       .limit(10)
+    if (cid) q.eq('client_id', cid)
+    const { data } = await q
     setInsights((data as Insight[]) || [])
     setInsLoading(false)
-  }, [])
+  }, [CLIENT_PIXEL_ID])
 
   const generateInsights = useCallback(async () => {
     setGenerating(true)
@@ -1156,10 +1160,10 @@ export default function DashboardPage() {
     setCohortData(months)
   }, [])
 
-  const markRead = useCallback(async (insightId: string) => {
-    setInsights(prev => prev.map(i => i.id === insightId ? { ...i, is_read: true } : i))
+  const dismissInsight = useCallback(async (insightId: string) => {
+    setInsights(prev => prev.filter(i => i.id !== insightId))
     await fetch(`${API_URL}/insights/${CLIENT_PIXEL_ID}/${insightId}/read`, { method: 'PATCH' })
-  }, [])
+  }, [CLIENT_PIXEL_ID])
 
   const loadPacing = useCallback(async () => {
     try {
@@ -2180,15 +2184,15 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2">
                 <Sparkles size={15} className="text-indigo-400" />
                 <h2 className="text-sm font-semibold text-slate-300">Insights IA</h2>
-                {insights.filter(i => !i.is_read).length > 0 && (
+                {insights.length > 0 && (
                   <span className="bg-indigo-600 text-white text-xs px-1.5 py-0.5 rounded-full font-medium">
-                    {insights.filter(i => !i.is_read).length} novo{insights.filter(i => !i.is_read).length > 1 ? 's' : ''}
+                    {insights.length} novo{insights.length > 1 ? 's' : ''}
                   </span>
                 )}
               </div>
               <button onClick={generateInsights} disabled={generating}
                 className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors font-medium">
-                {generating ? <><Loader2 size={12} className="animate-spin" /> Analisando…</> : <><Sparkles size={12} /> Gerar análise</>}
+                {generating ? <><Loader2 size={12} className="animate-spin" /> Analisando…</> : <><Sparkles size={12} /> Atualizar</>}
               </button>
             </div>
             <div className="p-5">
@@ -2197,12 +2201,14 @@ export default function DashboardPage() {
               ) : insights.length === 0 ? (
                 <div className="text-center py-8">
                   <Sparkles size={32} className="text-slate-600 mx-auto mb-3" />
-                  <p className="text-slate-400 text-sm font-medium">Nenhum insight gerado ainda</p>
-                  <p className="text-slate-600 text-xs mt-1">Clique em "Gerar análise" para o Claude analisar seus dados</p>
+                  <p className="text-slate-400 text-sm font-medium">Nenhum alerta ativo</p>
+                  <p className="text-slate-600 text-xs mt-1">Tudo dentro da normalidade, ou clique em "Atualizar" para forçar análise.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                  {insights.map(insight => <InsightCard key={insight.id} insight={insight} onRead={markRead} />)}
+                  {insights.map((insight, idx) => (
+                    <InsightCard key={insight.id} insight={insight} onDismiss={dismissInsight} autoExpand={idx === 0} />
+                  ))}
                 </div>
               )}
             </div>
