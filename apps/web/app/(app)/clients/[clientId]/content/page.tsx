@@ -857,6 +857,12 @@ export default function ContentPage() {
                               Gerar
                             </button>
                           )}
+                          <button
+                            onClick={() => router.push(`/clients/${clientId}/content/briefings/${b.id}`)}
+                            className="flex items-center gap-1 text-xs text-slate-400 hover:text-white px-2 py-1 rounded-md hover:bg-[#2a2f3e] transition-colors"
+                          >
+                            <ChevronRight size={11} /> Detalhes
+                          </button>
                           {['generated', 'reviewing', 'approved', 'published'].includes(b.status) && (
                             <button
                               onClick={() => router.push(`/clients/${clientId}/content/pieces?briefing=${b.id}`)}

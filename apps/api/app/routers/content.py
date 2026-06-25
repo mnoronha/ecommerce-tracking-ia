@@ -352,8 +352,9 @@ async def generate_from_briefing(pixel_id: str, briefing_id: str, bg: Background
 
 @router.get("/{pixel_id}/pieces")
 async def list_pieces(
-    pixel_id: str,
-    status:   Optional[str] = Query(None),
+    pixel_id:    str,
+    status:      Optional[str] = Query(None),
+    briefing_id: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     per_page: int = Query(30, ge=5, le=100),
 ):
@@ -366,6 +367,8 @@ async def list_pieces(
     )
     if status:
         q = q.eq("status", status)
+    if briefing_id:
+        q = q.eq("briefing_id", briefing_id)
     offset = (page - 1) * per_page
     rows = q.order("created_at", desc=True).offset(offset).limit(per_page).execute().data or []
     return {"pieces": rows, "page": page, "per_page": per_page}
@@ -379,19 +382,18 @@ async def get_piece(pixel_id: str, piece_id: str):
     if not piece_rows:
         raise HTTPException(404, "piece not found")
     piece = piece_rows[0]
-    # Latest version
+    # All versions (sorted desc)
     version_rows = (
         sb.table("content_piece_versions")
-        .select("id,version_number,version_type,title,body_markdown,word_count,generation_model,tokens_input,tokens_output,generation_cost_usd,created_at,rag_chunks_used")
+        .select("id,version_number,version_type,title,body_markdown,word_count,generation_model,tokens_input,tokens_output,generation_cost_usd,generation_duration_ms,created_at,rag_chunks_used")
         .eq("piece_id", piece_id)
         .order("version_number", desc=True)
-        .limit(1)
         .execute()
-    ).data
-    # Factcheck
+    ).data or []
+    # Latest factcheck
     fc_rows = (
         sb.table("content_factchecks")
-        .select("overall_confidence,facts_to_verify,issues_found,recommendation,created_at")
+        .select("id,version_id,overall_confidence,facts_to_verify,issues_found,recommendation,created_at")
         .eq("piece_id", piece_id)
         .order("created_at", desc=True)
         .limit(1)
@@ -399,8 +401,8 @@ async def get_piece(pixel_id: str, piece_id: str):
     ).data
     return {
         **piece,
-        "latest_version": version_rows[0] if version_rows else None,
-        "factcheck":      fc_rows[0] if fc_rows else None,
+        "versions":     version_rows,
+        "factcheck":    fc_rows[0] if fc_rows else None,
     }
 
 
@@ -450,6 +452,38 @@ async def update_piece(pixel_id: str, piece_id: str, body: dict):
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     get_supabase().table("content_pieces").update(body).eq("id", piece_id).execute()
     return {"ok": True}
+
+
+@router.post("/{pixel_id}/pieces/{piece_id}/regen")
+async def regen_piece(pixel_id: str, piece_id: str, bg: BackgroundTasks):
+    """Regenera uma peça existente a partir do mesmo briefing (nova versão IA)."""
+    _get_client(pixel_id)
+    sb = get_supabase()
+    piece_rows = sb.table("content_pieces").select("briefing_id,client_id").eq("id", piece_id).limit(1).execute().data
+    if not piece_rows or not piece_rows[0].get("briefing_id"):
+        raise HTTPException(400, "peça sem briefing associado — não é possível regenerar")
+    briefing_id = piece_rows[0]["briefing_id"]
+    bg.add_task(content_generator.generate_piece, briefing_id)
+    return {"ok": True, "message": "regeneração iniciada em background"}
+
+
+@router.post("/{pixel_id}/pieces/{piece_id}/factcheck")
+async def trigger_factcheck(pixel_id: str, piece_id: str, bg: BackgroundTasks):
+    """Dispara fact-check da versão mais recente em background."""
+    _get_client(pixel_id)
+    sb = get_supabase()
+    rows = (
+        sb.table("content_piece_versions")
+        .select("id,client_id")
+        .eq("piece_id", piece_id)
+        .order("version_number", desc=True)
+        .limit(1)
+        .execute()
+    ).data
+    if not rows:
+        raise HTTPException(404, "nenhuma versão encontrada")
+    bg.add_task(content_factchecker.factcheck_version, piece_id, rows[0]["id"], rows[0]["client_id"])
+    return {"ok": True, "message": "fact-check iniciado em background"}
 
 
 @router.get("/{pixel_id}/pieces/{piece_id}/factcheck")

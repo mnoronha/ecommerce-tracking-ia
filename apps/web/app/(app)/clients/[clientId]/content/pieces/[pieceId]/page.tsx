@@ -3,9 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import {
-  ArrowLeft, Loader2, CheckCircle, AlertTriangle,
-  XCircle, Clock, RefreshCw, Send, ChevronDown, ChevronUp,
-  Copy, ExternalLink, Sparkles, Shield,
+  ArrowLeft, Loader2, CheckCircle, AlertTriangle, XCircle,
+  RefreshCw, Send, ChevronDown, ChevronUp, Copy, Shield, Sparkles,
 } from 'lucide-react'
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -15,25 +14,30 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-pr
 interface PieceVersion {
   id: string
   version_number: number
-  content_markdown: string
+  version_type: string
+  title: string | null
+  body_markdown: string
   word_count: number | null
-  rag_sources_used: number
-  generation_model: string
+  generation_model: string | null
+  generation_cost_usd: number | null
+  generation_duration_ms: number | null
+  rag_chunks_used: string[] | null
   created_at: string
 }
 
 interface FactCheck {
   id: string
   version_id: string
-  overall_confidence: number
-  facts_to_verify: Array<{ claim: string; source: string | null; confidence: number }>
-  issues_found: Array<{ type: string; description: string; severity: string }>
+  overall_confidence: 'high' | 'medium' | 'low'
+  facts_to_verify: Array<{ claim: string; location_hint?: string; concern?: string; suggested_verification?: string }>
+  issues_found: Array<{ type: string; description: string; severity: string; suggested_fix?: string }>
   recommendation: string
   created_at: string
 }
 
 interface Piece {
   id: string
+  briefing_id: string | null
   final_title: string | null
   status: string
   current_version: number
@@ -46,35 +50,38 @@ interface Piece {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const STATUS_COLORS: Record<string, string> = {
-  draft:           'text-slate-400',
-  reviewed:        'text-indigo-400',
-  approved:        'text-emerald-400',
-  published:       'text-emerald-300',
-  pending_client:  'text-orange-400',
+const CONFIDENCE_COLOR: Record<string, string> = {
+  high:   'text-emerald-400',
+  medium: 'text-yellow-400',
+  low:    'text-red-400',
+}
+const CONFIDENCE_LABEL: Record<string, string> = {
+  high: 'Alta', medium: 'Média', low: 'Baixa',
 }
 
-function ConfidenceBadge({ score }: { score: number }) {
-  const color =
-    score >= 0.8 ? 'text-emerald-400' :
-    score >= 0.6 ? 'text-yellow-400' :
-                   'text-red-400'
-  return (
-    <span className={`text-sm font-bold ${color}`}>
-      {Math.round(score * 100)}%
-    </span>
-  )
+const STATUS_COLORS: Record<string, string> = {
+  draft:          'text-slate-400',
+  reviewed:       'text-indigo-400',
+  approved:       'text-emerald-400',
+  published:      'text-emerald-300',
+  pending_client: 'text-orange-400',
 }
 
 function SeverityIcon({ severity }: { severity: string }) {
   if (severity === 'high')   return <XCircle size={13} className="text-red-400 shrink-0" />
   if (severity === 'medium') return <AlertTriangle size={13} className="text-yellow-400 shrink-0" />
-  return <Clock size={13} className="text-slate-500 shrink-0" />
+  return <AlertTriangle size={13} className="text-slate-500 shrink-0" />
 }
 
 function fmtDate(s: string | null) {
   if (!s) return '—'
-  return new Date(s).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return new Date(s).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+function fmtCost(usd: number | null) {
+  if (!usd) return null
+  const brl = usd * 5.5
+  return `R$ ${brl.toFixed(2)}`
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -85,17 +92,14 @@ export default function PieceEditorPage() {
   const clientId = params.clientId as string
   const pieceId  = params.pieceId  as string
 
-  const [piece, setPiece]           = useState<Piece | null>(null)
-  const [loading, setLoading]       = useState(true)
+  const [piece, setPiece]               = useState<Piece | null>(null)
+  const [loading, setLoading]           = useState(true)
   const [activeVersion, setActiveVersion] = useState<PieceVersion | null>(null)
-  const [editingTitle, setEditingTitle]   = useState(false)
-  const [title, setTitle]                 = useState('')
-  const [saving, setSaving]               = useState(false)
-  const [runningFC, setRunningFC]         = useState(false)
-  const [sendingApproval, setSendingApproval] = useState(false)
-  const [approvalSent, setApprovalSent]       = useState(false)
-  const [showFC, setShowFC]               = useState(true)
-  const [copied, setCopied]               = useState(false)
+  const [saving, setSaving]             = useState(false)
+  const [runningFC, setRunningFC]       = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+  const [showFC, setShowFC]             = useState(true)
+  const [copied, setCopied]             = useState(false)
 
   const base = `${API}/content/${clientId}`
 
@@ -103,28 +107,14 @@ export default function PieceEditorPage() {
     try {
       const d: Piece = await fetch(`${base}/pieces/${pieceId}`).then(r => r.json())
       setPiece(d)
-      setTitle(d.final_title || '')
-      const latest = d.versions.sort((a, b) => b.version_number - a.version_number)[0]
-      if (latest) setActiveVersion(latest)
-    } catch {}
+      if (d.versions?.length) {
+        setActiveVersion(av => av ? (d.versions.find(v => v.id === av.id) ?? d.versions[0]) : d.versions[0])
+      }
+    } catch { /* ignore */ }
     finally { setLoading(false) }
   }, [base, pieceId])
 
   useEffect(() => { load() }, [load])
-
-  async function saveTitle() {
-    if (!title.trim()) return
-    setSaving(true)
-    try {
-      await fetch(`${base}/pieces/${pieceId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ final_title: title }),
-      })
-      setEditingTitle(false)
-      await load()
-    } finally { setSaving(false) }
-  }
 
   async function updateStatus(status: string) {
     setSaving(true)
@@ -139,42 +129,28 @@ export default function PieceEditorPage() {
   }
 
   async function runFactcheck() {
-    if (!activeVersion) return
     setRunningFC(true)
     try {
       await fetch(`${base}/pieces/${pieceId}/factcheck`, { method: 'POST' })
-      await new Promise(r => setTimeout(r, 3000))
+      await new Promise(r => setTimeout(r, 5000))
       await load()
       setShowFC(true)
     } finally { setRunningFC(false) }
   }
 
-  async function regenerate() {
-    if (!confirm('Gerar nova versão desta peça?')) return
-    setSaving(true)
+  async function regen() {
+    if (!confirm('Gerar nova versão com IA? A versão atual não será perdida.')) return
+    setRegenerating(true)
     try {
-      await fetch(`${base}/pieces/${pieceId}/versions`, { method: 'POST' })
-      await new Promise(r => setTimeout(r, 4000))
+      await fetch(`${base}/pieces/${pieceId}/regen`, { method: 'POST' })
+      await new Promise(r => setTimeout(r, 12000))
       await load()
-    } finally { setSaving(false) }
-  }
-
-  async function sendApproval() {
-    setSendingApproval(true)
-    try {
-      await fetch(`${base}/pieces/${pieceId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'pending_client' }),
-      })
-      setApprovalSent(true)
-      await load()
-    } finally { setSendingApproval(false) }
+    } finally { setRegenerating(false) }
   }
 
   function copyContent() {
-    if (!activeVersion) return
-    navigator.clipboard.writeText(activeVersion.content_markdown)
+    if (!activeVersion?.body_markdown) return
+    navigator.clipboard.writeText(activeVersion.body_markdown)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -185,9 +161,7 @@ export default function PieceEditorPage() {
     </div>
   )
 
-  if (!piece) return (
-    <div className="p-6 text-red-400">Peça não encontrada.</div>
-  )
+  if (!piece) return <div className="p-6 text-red-400">Peça não encontrada.</div>
 
   const versions = [...(piece.versions || [])].sort((a, b) => b.version_number - a.version_number)
   const fc = piece.factcheck
@@ -197,87 +171,47 @@ export default function PieceEditorPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <button
-            onClick={() => router.push(`/clients/${clientId}/content`)}
-            className="text-slate-500 hover:text-white mt-0.5 shrink-0"
-          >
+          <button onClick={() => router.push(`/clients/${clientId}/content`)}
+            className="text-slate-500 hover:text-white mt-1 shrink-0">
             <ArrowLeft size={18} />
           </button>
           <div>
-            {editingTitle ? (
-              <div className="flex items-center gap-2">
-                <input
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  autoFocus
-                  onKeyDown={e => e.key === 'Enter' && saveTitle()}
-                  className="text-xl font-bold bg-transparent border-b border-indigo-500 text-white outline-none w-96"
-                />
-                <button onClick={saveTitle} disabled={saving} className="text-xs text-indigo-400 hover:text-indigo-300">
-                  {saving ? '…' : 'OK'}
-                </button>
-                <button onClick={() => setEditingTitle(false)} className="text-xs text-slate-500 hover:text-white">
-                  Cancelar
-                </button>
-              </div>
-            ) : (
-              <h1
-                className="text-xl font-bold text-white cursor-pointer hover:text-indigo-300 transition-colors"
-                onClick={() => setEditingTitle(true)}
-                title="Clique para editar"
-              >
-                {piece.final_title || 'Sem título — clique para editar'}
-              </h1>
-            )}
+            <h1 className="text-xl font-bold text-white">
+              {piece.final_title || 'Sem título'}
+            </h1>
             <p className={`text-xs mt-1 ${STATUS_COLORS[piece.status] || 'text-slate-500'}`}>
               {piece.status.replace(/_/g, ' ')} · v{piece.current_version} · {fmtDate(piece.created_at)}
             </p>
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={regenerate}
-            disabled={saving}
-            className="flex items-center gap-1.5 text-xs bg-[#1a1f2e] hover:bg-[#2a2f3e] text-slate-300 px-3 py-2 rounded-md transition-colors disabled:opacity-50"
-          >
-            <Sparkles size={12} /> Nova versão
+          <button onClick={regen} disabled={regenerating || saving}
+            className="flex items-center gap-1.5 text-xs bg-[#1a1f2e] hover:bg-[#2a2f3e] text-slate-300 px-3 py-2 rounded-md transition-colors disabled:opacity-50">
+            {regenerating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+            {regenerating ? 'Gerando…' : 'Nova versão IA'}
           </button>
-          <button
-            onClick={runFactcheck}
-            disabled={runningFC || !activeVersion}
-            className="flex items-center gap-1.5 text-xs bg-[#1a1f2e] hover:bg-[#2a2f3e] text-slate-300 px-3 py-2 rounded-md transition-colors disabled:opacity-50"
-          >
+          <button onClick={runFactcheck} disabled={runningFC}
+            className="flex items-center gap-1.5 text-xs bg-[#1a1f2e] hover:bg-[#2a2f3e] text-slate-300 px-3 py-2 rounded-md transition-colors disabled:opacity-50">
             {runningFC ? <Loader2 size={12} className="animate-spin" /> : <Shield size={12} />}
             Factcheck
           </button>
+          {['draft', 'generated'].includes(piece.status) && (
+            <button onClick={() => updateStatus('reviewed')} disabled={saving}
+              className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md transition-colors disabled:opacity-50">
+              <CheckCircle size={12} /> Marcar revisado
+            </button>
+          )}
           {piece.status === 'reviewed' && (
-            <button
-              onClick={sendApproval}
-              disabled={sendingApproval}
-              className="flex items-center gap-1.5 text-xs bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-md transition-colors disabled:opacity-50"
-            >
-              {sendingApproval ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-              {approvalSent ? 'Enviado!' : 'Enviar p/ aprovação'}
+            <button onClick={() => updateStatus('approved')} disabled={saving}
+              className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md transition-colors disabled:opacity-50">
+              <CheckCircle size={12} /> Aprovar
             </button>
           )}
           {piece.status === 'approved' && (
-            <button
-              onClick={() => updateStatus('published')}
-              disabled={saving}
-              className="flex items-center gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-md transition-colors disabled:opacity-50"
-            >
-              Marcar publicado
-            </button>
-          )}
-          {['draft', 'generated'].includes(piece.status) && (
-            <button
-              onClick={() => updateStatus('reviewed')}
-              disabled={saving}
-              className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-md transition-colors disabled:opacity-50"
-            >
-              <CheckCircle size={12} /> Marcar revisado
+            <button onClick={() => updateStatus('published')} disabled={saving}
+              className="flex items-center gap-1.5 text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3 py-2 rounded-md transition-colors disabled:opacity-50">
+              <Send size={12} /> Marcar publicado
             </button>
           )}
         </div>
@@ -286,50 +220,41 @@ export default function PieceEditorPage() {
       <div className="grid grid-cols-3 gap-5">
         {/* ── Content ─────────────────────────────────────────────────────── */}
         <div className="col-span-2 space-y-3">
-          {/* Version selector */}
           {versions.length > 1 && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-500">Versão:</span>
               <div className="flex gap-1">
                 {versions.map(v => (
-                  <button
-                    key={v.id}
-                    onClick={() => setActiveVersion(v)}
+                  <button key={v.id} onClick={() => setActiveVersion(v)}
                     className={`text-xs px-2.5 py-1 rounded-md transition-colors ${
-                      activeVersion?.id === v.id
-                        ? 'bg-indigo-600 text-white'
-                        : 'bg-[#1a1f2e] text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    v{v.version_number}
+                      activeVersion?.id === v.id ? 'bg-indigo-600 text-white' : 'bg-[#1a1f2e] text-slate-400 hover:text-white'
+                    }`}>
+                    v{v.version_number} {v.version_type === 'human_edit' ? '✏' : '✦'}
                   </button>
                 ))}
               </div>
               {activeVersion && (
                 <span className="text-xs text-slate-600 ml-2">
-                  {activeVersion.word_count ? `${activeVersion.word_count} palavras · ` : ''}
-                  {activeVersion.rag_sources_used} fontes RAG · {activeVersion.generation_model}
+                  {activeVersion.word_count ? `${activeVersion.word_count} palavras` : ''}
+                  {activeVersion.rag_chunks_used?.length ? ` · ${activeVersion.rag_chunks_used.length} chunks RAG` : ''}
+                  {activeVersion.generation_cost_usd ? ` · ${fmtCost(activeVersion.generation_cost_usd)}` : ''}
                 </span>
               )}
             </div>
           )}
 
-          {/* Content block */}
           {activeVersion ? (
             <div className="bg-[#1a1f2e] rounded-xl p-5 relative group">
-              <button
-                onClick={copyContent}
+              <button onClick={copyContent}
                 className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors opacity-0 group-hover:opacity-100"
-                title="Copiar markdown"
-              >
+                title="Copiar markdown">
                 {copied ? <CheckCircle size={15} className="text-emerald-400" /> : <Copy size={15} />}
               </button>
-
               <article
                 className="prose prose-invert prose-sm max-w-none text-slate-200 leading-relaxed whitespace-pre-wrap font-mono text-xs"
                 style={{ maxHeight: '72vh', overflowY: 'auto' }}
               >
-                {activeVersion.content_markdown}
+                {activeVersion.body_markdown}
               </article>
             </div>
           ) : (
@@ -343,23 +268,21 @@ export default function PieceEditorPage() {
         <div className="space-y-4">
           {/* Version history */}
           <div className="bg-[#1a1f2e] rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-white mb-3">Histórico de versões</h3>
-            <div className="space-y-2">
+            <h3 className="text-sm font-semibold text-white mb-3">Versões</h3>
+            <div className="space-y-1.5">
               {versions.map(v => (
-                <button
-                  key={v.id}
-                  onClick={() => setActiveVersion(v)}
+                <button key={v.id} onClick={() => setActiveVersion(v)}
                   className={`w-full text-left p-2 rounded-lg text-xs transition-colors ${
-                    activeVersion?.id === v.id
-                      ? 'bg-indigo-600/20 text-indigo-300'
-                      : 'hover:bg-[#0f1117] text-slate-400 hover:text-white'
-                  }`}
-                >
+                    activeVersion?.id === v.id ? 'bg-indigo-600/20 text-indigo-300' : 'hover:bg-[#0f1117] text-slate-400 hover:text-white'
+                  }`}>
                   <div className="flex items-center justify-between">
-                    <span className="font-medium">v{v.version_number}</span>
+                    <span className="font-medium">
+                      v{v.version_number} — {v.version_type === 'human_edit' ? 'Edição humana' : 'Gerada por IA'}
+                    </span>
                     {v.word_count && <span className="text-slate-500">{v.word_count}p</span>}
                   </div>
                   <p className="text-slate-600 mt-0.5">{fmtDate(v.created_at)}</p>
+                  {v.generation_model && <p className="text-slate-700 mt-0.5 truncate">{v.generation_model}</p>}
                 </button>
               ))}
               {versions.length === 0 && (
@@ -370,16 +293,18 @@ export default function PieceEditorPage() {
 
           {/* Factcheck */}
           <div className="bg-[#1a1f2e] rounded-xl p-4">
-            <button
-              onClick={() => setShowFC(v => !v)}
-              className="w-full flex items-center justify-between text-sm font-semibold text-white"
-            >
+            <button onClick={() => setShowFC(v => !v)}
+              className="w-full flex items-center justify-between text-sm font-semibold text-white">
               <span className="flex items-center gap-2">
                 <Shield size={14} className="text-indigo-400" />
                 Factcheck
               </span>
               <div className="flex items-center gap-2">
-                {fc && <ConfidenceBadge score={fc.overall_confidence} />}
+                {fc && (
+                  <span className={`text-xs font-medium ${CONFIDENCE_COLOR[fc.overall_confidence] || 'text-slate-400'}`}>
+                    {CONFIDENCE_LABEL[fc.overall_confidence] || fc.overall_confidence}
+                  </span>
+                )}
                 {showFC ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
               </div>
             </button>
@@ -388,20 +313,15 @@ export default function PieceEditorPage() {
               <div className="mt-3 space-y-3">
                 {runningFC && (
                   <div className="flex items-center gap-2 text-xs text-indigo-400">
-                    <Loader2 size={12} className="animate-spin" />
-                    Verificando fatos…
+                    <Loader2 size={12} className="animate-spin" /> Verificando fatos…
                   </div>
                 )}
 
                 {!fc && !runningFC && (
                   <div className="text-center py-4">
-                    <p className="text-xs text-slate-500 mb-3">
-                      Nenhum factcheck ainda. Clique em "Factcheck" para verificar a precisão da peça.
-                    </p>
-                    <button
-                      onClick={runFactcheck}
-                      className="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-md transition-colors"
-                    >
+                    <p className="text-xs text-slate-500 mb-3">Nenhum factcheck ainda.</p>
+                    <button onClick={runFactcheck}
+                      className="text-xs bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 px-3 py-1.5 rounded-md">
                       Executar agora
                     </button>
                   </div>
@@ -409,42 +329,20 @@ export default function PieceEditorPage() {
 
                 {fc && !runningFC && (
                   <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-slate-400">Confiança</span>
-                      <ConfidenceBadge score={fc.overall_confidence} />
+                    <div className="bg-[#0f1117] rounded-lg p-2">
+                      <p className="text-xs text-slate-300 italic">{fc.recommendation}</p>
                     </div>
 
-                    {fc.recommendation && (
-                      <div className="bg-[#0f1117] rounded-lg p-2">
-                        <p className="text-xs text-slate-300 italic">{fc.recommendation}</p>
-                      </div>
-                    )}
-
-                    {fc.issues_found && fc.issues_found.length > 0 && (
+                    {fc.issues_found?.length > 0 && (
                       <div>
-                        <p className="text-xs text-slate-500 mb-1.5">Problemas encontrados</p>
+                        <p className="text-xs text-slate-500 mb-1.5">Problemas ({fc.issues_found.length})</p>
                         <div className="space-y-1.5">
                           {fc.issues_found.map((iss, i) => (
-                            <div key={i} className="flex items-start gap-2 text-xs">
+                            <div key={i} className="flex items-start gap-2 text-xs bg-[#0f1117] rounded p-2">
                               <SeverityIcon severity={iss.severity} />
-                              <span className="text-slate-300">{iss.description}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {fc.facts_to_verify && fc.facts_to_verify.length > 0 && (
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1.5">Verificar manualmente</p>
-                        <div className="space-y-2">
-                          {fc.facts_to_verify.map((f, i) => (
-                            <div key={i} className="bg-[#0f1117] rounded p-2 text-xs">
-                              <p className="text-slate-200 mb-1">"{f.claim}"</p>
-                              {f.source && <p className="text-slate-500">Fonte: {f.source}</p>}
-                              <div className="flex items-center justify-between mt-1">
-                                <span className="text-slate-600">confiança</span>
-                                <ConfidenceBadge score={f.confidence} />
+                              <div>
+                                <p className="text-slate-300">{iss.description}</p>
+                                {iss.suggested_fix && <p className="text-slate-500 mt-0.5">→ {iss.suggested_fix}</p>}
                               </div>
                             </div>
                           ))}
@@ -452,31 +350,34 @@ export default function PieceEditorPage() {
                       </div>
                     )}
 
-                    <p className="text-xs text-slate-600">{fmtDate(fc.created_at)}</p>
+                    {fc.facts_to_verify?.length > 0 && (
+                      <div>
+                        <p className="text-xs text-slate-500 mb-1.5">Verificar ({fc.facts_to_verify.length})</p>
+                        <div className="space-y-2">
+                          {fc.facts_to_verify.map((f, i) => (
+                            <div key={i} className="bg-[#0f1117] rounded p-2 text-xs">
+                              <p className="text-slate-200 mb-1">"{f.claim}"</p>
+                              {f.concern && <p className="text-slate-500">{f.concern}</p>}
+                              {f.suggested_verification && (
+                                <p className="text-indigo-400/70 mt-0.5">→ {f.suggested_verification}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-slate-600">{fmtDate(fc.created_at)}</p>
+                      <button onClick={runFactcheck} className="text-xs text-slate-500 hover:text-slate-300">
+                        <RefreshCw size={11} />
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
             )}
           </div>
-
-          {/* Published URL */}
-          {piece.published_url && (
-            <div className="bg-[#1a1f2e] rounded-xl p-4">
-              <h3 className="text-xs font-semibold text-white mb-2">Publicado em</h3>
-              <a
-                href={piece.published_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 break-all"
-              >
-                <ExternalLink size={11} />
-                {piece.published_url}
-              </a>
-              {piece.published_at && (
-                <p className="text-xs text-slate-600 mt-1">{fmtDate(piece.published_at)}</p>
-              )}
-            </div>
-          )}
         </div>
       </div>
     </div>
