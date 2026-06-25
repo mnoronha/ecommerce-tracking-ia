@@ -112,7 +112,7 @@ _scheduler.add_job(
 _scheduler.add_job(
     meta_attribution_sync.run_daily_sync_all_clients,
     "cron",
-    hour=9,   # 09 UTC = 06:00 BRT — early so dashboards are fresh by morning
+    hour=14,  # 14 UTC = 11:00 BRT — Meta finaliza atribuição ~11h após fim do dia BRT
     minute=0,
     id="meta_attribution_sync",
 )

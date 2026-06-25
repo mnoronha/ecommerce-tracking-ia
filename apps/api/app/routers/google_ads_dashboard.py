@@ -112,7 +112,7 @@ async def google_overview(
     def _fetch_spend(d_from, d_to):
         return (
             sb.table("ad_spend")
-            .select("date, spend, impressions, clicks")
+            .select("date, spend, impressions, clicks, conversions")
             .eq("client_id", client_id)
             .eq("channel", "google_ads")
             .gte("date", str(d_from))
@@ -126,6 +126,8 @@ async def google_overview(
     prev_spend  = round(sum(float(r.get("spend") or 0)     for r in prev_spend_rows), 2)
     curr_impr   = sum(int(r.get("impressions") or 0)       for r in curr_spend_rows)
     curr_clicks = sum(int(r.get("clicks") or 0)            for r in curr_spend_rows)
+    curr_conv   = round(sum(float(r.get("conversions") or 0) for r in curr_spend_rows), 2)
+    prev_conv   = round(sum(float(r.get("conversions") or 0) for r in prev_spend_rows), 2)
     has_spend   = len(curr_spend_rows) > 0
     spend_by_day: dict = {}
     for r in curr_spend_rows:
@@ -178,6 +180,7 @@ async def google_overview(
         "has_spend":        has_spend,
         "impressions":      curr_impr,
         "clicks":           curr_clicks,
+        "conversions":      curr_conv if curr_conv > 0 else None,
         "roas":             round(curr_agg["revenue"] / curr_spend, 2) if curr_spend > 0 else None,
         "total_sent":       curr_match["total_sent"],
         "sent_coverage_pct": sent_coverage_curr,
@@ -192,18 +195,20 @@ async def google_overview(
     }
     prev_totals = {
         **prev_agg,
-        "spend":  prev_spend,
-        "roas":   prev_roas,
-        "gclid":  prev_match["gclid"],
+        "spend":      prev_spend,
+        "roas":       prev_roas,
+        "conversions": prev_conv if prev_conv > 0 else None,
+        "gclid":      prev_match["gclid"],
         "total_sent": prev_match["total_sent"],
     }
     deltas = {
-        "orders":  _delta(curr_agg["orders"],  prev_agg["orders"]),
-        "revenue": _delta(curr_agg["revenue"], prev_agg["revenue"]),
-        "spend":   _delta(curr_spend, prev_spend),
-        "roas":    _delta(totals["roas"], prev_roas),
-        "gclid":   _delta(curr_match["gclid"], prev_match["gclid"]),
-        "total_sent": _delta(curr_match["total_sent"], prev_match["total_sent"]),
+        "orders":      _delta(curr_agg["orders"],  prev_agg["orders"]),
+        "revenue":     _delta(curr_agg["revenue"], prev_agg["revenue"]),
+        "spend":       _delta(curr_spend, prev_spend),
+        "roas":        _delta(totals["roas"], prev_roas),
+        "conversions": _delta(curr_conv, prev_conv),
+        "gclid":       _delta(curr_match["gclid"], prev_match["gclid"]),
+        "total_sent":  _delta(curr_match["total_sent"], prev_match["total_sent"]),
     }
 
     # ── Daily time series ──────────────────────────────────────────────────
@@ -312,7 +317,7 @@ async def google_overview(
             for et in ("pageview", "add_to_cart", "begin_checkout"):
                 funnel[et] = (
                     sb.table("tracking_events")
-                    .select("id", count="exact", head=True)
+                    .select("id", count="exact")
                     .eq("client_id", client_id)
                     .eq("event_type", et)
                     .gte("created_at", funnel_start)
