@@ -96,7 +96,7 @@ def check_client(client_id: str) -> dict:
     sb = get_supabase()
     client = (
         sb.table("clients")
-        .select("id,shopify_domain,website_url")
+        .select("id,shopify_domain")
         .eq("id", client_id)
         .limit(1)
         .execute()
@@ -106,7 +106,7 @@ def check_client(client_id: str) -> dict:
     client = client[0]
 
     domain = (client.get("shopify_domain") or "").strip().rstrip("/")
-    url    = client.get("website_url") or (f"https://{domain}" if domain else "")
+    url    = f"https://{domain}" if domain else ""
     if not url:
         raise ValueError("cliente sem URL configurada")
 

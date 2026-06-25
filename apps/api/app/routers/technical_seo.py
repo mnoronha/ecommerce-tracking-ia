@@ -145,6 +145,9 @@ async def check_cwv(pixel_id: str):
         return core_web_vitals.check_client(client["id"])
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("core_web_vitals error for %s: %s", pixel_id, e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ── Pending optimizations ─────────────────────────────────────────────────────
