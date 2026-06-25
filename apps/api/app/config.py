@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # ── RAG / Content Production ─────────────────────────────────────────
     VOYAGE_API_KEY: str = ""  # Voyage AI (embeddings)
 
+    # ── Technical SEO ─────────────────────────────────────────────────────
+    PAGESPEED_API_KEY: str = ""  # Google PageSpeed Insights API key (opcional)
+
 
 @lru_cache()
 def get_settings() -> Settings:

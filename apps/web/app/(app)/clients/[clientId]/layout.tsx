@@ -5,7 +5,7 @@ import { usePathname, useParams } from 'next/navigation'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
 import { CriticalAlertsBar } from '@/components/alerts/critical-alerts-bar'
-import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search } from 'lucide-react'
+import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench, History, Rocket, UserCheck } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -35,6 +35,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/content`,          label: 'Conteúdo IA',     icon: PenLine,          gate: null },
     { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA',  icon: Sparkles,        gate: 'creative_intelligence' },
     { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',   icon: FileText,        gate: 'ai_insights' },
+    { href: `/clients/${clientId}/ai-presence/pipeline`,      label: 'Pipeline',         icon: Rocket,      gate: null },
+    { href: `/clients/${clientId}/technical/schema-audit`,    label: 'Schema Audit',     icon: ShieldCheck, gate: null },
+    { href: `/clients/${clientId}/technical/llms-txt`,        label: 'llms.txt',         icon: FileText,    gate: null },
+    { href: `/clients/${clientId}/technical/pending-optimizations`, label: 'Otimizações', icon: Wrench,     gate: null },
+    { href: `/clients/${clientId}/technical/history`,         label: 'Histórico Técnico', icon: History,    gate: null },
+    { href: `/clients/${clientId}/technical/onboarding`,      label: 'Onboarding',       icon: UserCheck,  gate: null },
     { href: `/clients/${clientId}/metas`,       label: 'Metas',           icon: Target,          gate: null },
     { href: `/clients/${clientId}/alertas`,     label: 'Alertas',         icon: Bell,            gate: null },
     { href: `/clients/${clientId}/diagnostics`, label: 'Diagnóstico',     icon: Activity,        gate: null },

@@ -15,7 +15,7 @@ from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
 from .limiter import limiter
-from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, tiktok_ads
+from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
 from .services import ai_analyst, ai_visibility_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
@@ -336,6 +336,7 @@ app.include_router(tiktok_ads.router)
 app.include_router(pinterest_ads.router)
 app.include_router(search_console_router.router)
 app.include_router(shopify_revenue_router.router)
+app.include_router(technical_seo_router.router)
 
 # ── Noro Platform Public REST API (v1) ────────────────────────────────────────
 app.include_router(public_api_router)
