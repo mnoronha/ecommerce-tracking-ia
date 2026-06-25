@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { BrainCircuit, RefreshCw, Loader2, TrendingUp, TrendingDown, Minus, UploadCloud, AlertCircle } from 'lucide-react'
+import { BrainCircuit, RefreshCw, Loader2, TrendingUp, TrendingDown, Minus, UploadCloud, AlertCircle, Lightbulb, ChevronDown, ChevronUp, AlertTriangle, Info, Zap } from 'lucide-react'
 import { useDatePeriod } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 
@@ -46,6 +46,15 @@ interface CompetitorRow {
   share:      number
 }
 
+interface Insight {
+  id:         string
+  title:      string
+  content:    string
+  severity:   'info' | 'warning' | 'critical'
+  data:       { category?: string; suggested_action?: string } | null
+  created_at: string
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const fmtPct = (n: number | null) =>
@@ -67,6 +76,49 @@ const CATEGORY_LABELS: Record<string, string> = {
   problem_solution: 'Problema/Solução',
   alternative:      'Alternativa',
   review:           'Avaliação',
+}
+
+const SEVERITY_STYLE: Record<string, string> = {
+  critical: 'border-red-500/40 bg-red-500/5',
+  warning:  'border-yellow-500/40 bg-yellow-500/5',
+  info:     'border-indigo-500/20 bg-indigo-500/5',
+}
+const SEVERITY_ICON: Record<string, React.ReactNode> = {
+  critical: <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />,
+  warning:  <AlertTriangle size={14} className="text-yellow-400 shrink-0 mt-0.5" />,
+  info:     <Info size={14} className="text-indigo-400 shrink-0 mt-0.5" />,
+}
+
+function InsightCard({ insight }: { insight: Insight }) {
+  const [open, setOpen] = useState(false)
+  const isLong = insight.content.length > 160
+  return (
+    <div className={`rounded-lg border p-4 ${SEVERITY_STYLE[insight.severity] || SEVERITY_STYLE.info}`}>
+      <div className="flex items-start gap-2.5">
+        {SEVERITY_ICON[insight.severity] || SEVERITY_ICON.info}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-white leading-snug">{insight.title}</p>
+          <p className={`text-xs text-slate-400 mt-1 leading-relaxed ${!open && isLong ? 'line-clamp-2' : ''}`}>
+            {insight.content}
+          </p>
+          {insight.data?.suggested_action && (
+            <div className={`mt-2 text-xs text-indigo-300 flex items-start gap-1.5 ${!open && isLong ? 'hidden' : ''}`}>
+              <Zap size={11} className="mt-0.5 shrink-0" />
+              {insight.data.suggested_action}
+            </div>
+          )}
+          {isLong && (
+            <button
+              onClick={() => setOpen(o => !o)}
+              className="mt-1.5 text-[10px] text-slate-500 hover:text-slate-300 flex items-center gap-0.5 transition-colors"
+            >
+              {open ? <><ChevronUp size={10} /> Menos</> : <><ChevronDown size={10} /> Mais</>}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function KpiCard({
@@ -118,31 +170,44 @@ export default function AIVisibilityPage() {
   const [trend,       setTrend]       = useState<TrendPoint[]>([])
   const [prompts,     setPrompts]     = useState<PromptRow[]>([])
   const [competitors, setCompetitors] = useState<CompetitorRow[]>([])
+  const [insights,    setInsights]    = useState<Insight[]>([])
   const [platform,    setPlatform]    = useState<string>('')
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState<string | null>(null)
+  const [triggering,  setTriggering]  = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const qs = `start=${from}&end=${to}${platform ? `&platform=${platform}` : ''}`
-      const [s, t, p, c] = await Promise.all([
+      const [s, t, p, c, ins] = await Promise.all([
         fetch(`${API_URL}/ai-visibility/${clientId}/summary?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/trend?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/prompts?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/competitors?${qs}`).then(r => r.json()),
+        fetch(`${API_URL}/ai-visibility/${clientId}/insights?limit=10`).then(r => r.json()),
       ])
       setSummary(s)
       setTrend(Array.isArray(t) ? t : [])
       setPrompts(Array.isArray(p) ? p : [])
       setCompetitors(Array.isArray(c) ? c : [])
+      setInsights(Array.isArray(ins) ? ins : [])
     } catch (e) {
       setError('Erro ao carregar dados de AI Visibility')
     } finally {
       setLoading(false)
     }
   }, [clientId, from, to, platform])
+
+  const triggerAnalysis = async () => {
+    setTriggering(true)
+    try {
+      await fetch(`${API_URL}/ai-visibility/${clientId}/insights/trigger`, { method: 'POST' })
+      setTimeout(load, 3000)
+    } catch { /* ignore */ }
+    finally { setTriggering(false) }
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -174,6 +239,15 @@ export default function AIVisibilityPage() {
               <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>
             ))}
           </select>
+          <button
+            onClick={triggerAnalysis}
+            disabled={triggering}
+            className="h-8 px-3 bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] rounded text-xs text-slate-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            title="Gerar insights de AI Visibility via Claude"
+          >
+            {triggering ? <Loader2 size={12} className="animate-spin" /> : <Lightbulb size={12} />}
+            Analisar
+          </button>
           <button
             onClick={() => router.push('/ai-visibility/import')}
             className="h-8 px-3 bg-indigo-600 hover:bg-indigo-500 rounded text-xs text-white flex items-center gap-1.5 transition-colors"
@@ -246,6 +320,29 @@ export default function AIVisibilityPage() {
             <p className="text-xs text-slate-600">
               Último import: {new Date(summary.last_import_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
             </p>
+          )}
+
+          {/* AI Insights */}
+          {insights.length > 0 && (
+            <div className="bg-[#151b27] border border-[#2a2f3e] rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <Lightbulb size={15} className="text-indigo-400" />
+                <h2 className="text-sm font-semibold text-white">Insights IA</h2>
+                <span className="ml-auto text-[10px] text-slate-600">
+                  {new Date(insights[0].created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                </span>
+              </div>
+              <div className="space-y-3">
+                {insights.filter(i => i.data?.category !== 'summary').map(i => (
+                  <InsightCard key={i.id} insight={i} />
+                ))}
+                {insights.find(i => i.data?.category === 'summary') && (
+                  <p className="text-xs text-slate-500 pt-2 border-t border-[#2a2f3e] leading-relaxed">
+                    {insights.find(i => i.data?.category === 'summary')!.content}
+                  </p>
+                )}
+              </div>
+            </div>
           )}
 
           {/* Trend by platform */}

@@ -16,7 +16,7 @@ from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error
 from .config import settings
 from .limiter import limiter
 from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, tiktok_ads
-from .services import ai_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
+from .services import ai_analyst, ai_visibility_analyst, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -236,6 +236,14 @@ _scheduler.add_job(
     hour=10,  # 10 UTC = 07:00 BRT — manhã antes do dia de trabalho
     minute=0,
     id="content_deadline_reminders",
+)
+_scheduler.add_job(
+    ai_visibility_analyst.send_monthly_import_reminder,
+    "cron",
+    day=1,
+    hour=11,  # 11 UTC = 08:00 BRT — 1º do mês, lembrete de import Ubersuggest
+    minute=0,
+    id="ai_visibility_monthly_reminder",
 )
 
 

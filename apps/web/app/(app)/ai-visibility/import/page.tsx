@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { UploadCloud, CheckCircle, XCircle, AlertTriangle, Loader2, RotateCcw, ExternalLink } from 'lucide-react'
+import { UploadCloud, CheckCircle, XCircle, AlertTriangle, Loader2, RotateCcw, ExternalLink, BookOpen, ChevronDown, ChevronUp } from 'lucide-react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -169,6 +169,8 @@ export default function AIVisibilityImportPage() {
     setStep('upload')
     if (fileInput.current) fileInput.current.value = ''
   }
+
+  const [showGuide, setShowGuide] = useState(false)
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-6">
@@ -423,6 +425,50 @@ export default function AIVisibilityImportPage() {
           )}
         </div>
       )}
+
+      {/* Instructions guide */}
+      <div className="bg-[#151b27] border border-[#2a2f3e] rounded-xl overflow-hidden">
+        <button
+          onClick={() => setShowGuide(g => !g)}
+          className="w-full flex items-center justify-between px-5 py-4 text-left"
+        >
+          <div className="flex items-center gap-2">
+            <BookOpen size={14} className="text-indigo-400" />
+            <span className="text-sm font-semibold text-white">Como fazer o import mensal</span>
+          </div>
+          {showGuide ? <ChevronUp size={14} className="text-slate-500" /> : <ChevronDown size={14} className="text-slate-500" />}
+        </button>
+        {showGuide && (
+          <div className="px-5 pb-5 space-y-4 text-xs text-slate-400 border-t border-[#2a2f3e] pt-4">
+            <div>
+              <p className="font-semibold text-slate-300 mb-1">1. Exportar do Ubersuggest</p>
+              <ol className="list-decimal ml-4 space-y-1">
+                <li>Acesse <span className="text-indigo-300">app.neilpatel.com</span> → AI Search Visibility</li>
+                <li>Selecione o domínio do cliente</li>
+                <li>Filtre o período desejado (mês completo)</li>
+                <li>Clique em "Export CSV" no canto superior direito</li>
+                <li>Salve o arquivo <code className="bg-[#0f1117] px-1 rounded">.csv</code></li>
+              </ol>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-300 mb-1">2. Dois tipos de CSV</p>
+              <ul className="space-y-1 ml-2">
+                <li><span className="text-emerald-400 font-medium">Prompts:</span> contém colunas <code className="bg-[#0f1117] px-1 rounded">prompt_text</code> e <code className="bg-[#0f1117] px-1 rounded">brand_mentioned</code> — importa visibilidade por pergunta</li>
+                <li><span className="text-indigo-400 font-medium">Competidores:</span> contém coluna <code className="bg-[#0f1117] px-1 rounded">competitor_brand</code> — importa share of voice vs. concorrentes</li>
+              </ul>
+              <p className="mt-1 text-slate-500">O sistema detecta o tipo automaticamente na validação.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-300 mb-1">3. Frequência recomendada</p>
+              <p>Importe no <span className="text-white">1º dia de cada mês</span> com os dados do mês anterior. O sistema envia um lembrete por email automaticamente.</p>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-300 mb-1">4. Após o import</p>
+              <p>A análise IA cruza automaticamente os dados com performance de anúncios e gera insights + sugestões de pauta no dashboard de AI Visibility. Aguarde ~30 segundos após o import.</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

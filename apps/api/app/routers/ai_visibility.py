@@ -16,11 +16,11 @@ AI Visibility router.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 
 from ..database import get_supabase
-from ..services import ai_visibility as svc
+from ..services import ai_visibility as svc, ai_visibility_analyst as analyst_svc
 from ..services.ai_visibility_parser import UbersuggestCSVParser
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def import_preview(pixel_id: str, file: UploadFile = File(...)):
 
 
 @router.post("/{pixel_id}/import/confirm", summary="Importa CSV após preview")
-async def import_confirm(pixel_id: str, file: UploadFile = File(...)):
+async def import_confirm(pixel_id: str, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     client     = _get_client(pixel_id)
     file_bytes = await file.read()
 
@@ -102,6 +102,13 @@ async def import_confirm(pixel_id: str, file: UploadFile = File(...)):
             svc.recalc_monthly_summary(client["id"], validation.period_start)
         if validation.period_end and validation.period_end[:7] != (validation.period_start or "")[:7]:
             svc.recalc_monthly_summary(client["id"], validation.period_end)
+
+        # Trigger cross-data analysis in background
+        background_tasks.add_task(
+            analyst_svc.run_visibility_analysis,
+            client["id"],
+            import_id,
+        )
 
     except Exception as exc:
         svc.fail_import(import_id, str(exc))
@@ -218,3 +225,28 @@ async def upsert_brand(pixel_id: str, body: BrandPayload):
         website_url          = body.website_url,
         brand_aliases        = body.brand_aliases,
     )
+
+
+# ── AI Insights ───────────────────────────────────────────────────────────────
+
+@router.get("/{pixel_id}/insights", summary="Insights IA de AI Visibility")
+async def get_insights(pixel_id: str, limit: int = Query(10, le=50)):
+    client = _get_client(pixel_id)
+    rows = (
+        get_supabase()
+        .table("ai_insights")
+        .select("id, title, content, severity, data, created_at")
+        .eq("client_id", client["id"])
+        .eq("type", "ai_visibility")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return rows.data or []
+
+
+@router.post("/{pixel_id}/insights/trigger", summary="Dispara análise manual de AI Visibility")
+async def trigger_analysis(pixel_id: str, background_tasks: BackgroundTasks):
+    client = _get_client(pixel_id)
+    background_tasks.add_task(analyst_svc.run_visibility_analysis, client["id"])
+    return {"ok": True, "message": "Análise iniciada em background"}
