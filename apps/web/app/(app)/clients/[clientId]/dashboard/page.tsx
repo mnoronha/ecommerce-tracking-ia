@@ -1222,7 +1222,8 @@ export default function DashboardPage() {
     ])
     if (funnelRes?.ok) {
       const data = await funnelRes.json()
-      setGa4Funnel(data ?? null)
+      // API returns { summary: {...}, by_channel: [...] } — extract summary
+      setGa4Funnel(data?.summary ?? null)
     }
     if (pagesRes?.ok) {
       const data = await pagesRes.json()
@@ -1835,10 +1836,10 @@ export default function DashboardPage() {
                   <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão GA4</h2>
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
                     {[
-                      { label: 'Sessões', value: ga4Funnel.sessions, rate: null },
-                      { label: 'Add ao Carrinho', value: ga4Funnel.add_to_cart, rate: ga4Funnel.atc_rate },
-                      { label: 'Checkout', value: ga4Funnel.begin_checkout, rate: ga4Funnel.checkout_rate },
-                      { label: 'Compras', value: ga4Funnel.purchases, rate: ga4Funnel.purchase_rate },
+                      { label: 'Sessões', value: ga4Funnel.sessions ?? 0, rate: null },
+                      { label: 'Add ao Carrinho', value: ga4Funnel.add_to_cart ?? 0, rate: ga4Funnel.atc_rate ?? null },
+                      { label: 'Checkout', value: ga4Funnel.begin_checkout ?? 0, rate: ga4Funnel.checkout_rate ?? null },
+                      { label: 'Compras', value: ga4Funnel.purchases ?? 0, rate: ga4Funnel.purchase_rate ?? null },
                     ].map((step, i) => (
                       <div key={i} className="bg-[#0f1117] rounded-xl p-4">
                         <p className="text-xs text-slate-500 mb-2">{step.label}</p>
