@@ -306,6 +306,84 @@ async def spend_backfill(pixel_id: str, body: SpendBackfillRequest, background_t
     }
 
 
+@router.get("/{pixel_id}/spend-test")
+async def spend_api_test(pixel_id: str):
+    """
+    Diagnóstico síncrono: chama as APIs de TikTok e Pinterest e retorna resposta bruta.
+    Útil para debugar falhas de permissão/token no spend sync.
+    """
+    from datetime import date as date_type, timedelta
+    from ..services import crypto, spend_sync as ss
+    import httpx
+
+    client_uuid = resolve_client_uuid(pixel_id)
+    if not client_uuid:
+        raise HTTPException(status_code=404, detail="cliente não encontrado")
+
+    sb = get_supabase()
+    row = (
+        sb.table("clients")
+        .select(
+            "id, pixel_id, "
+            "tiktok_advertiser_id, tiktok_access_token, "
+            "pinterest_ad_account_id, pinterest_access_token"
+        )
+        .eq("id", client_uuid)
+        .limit(1)
+        .execute()
+    ).data
+    if not row:
+        raise HTTPException(status_code=404, detail="cliente não encontrado")
+
+    c = crypto.decrypt_client_secrets(row[0])
+    yesterday = (date_type.today() - timedelta(days=1)).isoformat()
+    result: dict = {}
+
+    if c.get("tiktok_advertiser_id") and c.get("tiktok_access_token"):
+        try:
+            resp = httpx.get(
+                ss._TIKTOK_REPORT,
+                params={
+                    "advertiser_id": c["tiktok_advertiser_id"],
+                    "report_type":   "BASIC",
+                    "dimensions":    '["stat_time_day"]',
+                    "metrics":       '["spend","impressions","clicks"]',
+                    "data_level":    "ACCOUNT",
+                    "start_date":    yesterday,
+                    "end_date":      yesterday,
+                    "page_size":     1,
+                },
+                headers={"Access-Token": c["tiktok_access_token"]},
+                timeout=20.0,
+            )
+            result["tiktok"] = {"status_code": resp.status_code, "body": resp.json()}
+        except Exception as exc:
+            result["tiktok"] = {"error": str(exc)}
+    else:
+        result["tiktok"] = {"error": "credentials not set"}
+
+    if c.get("pinterest_ad_account_id") and c.get("pinterest_access_token"):
+        try:
+            resp = httpx.get(
+                ss._PINTEREST_ANALYTICS.format(ad_account_id=c["pinterest_ad_account_id"]),
+                params={
+                    "start_date":  yesterday,
+                    "end_date":    yesterday,
+                    "columns":     "SPEND_IN_DOLLAR,IMPRESSION_1,OUTBOUND_CLICK_1",
+                    "granularity": "DAY",
+                },
+                headers={"Authorization": f"Bearer {c['pinterest_access_token']}"},
+                timeout=15.0,
+            )
+            result["pinterest"] = {"status_code": resp.status_code, "body": resp.json()}
+        except Exception as exc:
+            result["pinterest"] = {"error": str(exc)}
+    else:
+        result["pinterest"] = {"error": "credentials not set"}
+
+    return result
+
+
 @router.get("/{pixel_id}/campaign-products")
 async def get_campaign_products(
     pixel_id: str,
