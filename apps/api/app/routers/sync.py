@@ -25,7 +25,9 @@ def _get_client(pixel_id: str) -> dict:
         sb.table("clients")
         .select(
             "id, pixel_id, name, shopify_domain, shopify_access_token, "
-            "shopify_sync_enabled, shopify_last_sync_at, is_active"
+            "shopify_sync_enabled, shopify_last_sync_at, is_active, "
+            "ga4_measurement_id, ga4_api_secret, "
+            "meta_pixel_id, meta_access_token"
         )
         .eq("pixel_id", pixel_id)
         .limit(1)

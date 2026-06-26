@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from ..database import get_supabase
-from ..services import crypto, meta_capi, writer
+from ..services import crypto, ga4 as ga4_svc, meta_capi, writer
 from ..services.adapters.shopify_adapter import ShopifyAdapter
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,53 @@ def _cancel_voided_in_meta(client: dict) -> int:
     return cancelled
 
 
+def _dispatch_ga4_purchase(
+    raw_order: dict,
+    event: "writer.NormalizedEvent",  # type: ignore[name-defined]
+    measurement_id: str,
+    api_secret: str,
+) -> None:
+    """
+    Send a GA4 Measurement Protocol purchase event for an order.
+
+    Skips orders older than 72h (GA4 rejects stale events).
+    Extracts _ga cookie relayed by the GTM snippet via cart note_attribute
+    so GA4 can link the server-side event to the original browser session.
+    GA4 deduplicates purchase events by transaction_id, so credit-card orders
+    that already fired client-side on the thank-you page are not double-counted.
+    PIX orders (customer leaves the site before thank-you loads) are captured
+    exclusively by this server-side dispatch.
+    """
+    # GA4 rejects events older than 72h — skip historical backfill rows
+    paid_at = raw_order.get("processed_at") or raw_order.get("created_at") or ""
+    if paid_at:
+        try:
+            order_dt = datetime.fromisoformat(paid_at.replace("Z", "+00:00"))
+            if (datetime.now(timezone.utc) - order_dt).total_seconds() > 72 * 3600:
+                return
+        except Exception:
+            pass
+
+    # _ga cookie relayed by GTM snippet in cart note_attributes → "_ga": "GA1.2.xxx.yyy"
+    attrs = {a["name"]: a["value"] for a in (raw_order.get("note_attributes") or [])}
+    ga_raw = attrs.get("_ga") or ""
+    ga_client_id = None
+    if ga_raw.startswith("GA1."):
+        parts = ga_raw.split(".")
+        if len(parts) >= 4:
+            # GA4 MP client_id format: "1234567890.9876543210"
+            ga_client_id = ".".join(parts[2:])
+
+    try:
+        ga4_svc.send_purchase(measurement_id, api_secret, event, ga_client_id=ga_client_id)
+        logger.info(
+            "shopify_sync: GA4 purchase sent for order %s (ga_client_id=%s)",
+            raw_order.get("id"), ga_client_id or "synthetic",
+        )
+    except Exception as exc:
+        logger.warning("shopify_sync: GA4 dispatch failed for order %s: %s", raw_order.get("id"), exc)
+
+
 def _parse_next_link(link_header: str) -> Optional[str]:
     """Extract the `next` page URL from a Shopify Link header."""
     for part in link_header.split(","):
@@ -158,6 +205,10 @@ def sync_client(
     domain = (client.get("shopify_domain") or "").strip().rstrip("/")
     token  = client.get("shopify_access_token") or ""
     client_uuid = client["id"]
+
+    # GA4 Measurement Protocol — optional, captures PIX purchases server-side
+    ga4_mid    = client.get("ga4_measurement_id") or ""
+    ga4_secret = client.get("ga4_api_secret") or ""
 
     if not domain or not token:
         logger.warning("shopify_sync: client %s has no domain/token — skipping", client_uuid)
@@ -229,6 +280,11 @@ def sync_client(
                     )
                     writer.write_order(client_uuid, None, event)
                     imported += 1
+
+                    # GA4 server-side purchase — captures PIX orders missed client-side
+                    if ga4_mid and ga4_secret:
+                        _dispatch_ga4_purchase(order, event, ga4_mid, ga4_secret)
+
                 except Exception as exc:
                     logger.warning(
                         "shopify_sync: failed to import order %s: %s",
@@ -272,7 +328,8 @@ def run_hourly_for_all_clients() -> None:
             .select(
                 "id, shopify_domain, shopify_access_token, "
                 "shopify_last_sync_at, shopify_sync_enabled, "
-                "meta_pixel_id, meta_access_token"
+                "meta_pixel_id, meta_access_token, "
+                "ga4_measurement_id, ga4_api_secret"
             )
             .eq("is_active", True)
             .eq("shopify_sync_enabled", True)
