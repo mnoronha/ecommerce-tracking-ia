@@ -588,6 +588,56 @@ async def ga4_top_pages(
     return result
 
 
+@router.get("/ga4/{pixel_id}/sources", summary="GA4 — breakdown por source/medium", tags=["ga4"])
+async def ga4_sources(
+    pixel_id: str,
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+    days:  int = 7,
+    limit: int = 20,
+):
+    """Sessões e conversões agrupadas por sessionSource + sessionMedium."""
+    import httpx as _httpx
+    c, ga4 = _get_ga4_creds(pixel_id)
+    s, e   = _resolve_dates(start, end, days)
+    token  = ga4._get_token(c["google_ads_refresh_token"])
+    if not token:
+        raise HTTPException(status_code=502, detail="token_refresh_failed")
+
+    url  = ga4._GA4_API_URL.format(property_id=c["ga4_property_id"])
+    hdrs = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    body = {
+        "dateRanges": [{"startDate": s.isoformat(), "endDate": e.isoformat()}],
+        "dimensions": [{"name": "sessionSource"}, {"name": "sessionMedium"}],
+        "metrics": [
+            {"name": "sessions"},
+            {"name": "conversions"},
+            {"name": "purchaseRevenue"},
+        ],
+        "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+        "limit": limit,
+    }
+    try:
+        resp = _httpx.post(url, json=body, headers=hdrs, timeout=15.0)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=resp.text[:300])
+        rows = resp.json().get("rows", [])
+        return [
+            {
+                "source":      r["dimensionValues"][0]["value"],
+                "medium":      r["dimensionValues"][1]["value"],
+                "sessions":    int(r["metricValues"][0]["value"]),
+                "conversions": round(float(r["metricValues"][1]["value"])),
+                "revenue":     round(float(r["metricValues"][2]["value"]), 2),
+            }
+            for r in rows
+        ]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 @router.get("/ga4/{pixel_id}/audience", summary="GA4 — novos vs recorrentes", tags=["ga4"])
 async def ga4_audience(
     pixel_id: str,
