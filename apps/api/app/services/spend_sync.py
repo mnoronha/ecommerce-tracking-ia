@@ -137,7 +137,7 @@ def _fetch_tiktok_spend(advertiser_id: str, access_token: str, target_date: date
         "report_type":   "BASIC",
         "dimensions":    '["stat_time_day"]',
         "metrics":       '["spend","impressions","clicks","total_complete_payment_event_count"]',
-        "data_level":    "ACCOUNT",
+        "data_level":    "AUCTION_ADVERTISER",
         "start_date":    date_str,
         "end_date":      date_str,
         "page_size":     1,

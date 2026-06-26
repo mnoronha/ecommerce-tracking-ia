@@ -348,7 +348,7 @@ async def spend_api_test(pixel_id: str):
                     "report_type":   "BASIC",
                     "dimensions":    '["stat_time_day"]',
                     "metrics":       '["spend","impressions","clicks"]',
-                    "data_level":    "ACCOUNT",
+                    "data_level":    "AUCTION_ADVERTISER",
                     "start_date":    yesterday,
                     "end_date":      yesterday,
                     "page_size":     1,
