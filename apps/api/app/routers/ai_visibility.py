@@ -1,26 +1,35 @@
 """
 AI Visibility router.
 
+CSV import (legacy — kept for backward compat):
   POST /ai-visibility/{pixel_id}/import/preview  — valida CSV e retorna preview
   POST /ai-visibility/{pixel_id}/import/confirm  — importa CSV validado
-  GET  /ai-visibility/{pixel_id}/summary         — KPIs do dashboard
-  GET  /ai-visibility/{pixel_id}/trend           — série temporal por plataforma
+
+DataForSEO automatic collection:
+  GET  /ai-visibility/{pixel_id}/config          — get DataForSEO config
+  PUT  /ai-visibility/{pixel_id}/config          — create/update DataForSEO config
+  POST /ai-visibility/{pixel_id}/collect         — trigger manual collection
+  GET  /ai-visibility/costs                      — agency-wide cost dashboard
+
+Dashboard:
+  GET  /ai-visibility/{pixel_id}/summary         — KPIs
+  GET  /ai-visibility/{pixel_id}/trend           — série temporal
   GET  /ai-visibility/{pixel_id}/prompts         — performance por prompt
-  GET  /ai-visibility/{pixel_id}/competitors     — share of voice por competidor
-  GET  /ai-visibility/{pixel_id}/imports         — histórico de imports
+  GET  /ai-visibility/{pixel_id}/competitors     — share of voice
+  GET  /ai-visibility/{pixel_id}/imports         — histórico (CSV + DataForSEO)
   POST /ai-visibility/imports/{import_id}/revert — reverte um import
   GET  /ai-visibility/{pixel_id}/brands          — marcas cadastradas
   POST /ai-visibility/{pixel_id}/brands          — cadastra/atualiza marca
 """
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 
 from ..database import get_supabase
-from ..services import ai_visibility as svc, ai_visibility_analyst as analyst_svc
+from ..services import ai_visibility as svc, ai_visibility_analyst as analyst_svc, ai_visibility_collector as collector_svc
 from ..services.ai_visibility_parser import UbersuggestCSVParser
 
 logger = logging.getLogger(__name__)
@@ -250,3 +259,50 @@ async def trigger_analysis(pixel_id: str, background_tasks: BackgroundTasks):
     client = _get_client(pixel_id)
     background_tasks.add_task(analyst_svc.run_visibility_analysis, client["id"])
     return {"ok": True, "message": "Análise iniciada em background"}
+
+
+# ── DataForSEO config ─────────────────────────────────────────────────────────
+
+@router.get("/{pixel_id}/config", summary="Configuração DataForSEO do cliente")
+async def get_config(pixel_id: str):
+    client = _get_client(pixel_id)
+    config = svc.get_dataforseo_config(client["id"])
+    return config or {"client_id": client["id"], "is_enabled": False, "configured": False}
+
+
+class DataForSEOConfigPayload(BaseModel):
+    is_enabled:          Optional[bool]       = None
+    llms_to_monitor:     Optional[List[str]]  = None
+    collection_frequency: Optional[str]       = None  # 'weekly' | 'biweekly' | 'monthly'
+    location_code:       Optional[int]        = None
+    language_code:       Optional[str]        = None
+    budget_monthly_usd:  Optional[float]      = None
+    notes:               Optional[str]        = None
+
+
+@router.put("/{pixel_id}/config", summary="Cria/atualiza configuração DataForSEO")
+async def upsert_config(pixel_id: str, body: DataForSEOConfigPayload):
+    client = _get_client(pixel_id)
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    result = svc.upsert_dataforseo_config(client["id"], **fields)
+    return result
+
+
+# ── Manual collection trigger ─────────────────────────────────────────────────
+
+@router.post("/{pixel_id}/collect", summary="Dispara coleta DataForSEO agora")
+async def trigger_collection(
+    pixel_id: str,
+    background_tasks: BackgroundTasks,
+    force: bool = Query(False, description="Ignora verificação de budget"),
+):
+    client = _get_client(pixel_id)
+    background_tasks.add_task(collector_svc.collect_for_client, client["id"], force=force)
+    return {"ok": True, "message": "Coleta iniciada em background — aguarde ~60s"}
+
+
+# ── Agency cost dashboard ─────────────────────────────────────────────────────
+
+@router.get("/costs", summary="Resumo de custos DataForSEO (agência)")
+async def get_costs(days: int = Query(30, le=90)):
+    return svc.get_usage_summary(client_id=None, days=days)

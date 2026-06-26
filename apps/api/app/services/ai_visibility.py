@@ -448,3 +448,67 @@ def upsert_brand(client_id: str, brand_name: str, is_own_brand: bool = False, **
         .upsert(row, on_conflict="client_id,brand_name")
         .execute()
     ).data[0]
+
+
+# ── DataForSEO config ─────────────────────────────────────────────────────────
+
+def get_dataforseo_config(client_id: str) -> Optional[dict]:
+    sb = get_supabase()
+    rows = (
+        sb.table("dataforseo_configs")
+        .select("*")
+        .eq("client_id", client_id)
+        .limit(1)
+        .execute()
+    ).data
+    return rows[0] if rows else None
+
+
+def upsert_dataforseo_config(client_id: str, **fields) -> dict:
+    sb = get_supabase()
+    existing = get_dataforseo_config(client_id)
+    payload = {
+        "client_id":  client_id,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        **fields,
+    }
+    if existing:
+        return (
+            sb.table("dataforseo_configs")
+            .update(payload)
+            .eq("client_id", client_id)
+            .execute()
+        ).data[0]
+    return (
+        sb.table("dataforseo_configs")
+        .insert(payload)
+        .execute()
+    ).data[0]
+
+
+# ── DataForSEO usage ──────────────────────────────────────────────────────────
+
+def get_usage_summary(client_id: Optional[str] = None, days: int = 30) -> list[dict]:
+    """Cost summary per client for the last N days. If client_id is None, returns all clients."""
+    from datetime import date, timedelta
+    sb  = get_supabase()
+    since = (date.today() - timedelta(days=days)).isoformat()
+    q = (
+        sb.table("dataforseo_usage_log")
+        .select("client_id,endpoint,request_units,cost_usd,created_at")
+        .gte("created_at", since)
+        .order("created_at", desc=True)
+    )
+    if client_id:
+        q = q.eq("client_id", client_id)
+    rows = q.limit(500).execute().data or []
+
+    buckets: dict[str, dict] = {}
+    for r in rows:
+        cid = r.get("client_id") or "unknown"
+        if cid not in buckets:
+            buckets[cid] = {"client_id": cid, "total_cost_usd": 0.0, "request_units": 0, "runs": 0}
+        buckets[cid]["total_cost_usd"] += float(r.get("cost_usd") or 0)
+        buckets[cid]["request_units"]  += int(r.get("request_units") or 0)
+
+    return sorted(buckets.values(), key=lambda x: -x["total_cost_usd"])

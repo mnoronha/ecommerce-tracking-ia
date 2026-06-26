@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     # ── Technical SEO ─────────────────────────────────────────────────────
     PAGESPEED_API_KEY: str = ""  # Google PageSpeed Insights API key (opcional)
 
+    # ── DataForSEO ────────────────────────────────────────────────────────
+    DATAFORSEO_LOGIN:    str = ""  # API login (email)
+    DATAFORSEO_PASSWORD: str = ""  # API password
+
 
 @lru_cache()
 def get_settings() -> Settings:

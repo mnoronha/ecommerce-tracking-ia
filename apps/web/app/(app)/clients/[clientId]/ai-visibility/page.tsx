@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { BrainCircuit, RefreshCw, Loader2, TrendingUp, TrendingDown, Minus, UploadCloud, AlertCircle, Lightbulb, ChevronDown, ChevronUp, AlertTriangle, Info, Zap } from 'lucide-react'
+import { BrainCircuit, RefreshCw, Loader2, TrendingUp, TrendingDown, Minus, UploadCloud, AlertCircle, Lightbulb, ChevronDown, ChevronUp, AlertTriangle, Info, Zap, Play, Settings, DollarSign, CheckCircle2 } from 'lucide-react'
 import { useDatePeriod } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 
@@ -19,6 +19,16 @@ interface Summary {
   positive_sentiment_rate: number | null
   share_of_voice:         number | null
   last_import_at:         string | null
+}
+
+interface DfsConfig {
+  is_enabled:              boolean
+  last_collection_at:      string | null
+  last_collection_status:  string | null
+  budget_monthly_usd:      number
+  budget_used_this_month:  number
+  llms_to_monitor:         string[]
+  configured:              boolean
 }
 
 interface TrendPoint {
@@ -171,28 +181,32 @@ export default function AIVisibilityPage() {
   const [prompts,     setPrompts]     = useState<PromptRow[]>([])
   const [competitors, setCompetitors] = useState<CompetitorRow[]>([])
   const [insights,    setInsights]    = useState<Insight[]>([])
+  const [dfsConfig,   setDfsConfig]   = useState<DfsConfig | null>(null)
   const [platform,    setPlatform]    = useState<string>('')
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState<string | null>(null)
   const [triggering,  setTriggering]  = useState(false)
+  const [collecting,  setCollecting]  = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
       const qs = `start=${from}&end=${to}${platform ? `&platform=${platform}` : ''}`
-      const [s, t, p, c, ins] = await Promise.all([
+      const [s, t, p, c, ins, cfg] = await Promise.all([
         fetch(`${API_URL}/ai-visibility/${clientId}/summary?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/trend?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/prompts?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/competitors?${qs}`).then(r => r.json()),
         fetch(`${API_URL}/ai-visibility/${clientId}/insights?limit=10`).then(r => r.json()),
+        fetch(`${API_URL}/ai-visibility/${clientId}/config`).then(r => r.json()),
       ])
       setSummary(s)
       setTrend(Array.isArray(t) ? t : [])
       setPrompts(Array.isArray(p) ? p : [])
       setCompetitors(Array.isArray(c) ? c : [])
       setInsights(Array.isArray(ins) ? ins : [])
+      setDfsConfig(cfg && !cfg.detail ? cfg : null)
     } catch (e) {
       setError('Erro ao carregar dados de AI Visibility')
     } finally {
@@ -207,6 +221,15 @@ export default function AIVisibilityPage() {
       setTimeout(load, 3000)
     } catch { /* ignore */ }
     finally { setTriggering(false) }
+  }
+
+  const triggerCollect = async () => {
+    setCollecting(true)
+    try {
+      await fetch(`${API_URL}/ai-visibility/${clientId}/collect`, { method: 'POST' })
+      setTimeout(load, 60000)
+    } catch { /* ignore */ }
+    finally { setCollecting(false) }
   }
 
   useEffect(() => { load() }, [load])
@@ -243,17 +266,37 @@ export default function AIVisibilityPage() {
             onClick={triggerAnalysis}
             disabled={triggering}
             className="h-8 px-3 bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] rounded text-xs text-slate-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
-            title="Gerar insights de AI Visibility via Claude"
+            title="Gerar insights via Claude"
           >
             {triggering ? <Loader2 size={12} className="animate-spin" /> : <Lightbulb size={12} />}
             Analisar
           </button>
+          {dfsConfig?.is_enabled ? (
+            <button
+              onClick={triggerCollect}
+              disabled={collecting}
+              className="h-8 px-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 rounded text-xs text-white flex items-center gap-1.5 transition-colors"
+              title="Coleta dados via DataForSEO agora"
+            >
+              {collecting ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+              Coletar agora
+            </button>
+          ) : (
+            <button
+              onClick={() => router.push(`/clients/${clientId}/ai-visibility/settings`)}
+              className="h-8 px-3 bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] rounded text-xs text-slate-300 flex items-center gap-1.5 transition-colors"
+              title="Configurar coleta automática DataForSEO"
+            >
+              <UploadCloud size={12} />
+              Importar / Configurar
+            </button>
+          )}
           <button
-            onClick={() => router.push('/ai-visibility/import')}
-            className="h-8 px-3 bg-indigo-600 hover:bg-indigo-500 rounded text-xs text-white flex items-center gap-1.5 transition-colors"
+            onClick={() => router.push(`/clients/${clientId}/ai-visibility/settings`)}
+            className="h-8 w-8 flex items-center justify-center bg-[#1a1f2e] border border-[#2a2f3e] rounded hover:bg-[#252a3a] transition-colors"
+            title="Configurações DataForSEO"
           >
-            <UploadCloud size={13} />
-            Importar dados
+            <Settings size={13} className="text-slate-400" />
           </button>
           <button
             onClick={load}
@@ -271,21 +314,65 @@ export default function AIVisibilityPage() {
         </div>
       )}
 
+      {/* DataForSEO collection status strip */}
+      {dfsConfig && (
+        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border text-xs ${
+          dfsConfig.is_enabled
+            ? dfsConfig.last_collection_status === 'ok'
+              ? 'bg-emerald-500/5 border-emerald-500/20'
+              : dfsConfig.last_collection_status === 'budget_exceeded'
+              ? 'bg-yellow-500/5 border-yellow-500/20'
+              : 'bg-[#151b27] border-[#2a2f3e]'
+            : 'bg-[#151b27] border-[#2a2f3e]'
+        }`}>
+          {dfsConfig.is_enabled
+            ? dfsConfig.last_collection_status === 'ok'
+              ? <CheckCircle2 size={13} className="text-emerald-400 shrink-0" />
+              : <AlertTriangle size={13} className="text-yellow-400 shrink-0" />
+            : <Info size={13} className="text-slate-500 shrink-0" />
+          }
+          <span className="text-slate-400 flex-1">
+            {dfsConfig.is_enabled
+              ? dfsConfig.last_collection_at
+                ? <>Última coleta: <span className="text-white">{new Date(dfsConfig.last_collection_at).toLocaleString('pt-BR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}</span>{' '}· Custo/mês: <span className="text-white">${(dfsConfig.budget_used_this_month || 0).toFixed(3)}</span> / ${dfsConfig.budget_monthly_usd}</>
+                : 'Coleta automática ativa — nenhuma coleta ainda'
+              : 'Coleta automática via DataForSEO não configurada'
+            }
+          </span>
+          <button
+            onClick={() => router.push(`/clients/${clientId}/ai-visibility/settings`)}
+            className="text-slate-500 hover:text-slate-300 flex items-center gap-1 transition-colors"
+          >
+            <Settings size={11} />
+            Configurar
+          </button>
+        </div>
+      )}
+
       {/* Empty state */}
       {!loading && summary && !summary.has_data && (
         <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
           <BrainCircuit size={40} className="text-slate-600" />
           <p className="text-slate-400 text-sm font-medium">Nenhum dado de AI Visibility</p>
           <p className="text-slate-600 text-xs max-w-xs">
-            Exporte o CSV do Ubersuggest AI Search Visibility e importe aqui para começar a monitorar.
+            Configure a coleta automática via DataForSEO ou importe um CSV do Ubersuggest para começar.
           </p>
-          <button
-            onClick={() => router.push('/ai-visibility/import')}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm text-white flex items-center gap-2 transition-colors"
-          >
-            <UploadCloud size={14} />
-            Importar primeiro CSV
-          </button>
+          <div className="flex gap-3">
+            <button
+              onClick={() => router.push(`/clients/${clientId}/ai-visibility/settings`)}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm text-white flex items-center gap-2 transition-colors"
+            >
+              <Settings size={14} />
+              Configurar DataForSEO
+            </button>
+            <button
+              onClick={() => router.push('/ai-visibility/import')}
+              className="px-4 py-2 bg-[#1a1f2e] hover:bg-[#252a3a] border border-[#2a2f3e] rounded-lg text-sm text-slate-300 flex items-center gap-2 transition-colors"
+            >
+              <UploadCloud size={14} />
+              Importar CSV
+            </button>
+          </div>
         </div>
       )}
 
