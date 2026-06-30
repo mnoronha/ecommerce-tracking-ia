@@ -756,6 +756,7 @@ export default function DashboardPage() {
   const [tiktokSummary, setTiktokSummary]       = useState<AdsTotals | null>(null)
   const [pinterestSummary, setPinterestSummary] = useState<AdsTotals | null>(null)
   const [ga4Channels, setGa4Channels]   = useState<Ga4Channel[]>([])
+  const [ga4Sources, setGa4Sources]     = useState<{source: string; medium: string; sessions: number; conversions: number; revenue: number}[]>([])
   const [ga4Funnel, setGa4Funnel]       = useState<Ga4Funnel | null>(null)
   const [ga4TopPages, setGa4TopPages]   = useState<Ga4TopPage[]>([])
   const [ltvStats, setLtvStats]         = useState<LtvStats | null>(null)
@@ -1263,18 +1264,24 @@ export default function DashboardPage() {
   const loadTrafficTab = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
     const qs = periodToQuery(period, from, to)
-    const [funnelRes, pagesRes] = await Promise.all([
+    const [funnelRes, pagesRes, sourcesRes] = await Promise.all([
       fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/funnel?${qs}`).catch(() => null),
       fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/top-pages?${qs}`).catch(() => null),
+      fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/sources?${qs}&limit=30`).catch(() => null),
     ])
     if (funnelRes?.ok) {
       const data = await funnelRes.json()
-      // API returns { summary: {...}, by_channel: [...] } — extract summary
       setGa4Funnel(data?.summary ?? null)
     }
     if (pagesRes?.ok) {
       const data = await pagesRes.json()
       setGa4TopPages(Array.isArray(data) ? data : (data.pages || []))
+    }
+    if (sourcesRes?.ok) {
+      const data = await sourcesRes.json()
+      setGa4Sources(Array.isArray(data) ? data : [])
+    } else {
+      setGa4Sources([])
     }
   }, [CLIENT_PIXEL_ID, period, from, to])
 
@@ -1935,6 +1942,46 @@ export default function DashboardPage() {
                             <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{ch.revenue > 0 ? fmt(ch.revenue) : '—'}</td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* GA4 by source — mostra TikTok, Pinterest, etc. separados */}
+              {ga4Sources.length > 0 && (
+                <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] overflow-hidden">
+                  <div className="px-5 py-4 border-b border-[#2a2f3e]">
+                    <h2 className="text-sm font-semibold text-slate-300">Tráfego por Fonte (GA4)</h2>
+                    <p className="text-xs text-slate-500 mt-0.5">Sessões por source / medium — inclui TikTok, Pinterest e demais origens</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[#2a2f3e]">
+                          {['Fonte / Mídia', 'Sessões', 'Conversões', 'Receita'].map(h => (
+                            <th key={h} className={`px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Fonte / Mídia' ? 'text-left' : 'text-right'}`}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ga4Sources.map((row, i) => {
+                          const s = row.source.toLowerCase()
+                          const m = row.medium.toLowerCase()
+                          const isTikTok    = s.includes('tiktok') || s === 'tt'
+                          const isPinterest = s.includes('pinterest')
+                          const isMeta      = ['facebook', 'instagram', 'meta', 'fb'].includes(s) || s.includes('facebook')
+                          const isGoogle    = s === 'google'
+                          const color = isTikTok ? 'text-pink-400' : isPinterest ? 'text-rose-400' : isMeta ? 'text-blue-400' : isGoogle ? 'text-red-400' : 'text-slate-300'
+                          return (
+                            <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
+                              <td className={`px-4 py-3 text-xs font-medium ${color}`}>{row.source} / {row.medium}</td>
+                              <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{row.sessions.toLocaleString('pt-BR')}</td>
+                              <td className="px-4 py-3 text-right text-indigo-400 tabular-nums font-medium">{row.conversions.toLocaleString('pt-BR')}</td>
+                              <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{row.revenue > 0 ? fmt(row.revenue) : '—'}</td>
+                            </tr>
+                          )
+                        })}
                       </tbody>
                     </table>
                   </div>
