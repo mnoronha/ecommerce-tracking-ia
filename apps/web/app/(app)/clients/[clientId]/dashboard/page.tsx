@@ -787,6 +787,15 @@ export default function DashboardPage() {
   // Cache clientId so we don't hit Supabase on every filter change
   const clientIdRef = useRef<string | null>(null)
 
+  // Reset cached UUID whenever the client changes (navigation between clients)
+  useEffect(() => {
+    clientIdRef.current = null
+    setMetaSummary(null)
+    setGoogleSummary(null)
+    setGa4Summary(null)
+    setKpis(null)
+  }, [CLIENT_PIXEL_ID])
+
   const loadData = useCallback(async () => {
     if (period === 'custom' && (!from || !to)) return
     setLoading(true)
@@ -1194,22 +1203,38 @@ export default function DashboardPage() {
     }
   }, [CLIENT_PIXEL_ID, period, from, to])
 
+  const loadAdsAbortRef = useRef<AbortController | null>(null)
+
   const loadAds = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
+    if (period === 'custom' && (!from || !to)) return
+
+    // Cancel any in-flight request to avoid stale overwrites
+    if (loadAdsAbortRef.current) loadAdsAbortRef.current.abort()
+    const controller = new AbortController()
+    loadAdsAbortRef.current = controller
+
     const qs = periodToQuery(period, from, to)
     const [metaRes, googleRes] = await Promise.all([
-      fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/overview?${qs}`).catch(() => null),
-      fetch(`${API_URL}/google-ads/${CLIENT_PIXEL_ID}/overview?${qs}`).catch(() => null),
+      fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
+      fetch(`${API_URL}/google-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
     ])
+
+    if (controller.signal.aborted) return
+
     if (metaRes?.ok) {
       const data = await metaRes.json()
       const t = data.totals
       if (t) setMetaSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.purchases ?? 0, revenue: t.revenue ?? 0 })
+    } else {
+      setMetaSummary(null)
     }
     if (googleRes?.ok) {
       const data = await googleRes.json()
       const t = data.totals
       if (t) setGoogleSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.orders ?? t.purchases ?? 0, revenue: t.revenue ?? 0 })
+    } else {
+      setGoogleSummary(null)
     }
   }, [CLIENT_PIXEL_ID, period, from, to])
 
