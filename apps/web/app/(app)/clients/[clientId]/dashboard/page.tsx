@@ -751,8 +751,10 @@ export default function DashboardPage() {
   const [ga4Summary, setGa4Summary]     = useState<{ sessions: number; users: number; conversions: number; revenue: number } | null>(null)
   const [activeTab, setActiveTab]       = useState<Tab>('overview')
   const [loadedTabs, setLoadedTabs]     = useState<Set<Tab>>(new Set(['overview']))
-  const [metaSummary, setMetaSummary]   = useState<AdsTotals | null>(null)
+  const [metaSummary, setMetaSummary]     = useState<AdsTotals | null>(null)
   const [googleSummary, setGoogleSummary] = useState<AdsTotals | null>(null)
+  const [tiktokSummary, setTiktokSummary]       = useState<AdsTotals | null>(null)
+  const [pinterestSummary, setPinterestSummary] = useState<AdsTotals | null>(null)
   const [ga4Channels, setGa4Channels]   = useState<Ga4Channel[]>([])
   const [ga4Funnel, setGa4Funnel]       = useState<Ga4Funnel | null>(null)
   const [ga4TopPages, setGa4TopPages]   = useState<Ga4TopPage[]>([])
@@ -792,6 +794,8 @@ export default function DashboardPage() {
     clientIdRef.current = null
     setMetaSummary(null)
     setGoogleSummary(null)
+    setTiktokSummary(null)
+    setPinterestSummary(null)
     setGa4Summary(null)
     setKpis(null)
   }, [CLIENT_PIXEL_ID])
@@ -1215,9 +1219,11 @@ export default function DashboardPage() {
     loadAdsAbortRef.current = controller
 
     const qs = periodToQuery(period, from, to)
-    const [metaRes, googleRes] = await Promise.all([
+    const [metaRes, googleRes, tiktokRes, pinterestRes] = await Promise.all([
       fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
       fetch(`${API_URL}/google-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
+      fetch(`${API_URL}/tiktok-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
+      fetch(`${API_URL}/pinterest-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
     ])
 
     if (controller.signal.aborted) return
@@ -1235,6 +1241,22 @@ export default function DashboardPage() {
       if (t) setGoogleSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.orders ?? t.purchases ?? 0, revenue: t.revenue ?? 0 })
     } else {
       setGoogleSummary(null)
+    }
+    if (tiktokRes?.ok) {
+      const data = await tiktokRes.json()
+      const t = data.totals
+      if (t && (t.orders > 0 || t.spend > 0)) setTiktokSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.orders ?? 0, revenue: t.revenue ?? 0 })
+      else setTiktokSummary(null)
+    } else {
+      setTiktokSummary(null)
+    }
+    if (pinterestRes?.ok) {
+      const data = await pinterestRes.json()
+      const t = data.totals
+      if (t && (t.orders > 0 || t.spend > 0)) setPinterestSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.orders ?? 0, revenue: t.revenue ?? 0 })
+      else setPinterestSummary(null)
+    } else {
+      setPinterestSummary(null)
     }
   }, [CLIENT_PIXEL_ID, period, from, to])
 
@@ -1473,8 +1495,8 @@ export default function DashboardPage() {
             color="bg-pink-500/10 text-pink-400" />
         </div>
 
-        {/* Ads Summary — Meta + Google side by side */}
-        {(metaSummary || googleSummary) && (
+        {/* Ads Summary — Meta + Google + TikTok + Pinterest */}
+        {(metaSummary || googleSummary || tiktokSummary || pinterestSummary) && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {metaSummary && (
               <div className="bg-[#1a1f2e] rounded-xl border border-blue-500/20 p-5">
@@ -1534,6 +1556,70 @@ export default function DashboardPage() {
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Pedidos</p>
                     <p className="text-xl font-bold text-white">{googleSummary.purchases}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {tiktokSummary && (
+              <div className="bg-[#1a1f2e] rounded-xl border border-pink-500/20 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-1.5 rounded bg-pink-500/10">
+                    <span className="text-pink-400 text-[11px] font-black leading-none">T</span>
+                  </div>
+                  <span className="text-sm font-semibold text-slate-300">TikTok Ads</span>
+                  <span className="text-[10px] text-pink-400/70 bg-pink-500/10 border border-pink-500/20 px-1.5 py-0.5 rounded ml-auto">
+                    {periodLabelLong(period, from, to)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Gasto</p>
+                    <p className="text-xl font-bold text-white">{tiktokSummary.spend > 0 ? fmt(tiktokSummary.spend) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">ROAS</p>
+                    <p className={`text-xl font-bold ${(tiktokSummary.roas ?? 0) >= 3 ? 'text-emerald-400' : (tiktokSummary.roas ?? 0) >= 1.5 ? 'text-yellow-400' : 'text-slate-400'}`}>
+                      {tiktokSummary.roas != null ? `${tiktokSummary.roas.toFixed(2)}x` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">CPA</p>
+                    <p className="text-xl font-bold text-white">{tiktokSummary.cpa != null ? fmt(tiktokSummary.cpa) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Pedidos</p>
+                    <p className="text-xl font-bold text-white">{tiktokSummary.purchases}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            {pinterestSummary && (
+              <div className="bg-[#1a1f2e] rounded-xl border border-rose-500/20 p-5">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="p-1.5 rounded bg-rose-500/10"><Target size={13} className="text-rose-400" /></div>
+                  <span className="text-sm font-semibold text-slate-300">Pinterest Ads</span>
+                  <span className="text-[10px] text-rose-400/70 bg-rose-500/10 border border-rose-500/20 px-1.5 py-0.5 rounded ml-auto">
+                    {periodLabelLong(period, from, to)}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Gasto</p>
+                    <p className="text-xl font-bold text-white">{pinterestSummary.spend > 0 ? fmt(pinterestSummary.spend) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">ROAS</p>
+                    <p className={`text-xl font-bold ${(pinterestSummary.roas ?? 0) >= 3 ? 'text-emerald-400' : (pinterestSummary.roas ?? 0) >= 1.5 ? 'text-yellow-400' : 'text-slate-400'}`}>
+                      {pinterestSummary.roas != null ? `${pinterestSummary.roas.toFixed(2)}x` : '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">CPA</p>
+                    <p className="text-xl font-bold text-white">{pinterestSummary.cpa != null ? fmt(pinterestSummary.cpa) : '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Pedidos</p>
+                    <p className="text-xl font-bold text-white">{pinterestSummary.purchases}</p>
                   </div>
                 </div>
               </div>
