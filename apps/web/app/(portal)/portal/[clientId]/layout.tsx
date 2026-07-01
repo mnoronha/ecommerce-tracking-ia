@@ -1,29 +1,38 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useParams } from 'next/navigation'
+import { usePathname, useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, TrendingUp, BarChart2, Target,
-  GitBranch, BarChart,
+  GitBranch, BarChart, LogOut,
 } from 'lucide-react'
+import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {
   const pathname  = usePathname()
   const params    = useParams()
+  const router    = useRouter()
   const clientId  = params.clientId as string
 
   const [clientName, setClientName] = useState<string>('')
   const [logoUrl,    setLogoUrl]    = useState<string | null>(null)
+  const [userEmail,  setUserEmail]  = useState<string>('')
+
+  useEffect(() => {
+    createSupabaseBrowserClient().auth.getUser().then(({ data }) => {
+      setUserEmail(data.user?.email ?? '')
+    })
+  }, [])
 
   useEffect(() => {
     if (!clientId) return
     fetch(`${API_URL}/setup/clients`)
       .then(r => r.json())
-      .then((d: any[]) => {
-        const list = Array.isArray(d) ? d : d.clients || []
+      .then((d: any) => {
+        const list: any[] = Array.isArray(d) ? d : (d.clients || [])
         const c = list.find((x: any) => x.pixel_id === clientId)
         if (c) {
           setClientName(c.name || clientId)
@@ -63,6 +72,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             {clientName || clientId}
           </p>
           <p className="text-[10px] text-slate-600 mt-0.5">Portal do cliente</p>
+          {userEmail && (
+            <p className="text-[10px] text-slate-500 mt-1 truncate" title={userEmail}>{userEmail}</p>
+          )}
         </div>
 
         {/* Nav */}
@@ -87,10 +99,19 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-[#2a2f3e] text-center">
-          <p className="text-[10px] text-slate-600">
-            Powered by{' '}
-            <span className="text-indigo-500 font-semibold">Noro</span>
+        <div className="p-4 border-t border-[#2a2f3e] space-y-2">
+          <button
+            onClick={async () => {
+              await createSupabaseBrowserClient().auth.signOut()
+              router.push('/portal/login')
+            }}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-slate-500 hover:text-white hover:bg-[#1a1f2e] transition-colors"
+          >
+            <LogOut size={13} />
+            Sair
+          </button>
+          <p className="text-[10px] text-slate-600 text-center">
+            Powered by <span className="text-indigo-500 font-semibold">Noro</span>
           </p>
         </div>
       </aside>

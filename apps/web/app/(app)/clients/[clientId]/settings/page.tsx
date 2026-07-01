@@ -93,8 +93,14 @@ export default function ClientSettingsPage() {
   const [mcId,      setMcId]      = useState('')
   const [mcToken,   setMcToken]   = useState('')
 
+  // Portal access
+  const [portalUsers,    setPortalUsers]    = useState<{ id: string; email: string; role: string; created_at: string }[]>([])
+  const [portalEmail,    setPortalEmail]    = useState('')
+  const [portalInviting, setPortalInviting] = useState(false)
+  const [portalMsg,      setPortalMsg]      = useState<{ ok: boolean; text: string } | null>(null)
+  const [portalRemoving, setPortalRemoving] = useState<string | null>(null)
+
   const load = useCallback(async () => {
-    // supabase singleton
     const { data } = await supabase
       .from('clients')
       .select('*')
@@ -104,8 +110,39 @@ export default function ClientSettingsPage() {
       setClient(data); setForm(data)
       if (data.merchant_center_id) setMcId(data.merchant_center_id)
     }
+    const { data: pu } = await supabase
+      .from('client_users')
+      .select('id, email, role, created_at')
+      .eq('pixel_id', clientId)
+      .order('created_at', { ascending: true })
+    setPortalUsers(pu || [])
     setLoading(false)
   }, [clientId])
+
+  async function invitePortalUser() {
+    const email = portalEmail.trim().toLowerCase()
+    if (!email) return
+    setPortalInviting(true); setPortalMsg(null)
+    const { error } = await supabase
+      .from('client_users')
+      .insert({ email, pixel_id: clientId, role: 'viewer' })
+    if (error) {
+      setPortalMsg({ ok: false, text: error.code === '23505' ? 'Email já tem acesso.' : error.message })
+    } else {
+      setPortalEmail('')
+      setPortalMsg({ ok: true, text: `Acesso concedido para ${email}. Compartilhe o link do portal.` })
+      load()
+    }
+    setPortalInviting(false)
+  }
+
+  async function removePortalUser(id: string, email: string) {
+    if (!confirm(`Remover acesso de ${email}?`)) return
+    setPortalRemoving(id)
+    await supabase.from('client_users').delete().eq('id', id)
+    setPortalUsers(u => u.filter(x => x.id !== id))
+    setPortalRemoving(null)
+  }
 
   useEffect(() => { load() }, [load])
 
@@ -1079,6 +1116,67 @@ export default function ClientSettingsPage() {
           </button>
         </div>
       </form>
+
+      {/* Acesso Portal do Cliente */}
+      <div className="mt-8 bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Acesso Portal do Cliente</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          Defina quais emails têm acesso ao portal restrito deste cliente.
+          Após cadastrar, compartilhe o link:{' '}
+          <span className="text-indigo-400 font-mono text-[11px] select-all">
+            {typeof window !== 'undefined' ? window.location.origin : ''}/portal/{clientId}/dashboard
+          </span>
+        </p>
+
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <input
+            type="email"
+            value={portalEmail}
+            onChange={e => { setPortalEmail(e.target.value); setPortalMsg(null) }}
+            placeholder="email@docliente.com"
+            className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500 w-64"
+          />
+          <button
+            onClick={invitePortalUser}
+            disabled={portalInviting || !portalEmail.trim()}
+            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors"
+          >
+            {portalInviting ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+            Adicionar acesso
+          </button>
+        </div>
+
+        {portalMsg && (
+          <p className={`text-xs mb-3 ${portalMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+            {portalMsg.ok ? <CheckCircle size={12} className="inline mr-1" /> : <AlertCircle size={12} className="inline mr-1" />}
+            {portalMsg.text}
+          </p>
+        )}
+
+        {portalUsers.length > 0 ? (
+          <div className="space-y-1">
+            {portalUsers.map(u => (
+              <div key={u.id} className="flex items-center justify-between px-3 py-2 bg-[#0f1117] rounded-lg">
+                <div>
+                  <p className="text-xs text-white">{u.email}</p>
+                  <p className="text-[10px] text-slate-600">
+                    desde {new Date(u.created_at).toLocaleDateString('pt-BR')}
+                  </p>
+                </div>
+                <button
+                  onClick={() => removePortalUser(u.id, u.email)}
+                  disabled={portalRemoving === u.id}
+                  className="text-slate-600 hover:text-red-400 transition-colors disabled:opacity-50"
+                >
+                  {portalRemoving === u.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-600">Nenhum acesso concedido ainda.</p>
+        )}
+      </div>
 
       {/* Privacidade & LGPD — direito à eliminação */}
       <div className="mt-8 bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
