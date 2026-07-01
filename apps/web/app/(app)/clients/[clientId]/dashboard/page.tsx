@@ -1514,7 +1514,7 @@ export default function DashboardPage() {
                     {periodLabelLong(period, from, to)}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 lg:grid-cols-5 gap-4">
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Gasto</p>
                     <p className="text-xl font-bold text-white">{fmt(metaSummary.spend)}</p>
@@ -1530,8 +1530,12 @@ export default function DashboardPage() {
                     <p className="text-xl font-bold text-white">{metaSummary.cpa != null ? fmt(metaSummary.cpa) : '—'}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-slate-500 mb-1">Compras</p>
+                    <p className="text-xs text-slate-500 mb-1">Pedidos</p>
                     <p className="text-xl font-bold text-white">{metaSummary.purchases}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Receita</p>
+                    <p className="text-xl font-bold text-emerald-400">{fmt(metaSummary.revenue)}</p>
                   </div>
                 </div>
               </div>
@@ -1545,7 +1549,7 @@ export default function DashboardPage() {
                     {periodLabelLong(period, from, to)}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 lg:grid-cols-5 gap-4">
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Gasto</p>
                     <p className="text-xl font-bold text-white">{fmt(googleSummary.spend)}</p>
@@ -1564,6 +1568,10 @@ export default function DashboardPage() {
                     <p className="text-xs text-slate-500 mb-1">Pedidos</p>
                     <p className="text-xl font-bold text-white">{googleSummary.purchases}</p>
                   </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Receita</p>
+                    <p className="text-xl font-bold text-emerald-400">{fmt(googleSummary.revenue)}</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -1578,7 +1586,7 @@ export default function DashboardPage() {
                     {periodLabelLong(period, from, to)}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 lg:grid-cols-5 gap-4">
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Gasto</p>
                     <p className="text-xl font-bold text-white">{tiktokSummary.spend > 0 ? fmt(tiktokSummary.spend) : '—'}</p>
@@ -1597,6 +1605,10 @@ export default function DashboardPage() {
                     <p className="text-xs text-slate-500 mb-1">Pedidos</p>
                     <p className="text-xl font-bold text-white">{tiktokSummary.purchases}</p>
                   </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Receita</p>
+                    <p className="text-xl font-bold text-emerald-400">{fmt(tiktokSummary.revenue)}</p>
+                  </div>
                 </div>
               </div>
             )}
@@ -1609,7 +1621,7 @@ export default function DashboardPage() {
                     {periodLabelLong(period, from, to)}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-3 lg:grid-cols-5 gap-4">
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Gasto</p>
                     <p className="text-xl font-bold text-white">{pinterestSummary.spend > 0 ? fmt(pinterestSummary.spend) : '—'}</p>
@@ -1627,6 +1639,10 @@ export default function DashboardPage() {
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Pedidos</p>
                     <p className="text-xl font-bold text-white">{pinterestSummary.purchases}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Receita</p>
+                    <p className="text-xl font-bold text-emerald-400">{fmt(pinterestSummary.revenue)}</p>
                   </div>
                 </div>
               </div>
