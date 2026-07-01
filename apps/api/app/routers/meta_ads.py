@@ -370,17 +370,28 @@ async def get_overview(
         return round((curr - prev) / prev * 100, 1)
 
     # ── Fetch attribution rows ─────────────────────────────────────────────
+    # Pagina em blocos de 1000 para contornar o max-rows do PostgREST que
+    # ignora limit > 1000 silenciosamente no plano Supabase padrão.
     def _fetch(d_from, d_to):
-        return (
-            sb.table("meta_ad_attributions")
-            .select("campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
-                    "date,spend,impressions,clicks,purchases,purchase_value")
-            .eq("client_id", client_id)
-            .gte("date", str(d_from))
-            .lte("date", str(d_to))
-            .limit(10000)
-            .execute()
-        ).data or []
+        _PAGE = 1000
+        rows: list = []
+        offset = 0
+        while True:
+            chunk = (
+                sb.table("meta_ad_attributions")
+                .select("campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,"
+                        "date,spend,impressions,clicks,purchases,purchase_value")
+                .eq("client_id", client_id)
+                .gte("date", str(d_from))
+                .lte("date", str(d_to))
+                .range(offset, offset + _PAGE - 1)
+                .execute()
+            ).data or []
+            rows.extend(chunk)
+            if len(chunk) < _PAGE:
+                break
+            offset += _PAGE
+        return rows
 
     curr_rows = _fetch(d_start, d_end)
     prev_rows = _fetch(d_prev_start, d_prev_end)
