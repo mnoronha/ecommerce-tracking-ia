@@ -748,7 +748,7 @@ export default function DashboardPage() {
   const [drilldown, setDrilldown]       = useState<DrilldownKPI | null>(null)
   const [allOrdersRaw, setAllOrdersRaw] = useState<any[]>([])
   const [allEventsRaw, setAllEventsRaw] = useState<any[]>([])
-  const [ga4Summary, setGa4Summary]     = useState<{ sessions: number; users: number; conversions: number; revenue: number } | null>(null)
+  const [ga4Summary, setGa4Summary]     = useState<{ sessions: number; users: number; conversions: number; purchases: number; revenue: number } | null>(null)
   const [activeTab, setActiveTab]       = useState<Tab>('overview')
   const [loadedTabs, setLoadedTabs]     = useState<Set<Tab>>(new Set(['overview']))
   const [metaSummary, setMetaSummary]     = useState<AdsTotals | null>(null)
@@ -1648,7 +1648,7 @@ export default function DashboardPage() {
                 Ver relatório completo →
               </Link>
             </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
               <div>
                 <p className="text-xs text-slate-500 mb-1">Sessões</p>
                 <p className="text-xl font-bold text-white">{ga4Summary.sessions.toLocaleString('pt-BR')}</p>
@@ -1658,20 +1658,17 @@ export default function DashboardPage() {
                 <p className="text-xl font-bold text-white">{ga4Summary.users.toLocaleString('pt-BR')}</p>
               </div>
               <div>
-                <p className="text-xs text-slate-500 mb-1">Conversões GA4</p>
+                <p className="text-xs text-slate-500 mb-1">Compras GA4</p>
+                <p className="text-xl font-bold text-emerald-400">{(ga4Summary.purchases ?? 0).toLocaleString('pt-BR')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Conversões</p>
                 <p className="text-xl font-bold text-white">{ga4Summary.conversions.toLocaleString('pt-BR')}</p>
               </div>
-              {ga4Summary.revenue > 0 ? (
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">Receita GA4</p>
-                  <p className="text-xl font-bold text-white">{fmt(ga4Summary.revenue)}</p>
-                </div>
-              ) : (
-                <div>
-                  <p className="text-xs text-slate-500 mb-1">Receita GA4</p>
-                  <p className="text-xl font-bold text-slate-600">—</p>
-                </div>
-              )}
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Receita GA4</p>
+                <p className="text-xl font-bold text-white">{ga4Summary.revenue > 0 ? fmt(ga4Summary.revenue) : '—'}</p>
+              </div>
             </div>
           </div>
         )}
@@ -1908,12 +1905,16 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
                   <div><p className="text-xs text-slate-500 mb-1">Sessões</p><p className="text-2xl font-bold text-white">{ga4Summary.sessions.toLocaleString('pt-BR')}</p></div>
                   <div><p className="text-xs text-slate-500 mb-1">Usuários</p><p className="text-2xl font-bold text-white">{ga4Summary.users.toLocaleString('pt-BR')}</p></div>
-                  <div><p className="text-xs text-slate-500 mb-1">Conversões GA4</p><p className="text-2xl font-bold text-white">{ga4Summary.conversions.toLocaleString('pt-BR')}</p></div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Compras GA4</p>
+                    <p className="text-2xl font-bold text-emerald-400">{(ga4Summary.purchases ?? 0).toLocaleString('pt-BR')}</p>
+                    <p className="text-[10px] text-slate-600 mt-0.5">{ga4Summary.conversions} conversões totais</p>
+                  </div>
                   <div>
                     <p className="text-xs text-slate-500 mb-1">Pedidos (real)</p>
-                    <p className="text-2xl font-bold text-emerald-400">{kpis ? kpis.totalOrders.toLocaleString('pt-BR') : '—'}</p>
-                    {kpis && ga4Summary.conversions > 0 && kpis.totalOrders !== ga4Summary.conversions && (
-                      <p className="text-[10px] text-slate-600 mt-0.5">GA4 registrou {ga4Summary.conversions}</p>
+                    <p className="text-2xl font-bold text-white">{kpis ? kpis.totalOrders.toLocaleString('pt-BR') : '—'}</p>
+                    {kpis && (ga4Summary.purchases ?? 0) > 0 && kpis.totalOrders !== (ga4Summary.purchases ?? 0) && (
+                      <p className="text-[10px] text-slate-600 mt-0.5">GA4 registrou {ga4Summary.purchases}</p>
                     )}
                   </div>
                   <div>

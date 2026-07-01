@@ -82,6 +82,7 @@ def fetch_overview(
             {"name": "activeUsers"},
             {"name": "conversions"},
             {"name": "purchaseRevenue"},
+            {"name": "transactions"},
         ],
         "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
         "limit": 20,
@@ -97,10 +98,11 @@ def fetch_overview(
         rows = data.get("rows", [])
 
         by_channel = []
-        total_sessions = 0
-        total_users    = 0
+        total_sessions    = 0
+        total_users       = 0
         total_conversions = 0
-        total_revenue  = 0.0
+        total_revenue     = 0.0
+        total_purchases   = 0
 
         for row in rows:
             dims = row.get("dimensionValues", [])
@@ -110,17 +112,20 @@ def fetch_overview(
             users       = int(vals[1]["value"])   if len(vals) > 1 else 0
             conversions = float(vals[2]["value"]) if len(vals) > 2 else 0.0
             revenue     = float(vals[3]["value"]) if len(vals) > 3 else 0.0
+            purchases   = int(vals[4]["value"])   if len(vals) > 4 else 0
 
             total_sessions    += sessions
             total_users       += users
             total_conversions += conversions
             total_revenue     += revenue
+            total_purchases   += purchases
 
             by_channel.append({
                 "channel":     channel,
                 "sessions":    sessions,
                 "users":       users,
                 "conversions": round(conversions),
+                "purchases":   purchases,
                 "revenue":     round(revenue, 2),
             })
 
@@ -156,6 +161,7 @@ def fetch_overview(
             "sessions":    total_sessions,
             "users":       total_users,
             "conversions": round(total_conversions),
+            "purchases":   total_purchases,
             "revenue":     round(total_revenue, 2),
         },
         "by_channel":   by_channel,

@@ -49,9 +49,10 @@ function presetDays(period: Period): number {
 }
 
 function yesterdayStr(): string {
-  const d = new Date()
-  d.setDate(d.getDate() - 1)
-  return d.toISOString().slice(0, 10)
+  // Shift to BRT (UTC-3) before computing yesterday — avoids returning
+  // today's date after midnight UTC but before midnight BRT.
+  const brtYesterday = new Date(Date.now() - 3 * 60 * 60 * 1000 - 24 * 60 * 60 * 1000)
+  return brtYesterday.toISOString().split('T')[0]
 }
 
 export function readPeriod(): Period {

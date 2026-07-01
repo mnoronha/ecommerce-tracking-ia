@@ -215,9 +215,13 @@ async def get_pacing(pixel_id: str):
         raise HTTPException(status_code=404, detail="Client not found")
     c = client.data[0]
 
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    month_key = month_start.date().isoformat()  # YYYY-MM-01
+    # Use BRT (UTC-3) — clientes são brasileiros; meia-noite UTC != virada do mês BRT
+    from datetime import timedelta
+    BRT = timezone(timedelta(hours=-3))
+    now = datetime.now(BRT)
+    month_start_brt = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_key   = month_start_brt.date().isoformat()  # YYYY-MM-01
+    month_start = month_start_brt.astimezone(timezone.utc)  # para query no Supabase (stored UTC)
 
     # Prefer goals table (set via Metas page); fall back to legacy clients column
     try:
@@ -240,8 +244,8 @@ async def get_pacing(pixel_id: str):
     day_of_month  = now.day
     fraction_done = day_of_month / days_in_month
 
-    # Today vs MTD revenue
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Today vs MTD revenue (BRT boundaries → UTC for Supabase)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
     mtd_orders = (
         sb.table("orders")
