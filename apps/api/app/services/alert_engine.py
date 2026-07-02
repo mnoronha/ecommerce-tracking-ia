@@ -1058,6 +1058,73 @@ def _eval_spend_below_expected(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+def _eval_spend_above_expected(rule: dict, client: dict) -> list[dict]:
+    """
+    Gasto de ontem superou X% acima da média dos 7 dias anteriores.
+    Detecta spikes de investimento inesperados (budget desbloqueado, campanha
+    duplicada, bid strategy fora de controle) sem precisar de orçamento configurado.
+    config: channel ('meta_ads'|'google_ads'|'all'), spike_pct (default 50),
+            min_daily_spend (default 100)
+    """
+    channel    = (rule.get("config") or {}).get("channel", "meta_ads")
+    spike_pct  = float((rule.get("config") or {}).get("spike_pct", 50))
+    min_spend  = float((rule.get("config") or {}).get("min_daily_spend", 100))
+
+    sb  = get_supabase()
+    now = _now()
+    yesterday = (now - timedelta(days=1)).date()
+    week_ago  = (now - timedelta(days=8)).date()
+
+    def _daily_spend_rows(start_date, end_date):
+        q = sb.table("ad_spend").select("spend, date").eq("client_id", client["id"])
+        if channel != "all":
+            q = q.eq("channel", channel)
+        return q.gte("date", start_date.isoformat()).lte("date", end_date.isoformat()).execute().data or []
+
+    try:
+        yesterday_rows = _daily_spend_rows(yesterday, yesterday)
+        week_rows      = _daily_spend_rows(week_ago, (now - timedelta(days=2)).date())
+    except Exception as exc:
+        logger.debug("_eval_spend_above_expected(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    if not yesterday_rows:
+        return []
+
+    spend_yesterday = sum(float(r["spend"]) for r in yesterday_rows)
+    spend_7d_total  = sum(float(r["spend"]) for r in week_rows)
+    spend_7d_avg    = spend_7d_total / 7.0
+
+    if spend_7d_avg < min_spend:
+        return []
+
+    ratio = spend_yesterday / spend_7d_avg
+    if ratio < 1.0 + spike_pct / 100:
+        return []
+
+    over_pct      = (ratio - 1.0) * 100.0
+    channel_label = {"meta_ads": "Meta Ads", "google_ads": "Google Ads", "all": "Ads"}.get(channel, channel)
+    pixel         = client.get("pixel_id") or "unknown"
+    sev           = "critical" if over_pct >= spike_pct * 2 else "warning"
+
+    return [{
+        "fingerprint": f"spend_above_expected:{client['id']}:{channel}:{yesterday.isoformat()}",
+        "title":       f"Investimento {channel_label} acima do esperado — {pixel}",
+        "message":     (
+            f"Gasto ontem ({channel_label}): R$ {spend_yesterday:,.0f} vs média 7d "
+            f"R$ {spend_7d_avg:,.0f}/dia (+{over_pct:.0f}%). "
+            f"Verifique se houve mudança de orçamento ou campanha não planejada."
+        ).replace(",", "_").replace(".", ",").replace("_", "."),
+        "severity": sev,
+        "data": {
+            "channel": channel,
+            "spend_yesterday": round(spend_yesterday, 2),
+            "spend_7d_avg":    round(spend_7d_avg, 2),
+            "over_pct":        round(over_pct, 1),
+        },
+    }]
+
+
 def _eval_utm_null_ratio(rule: dict, client: dict) -> list[dict]:
     """
     % de pedidos sem utm_source nas últimas 24h acima do threshold.
@@ -1709,6 +1776,7 @@ _EVALUATORS = {
     # 4 novos checks
     "roas_drop_channel":        _eval_roas_drop_channel,
     "spend_below_expected":     _eval_spend_below_expected,
+    "spend_above_expected":     _eval_spend_above_expected,
     "utm_null_ratio":           _eval_utm_null_ratio,
     "nonpaid_spike":            _eval_nonpaid_spike,
     # GA4-only clients
