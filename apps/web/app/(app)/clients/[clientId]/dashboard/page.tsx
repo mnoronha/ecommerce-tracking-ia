@@ -1468,12 +1468,25 @@ export default function DashboardPage() {
 
         {/* KPIs — clicáveis abrem drilldown */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
-          <KPICard title="Receita"      value={kpis ? fmt(kpis.totalRevenue) : '—'}
-            icon={TrendingUp} change={kpis?.revenueChange}
-            spark={revenueData.map(p => p.revenue)}
+          <KPICard
+            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0 ? 'Receita (GA4)' : 'Receita'}
+            value={
+              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0
+                ? fmt(ga4Summary.revenue)
+                : (kpis ? fmt(kpis.totalRevenue) : '—')
+            }
+            icon={TrendingUp}
+            change={kpis?.totalOrders === 0 && ga4Summary ? undefined : kpis?.revenueChange}
+            spark={kpis?.totalOrders === 0 && ga4Summary ? undefined : revenueData.map(p => p.revenue)}
             color="bg-emerald-500/10 text-emerald-400"
-            hint={period === '1d' ? `⚠ parcial — ${Math.round((new Date().getHours() * 60 + new Date().getMinutes()) / 1440 * 100)}% do dia decorrido` : undefined}
-            onClick={() => setDrilldown('revenue')} />
+            hint={
+              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0
+                ? 'via Google Analytics 4'
+                : period === '1d'
+                ? `⚠ parcial — ${Math.round((new Date().getHours() * 60 + new Date().getMinutes()) / 1440 * 100)}% do dia decorrido`
+                : undefined
+            }
+            onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('revenue')} />
           {kpis?.totalProfit != null && (
             <KPICard
               title="Margem"
@@ -1484,11 +1497,19 @@ export default function DashboardPage() {
               onClick={() => setDrilldown('profit')}
             />
           )}
-          <KPICard title="Pedidos"      value={kpis ? kpis.totalOrders.toString() : '—'}
-            icon={ShoppingBag} change={kpis?.ordersChange}
-            spark={revenueData.map(p => p.orders)}
+          <KPICard
+            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'Pedidos (GA4)' : 'Pedidos'}
+            value={
+              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0
+                ? ga4Summary.purchases.toLocaleString('pt-BR')
+                : (kpis ? kpis.totalOrders.toString() : '—')
+            }
+            icon={ShoppingBag}
+            change={kpis?.totalOrders === 0 && ga4Summary ? undefined : kpis?.ordersChange}
+            spark={kpis?.totalOrders === 0 && ga4Summary ? undefined : revenueData.map(p => p.orders)}
             color="bg-blue-500/10 text-blue-400"
-            onClick={() => setDrilldown('orders')} />
+            hint={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'via Google Analytics 4' : undefined}
+            onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('orders')} />
           <KPICard
             title={kpis?.totalVisitors === 0 && ga4Summary ? 'Sessões (GA4)' : 'Visitantes'}
             value={
