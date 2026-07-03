@@ -827,9 +827,20 @@ async def receive_webhook(
     if event.event_type.value in ("cart.created", "checkout.started"):
         background_tasks.add_task(_dispatch_funnel_capi, client_id, event)
 
-    # Fire Purchase CAPI + GA4 for paid orders (non-blocking, marks capi_sent)
-    # Only on order.paid (payment confirmed), NOT checkout.completed (which fires before payment)
-    if event.event_type.value == "order.paid" and order_uuid:
+    # Fire Purchase CAPI + GA4 for paid orders (non-blocking, marks capi_sent).
+    # Accept both orders/paid (explicit payment confirmation) AND orders/create when
+    # financial_status is already 'paid' — Shopify sends the latter for instant-payment
+    # methods (PIX auto-confirm, credit card with immediate approval) and when the
+    # orders/paid webhook subscription is missing or not yet configured.
+    _order_is_paid = (
+        event.event_type.value == "order.paid"
+        or (
+            event.event_type.value == "order.created"
+            and event.order
+            and (event.order.status or "").lower() == "paid"
+        )
+    )
+    if _order_is_paid and order_uuid:
         background_tasks.add_task(_dispatch_purchase_capi, client_id, event, order_uuid)
         # Visitor converted — reset retargeting score so they leave retargeting audiences
         if visitor_uuid:

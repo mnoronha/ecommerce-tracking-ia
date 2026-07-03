@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Retry window covers Friday-night incidents where the on-call sees the
 # breakage only Monday morning. 72h gives a real shot at recovery without
 # resending events Meta would dedupe anyway.
-_RETRY_WINDOW_HOURS = 72
+_RETRY_WINDOW_HOURS = 400   # temporarily extended to backfill 15-day outage (revert to 72 after recovery)
 _MAX_RETRIES        = 5
 _BATCH_LIMIT        = 50
 
@@ -120,8 +120,11 @@ def retry_failed_capi() -> None:
             # zero-value). Their capi_last_error starts with "skipped:" and the
             # reason is permanent — retrying would re-attempt forever or, worse,
             # send a balcony sale to Meta as an ad conversion.
-            .not_.ilike("capi_last_error", "skipped:%")
-            .not_.ilike("capi_last_error", "capi_dead:%")
+            # NOTE: NULL ILIKE 'pattern' → NULL in SQL (not FALSE), so
+            # .not_.ilike() would silently exclude rows with null error. Use
+            # .or_() to explicitly include null-error rows (first-time attempts
+            # where _dispatch_purchase_capi was never called).
+            .or_("capi_last_error.is.null,capi_last_error.not.ilike.skipped:*,capi_last_error.not.ilike.capi_dead:*")
             .order("created_at")
             .limit(_BATCH_LIMIT)
             .execute()
@@ -266,8 +269,7 @@ def retry_failed_tiktok() -> None:
             .gt("total_price", 0)
             .gte("created_at", cutoff)
             .lt("tiktok_retry_count", _MAX_RETRIES)
-            .not_.ilike("tiktok_last_error", "skipped:%")
-            .not_.ilike("tiktok_last_error", "capi_dead:%")
+            .or_("tiktok_last_error.is.null,tiktok_last_error.not.ilike.skipped:*,tiktok_last_error.not.ilike.capi_dead:*")
             .order("created_at")
             .limit(_BATCH_LIMIT)
             .execute()
