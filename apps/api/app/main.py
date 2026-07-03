@@ -15,7 +15,7 @@ from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
 from .limiter import limiter
-from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
+from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, portal_users, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
 from .services import ai_analyst, ai_visibility_analyst, ai_visibility_collector, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, search_console_sync, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
@@ -344,6 +344,7 @@ app.include_router(insights.router)
 app.include_router(meta_ads.router)
 app.include_router(audiences.router)
 app.include_router(setup.router)
+app.include_router(portal_users.router)
 app.include_router(cname.router)
 app.include_router(attribution.router)
 app.include_router(live.router)
