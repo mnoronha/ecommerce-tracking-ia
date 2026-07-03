@@ -5,7 +5,7 @@ import { usePathname, useParams, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import {
   LayoutDashboard, TrendingUp, BarChart2, Target,
-  GitBranch, BarChart, LogOut,
+  BarChart, LogOut, Sparkles, FileText,
 } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 
@@ -44,12 +44,14 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
   const NAV = [
     { href: `/portal/${clientId}/dashboard`,     label: 'Dashboard',     icon: LayoutDashboard },
-    { href: `/portal/${clientId}/attribution`,   label: 'Atribuição',    icon: GitBranch },
     { href: `/portal/${clientId}/meta-ads`,      label: 'Meta Ads',      icon: Target },
     { href: `/portal/${clientId}/google-ads`,    label: 'Google Ads',    icon: TrendingUp },
     { href: `/portal/${clientId}/tiktok-ads`,    label: 'TikTok Ads',    icon: BarChart },
     { href: `/portal/${clientId}/pinterest-ads`, label: 'Pinterest Ads', icon: BarChart2 },
     { href: `/portal/${clientId}/ga4`,           label: 'GA4',           icon: BarChart2 },
+    { href: `/portal/${clientId}/creatives`,     label: 'Criativos',     icon: Sparkles },
+    { href: `/portal/${clientId}/reports`,       label: 'IA',            icon: FileText },
+    { href: `/portal/${clientId}/metas`,         label: 'Metas',         icon: Target },
   ]
 
   return (
