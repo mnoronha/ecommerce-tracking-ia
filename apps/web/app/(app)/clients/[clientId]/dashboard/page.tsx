@@ -308,39 +308,64 @@ function KPICard({ title, value, icon: Icon, change, color, hint, spark, onClick
   )
 }
 
-function FunnelBar({ steps }: { steps: FunnelStep[] }) {
-  const colors = ['#6366f1', '#8b5cf6', '#a855f7', '#ec4899', '#10b981']
-  // Compute drop% between adjacent steps so the merchant sees where the leak is
-  const drops = steps.map((step, i) => {
-    if (i === 0 || steps[i - 1].count === 0) return null
-    return 1 - step.count / steps[i - 1].count
+function ConversionFunnel({ funnel }: { funnel: Ga4Funnel }) {
+  const total = funnel.sessions || 1
+  const fmtN  = (n: number) => n.toLocaleString('pt-BR')
+
+  const steps = [
+    { label: 'Sessões',   value: funnel.sessions,       color: '#6366f1', widthPct: 100 },
+    { label: 'Carrinho',  value: funnel.add_to_cart,    color: '#8b5cf6', widthPct: 76  },
+    { label: 'Checkout',  value: funnel.begin_checkout, color: '#ec4899', widthPct: 54  },
+    { label: 'Compras',   value: funnel.purchases,      color: '#10b981', widthPct: 34  },
+  ]
+
+  const drops = steps.map((s, i) => {
+    if (i === 0) return null
+    const prev = steps[i - 1].value
+    return prev > 0 ? (prev - s.value) / prev * 100 : null
   })
+  const maxDrop = Math.max(...drops.filter((d): d is number => d !== null))
+
   return (
-    <div className="space-y-3">
+    <div className="py-1">
       {steps.map((step, i) => {
+        const pct  = step.value / total * 100
         const drop = drops[i]
-        const isWorstDrop = drop !== null && drop === Math.max(...drops.filter((d): d is number => d !== null))
+        const isWorst = drop !== null && drop === maxDrop && drop > 0
+
         return (
-          <div key={step.label}>
-            <div className="flex justify-between text-xs mb-1">
-              <span className="text-slate-300">{step.label}</span>
-              <span className="text-slate-400">
-                {step.count.toLocaleString('pt-BR')}
-                <span className="text-slate-500 ml-1">({step.pct.toFixed(1)}%)</span>
-              </span>
-            </div>
-            <div className="h-5 bg-[#0f1117] rounded overflow-hidden">
-              <div
-                className="h-full rounded transition-all duration-700"
-                style={{ width: `${Math.max(step.pct, step.count > 0 ? 2 : 0)}%`, backgroundColor: colors[i] }}
-              />
-            </div>
-            {drop !== null && drop > 0.05 && (
-              <p className={`text-xs mt-1 ${isWorstDrop ? 'text-red-400 font-medium' : 'text-slate-600'}`}>
-                ↓ {(drop * 100).toFixed(0)}% perdidos
-                {isWorstDrop && ' · maior queda'}
-              </p>
+          <div key={i} className="flex flex-col items-center">
+            {drop !== null && (
+              <div className="flex items-center justify-center gap-2 py-2">
+                <div className="h-3 w-px bg-[#2a2f3e]" />
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
+                  isWorst
+                    ? 'text-red-400 bg-red-500/10 border-red-500/20'
+                    : drop > 60
+                      ? 'text-amber-400 bg-amber-500/10 border-amber-500/20'
+                      : 'text-slate-500 bg-slate-800/30 border-slate-700/40'
+                }`}>
+                  ↓ {drop.toFixed(0)}% saíram{isWorst ? ' · maior queda' : ''}
+                </span>
+                <div className="h-3 w-px bg-[#2a2f3e]" />
+              </div>
             )}
+            <div
+              className="flex items-center justify-between rounded-lg px-4 py-3 transition-all duration-500"
+              style={{
+                width: `${step.widthPct}%`,
+                backgroundColor: `${step.color}14`,
+                border: `1px solid ${step.color}35`,
+              }}
+            >
+              <span className="text-slate-200 text-sm font-semibold truncate mr-3">{step.label}</span>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-white font-bold">{fmtN(step.value)}</span>
+                <span className="text-xs text-slate-500 bg-[#0f1117] px-1.5 py-0.5 rounded font-medium">
+                  {pct.toFixed(1)}%
+                </span>
+              </div>
+            </div>
           </div>
         )
       })}
@@ -1197,11 +1222,18 @@ export default function DashboardPage() {
     if (period === 'custom' && (!from || !to)) return
     try {
       const qs = periodToQuery(period, from, to)
-      const res = await fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/report?${qs}`)
+      const [res, funnelRes] = await Promise.all([
+        fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/report?${qs}`),
+        fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/funnel?${qs}`).catch(() => null),
+      ])
       if (!res.ok) { setGa4Summary(null); return }
       const data = await res.json()
       setGa4Summary(data.summary ?? null)
       setGa4Channels(data.by_channel || [])
+      if (funnelRes?.ok) {
+        const fData = await funnelRes.json()
+        setGa4Funnel(fData?.summary ?? null)
+      }
     } catch {
       setGa4Summary(null)
       setGa4Channels([])
@@ -1758,16 +1790,21 @@ export default function DashboardPage() {
           </div>
 
           <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
-            <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão</h2>
-            {funnelSteps.length === 0 || funnelSteps[0].count === 0 ? (
+            <div className="flex items-center gap-2 mb-4">
+              <h2 className="text-sm font-semibold text-slate-300">Funil de Conversão</h2>
+              <SourceBadge source="ga4" />
+            </div>
+            {ga4Funnel && ga4Funnel.sessions > 0 ? (
+              <ConversionFunnel funnel={ga4Funnel} />
+            ) : (
               <EmptyState
                 type="setup"
-                title="Funil via GA4 ou Shopify"
-                description="Não recebemos eventos de sessão do pixel Noro neste período. O funil completo (sessões → carrinho → checkout → compra) está disponível no GA4."
-                link={{ label: 'Ver funil GA4', href: `/clients/${CLIENT_PIXEL_ID}/ga4` }}
+                title="Funil via GA4"
+                description="O funil completo (sessões → carrinho → checkout → compra) requer GA4 configurado e recebendo dados."
+                link={{ label: 'Ver GA4', href: `/clients/${CLIENT_PIXEL_ID}/ga4` }}
                 compact
               />
-            ) : <FunnelBar steps={funnelSteps} />}
+            )}
           </div>
         </div>
 

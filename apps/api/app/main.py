@@ -112,7 +112,14 @@ _scheduler.add_job(
 _scheduler.add_job(
     meta_attribution_sync.run_daily_sync_all_clients,
     "cron",
-    hour=14,  # 14 UTC = 11:00 BRT — Meta finaliza atribuição ~11h após fim do dia BRT
+    hour=1,   # 01 UTC = 22:00 BRT — 1ª passagem logo após o dia BRT fechar
+    minute=0,
+    id="meta_attribution_sync_night",
+)
+_scheduler.add_job(
+    meta_attribution_sync.run_daily_sync_all_clients,
+    "cron",
+    hour=14,  # 14 UTC = 11:00 BRT — 2ª passagem com atribuição finalizada (view-through etc.)
     minute=0,
     id="meta_attribution_sync",
 )
