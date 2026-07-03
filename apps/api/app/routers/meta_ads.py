@@ -384,6 +384,8 @@ async def get_overview(
                 .eq("client_id", client_id)
                 .gte("date", str(d_from))
                 .lte("date", str(d_to))
+                .order("date")
+                .order("ad_id")
                 .range(offset, offset + _PAGE - 1)
                 .execute()
             ).data or []
