@@ -25,6 +25,14 @@ interface GA4Report {
   period: { start: string; end: string }
 }
 
+interface SourceRow {
+  source: string
+  medium: string
+  sessions: number
+  conversions: number
+  revenue: number
+}
+
 interface FunnelReport {
   summary: {
     sessions: number; add_to_cart: number; begin_checkout: number; purchases: number
@@ -121,7 +129,71 @@ function SectionError({ msg, retry }: { msg: string; retry: () => void }) {
 
 // ── Overview tab ──────────────────────────────────────────────────────────────
 
-function OverviewTab({ data }: { data: GA4Report }) {
+const SOURCE_ICONS: Record<string, string> = {
+  tiktok: '🎵', pinterest: 'P', facebook: 'f', google: 'G',
+  instagram: 'IG', klaviyo: '✉', chatgpt: '🤖', bing: 'B',
+}
+function sourceIcon(src: string) {
+  const key = src.toLowerCase().split('.')[0]
+  return SOURCE_ICONS[key] ?? src[0].toUpperCase()
+}
+const SOURCE_COLORS: Record<string, string> = {
+  tiktok: '#ff004f', pinterest: '#e60023', facebook: '#1877f2',
+  google: '#4285f4', instagram: '#e1306c', klaviyo: '#0ea5e9',
+  chatgpt: '#74aa9c', bing: '#008373',
+}
+function sourceColor(src: string) {
+  return SOURCE_COLORS[src.toLowerCase().split('.')[0]] ?? '#64748b'
+}
+
+function SourcesTable({ rows, total }: { rows: SourceRow[]; total: number }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-[#2a2f3e]">
+            {['Fonte', 'Medium', 'Sessões', '% Total', 'Conversões', 'Receita'].map(h => (
+              <th key={h} className="px-4 py-3 text-left text-xs text-slate-500 font-medium">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => {
+            const sharePct = total > 0 ? (row.sessions / total) * 100 : 0
+            const color = sourceColor(row.source)
+            return (
+              <tr key={i} className="border-b border-[#1a1f2e] hover:bg-[#1a1f2e] transition-colors">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded flex items-center justify-center text-[10px] font-bold shrink-0"
+                      style={{ backgroundColor: `${color}20`, color }}>
+                      {sourceIcon(row.source)}
+                    </span>
+                    <span className="text-slate-300 font-medium">{row.source}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-slate-500 text-xs">{row.medium}</td>
+                <td className="px-4 py-3 text-slate-300">{fmt(row.sessions)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <div className="w-14 h-1.5 bg-[#2a2f3e] rounded-full overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${Math.min(sharePct, 100)}%`, backgroundColor: color }} />
+                    </div>
+                    <span className="text-slate-400 text-xs">{sharePct.toFixed(1)}%</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-slate-300">{fmt(row.conversions)}</td>
+                <td className="px-4 py-3 text-slate-300">{row.revenue > 0 ? fmtR(row.revenue) : '—'}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function OverviewTab({ data, sources }: { data: GA4Report; sources: SourceRow[] | null }) {
   const { summary, by_channel, daily_series } = data
   const totalSessions = summary.sessions || 1
 
@@ -172,7 +244,7 @@ function OverviewTab({ data }: { data: GA4Report }) {
 
       {by_channel.length > 0 && (
         <Card className="overflow-hidden">
-          <CardHeader title="Por canal" />
+          <CardHeader title="Por canal (agrupamento GA4)" />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -209,6 +281,13 @@ function OverviewTab({ data }: { data: GA4Report }) {
               </tbody>
             </table>
           </div>
+        </Card>
+      )}
+
+      {sources && sources.length > 0 && (
+        <Card className="overflow-hidden">
+          <CardHeader title="Por fonte / medium (top 20)" />
+          <SourcesTable rows={sources} total={totalSessions} />
         </Card>
       )}
     </div>
@@ -503,6 +582,7 @@ export default function GA4Page() {
   const [activeTab, setActiveTab] = useState<Tab>('overview')
 
   const [overview,  setOverview]  = useState<GA4Report | null>(null)
+  const [sources,   setSources]   = useState<SourceRow[] | null>(null)
   const [funnel,    setFunnel]    = useState<FunnelReport | null>(null)
   const [aiData,    setAiData]    = useState<AIReport | null>(null)
   const [pages,     setPages]     = useState<PagesReport | null>(null)
@@ -519,11 +599,15 @@ export default function GA4Page() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API_URL}/ga4/${clientId}/report?${qs}`)
+      const [res, srcRes] = await Promise.all([
+        fetch(`${API_URL}/ga4/${clientId}/report?${qs}`),
+        fetch(`${API_URL}/ga4/${clientId}/sources?${qs}&limit=20`).catch(() => null),
+      ])
       if (res.status === 403) { setError('disabled'); return }
       if (res.status === 400) { setError('no_property'); return }
       if (!res.ok) { const b = await res.json().catch(() => ({})); setError(b.detail || `Erro ${res.status}`); return }
       setOverview(await res.json())
+      if (srcRes?.ok) setSources(await srcRes.json())
     } catch { setError('Falha de rede') }
     finally { setLoading(false) }
   }, [clientId, qs])
@@ -555,8 +639,7 @@ export default function GA4Page() {
   useEffect(() => { loadOverview() }, [loadOverview])
 
   useEffect(() => {
-    // Reset derived tabs when period changes
-    setFunnel(null); setAiData(null); setPages(null); setAudience(null)
+    setSources(null); setFunnel(null); setAiData(null); setPages(null); setAudience(null)
   }, [qs])
 
   const handleTabChange = (tab: Tab) => {
@@ -662,7 +745,7 @@ export default function GA4Page() {
       </div>
 
       {/* Tab content */}
-      {activeTab === 'overview' && <OverviewTab data={overview} />}
+      {activeTab === 'overview' && <OverviewTab data={overview} sources={sources} />}
 
       {activeTab !== 'overview' && (
         tabLoading ? <SectionLoading /> :
