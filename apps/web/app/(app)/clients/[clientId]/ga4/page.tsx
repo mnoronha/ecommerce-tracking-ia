@@ -19,8 +19,8 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface GA4Report {
-  summary: { sessions: number; users: number; conversions: number; revenue: number }
-  by_channel: { channel: string; sessions: number; users: number; conversions: number; revenue: number }[]
+  summary: { sessions: number; users: number; conversions: number; purchases: number; revenue: number }
+  by_channel: { channel: string; sessions: number; users: number; conversions: number; purchases: number; revenue: number }[]
   daily_series: { date: string; sessions: number; users: number; conversions: number }[]
   period: { start: string; end: string }
 }
@@ -29,7 +29,7 @@ interface SourceRow {
   source: string
   medium: string
   sessions: number
-  conversions: number
+  purchases: number
   revenue: number
 }
 
@@ -152,7 +152,7 @@ function SourcesTable({ rows, total }: { rows: SourceRow[]; total: number }) {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-[#2a2f3e]">
-            {['Fonte', 'Medium', 'Sessões', '% Total', 'Conversões', 'Receita'].map(h => (
+            {['Fonte', 'Medium', 'Sessões', '% Total', 'Pedidos', 'Receita'].map(h => (
               <th key={h} className="px-4 py-3 text-left text-xs text-slate-500 font-medium">{h}</th>
             ))}
           </tr>
@@ -182,7 +182,7 @@ function SourcesTable({ rows, total }: { rows: SourceRow[]; total: number }) {
                     <span className="text-slate-400 text-xs">{sharePct.toFixed(1)}%</span>
                   </div>
                 </td>
-                <td className="px-4 py-3 text-slate-300">{fmt(row.conversions)}</td>
+                <td className="px-4 py-3 text-slate-300">{fmt(row.purchases)}</td>
                 <td className="px-4 py-3 text-slate-300">{row.revenue > 0 ? fmtR(row.revenue) : '—'}</td>
               </tr>
             )
@@ -203,8 +203,8 @@ function OverviewTab({ data, sources }: { data: GA4Report; sources: SourceRow[] 
         {[
           { icon: BarChart2, label: 'Sessões', value: fmt(summary.sessions), color: 'text-indigo-400' },
           { icon: Users, label: 'Usuários', value: fmt(summary.users), color: 'text-emerald-400' },
-          { icon: MousePointerClick, label: 'Conversões', value: fmt(summary.conversions), color: 'text-amber-400' },
-          { icon: ShoppingCart, label: 'Receita GA4', value: fmtR(summary.revenue), color: 'text-pink-400' },
+          { icon: ShoppingCart, label: 'Pedidos', value: fmt(summary.purchases), color: 'text-amber-400' },
+          { icon: MousePointerClick, label: 'Receita GA4', value: fmtR(summary.revenue), color: 'text-pink-400' },
         ].map(({ icon: Icon, label, value, color }) => (
           <Card key={label} className="p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -249,7 +249,7 @@ function OverviewTab({ data, sources }: { data: GA4Report; sources: SourceRow[] 
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#2a2f3e]">
-                  {['Canal', 'Sessões', '% Sessões', 'Usuários', 'Conversões', 'Receita'].map(h => (
+                  {['Canal', 'Sessões', '% Sessões', 'Usuários', 'Pedidos', 'Receita'].map(h => (
                     <th key={h} className="px-4 py-3 text-left text-xs text-slate-500 font-medium">{h}</th>
                   ))}
                 </tr>
@@ -274,7 +274,7 @@ function OverviewTab({ data, sources }: { data: GA4Report; sources: SourceRow[] 
                       </div>
                     </td>
                     <td className="px-4 py-3 text-slate-300">{fmt(row.users)}</td>
-                    <td className="px-4 py-3 text-slate-300">{fmt(row.conversions)}</td>
+                    <td className="px-4 py-3 text-slate-300">{fmt(row.purchases)}</td>
                     <td className="px-4 py-3 text-slate-300">{row.revenue > 0 ? fmtR(row.revenue) : '—'}</td>
                   </tr>
                 ))}

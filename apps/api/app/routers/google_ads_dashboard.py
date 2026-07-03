@@ -611,7 +611,7 @@ async def ga4_sources(
         "dimensions": [{"name": "sessionSource"}, {"name": "sessionMedium"}],
         "metrics": [
             {"name": "sessions"},
-            {"name": "conversions"},
+            {"name": "transactions"},
             {"name": "purchaseRevenue"},
         ],
         "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
@@ -624,11 +624,11 @@ async def ga4_sources(
         rows = resp.json().get("rows", [])
         return [
             {
-                "source":      r["dimensionValues"][0]["value"],
-                "medium":      r["dimensionValues"][1]["value"],
-                "sessions":    int(r["metricValues"][0]["value"]),
-                "conversions": round(float(r["metricValues"][1]["value"])),
-                "revenue":     round(float(r["metricValues"][2]["value"]), 2),
+                "source":    r["dimensionValues"][0]["value"],
+                "medium":    r["dimensionValues"][1]["value"],
+                "sessions":  int(r["metricValues"][0]["value"]),
+                "purchases": int(float(r["metricValues"][1]["value"])),
+                "revenue":   round(float(r["metricValues"][2]["value"]), 2),
             }
             for r in rows
         ]
