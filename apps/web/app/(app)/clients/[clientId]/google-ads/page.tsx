@@ -27,6 +27,8 @@ interface Totals {
   total_sent: number; sent_coverage_pct: number | null
   gclid: number; gbraid: number; enhanced_only: number; not_sent: number
   gclid_pct: number | null; cpa: number | null; avg_ticket: number | null
+  ctr?: number | null; cpc?: number | null; cpm?: number | null
+  sessions?: number | null
   data_source?: string
 }
 
@@ -333,19 +335,17 @@ export default function GoogleAdsPage() {
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
-            <KpiCard label="Investimento"     value={t?.has_spend ? fmt(t.spend) : '—'} delta={dlt.spend} invertDelta accent="rose"
+            <KpiCard label="Investimento"   value={t?.has_spend ? fmt(t.spend) : '—'}                    delta={dlt.spend}   invertDelta accent="rose"
               sub={t && !t.has_spend ? 'sem sync de spend' : undefined} />
-            <KpiCard label="ROAS"             value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'} delta={dlt.roas} accent="emerald" />
-            <KpiCard label="Compras Google"   value={t ? String(t.orders) : '—'}       delta={dlt.orders}   accent="emerald" />
-            <KpiCard label="Receita Google"   value={t ? fmt(t.revenue) : '—'}          delta={dlt.revenue}  accent="emerald" />
-            <KpiCard label="CPA"              value={t?.cpa != null ? fmtD2(t.cpa) : '—'} invertDelta />
-            <KpiCard label="Ticket Médio"     value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'} accent="orange" />
-            <KpiCard label="Conversões env."  value={t ? String(t.total_sent) : '—'}    delta={dlt.total_sent} accent="blue"
-              sub={t?.sent_coverage_pct != null ? `${t.sent_coverage_pct}% dos pedidos` : undefined} />
-            <KpiCard label="gclid (clique)"   value={t ? String(t.gclid) : '—'}        delta={dlt.gclid}    accent="yellow"
-              sub={t?.gclid_pct != null ? `${t.gclid_pct}% dos enviados` : undefined} />
-            <KpiCard label="Enhanced"         value={t ? String(t.enhanced_only) : '—'}  accent="teal" />
-            <KpiCard label="Não enviados"      value={t ? String(t.not_sent) : '—'}      invertDelta />
+            <KpiCard label="ROAS"           value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'}      delta={dlt.roas}    accent="emerald" />
+            <KpiCard label="Compras Google" value={t ? String(t.orders) : '—'}                           delta={dlt.orders}  accent="emerald" />
+            <KpiCard label="Receita Google" value={t ? fmt(t.revenue) : '—'}                             delta={dlt.revenue} accent="emerald" />
+            <KpiCard label="CPA"            value={t?.cpa != null ? fmtD2(t.cpa) : '—'}                 invertDelta />
+            <KpiCard label="Ticket Médio"   value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'}      accent="orange" />
+            <KpiCard label="Impressões"     value={t ? fmtN(t.impressions) : '—'}                        accent="blue" />
+            <KpiCard label="CPM"            value={t?.cpm != null ? fmtD2(t.cpm) : t && t.impressions > 0 ? fmtD2(t.spend / t.impressions * 1000) : '—'} accent="blue" />
+            <KpiCard label="CTR"            value={t?.ctr != null ? `${t.ctr.toFixed(2)}%` : t && t.impressions > 0 ? `${(t.clicks / t.impressions * 100).toFixed(2)}%` : '—'} accent="blue" />
+            <KpiCard label="CPC"            value={t?.cpc != null ? fmtD2(t.cpc) : t && t.clicks > 0 ? fmtD2(t.spend / t.clicks) : '—'} accent="blue" />
           </div>
 
           {/* Charts + Match Types */}

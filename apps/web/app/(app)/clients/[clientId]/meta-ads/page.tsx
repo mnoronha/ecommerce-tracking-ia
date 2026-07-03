@@ -415,32 +415,34 @@ export default function MetaAdsPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Funnel */}
-            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
-              <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão</h2>
-              <div className="space-y-3">
-                <FunnelBar label="Pageviews"     count={funnel.pageview || 0}        pct={100}
-                  prev={funnelPrev.pageview} />
-                <FunnelBar label="Add ao Carrinho" count={funnel.add_to_cart || 0}   pct={fTop > 0 ? (funnel.add_to_cart || 0)/fTop*100 : 0}
-                  prev={funnelPrev.add_to_cart} />
-                <FunnelBar label="Checkout Iniciado" count={funnel.begin_checkout || 0} pct={fTop > 0 ? (funnel.begin_checkout || 0)/fTop*100 : 0}
-                  prev={funnelPrev.begin_checkout} />
-                <FunnelBar label="Compras Meta"  count={funnel.purchases || 0}       pct={fTop > 0 ? (funnel.purchases || 0)/fTop*100 : 0}
-                  prev={funnelPrev.purchases} />
-              </div>
-              {t && (
-                <div className="mt-4 pt-4 border-t border-[#2a2f3e] grid grid-cols-2 gap-3 text-center">
-                  <div>
-                    <p className="text-lg font-bold text-emerald-400">{t.ctr?.toFixed(2) ?? '—'}%</p>
-                    <p className="text-xs text-slate-500">CTR</p>
-                  </div>
-                  <div>
-                    <p className="text-lg font-bold text-teal-400">{t.cpa != null ? fmtDec(t.cpa) : '—'}</p>
-                    <p className="text-xs text-slate-500">CPA</p>
-                  </div>
+            {/* Funnel — só exibe se tiver dados do pixel Noro */}
+            {fTop > 0 && (
+              <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
+                <h2 className="text-sm font-semibold text-slate-300 mb-4">Funil de Conversão</h2>
+                <div className="space-y-3">
+                  <FunnelBar label="Pageviews"        count={funnel.pageview || 0}       pct={100}
+                    prev={funnelPrev.pageview} />
+                  <FunnelBar label="Add ao Carrinho"  count={funnel.add_to_cart || 0}    pct={fTop > 0 ? (funnel.add_to_cart || 0)/fTop*100 : 0}
+                    prev={funnelPrev.add_to_cart} />
+                  <FunnelBar label="Checkout Iniciado" count={funnel.begin_checkout || 0} pct={fTop > 0 ? (funnel.begin_checkout || 0)/fTop*100 : 0}
+                    prev={funnelPrev.begin_checkout} />
+                  <FunnelBar label="Compras Meta"     count={funnel.purchases || 0}      pct={fTop > 0 ? (funnel.purchases || 0)/fTop*100 : 0}
+                    prev={funnelPrev.purchases} />
                 </div>
-              )}
-            </div>
+                {t && (
+                  <div className="mt-4 pt-4 border-t border-[#2a2f3e] grid grid-cols-2 gap-3 text-center">
+                    <div>
+                      <p className="text-lg font-bold text-emerald-400">{t.ctr?.toFixed(2) ?? '—'}%</p>
+                      <p className="text-xs text-slate-500">CTR</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold text-teal-400">{t.cpa != null ? fmtDec(t.cpa) : '—'}</p>
+                      <p className="text-xs text-slate-500">CPA</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Campaign Table */}

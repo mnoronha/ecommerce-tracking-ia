@@ -1527,26 +1527,31 @@ export default function DashboardPage() {
                 : undefined
             }
             color="bg-purple-500/10 text-purple-400" />
-          <KPICard title="Ticket Médio" value={kpis ? fmt(kpis.avgOrderValue) : '—'}
-            icon={Activity} change={kpis?.avgOrderValueChange}
-            spark={revenueData.map(p => p.orders > 0 ? p.revenue / p.orders : 0)}
+          <KPICard
+            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'Ticket Médio (GA4)' : 'Ticket Médio'}
+            value={
+              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 && ga4Summary.revenue > 0
+                ? fmt(ga4Summary.revenue / ga4Summary.purchases)
+                : (kpis ? fmt(kpis.avgOrderValue) : '—')
+            }
+            icon={Activity}
+            change={kpis?.totalOrders === 0 && ga4Summary ? undefined : kpis?.avgOrderValueChange}
+            spark={kpis?.totalOrders === 0 && ga4Summary ? undefined : revenueData.map(p => p.orders > 0 ? p.revenue / p.orders : 0)}
             color="bg-orange-500/10 text-orange-400"
-            onClick={() => setDrilldown('avgOrderValue')} />
+            hint={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'via Google Analytics 4' : undefined}
+            onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('avgOrderValue')} />
           <KPICard
             title="Conversão"
             value={
-              kpis?.totalVisitors === 0 && ga4Summary && ga4Summary.sessions > 0
-                ? ((kpis.totalOrders / ga4Summary.sessions) * 100).toFixed(1) + '%'
-                : kpis && kpis.totalVisitors === 0 && !ga4Summary
-                ? '—'
-                : (kpis ? kpis.conversionRate.toFixed(1) + '%' : '—')
+              ga4Summary && ga4Summary.sessions > 0 && (kpis?.totalOrders === 0 ? ga4Summary.purchases : kpis?.totalOrders ?? 0) > 0
+                ? (((kpis?.totalOrders === 0 ? ga4Summary.purchases : kpis?.totalOrders ?? 0) / ga4Summary.sessions) * 100).toFixed(1) + '%'
+                : kpis && kpis.totalVisitors > 0
+                ? kpis.conversionRate.toFixed(1) + '%'
+                : '—'
             }
             icon={Percent}
-            change={
-              kpis?.totalVisitors === 0 && !ga4Summary ? undefined : kpis?.conversionRateChange
-            }
             hint={
-              kpis?.totalVisitors === 0 && ga4Summary
+              ga4Summary && ga4Summary.sessions > 0
                 ? 'pedidos ÷ sessões GA4'
                 : kpis?.totalVisitors === 0
                 ? 'Sem dados de sessões — verificar pixel'
