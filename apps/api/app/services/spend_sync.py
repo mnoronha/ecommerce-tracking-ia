@@ -147,7 +147,12 @@ def _fetch_tiktok_spend(advertiser_id: str, access_token: str, target_date: date
         resp = httpx.get(_TIKTOK_REPORT, params=params, headers=headers, timeout=30.0)
         body = resp.json()
         if body.get("code") != 0:
-            logger.warning("tiktok_spend: API error for advertiser %s: %s", advertiser_id, body.get("message", ""))
+            logger.warning(
+                "tiktok_spend: API error %s for advertiser %s — code=%s msg=%s raw=%s",
+                resp.status_code, advertiser_id,
+                body.get("code"), body.get("message", ""),
+                str(body)[:300],
+            )
             return None
         rows = (body.get("data") or {}).get("list") or []
         if not rows:
@@ -222,7 +227,7 @@ def _fetch_pinterest_spend(ad_account_id: str, access_token: str, target_date: d
     Pinterest returns values in the account's currency (usually BRL for BR accounts).
     SPEND_IN_DOLLAR field name is misleading — it's in account currency, not USD.
     """
-    url     = _PINTEREST_ANALYTICS.format(ad_account_id=ad_account_id)
+    url      = _PINTEREST_ANALYTICS.format(ad_account_id=ad_account_id)
     date_str = target_date.isoformat()
     try:
         resp = httpx.get(
@@ -237,9 +242,14 @@ def _fetch_pinterest_spend(ad_account_id: str, access_token: str, target_date: d
             timeout=15.0,
         )
         if resp.status_code != 200:
-            logger.warning("pinterest_spend: HTTP %s for %s: %s", resp.status_code, ad_account_id, resp.text[:200])
+            logger.warning(
+                "pinterest_spend: HTTP %s for %s — raw=%s",
+                resp.status_code, ad_account_id, resp.text[:300],
+            )
             return None
-        rows = resp.json()
+        # Pinterest v5 analytics response: {"value": [...], "summary_no_filter": {...}}
+        body = resp.json()
+        rows = body.get("value") if isinstance(body, dict) else body
         if not rows:
             return {"spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0}
         row = rows[0]
@@ -350,6 +360,125 @@ def run_daily_spend_sync() -> None:
             if metrics is not None:
                 _upsert_spend(c["id"], "pinterest_ads", yesterday, metrics)
                 logger.info("spend_sync: pinterest_ads %s → R$%.2f", pixel, metrics["spend"])
+
+
+# ── Monthly range helpers (efficient — 1 API call per platform) ───────────────
+
+def fetch_meta_spend_monthly(
+    ad_account_id: str,
+    access_token: str,
+    start_date: date,
+    end_date: date,
+) -> list:
+    """
+    Fetch monthly Meta Ads spend aggregates for a date range in a single API call.
+    Returns list of dicts: {date, spend, impressions, clicks, conversions}.
+    """
+    clean_id = ad_account_id.removeprefix("act_")
+    url = _META_INSIGHTS.format(account_id=clean_id)
+    try:
+        resp = httpx.get(
+            url,
+            params={
+                "fields":         "spend,impressions,clicks,actions",
+                "time_range":     f'{{"since":"{start_date.isoformat()}","until":"{end_date.isoformat()}"}}',
+                "time_increment": "monthly",
+                "level":          "account",
+                "access_token":   access_token,
+            },
+            timeout=30.0,
+        )
+        if resp.status_code != 200:
+            logger.warning("meta_monthly: HTTP %s: %s", resp.status_code, resp.text[:300])
+            return []
+        rows = resp.json().get("data") or []
+        result = []
+        for row in rows:
+            purchases = 0.0
+            for action in (row.get("actions") or []):
+                if action.get("action_type") in ("purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase"):
+                    try:
+                        purchases = float(action.get("value") or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    break
+            month_date = date.fromisoformat(row.get("date_start", start_date.isoformat()))
+            result.append({
+                "date":        month_date,
+                "spend":       round(float(row.get("spend") or 0), 2),
+                "impressions": int(row.get("impressions") or 0),
+                "clicks":      int(row.get("clicks") or 0),
+                "conversions": round(purchases, 2),
+            })
+        return result
+    except Exception as exc:
+        logger.warning("meta_monthly: fetch failed: %s", exc)
+        return []
+
+
+def fetch_google_spend_monthly(
+    customer_id: str,
+    refresh_token: str,
+    start_date: date,
+    end_date: date,
+    manager_id: Optional[str] = None,
+) -> list:
+    """
+    Fetch monthly Google Ads spend aggregates for a date range in a single API call.
+    Returns list of dicts: {date, spend, impressions, clicks, conversions}.
+    """
+    if not all([settings.GOOGLE_ADS_DEVELOPER_TOKEN, settings.GOOGLE_ADS_OAUTH_CLIENT_ID, settings.GOOGLE_ADS_OAUTH_CLIENT_SECRET]):
+        return []
+
+    token = _get_google_token(refresh_token)
+    if not token:
+        return []
+
+    clean_cid = customer_id.replace("-", "").replace(" ", "")
+    query = (
+        "SELECT segments.month, metrics.cost_micros, metrics.impressions, "
+        "metrics.clicks, metrics.conversions "
+        "FROM customer "
+        f"WHERE segments.date BETWEEN '{start_date.isoformat()}' AND '{end_date.isoformat()}'"
+    )
+
+    headers = {
+        "Authorization":   f"Bearer {token}",
+        "developer-token": settings.GOOGLE_ADS_DEVELOPER_TOKEN,
+        "Content-Type":    "application/json",
+    }
+    if manager_id:
+        headers["login-customer-id"] = manager_id.replace("-", "").replace(" ", "")
+
+    url = f"{_GOOGLE_ADS_API}/customers/{clean_cid}/googleAds:search"
+    try:
+        resp = httpx.post(url, json={"query": query}, headers=headers, timeout=30.0)
+        if resp.status_code != 200:
+            logger.warning("google_monthly: HTTP %s for %s: %s", resp.status_code, customer_id, resp.text[:300])
+            return []
+
+        monthly: dict = {}
+        for row in (resp.json().get("results") or []):
+            seg    = row.get("segments") or {}
+            m_str  = seg.get("month")  # "2025-01-01"
+            if not m_str:
+                continue
+            m_date = date.fromisoformat(m_str)
+            m      = row.get("metrics") or {}
+            if m_date not in monthly:
+                monthly[m_date] = {"date": m_date, "spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0}
+            monthly[m_date]["spend"]       += int(m.get("costMicros", 0)) / 1_000_000
+            monthly[m_date]["impressions"] += int(m.get("impressions", 0))
+            monthly[m_date]["clicks"]      += int(m.get("clicks", 0))
+            monthly[m_date]["conversions"] += float(m.get("conversions", 0))
+
+        return [
+            {**v, "spend": round(v["spend"], 2), "conversions": round(v["conversions"], 2)}
+            for v in sorted(monthly.values(), key=lambda x: x["date"])
+        ]
+    except Exception as exc:
+        logger.warning("google_monthly: fetch failed for %s: %s", customer_id, exc)
+        return []
 
 
 # ── Historical backfill ───────────────────────────────────────────────────────

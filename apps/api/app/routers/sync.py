@@ -4,6 +4,8 @@ Rotas de sincronização manual via API.
 POST /sync/shopify/{pixel_id}           — dispara sync imediato para um cliente
 POST /sync/shopify/{pixel_id}/backfill  — sync completo sem filtro de data
 GET  /sync/shopify/{pixel_id}/status    — retorna last_sync_at e estado
+POST /sync/spend/{pixel_id}/backfill    — backfill histórico Meta+Google mensal
+POST /sync/spend/{pixel_id}/debug       — testa TikTok+Pinterest e retorna resposta bruta
 """
 
 from datetime import datetime, timezone
@@ -11,10 +13,11 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from ..config import settings
 from ..database import get_supabase
 from ..services import crypto, metrics_cache, reports, report_builder, report_renderer
 from ..services import resend as email_service
-from ..services import shopify_sync
+from ..services import shopify_sync, spend_sync
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -368,6 +371,214 @@ async def inspect_note_attributes(
         "orders_inspected": len(result),
         "orders": result,
     }
+
+
+@router.post("/spend/{pixel_id}/backfill", summary="Backfill histórico de ad spend — Meta + Google Ads mensal")
+async def spend_backfill(
+    pixel_id: str,
+    from_date: str = Query(..., description="Data inicial YYYY-MM-DD"),
+    to_date:   Optional[str] = Query(None, description="Data final YYYY-MM-DD (padrão: hoje)"),
+):
+    """
+    Busca gasto histórico do Meta Ads e Google Ads com granularidade mensal
+    (2 chamadas API no total), armazena em ad_spend e retorna o relatório mensal.
+    """
+    from datetime import date as _date
+
+    try:
+        start = _date.fromisoformat(from_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="from_date inválido — use YYYY-MM-DD")
+
+    end = _date.today()
+    if to_date:
+        try:
+            end = _date.fromisoformat(to_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="to_date inválido — use YYYY-MM-DD")
+
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select(
+            "id, pixel_id, name, "
+            "meta_ad_account_id, meta_access_token, "
+            "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id"
+        )
+        .eq("pixel_id", pixel_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    c         = crypto.decrypt_client_secrets(rows[0])
+    client_id = c["id"]
+    manager   = c.get("google_ads_login_customer_id") or settings.GOOGLE_ADS_MANAGER_ID or None
+    errors: list = []
+
+    # ── Meta ──────────────────────────────────────────────────────────────────
+    meta_monthly: dict = {}
+    if c.get("meta_ad_account_id") and c.get("meta_access_token"):
+        meta_rows = spend_sync.fetch_meta_spend_monthly(
+            c["meta_ad_account_id"], c["meta_access_token"], start, end
+        )
+        for r in meta_rows:
+            key = r["date"].isoformat()[:7]
+            meta_monthly[key] = r
+            spend_sync._upsert_spend(client_id, "meta_ads", r["date"], r)
+        if not meta_rows:
+            errors.append("meta_ads: sem dados retornados — token pode estar expirado")
+    else:
+        errors.append("meta_ads: credenciais não configuradas")
+
+    # ── Google Ads ────────────────────────────────────────────────────────────
+    google_monthly: dict = {}
+    if c.get("google_ads_customer_id") and c.get("google_ads_refresh_token"):
+        google_rows = spend_sync.fetch_google_spend_monthly(
+            c["google_ads_customer_id"], c["google_ads_refresh_token"], start, end, manager
+        )
+        for r in google_rows:
+            key = r["date"].isoformat()[:7]
+            google_monthly[key] = r
+            spend_sync._upsert_spend(client_id, "google_ads", r["date"], r)
+        if not google_rows:
+            errors.append("google_ads: sem dados retornados — credenciais podem estar inválidas")
+    else:
+        errors.append("google_ads: credenciais não configuradas")
+
+    # ── Montar relatório ──────────────────────────────────────────────────────
+    all_months = sorted(set(list(meta_monthly.keys()) + list(google_monthly.keys())))
+    months_report = []
+    for month in all_months:
+        m = meta_monthly.get(month, {})
+        g = google_monthly.get(month, {})
+        months_report.append({
+            "mes":        month,
+            "meta_ads":   m.get("spend", 0.0),
+            "google_ads": g.get("spend", 0.0),
+            "total":      round((m.get("spend", 0.0) + g.get("spend", 0.0)), 2),
+        })
+
+    return {
+        "client":           c.get("name"),
+        "from":             start.isoformat(),
+        "to":               end.isoformat(),
+        "months":           months_report,
+        "total_meta_ads":   round(sum(r["meta_ads"]   for r in months_report), 2),
+        "total_google_ads": round(sum(r["google_ads"] for r in months_report), 2),
+        "total_geral":      round(sum(r["total"]      for r in months_report), 2),
+        "errors":           errors,
+    }
+
+
+@router.post("/spend/{pixel_id}/debug", summary="Testa spend sync TikTok+Pinterest e retorna resposta bruta das APIs")
+async def debug_spend_sync(
+    pixel_id: str,
+    target_date: Optional[str] = Query(None, description="Data alvo YYYY-MM-DD (padrão: ontem)"),
+):
+    """
+    Dispara uma chamada de teste para as APIs de spend de TikTok e Pinterest
+    para um único dia e retorna o resultado detalhado — incluindo erros.
+    Útil para diagnosticar tokens expirados ou problemas de credencial.
+    """
+    from datetime import date as _date
+    import httpx as _httpx
+    from ..services.spend_sync import (
+        _TIKTOK_REPORT, _PINTEREST_ANALYTICS,
+    )
+
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select(
+            "id, pixel_id, name, "
+            "tiktok_advertiser_id, tiktok_access_token, "
+            "pinterest_ad_account_id, pinterest_access_token"
+        )
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    c = crypto.decrypt_client_secrets(rows[0])
+
+    if target_date:
+        try:
+            d = _date.fromisoformat(target_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="Invalid date format — use YYYY-MM-DD")
+    else:
+        d = (_date.today() - __import__("datetime").timedelta(days=1))
+
+    result: dict = {
+        "client":      c.get("name") or pixel_id,
+        "target_date": d.isoformat(),
+        "tiktok":      None,
+        "pinterest":   None,
+    }
+
+    # ── TikTok ──────────────────────────────────────────────────────────────────
+    if c.get("tiktok_advertiser_id") and c.get("tiktok_access_token"):
+        date_str = d.isoformat()
+        params = {
+            "advertiser_id": c["tiktok_advertiser_id"],
+            "report_type":   "BASIC",
+            "dimensions":    '["stat_time_day"]',
+            "metrics":       '["spend","impressions","clicks","total_complete_payment_event_count"]',
+            "data_level":    "AUCTION_ADVERTISER",
+            "start_date":    date_str,
+            "end_date":      date_str,
+            "page_size":     1,
+        }
+        try:
+            resp = _httpx.get(
+                _TIKTOK_REPORT,
+                params=params,
+                headers={"Access-Token": c["tiktok_access_token"]},
+                timeout=15.0,
+            )
+            body = resp.json()
+            result["tiktok"] = {
+                "http_status": resp.status_code,
+                "api_code":    body.get("code"),
+                "api_message": body.get("message"),
+                "raw":         body,
+            }
+        except Exception as exc:
+            result["tiktok"] = {"error": str(exc)}
+    else:
+        result["tiktok"] = {"error": "credenciais não configuradas"}
+
+    # ── Pinterest ────────────────────────────────────────────────────────────────
+    if c.get("pinterest_ad_account_id") and c.get("pinterest_access_token"):
+        url = _PINTEREST_ANALYTICS.format(ad_account_id=c["pinterest_ad_account_id"])
+        try:
+            resp = _httpx.get(
+                url,
+                params={
+                    "start_date":  d.isoformat(),
+                    "end_date":    d.isoformat(),
+                    "columns":     "SPEND_IN_DOLLAR,IMPRESSION_1,OUTBOUND_CLICK_1,TOTAL_CHECKOUT",
+                    "granularity": "DAY",
+                },
+                headers={"Authorization": f"Bearer {c['pinterest_access_token']}"},
+                timeout=15.0,
+            )
+            body = resp.json() if resp.status_code == 200 else resp.text
+            result["pinterest"] = {
+                "http_status": resp.status_code,
+                "raw":         body,
+            }
+        except Exception as exc:
+            result["pinterest"] = {"error": str(exc)}
+    else:
+        result["pinterest"] = {"error": "credenciais não configuradas"}
+
+    return result
 
 
 @router.patch("/shopify/{pixel_id}/enable", summary="Enable/disable Shopify API sync")
