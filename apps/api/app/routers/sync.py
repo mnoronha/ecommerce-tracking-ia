@@ -1,11 +1,13 @@
 """
 Rotas de sincronização manual via API.
 
-POST /sync/shopify/{pixel_id}           — dispara sync imediato para um cliente
-POST /sync/shopify/{pixel_id}/backfill  — sync completo sem filtro de data
-GET  /sync/shopify/{pixel_id}/status    — retorna last_sync_at e estado
-POST /sync/spend/{pixel_id}/backfill    — backfill histórico Meta+Google mensal
-POST /sync/spend/{pixel_id}/debug       — testa TikTok+Pinterest e retorna resposta bruta
+POST /sync/shopify/{pixel_id}                    — dispara sync imediato para um cliente
+POST /sync/shopify/{pixel_id}/backfill           — sync completo sem filtro de data
+GET  /sync/shopify/{pixel_id}/status             — retorna last_sync_at e estado
+POST /sync/spend/{pixel_id}/backfill             — backfill histórico Meta+Google mensal
+POST /sync/spend/{pixel_id}/daily-backfill       — backfill diário ad_spend (por dia, qualquer período)
+POST /sync/spend/{pixel_id}/debug               — testa TikTok+Pinterest e retorna resposta bruta
+POST /sync/meta-attributions/{pixel_id}/backfill — re-sincroniza meta_ad_attributions desde uma data
 """
 
 from datetime import datetime, timezone
@@ -17,7 +19,7 @@ from ..config import settings
 from ..database import get_supabase
 from ..services import crypto, metrics_cache, reports, report_builder, report_renderer
 from ..services import resend as email_service
-from ..services import shopify_sync, spend_sync
+from ..services import shopify_sync, spend_sync, meta_attribution_sync
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -426,7 +428,6 @@ async def spend_backfill(
         for r in meta_rows:
             key = r["date"].isoformat()[:7]
             meta_monthly[key] = r
-            spend_sync._upsert_spend(client_id, "meta_ads", r["date"], r)
         if not meta_rows:
             errors.append("meta_ads: sem dados retornados — token pode estar expirado")
     else:
@@ -441,7 +442,6 @@ async def spend_backfill(
         for r in google_rows:
             key = r["date"].isoformat()[:7]
             google_monthly[key] = r
-            spend_sync._upsert_spend(client_id, "google_ads", r["date"], r)
         if not google_rows:
             errors.append("google_ads: sem dados retornados — credenciais podem estar inválidas")
     else:
@@ -469,6 +469,114 @@ async def spend_backfill(
         "total_google_ads": round(sum(r["google_ads"] for r in months_report), 2),
         "total_geral":      round(sum(r["total"]      for r in months_report), 2),
         "errors":           errors,
+    }
+
+
+@router.post("/spend/{pixel_id}/daily-backfill", summary="Backfill diário de ad_spend — Meta+Google+TikTok+Pinterest por dia")
+async def spend_daily_backfill(
+    pixel_id:  str,
+    from_date: str = Query(..., description="Data inicial YYYY-MM-DD"),
+    to_date:   Optional[str] = Query(None, description="Data final YYYY-MM-DD (padrão: hoje)"),
+):
+    """
+    Re-sincroniza ad_spend dia a dia para o período informado, chamando cada API
+    individualmente por dia. Corrige dias faltando ou com dados desatualizados.
+    Para backfill de meses inteiros prefira /spend/{pixel_id}/backfill (uma chamada mensal).
+    """
+    from datetime import date as _date
+
+    try:
+        start = _date.fromisoformat(from_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="from_date inválido — use YYYY-MM-DD")
+
+    end = _date.today()
+    if to_date:
+        try:
+            end = _date.fromisoformat(to_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="to_date inválido — use YYYY-MM-DD")
+
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select("id, pixel_id")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    client_id = rows[0]["id"]
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: spend_sync.backfill_spend_range(client_id, pixel_id, start, end),
+    )
+    return result
+
+
+@router.post("/meta-attributions/{pixel_id}/backfill", summary="Re-sincroniza meta_ad_attributions desde uma data")
+async def meta_attributions_backfill(
+    pixel_id:  str,
+    from_date: str = Query(..., description="Data inicial YYYY-MM-DD — todos os dias até hoje são re-sincronizados"),
+):
+    """
+    Re-busca dados por anúncio/dia da Meta Ads API para o período desde from_date até hoje
+    e faz upsert em meta_ad_attributions. Corrige dados retroativos de atribuição
+    (janela de 28 dias do Meta) e dias que nunca foram atualizados após o primeiro sync.
+    """
+    from datetime import date as _date
+
+    try:
+        start = _date.fromisoformat(from_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="from_date inválido — use YYYY-MM-DD")
+
+    today = _date.today()
+    days = (today - start).days + 1
+    if days < 1:
+        raise HTTPException(status_code=422, detail="from_date não pode ser no futuro")
+    if days > 180:
+        raise HTTPException(status_code=422, detail="Período máximo de 180 dias")
+
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select("id, meta_ad_account_id, meta_access_token")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Cliente não encontrado")
+
+    c = crypto.decrypt_client_secrets(rows[0])
+    if not c.get("meta_ad_account_id") or not c.get("meta_access_token"):
+        raise HTTPException(status_code=400, detail="Credenciais Meta Ads não configuradas")
+
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: meta_attribution_sync.sync_for_client(
+            client_uuid=c["id"],
+            account_id=c["meta_ad_account_id"],
+            access_token=c["meta_access_token"],
+            days=days,
+        ),
+    )
+    return {
+        "pixel_id":  pixel_id,
+        "from_date": from_date,
+        "to_date":   today.isoformat(),
+        "days":      days,
+        **result,
     }
 
 
