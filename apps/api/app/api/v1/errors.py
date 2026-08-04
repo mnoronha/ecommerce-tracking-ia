@@ -50,9 +50,15 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         500: "INTERNAL_ERROR",
         503: "SERVICE_UNAVAILABLE",
     }.get(exc.status_code, "ERROR")
+    if isinstance(exc.detail, dict):
+        message = exc.detail.get("error", str(exc.detail))
+        details = {k: v for k, v in exc.detail.items() if k != "error"}
+    else:
+        message = str(exc.detail)
+        details = {}
     return JSONResponse(
         status_code=exc.status_code,
-        content=_error_body(code, str(exc.detail), {}, req_id),
+        content=_error_body(code, message, details, req_id),
     )
 
 
