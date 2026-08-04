@@ -320,6 +320,7 @@ async def google_overview(
                     .select("id", count="exact")
                     .eq("client_id", client_id)
                     .eq("event_type", et)
+                    .neq("device_type", "bot")
                     .gte("created_at", funnel_start)
                     .lte("created_at", funnel_end)
                     .execute()
@@ -495,7 +496,10 @@ async def ga4_report(
     )
 
     if "error" in result:
-        raise HTTPException(status_code=502, detail=result["error"])
+        raise HTTPException(
+            status_code=502,
+            detail={"error": result["error"], "ga4_detail": result.get("detail", "")},
+        )
 
     return result
 
@@ -624,11 +628,11 @@ async def ga4_sources(
         rows = resp.json().get("rows", [])
         return [
             {
-                "source":    r["dimensionValues"][0]["value"],
-                "medium":    r["dimensionValues"][1]["value"],
-                "sessions":  int(r["metricValues"][0]["value"]),
-                "purchases": int(float(r["metricValues"][1]["value"])),
-                "revenue":   round(float(r["metricValues"][2]["value"]), 2),
+                "source":      r["dimensionValues"][0]["value"],
+                "medium":      r["dimensionValues"][1]["value"],
+                "sessions":    int(r["metricValues"][0]["value"]),
+                "conversions": int(float(r["metricValues"][1]["value"])),
+                "revenue":     round(float(r["metricValues"][2]["value"]), 2),
             }
             for r in rows
         ]
