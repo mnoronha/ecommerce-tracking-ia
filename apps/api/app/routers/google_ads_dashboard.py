@@ -477,12 +477,11 @@ async def ga4_report(
         raise HTTPException(status_code=400, detail="Google OAuth not connected")
 
     try:
+        today = datetime.now(timezone.utc).date()
         if start and end:
             start_dt = date_type.fromisoformat(start)
-            end_dt   = date_type.fromisoformat(end)
+            end_dt   = min(date_type.fromisoformat(end), today)
         else:
-            from datetime import datetime, timezone
-            today    = datetime.now(timezone.utc).date()
             end_dt   = today - timedelta(days=1)
             start_dt = end_dt - timedelta(days=days - 1)
     except ValueError:
@@ -532,12 +531,12 @@ def _get_ga4_creds(pixel_id: str):
 
 def _resolve_dates(start: Optional[str], end: Optional[str], days: int):
     from datetime import date as _date, datetime as _dt
+    today = _dt.now(timezone.utc).date()
     if start and end:
         try:
-            return _date.fromisoformat(start), _date.fromisoformat(end)
+            return _date.fromisoformat(start), min(_date.fromisoformat(end), today)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date — use YYYY-MM-DD")
-    today    = _dt.now(timezone.utc).date()
     end_dt   = today - timedelta(days=1)
     start_dt = end_dt - timedelta(days=days - 1)
     return start_dt, end_dt
