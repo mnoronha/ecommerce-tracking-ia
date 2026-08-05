@@ -402,7 +402,7 @@ def _header_html(client_name: str, subtitle: str,
     Inclui logo do cliente (se houver) + logo da agência.
     """
     agency_logo = settings.AGENCY_LOGO_URL
-    agency_name = settings.AGENCY_NAME or "Noroia"
+    agency_name = settings.AGENCY_NAME or "Norolabs"
 
     # Logo do cliente
     client_logo_html = ""
@@ -659,7 +659,7 @@ def _build_weekly_uau_context(
     dashboard_url = f"{settings.DASHBOARD_URL}/clients/{pixel_id}/dashboard" if settings.DASHBOARD_URL else None
 
     return {
-        "agencia":   {"name": agency_name},
+        "agencia":   {"name": agency_name, "logo": settings.AGENCY_LOGO_URL or ""},
         "cliente":   {"nome": client_name, "logo": client_logo or ""},
         "periodo":   periodo,
         "headline":  uau.get("headline", ""),
@@ -861,22 +861,7 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
     roas_big  = f'{m["roas"]:.2f}x' if m["roas"] is not None else "—"
     roas_col  = "#16a34a" if (m["roas"] is not None and (not m["roas_goal"] or m["roas"] >= float(m["roas_goal"]))) else "#f59e0b"
 
-    # Open alerts (compact)
-    alerts_html = ""
-    if m["alerts"]:
-        crit = sum(1 for a in m["alerts"] if a.get("severity") == "critical")
-        items = "".join(
-            f'<li style="margin:3px 0;color:#374151;font-size:12px">'
-            f'<span style="color:{"#ef4444" if a.get("severity")=="critical" else "#f59e0b"}">●</span> {a["title"]}</li>'
-            for a in m["alerts"][:3]
-        )
-        alerts_html = f"""
-        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:12px 16px;margin-top:16px">
-          <p style="margin:0 0 6px;font-weight:600;color:#991b1b;font-size:13px">
-            ⚠ {len(m['alerts'])} alerta{'s' if len(m['alerts'])>1 else ''} aberto{'s' if len(m['alerts'])>1 else ''}{f' ({crit} crítico{"s" if crit>1 else ""})' if crit else ''}
-          </p>
-          <ul style="margin:0;padding-left:16px">{items}</ul>
-        </div>"""
+    alerts_html = ""  # alertas vão apenas para a agência, nunca para o cliente
 
     # One AI action
     ai_html = ""
@@ -958,7 +943,7 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
   </div>
 
   <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:16px">
-    {settings.AGENCY_NAME or 'Ecommerce Tracking IA'} ·
+    {settings.AGENCY_NAME or 'Norolabs'} ·
     <a href="{dashboard_url}" style="color:#6366f1">Ver dashboard</a>
   </p>
 </div>
@@ -1354,7 +1339,7 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
   </div>
 
   <p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:16px">
-    {settings.AGENCY_NAME or 'Ecommerce Tracking IA'} ·
+    {settings.AGENCY_NAME or 'Norolabs'} ·
     <a href="{dashboard_url}" style="color:#6366f1">Ver dashboard</a>
   </p>
 </div>

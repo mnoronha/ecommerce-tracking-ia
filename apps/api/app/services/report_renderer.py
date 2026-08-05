@@ -320,6 +320,8 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
     nome_cliente   = _h(cliente.get("nome"), "Cliente")
     cor_primaria   = _h(agencia.get("cor_primaria"), "#6366f1")
     site_agencia   = _h(agencia.get("site"), "")
+    logo_agencia   = _h(agencia.get("logo_url") or agencia.get("logo"), "")
+    logo_cliente   = _h(cliente.get("logo"), "")
 
     sc_color   = _sc_color(scorecard.get("status", ""))
     sc_emoji   = _h(scorecard.get("emoji"), "📊")
@@ -790,22 +792,32 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
 
   <!-- HEADER -->
   <tr>
-    <td style="background:#1a1f2e;border-radius:12px 12px 0 0;padding:24px 28px;
+    <td style="background:#1a1f2e;border-radius:12px 12px 0 0;padding:20px 28px;
                border-bottom:1px solid #2a2f3e">
-      <table width="100%" cellpadding="0" cellspacing="0"><tr>
-        <td>
-          <p style="margin:0;font-size:12px;color:{cor_primaria};font-weight:600;
-             text-transform:uppercase;letter-spacing:0.8px">{nome_agencia}</p>
-          <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#f1f5f9">{nome_cliente}</p>
-        </td>
-        <td align="right" style="vertical-align:top">
-          <div style="background:#0c0e14;border:1px solid #2a2f3e;border-radius:8px;
-                      padding:8px 14px;display:inline-block">
-            <p style="margin:0;font-size:10px;color:#64748b">Relatório Mensal</p>
-            <p style="margin:2px 0 0;font-size:15px;font-weight:700;color:#e2e8f0">{mes_label}</p>
-          </div>
-        </td>
-      </tr></table>
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <!-- Logos row -->
+        <tr>
+          <td style="padding-bottom:14px">
+            <table cellpadding="0" cellspacing="0"><tr>
+              {f'<td style="padding-right:12px;vertical-align:middle"><img src="{logo_cliente}" alt="{nome_cliente}" style="height:36px;max-width:140px;object-fit:contain;display:block"></td>' if logo_cliente else ''}
+              {f'<td style="vertical-align:middle"><img src="{logo_agencia}" alt="{nome_agencia}" style="height:22px;max-width:100px;object-fit:contain;opacity:0.75;display:block"></td>' if logo_agencia else f'<td style="vertical-align:middle"><span style="font-size:11px;font-weight:600;color:#64748b;letter-spacing:0.5px">{nome_agencia}</span></td>'}
+            </tr></table>
+          </td>
+          <td align="right" style="vertical-align:top;padding-bottom:14px">
+            <div style="background:#0c0e14;border:1px solid #2a2f3e;border-radius:8px;
+                        padding:8px 14px;display:inline-block">
+              <p style="margin:0;font-size:10px;color:#64748b">Relatório Mensal</p>
+              <p style="margin:2px 0 0;font-size:15px;font-weight:700;color:#e2e8f0">{mes_label}</p>
+            </div>
+          </td>
+        </tr>
+        <!-- Client name row -->
+        <tr>
+          <td colspan="2">
+            <p style="margin:0;font-size:22px;font-weight:700;color:#f1f5f9">{nome_cliente}</p>
+          </td>
+        </tr>
+      </table>
     </td>
   </tr>
 

@@ -13,7 +13,7 @@
   <div class="hdr">
     <div class="hdr-left">
       {{#if cliente.logo}}<img src="{{cliente.logo}}" class="hdr-logo" alt="{{cliente.nome}}" />{{/if}}
-      <span class="hdr-agencia">{{agencia.name}}</span>
+      {{#if agencia.logo}}<img src="{{agencia.logo}}" class="hdr-logo" style="opacity:0.75" alt="{{agencia.name}}" />{{else}}<span class="hdr-agencia">{{agencia.name}}</span>{{/if}}
     </div>
     <div class="hdr-right">
       <span class="hdr-periodo">{{periodo}}</span>

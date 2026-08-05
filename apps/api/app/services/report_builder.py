@@ -1249,8 +1249,10 @@ def build_monthly_context(
         ) if p.exists()),
         _here.parent.parent.parent / "relatorios-agencia" / "config" / "agencia.json",
     )
-    agencia = {"nome": settings.AGENCY_NAME or "Noroia", "logo_texto": settings.AGENCY_NAME or "NOROIA",
-                "site": settings.AGENCY_WEBSITE or "noroia.com", "cor_primaria": "#6c47ff", "cor_secundaria": "#a855f7"}
+    agencia = {"nome": settings.AGENCY_NAME or "Norolabs", "logo_texto": settings.AGENCY_NAME or "NOROLABS",
+                "site": settings.AGENCY_WEBSITE or "norolabs.com",
+                "logo_url": settings.AGENCY_LOGO_URL or "",
+                "cor_primaria": "#6c47ff", "cor_secundaria": "#a855f7"}
     try:
         import json
         if agency_cfg_path.exists():
