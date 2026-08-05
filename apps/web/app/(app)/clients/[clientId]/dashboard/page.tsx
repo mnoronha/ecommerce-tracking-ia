@@ -781,7 +781,7 @@ export default function DashboardPage() {
   const [tiktokSummary, setTiktokSummary]       = useState<AdsTotals | null>(null)
   const [pinterestSummary, setPinterestSummary] = useState<AdsTotals | null>(null)
   const [ga4Channels, setGa4Channels]   = useState<Ga4Channel[]>([])
-  const [ga4Sources, setGa4Sources]     = useState<{source: string; medium: string; sessions: number; conversions: number; revenue: number}[]>([])
+  const [ga4Sources, setGa4Sources]     = useState<{source: string; medium: string; sessions: number; purchases: number; revenue: number}[]>([])
   const [ga4Funnel, setGa4Funnel]       = useState<Ga4Funnel | null>(null)
   const [ga4TopPages, setGa4TopPages]   = useState<Ga4TopPage[]>([])
   const [ltvStats, setLtvStats]         = useState<LtvStats | null>(null)
@@ -2062,7 +2062,7 @@ export default function DashboardPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-[#2a2f3e]">
-                          {['Fonte / Mídia', 'Sessões', 'Conversões', 'Receita'].map(h => (
+                          {['Fonte / Mídia', 'Sessões', 'Pedidos', 'Receita'].map(h => (
                             <th key={h} className={`px-4 py-3 text-xs font-medium text-slate-500 uppercase tracking-wider whitespace-nowrap ${h === 'Fonte / Mídia' ? 'text-left' : 'text-right'}`}>{h}</th>
                           ))}
                         </tr>
@@ -2080,7 +2080,7 @@ export default function DashboardPage() {
                             <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
                               <td className={`px-4 py-3 text-xs font-medium ${color}`}>{row.source} / {row.medium}</td>
                               <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{row.sessions.toLocaleString('pt-BR')}</td>
-                              <td className="px-4 py-3 text-right text-indigo-400 tabular-nums font-medium">{(row.conversions ?? 0).toLocaleString('pt-BR')}</td>
+                              <td className="px-4 py-3 text-right text-indigo-400 tabular-nums font-medium">{(row.purchases ?? 0).toLocaleString('pt-BR')}</td>
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{row.revenue > 0 ? fmt(row.revenue) : '—'}</td>
                             </tr>
                           )
