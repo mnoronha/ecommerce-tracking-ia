@@ -478,6 +478,7 @@ def _eval_views_drop(rule: dict, client: dict) -> list[dict]:
             .select("id", count="exact", head=True)
             .eq("client_id", client["id"])
             .eq("event_type", "pageview")
+            .neq("device_type", "bot")
             .gte("created_at", t2h.isoformat())
             .execute()
         ).count or 0
@@ -492,6 +493,7 @@ def _eval_views_drop(rule: dict, client: dict) -> list[dict]:
                 .select("id", count="exact", head=True)
                 .eq("client_id", client["id"])
                 .eq("event_type", "pageview")
+                .neq("device_type", "bot")
                 .gte("created_at", (start - timedelta(hours=window_h)).isoformat())
                 .lt("created_at", end.isoformat())
                 .execute()
@@ -607,6 +609,7 @@ def _eval_checkout_drop(rule: dict, client: dict) -> list[dict]:
             .select("id", count="exact", head=True)
             .eq("client_id", client["id"])
             .eq("event_type", "begin_checkout")
+            .neq("device_type", "bot")
             .gte("created_at", t2h.isoformat())
             .execute()
         ).count or 0
@@ -619,6 +622,7 @@ def _eval_checkout_drop(rule: dict, client: dict) -> list[dict]:
                 .select("id", count="exact", head=True)
                 .eq("client_id", client["id"])
                 .eq("event_type", "begin_checkout")
+                .neq("device_type", "bot")
                 .gte("created_at", (s - timedelta(hours=window_h)).isoformat())
                 .lt("created_at", s.isoformat())
                 .execute()
@@ -1717,6 +1721,83 @@ def _eval_merchant_token_expired(rule: dict, client: dict) -> list[dict]:
     }]
 
 
+def _eval_spend_data_gap(rule: dict, client: dict) -> list[dict]:
+    """
+    Nenhum dado de gasto em `ad_spend` por 2+ dias consecutivos num canal com credenciais ativas.
+    Detecta falhas silenciosas do cron run_daily_spend_sync que deixam o custo
+    sub-reportado no dashboard sem nenhuma evidência visível.
+    config: threshold_days (default 2), channels (default ['meta_ads','google_ads'])
+    """
+    cfg            = rule.get("config") or {}
+    threshold_days = int(cfg.get("threshold_days", 2))
+    channels_cfg   = cfg.get("channels") or ["meta_ads", "google_ads"]
+
+    _channel_cred = {
+        "meta_ads":   "meta_ad_account_id",
+        "google_ads": "google_ads_customer_id",
+    }
+    active_channels = [ch for ch in channels_cfg if client.get(_channel_cred.get(ch, ch))]
+    if not active_channels:
+        return []
+
+    sb  = get_supabase()
+    now = _now()
+    # Check from 2 days ago backwards — yesterday's cron may not have run yet (06:00 UTC).
+    # threshold_days=2 → check [3dago, 2dago]; both must be missing to alert.
+    check_end   = (now - timedelta(days=2)).date()
+    check_start = check_end - timedelta(days=threshold_days - 1)
+
+    try:
+        rows = (
+            sb.table("ad_spend")
+            .select("channel, date")
+            .eq("client_id", client["id"])
+            .in_("channel", active_channels)
+            .gte("date", check_start.isoformat())
+            .lte("date", check_end.isoformat())
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_spend_data_gap(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    have = {(r["channel"], str(r["date"])[:10]) for r in rows}
+
+    findings: list[dict] = []
+    pixel = client.get("pixel_id") or "unknown"
+
+    for ch in active_channels:
+        missing = [
+            (check_end - timedelta(days=i)).isoformat()
+            for i in range(threshold_days)
+            if (ch, (check_end - timedelta(days=i)).isoformat()) not in have
+        ]
+        if len(missing) < threshold_days:
+            continue
+        channel_label = {"meta_ads": "Meta Ads", "google_ads": "Google Ads"}.get(ch, ch)
+        sev = "critical" if len(missing) >= threshold_days + 2 else "warning"
+        findings.append({
+            "fingerprint": f"spend_data_gap:{client['id']}:{ch}:{check_end.isoformat()}",
+            "title":       f"Dado de custo {channel_label} faltando — {pixel}",
+            "message":     (
+                f"{len(missing)} dia(s) sem dado de investimento {channel_label} "
+                f"(de {missing[-1]} a {missing[0]}). "
+                f"O cron diário pode estar falhando silenciosamente. "
+                f"Use /sync/spend/{pixel}/daily-backfill para recuperar."
+            ),
+            "severity": sev,
+            "data": {
+                "channel":      ch,
+                "missing_days": missing,
+                "gap_start":    missing[-1],
+                "gap_end":      missing[0],
+                "gap_days":     len(missing),
+            },
+        })
+
+    return findings
+
+
 def _eval_merchant_feed_not_updated(rule: dict, client: dict) -> list[dict]:
     """Feed não atualizado há mais de N dias."""
     if not client.get("merchant_center_id"):
@@ -1792,6 +1873,8 @@ _EVALUATORS = {
     "merchant_feed_health_drop":   _eval_merchant_feed_health_drop,
     "merchant_token_expired":      _eval_merchant_token_expired,
     "merchant_feed_not_updated":   _eval_merchant_feed_not_updated,
+    # Spend data integrity
+    "spend_data_gap":              _eval_spend_data_gap,
 }
 
 
@@ -1902,6 +1985,7 @@ def _clients_for_rule(rule: dict) -> list[dict]:
     cols = (
         "id, pixel_id, agency_id, slack_webhook_url, tracking_enabled, "
         "meta_token_expires_at, meta_ad_account_id, meta_access_token, "
+        "google_ads_customer_id, "
         "meta_prepaid, google_prepaid, meta_balance_threshold, google_balance_threshold, "
         "ga4_property_id, ga4_reporting_enabled, google_ads_refresh_token, "
         + ", ".join(_INTEGRATION_HEALTH_COLS.values())
