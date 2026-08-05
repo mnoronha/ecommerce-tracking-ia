@@ -72,7 +72,7 @@ interface AudienceReport {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(n: number) { return n.toLocaleString('pt-BR') }
+function fmt(n: number) { return (n ?? 0).toLocaleString('pt-BR') }
 function fmtR(n: number) {
   return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 })
 }
