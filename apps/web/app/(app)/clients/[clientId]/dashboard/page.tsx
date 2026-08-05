@@ -1558,6 +1558,22 @@ export default function DashboardPage() {
                 : undefined
             }
             color="bg-pink-500/10 text-pink-400" />
+          {(() => {
+            const totalSpend = (metaSummary?.spend ?? 0) + (googleSummary?.spend ?? 0) + (tiktokSummary?.spend ?? 0) + (pinterestSummary?.spend ?? 0)
+            if (totalSpend <= 0) return null
+            const revenue = kpis && kpis.totalOrders > 0 ? kpis.totalRevenue : (ga4Summary?.revenue ?? 0)
+            const roas = revenue / totalSpend
+            const platforms = [metaSummary && 'Meta', googleSummary && 'Google', tiktokSummary && 'TikTok', pinterestSummary && 'Pinterest'].filter(Boolean).join(' + ')
+            return (
+              <KPICard
+                title="ROAS Total"
+                value={`${roas.toFixed(2)}x`}
+                icon={DollarSign}
+                color={roas >= 3 ? 'bg-emerald-500/10 text-emerald-400' : roas >= 1.5 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-red-500/10 text-red-400'}
+                hint={`receita ÷ gasto (${platforms})`}
+              />
+            )
+          })()}
         </div>
 
         {/* Ads Summary — Meta + Google + TikTok + Pinterest */}
@@ -2053,8 +2069,8 @@ export default function DashboardPage() {
                       </thead>
                       <tbody>
                         {ga4Sources.map((row, i) => {
-                          const s = row.source.toLowerCase()
-                          const m = row.medium.toLowerCase()
+                          const s = (row.source ?? '').toLowerCase()
+                          const m = (row.medium ?? '').toLowerCase()
                           const isTikTok    = s.includes('tiktok') || s === 'tt'
                           const isPinterest = s.includes('pinterest')
                           const isMeta      = ['facebook', 'instagram', 'meta', 'fb'].includes(s) || s.includes('facebook')
@@ -2064,7 +2080,7 @@ export default function DashboardPage() {
                             <tr key={i} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a]">
                               <td className={`px-4 py-3 text-xs font-medium ${color}`}>{row.source} / {row.medium}</td>
                               <td className="px-4 py-3 text-right text-slate-300 tabular-nums">{row.sessions.toLocaleString('pt-BR')}</td>
-                              <td className="px-4 py-3 text-right text-indigo-400 tabular-nums font-medium">{row.conversions.toLocaleString('pt-BR')}</td>
+                              <td className="px-4 py-3 text-right text-indigo-400 tabular-nums font-medium">{(row.conversions ?? 0).toLocaleString('pt-BR')}</td>
                               <td className="px-4 py-3 text-right text-emerald-400 font-semibold tabular-nums">{row.revenue > 0 ? fmt(row.revenue) : '—'}</td>
                             </tr>
                           )
