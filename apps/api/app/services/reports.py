@@ -23,7 +23,7 @@ from ..config import settings
 from ..database import get_supabase
 from . import resend as email_service
 from . import notify as _notify
-from . import report_builder, report_renderer
+from . import report_builder, report_renderer, ga4_reporting, crypto
 
 
 def _html_to_pdf(html: str) -> Optional[bytes]:
@@ -309,6 +309,48 @@ def _client_logo(sb, client_id: str) -> Optional[str]:
     return None
 
 
+def _ga4_money_fallback(sb, client_id: str, start: str, end: str) -> Optional[dict]:
+    """Revenue/pedidos via GA4 para clientes sem adapter (ex: Vnda).
+    Retorna dict compatível com _money() ou None se GA4 indisponível."""
+    try:
+        row = sb.table("clients").select(
+            "ga4_property_id, google_ads_refresh_token, ga4_reporting_enabled"
+        ).eq("id", client_id).limit(1).execute()
+        if not row.data:
+            return None
+        c = crypto.decrypt_client_secrets(row.data[0])
+        if not (c.get("ga4_reporting_enabled") and c.get("ga4_property_id") and c.get("google_ads_refresh_token")):
+            return None
+        start_d = date.fromisoformat(start[:10])
+        end_d   = date.fromisoformat(end[:10])
+        if end_d < start_d:
+            end_d = start_d
+        data = ga4_reporting.fetch_overview(
+            property_id=c["ga4_property_id"],
+            refresh_token=c["google_ads_refresh_token"],
+            start_date=start_d,
+            end_date=end_d,
+        )
+        if "error" in data:
+            logger.warning("_ga4_money_fallback: GA4 error for %s: %s", client_id, data["error"])
+            return None
+        s       = data.get("summary", {})
+        revenue = float(s.get("revenue", 0))
+        orders  = int(s.get("purchases", 0))
+        sessions = int(s.get("sessions", 0))
+        return {
+            "revenue":  round(revenue, 2),
+            "orders":   orders,
+            "aov":      round(revenue / orders, 2) if orders > 0 else 0.0,
+            "daily":    [],
+            "sessions": sessions,
+            "source":   "ga4",
+        }
+    except Exception as exc:
+        logger.warning("_ga4_money_fallback failed for %s: %s", client_id, exc)
+        return None
+
+
 def _weekly_funnel(sb, client_id: str, start: str, end: str) -> dict:
     """Conta visitantes únicos por etapa do funil (7d) via tracking_events."""
     try:
@@ -492,6 +534,18 @@ def _build_weekly(sb, client_id: str, now: datetime) -> dict:
     week = _money(sb, client_id, week_start.isoformat(), now.isoformat())
     prev = _money(sb, client_id, prev_week_start.isoformat(), week_start.isoformat())
     mtd  = _money(sb, client_id, month_start.isoformat(), now.isoformat())
+
+    # Fallback GA4: clientes sem adapter (Vnda etc.) — usa receita/pedidos do GA4
+    if week["revenue"] == 0 and week["orders"] == 0:
+        ga4_week = _ga4_money_fallback(sb, client_id, week_start.isoformat(), now.isoformat())
+        if ga4_week:
+            week = {**week, **ga4_week}
+        ga4_prev = _ga4_money_fallback(sb, client_id, prev_week_start.isoformat(), week_start.isoformat())
+        if ga4_prev:
+            prev = {**prev, **ga4_prev}
+        ga4_mtd = _ga4_money_fallback(sb, client_id, month_start.isoformat(), now.isoformat())
+        if ga4_mtd:
+            mtd = {**mtd, **ga4_mtd}
 
     def _pct_delta(cur, prv):
         return round((cur - prv) / prv * 100, 1) if prv > 0 else None
@@ -970,6 +1024,17 @@ def _build_monthly(sb, client_id: str, now: datetime) -> dict:
 
     cur  = _money(sb, client_id, s, e)
     prev = _money(sb, client_id, ps, pe)
+
+    # Fallback GA4: clientes sem adapter (Vnda etc.)
+    if cur["revenue"] == 0 and cur["orders"] == 0:
+        ga4_cur = _ga4_money_fallback(sb, client_id, s, e)
+        if ga4_cur:
+            cur = {**cur, **ga4_cur}
+    if prev["revenue"] == 0 and prev["orders"] == 0:
+        ga4_prev = _ga4_money_fallback(sb, client_id, ps, pe)
+        if ga4_prev:
+            prev = {**prev, **ga4_prev}
+
     mom_delta = (
         round((cur["revenue"] - prev["revenue"]) / prev["revenue"] * 100, 1)
         if prev["revenue"] > 0 else None
