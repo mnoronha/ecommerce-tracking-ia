@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from ..database import get_supabase
-from ..services import ai_analyst, alerts, reports, spend_sync
+from ..services import ai_analyst, alerts, notify as _notify, reports, spend_sync
 from ..services.writer import resolve_client_uuid
 
 logger = logging.getLogger(__name__)
@@ -230,18 +230,18 @@ async def send_report(pixel_id: str, body: ReportRequest | None = None, backgrou
         raise HTTPException(status_code=400, detail="report_type deve ser 'weekly' ou 'monthly'")
     force = bool(body.force) if body else False
 
-    # Resolve target email
-    to_email = (body.email if body else None)
+    # Resolve target email(s)
+    # Se body.email foi passado manualmente, usa só ele (override pontual).
+    # Se não, passa vazio para send_report_now usar _all_client_emails(),
+    # que já lê alert_emails[] + alert_email e envia para todos.
+    to_email = (body.email if body else None) or ""
     if not to_email:
-        row = get_supabase().table("clients").select("alert_email").eq("id", client_uuid).limit(1).execute()
-        if row.data:
-            to_email = row.data[0].get("alert_email")
-
-    if not to_email:
-        raise HTTPException(
-            status_code=422,
-            detail="Nenhum email configurado. Adicione alert_email no cliente ou passe email no body.",
-        )
+        row = get_supabase().table("clients").select("alert_email, alert_emails").eq("id", client_uuid).limit(1).execute()
+        if not row.data or not _notify._all_client_emails(row.data[0]):
+            raise HTTPException(
+                status_code=422,
+                detail="Nenhum email configurado. Adicione pelo menos um email na aba de relatórios.",
+            )
 
     email_snapshot = to_email
 
