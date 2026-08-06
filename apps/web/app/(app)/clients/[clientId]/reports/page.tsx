@@ -6,6 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Sparkles, Loader2, BarChart2, Lightbulb,
   AlertTriangle, RefreshCw, Download, FileText, Send, CheckCircle,
+  Plus, X,
 } from 'lucide-react'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanGate } from '@/components/plan-gate'
@@ -120,10 +121,10 @@ export default function ReportsPage() {
   const [sentTo,      setSentTo]      = useState<string | null>(null)
   const [sentHeld,    setSentHeld]    = useState(false)
   const [sendError,   setSendError]   = useState<string | null>(null)
-  const [alertEmail,  setAlertEmail]  = useState('')
-  const [emailInput,  setEmailInput]  = useState('')
-  const [savingEmail, setSavingEmail] = useState(false)
-  const [emailSaved,  setEmailSaved]  = useState(false)
+  const [alertEmails,  setAlertEmails]  = useState<string[]>([])
+  const [newEmailInput, setNewEmailInput] = useState('')
+  const [savingEmails, setSavingEmails] = useState(false)
+  const [emailsSaved,  setEmailsSaved]  = useState(false)
   const [weeklyEnabled,  setWeeklyEnabled]  = useState(false)
   const [monthlyEnabled, setMonthlyEnabled] = useState(false)
   const [reportHistory, setReportHistory] = useState<Array<{ id: string; type: string; period_start: string; period_end: string; status: string; sent_to: string[] | null; sent_at: string }>>([])
@@ -229,12 +230,13 @@ export default function ReportsPage() {
   // Load report settings on mount
   useEffect(() => {
     supabase.from('clients')
-      .select('alert_email, weekly_report_enabled, monthly_report_enabled')
+      .select('alert_email, alert_emails, weekly_report_enabled, monthly_report_enabled')
       .eq('pixel_id', clientId).single()
       .then(({ data }) => {
-        const email = data?.alert_email ?? ''
-        setAlertEmail(email)
-        setEmailInput(email)
+        const arr: string[] = data?.alert_emails?.length
+          ? data.alert_emails
+          : data?.alert_email ? [data.alert_email] : []
+        setAlertEmails(arr)
         setWeeklyEnabled(Boolean(data?.weekly_report_enabled))
         setMonthlyEnabled(Boolean(data?.monthly_report_enabled))
       })
@@ -252,15 +254,31 @@ export default function ReportsPage() {
     }
   }
 
-  async function saveAlertEmail(e: React.FormEvent) {
+  async function addEmail(e: React.FormEvent) {
     e.preventDefault()
-    setSavingEmail(true)
-    setEmailSaved(false)
-    await supabase.from('clients').update({ alert_email: emailInput || null }).eq('pixel_id', clientId)
-    setAlertEmail(emailInput)
-    setSavingEmail(false)
-    setEmailSaved(true)
-    setTimeout(() => setEmailSaved(false), 3000)
+    const email = newEmailInput.trim().toLowerCase()
+    if (!email || alertEmails.includes(email)) return
+    const updated = [...alertEmails, email]
+    await persistEmails(updated)
+    setNewEmailInput('')
+  }
+
+  async function removeEmail(email: string) {
+    const updated = alertEmails.filter(e => e !== email)
+    await persistEmails(updated)
+  }
+
+  async function persistEmails(list: string[]) {
+    setSavingEmails(true)
+    setEmailsSaved(false)
+    await supabase.from('clients').update({
+      alert_emails: list,
+      alert_email:  list[0] ?? null,
+    }).eq('pixel_id', clientId)
+    setAlertEmails(list)
+    setSavingEmails(false)
+    setEmailsSaved(true)
+    setTimeout(() => setEmailsSaved(false), 3000)
   }
 
   const unread = insights.filter(i => !i.is_read).length
@@ -385,32 +403,58 @@ export default function ReportsPage() {
             </p>
           )}
 
-          {/* Destinatário */}
-          <div className="border-t border-[#2a2f3e] pt-4 flex items-start justify-between gap-4 flex-wrap">
-            <div className="max-w-xs">
-              <p className="text-xs font-medium text-slate-300">Destinatário</p>
-              <p className="text-xs text-slate-500 mt-0.5">Email que recebe os relatórios ativos acima.</p>
-              {alertEmail && (
-                <p className="text-xs text-slate-600 mt-1">
-                  Atual: <span className="text-slate-400">{alertEmail}</span>
-                </p>
+          {/* Destinatários */}
+          <div className="border-t border-[#2a2f3e] pt-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-slate-300">Destinatários</p>
+                <p className="text-xs text-slate-500 mt-0.5">Emails que recebem os relatórios ativos acima.</p>
+              </div>
+              {emailsSaved && (
+                <span className="flex items-center gap-1 text-emerald-400 text-xs">
+                  <CheckCircle size={11} /> Salvo
+                </span>
               )}
+              {savingEmails && <Loader2 size={12} className="animate-spin text-slate-500" />}
             </div>
-            <form onSubmit={saveAlertEmail} className="flex items-center gap-2 shrink-0">
+
+            {/* Lista atual */}
+            {alertEmails.length > 0 && (
+              <div className="space-y-1.5">
+                {alertEmails.map((email, idx) => (
+                  <div key={email} className="flex items-center justify-between bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2">
+                    <span className="text-xs text-slate-300 truncate">
+                      {idx === 0 && <span className="text-indigo-400 mr-1.5">principal</span>}
+                      {email}
+                    </span>
+                    <button
+                      onClick={() => removeEmail(email)}
+                      disabled={savingEmails}
+                      className="text-slate-600 hover:text-red-400 disabled:opacity-40 shrink-0 ml-2"
+                      aria-label={`Remover ${email}`}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Adicionar novo */}
+            <form onSubmit={addEmail} className="flex items-center gap-2">
               <input
                 type="email"
-                value={emailInput}
-                onChange={e => setEmailInput(e.target.value)}
-                placeholder="email@empresa.com"
-                className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500 w-56"
+                value={newEmailInput}
+                onChange={e => setNewEmailInput(e.target.value)}
+                placeholder="novo@email.com"
+                className="flex-1 bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
               />
               <button
                 type="submit"
-                disabled={savingEmail || emailInput === alertEmail}
-                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors"
+                disabled={savingEmails || !newEmailInput.trim() || alertEmails.includes(newEmailInput.trim().toLowerCase())}
+                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors shrink-0"
               >
-                {savingEmail ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle size={12} />}
-                {emailSaved ? 'Salvo!' : 'Salvar'}
+                <Plus size={12} /> Adicionar
               </button>
             </form>
           </div>
