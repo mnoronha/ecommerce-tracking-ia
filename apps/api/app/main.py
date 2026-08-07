@@ -15,8 +15,8 @@ from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
 from .limiter import limiter
-from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, portal_users, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
-from .services import ai_analyst, ai_visibility_analyst, ai_visibility_collector, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, search_console_sync, sessionization, shopify_sync, spend_sync
+from .routers import ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, finance as finance_router, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, portal_users, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
+from .services import ai_analyst, ai_visibility_analyst, ai_visibility_collector, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, finance_alerts, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, search_console_sync, sessionization, shopify_sync, spend_sync
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -212,6 +212,13 @@ _scheduler.add_job(
     id="daily_health_monitor",
 )
 _scheduler.add_job(
+    finance_alerts.run_daily_finance_alerts,
+    "cron",
+    hour=12,
+    minute=0,  # 12:00 UTC = 09:00 BRT — alertas de vencimento do financeiro
+    id="finance_alerts_daily",
+)
+_scheduler.add_job(
     retention.run_retention,
     "cron",
     hour=6,
@@ -360,6 +367,7 @@ app.include_router(klaviyo_webhook.router)
 app.include_router(lgpd.router)
 app.include_router(annotations.router)
 app.include_router(sync_router.router)
+app.include_router(finance_router.router)
 app.include_router(ai_visibility_router.router)
 app.include_router(merchant_center_router.router)
 app.include_router(content_router.router)
