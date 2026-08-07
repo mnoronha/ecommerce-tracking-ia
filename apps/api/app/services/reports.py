@@ -108,7 +108,7 @@ def _money(sb, client_id: str, start: str, end: str) -> dict:
 def _spend_by_channel(sb, client_id: str, start_date: str, end_date: str) -> dict:
     q = (
         sb.table("ad_spend")
-        .select("channel, spend, impressions, clicks, conversions")
+        .select("channel, spend, impressions, clicks, conversions, conversion_value")
         .eq("client_id", client_id)
         .gte("date", start_date)
         .lte("date", end_date)
@@ -117,11 +117,12 @@ def _spend_by_channel(sb, client_id: str, start_date: str, end_date: str) -> dic
     out: dict[str, dict] = {}
     for r in (q.data or []):
         ch = r["channel"]
-        agg = out.setdefault(ch, {"spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0})
-        agg["spend"]       += float(r.get("spend") or 0)
-        agg["impressions"] += int(r.get("impressions") or 0)
-        agg["clicks"]      += int(r.get("clicks") or 0)
-        agg["conversions"] += float(r.get("conversions") or 0)
+        agg = out.setdefault(ch, {"spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0, "conversion_value": 0.0})
+        agg["spend"]            += float(r.get("spend") or 0)
+        agg["impressions"]      += int(r.get("impressions") or 0)
+        agg["clicks"]           += int(r.get("clicks") or 0)
+        agg["conversions"]      += float(r.get("conversions") or 0)
+        agg["conversion_value"] += float(r.get("conversion_value") or 0)
     return out
 
 
@@ -180,6 +181,14 @@ def _channel_detail(sb, client_id: str, start: str, end: str, start_date: str, e
         meta_attr = _meta_revenue_from_attributions(sb, client_id, start_date, end_date)
         if meta_attr.get("revenue", 0) > 0:
             rev["meta_ads"] = {**meta_attr, "_source": "meta_attributions"}
+
+    # Fallback Google: usa conversions_value do ad_spend (receita reportada pelo Google Ads).
+    google_order_rev = rev.get("google_ads", {}).get("revenue", 0)
+    if google_order_rev == 0 and "google_ads" in spend:
+        goog_conv_val = spend["google_ads"].get("conversion_value", 0)
+        goog_conv_cnt = spend["google_ads"].get("conversions", 0)
+        if goog_conv_val > 0:
+            rev["google_ads"] = {"revenue": round(goog_conv_val, 2), "orders": int(goog_conv_cnt), "_source": "google_ads_api"}
 
     rows: list[dict] = []
     for ch in sorted(set(spend) | set(rev)):
@@ -870,7 +879,8 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
     channel_html = ""
     if m["channels"]:
         rows = ""
-        has_meta_attr = any(c.get("revenue_source") == "meta_attributions" for c in m["channels"])
+        has_meta_attr   = any(c.get("revenue_source") == "meta_attributions" for c in m["channels"])
+        has_google_attr = any(c.get("revenue_source") == "google_ads_api" for c in m["channels"])
         for c in m["channels"]:
             roas_now = f'{c["roas"]:.2f}x' if c["roas"] is not None else "—"
             rp = c.get("roas_prev")
@@ -897,7 +907,10 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
               <td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600;color:#111827">{roas_now}</td>
               <td style="padding:8px 0;text-align:right;font-size:11px">{cmp_cell}</td>
             </tr>"""
-        attr_note = ' · Meta: receita reportada pela plataforma' if has_meta_attr else ' · receita por utm_source'
+        notes = []
+        if has_meta_attr:   notes.append("Meta: receita reportada pela plataforma")
+        if has_google_attr: notes.append("Google: conversions value da API")
+        attr_note = (' · ' + ' · '.join(notes)) if notes else ' · receita por utm_source'
         channel_html = f"""
         <div style="margin-top:20px">
           <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:13px">ROAS por canal · vs semana anterior</p>
@@ -1333,7 +1346,8 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
     channel_html = ""
     if m["channels"]:
         crows = ""
-        has_meta_attr = any(c.get("revenue_source") == "meta_attributions" for c in m["channels"])
+        has_meta_attr   = any(c.get("revenue_source") == "meta_attributions" for c in m["channels"])
+        has_google_attr = any(c.get("revenue_source") == "google_ads_api" for c in m["channels"])
         for c in m["channels"]:
             roas_s = f'{c["roas"]:.2f}x' if c["roas"] is not None else "—"
             roas_c = "#16a34a" if (c["roas"] is not None and c["roas"] >= 1) else "#dc2626" if c["roas"] is not None else "#9ca3af"
@@ -1352,7 +1366,11 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
           <td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600;color:{roas_c}">{roas_s}</td>
           <td style="padding:8px 0;text-align:right;font-size:12px;color:#6b7280">{cpa_s}</td>
         </tr>"""
-        attr_note = 'Meta: receita reportada pela plataforma · Google: conversões (sem valor)' if has_meta_attr else 'Receita atribuída por utm_source'
+        m_notes = []
+        if has_meta_attr:   m_notes.append("Meta: receita reportada pela plataforma")
+        if has_google_attr: m_notes.append("Google: conversions value da API")
+        attr_note = (' · '.join(m_notes) + ' · ') if m_notes else ''
+        attr_note += 'ROAS = receita ÷ investimento'
         channel_html = f"""
     <div style="margin-top:22px">
       <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:14px">Desempenho por canal</p>
@@ -1366,7 +1384,7 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
         </tr>
         {crows}
       </table>
-      <p style="margin:6px 0 0;font-size:10px;color:#9ca3af">{attr_note}. ROAS = receita ÷ investimento.</p>
+      <p style="margin:6px 0 0;font-size:10px;color:#9ca3af">{attr_note}.</p>
     </div>"""
 
     # Top products

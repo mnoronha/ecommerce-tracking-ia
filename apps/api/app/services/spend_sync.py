@@ -81,7 +81,7 @@ def _fetch_google_spend(customer_id: str, refresh_token: str, target_date: date,
 
     query = (
         f"SELECT metrics.cost_micros, metrics.impressions, metrics.clicks, "
-        f"metrics.conversions "
+        f"metrics.conversions, metrics.conversions_value "
         f"FROM customer "
         f"WHERE segments.date = '{date_str}'"
     )
@@ -107,17 +107,20 @@ def _fetch_google_spend(customer_id: str, refresh_token: str, target_date: date,
         total_impressions  = 0
         total_clicks       = 0
         total_conversions  = 0.0
+        total_conversion_value = 0.0
         for row in results:
             m = row.get("metrics") or {}
-            total_spend_micros += int(m.get("costMicros", 0))
-            total_impressions  += int(m.get("impressions", 0))
-            total_clicks       += int(m.get("clicks", 0))
-            total_conversions  += float(m.get("conversions", 0))
+            total_spend_micros   += int(m.get("costMicros", 0))
+            total_impressions    += int(m.get("impressions", 0))
+            total_clicks         += int(m.get("clicks", 0))
+            total_conversions    += float(m.get("conversions", 0))
+            total_conversion_value += float(m.get("conversionsValue", 0))
         return {
-            "spend":       round(total_spend_micros / 1_000_000, 2),
-            "impressions": total_impressions,
-            "clicks":      total_clicks,
-            "conversions": round(total_conversions, 2),
+            "spend":            round(total_spend_micros / 1_000_000, 2),
+            "impressions":      total_impressions,
+            "clicks":           total_clicks,
+            "conversions":      round(total_conversions, 2),
+            "conversion_value": round(total_conversion_value, 2),
         }
     except Exception as exc:
         logger.warning("google_spend: fetch failed for %s: %s", customer_id, exc)
@@ -269,14 +272,15 @@ def _fetch_pinterest_spend(ad_account_id: str, access_token: str, target_date: d
 def _upsert_spend(client_id: str, channel: str, target_date: date, metrics: dict) -> None:
     sb = get_supabase()
     row = {
-        "client_id":   client_id,
-        "channel":     channel,
-        "date":        target_date.isoformat(),
-        "spend":       metrics["spend"],
-        "impressions": metrics["impressions"],
-        "clicks":      metrics["clicks"],
-        "conversions": metrics["conversions"],
-        "updated_at":  datetime.now(timezone.utc).isoformat(),
+        "client_id":        client_id,
+        "channel":          channel,
+        "date":             target_date.isoformat(),
+        "spend":            metrics["spend"],
+        "impressions":      metrics["impressions"],
+        "clicks":           metrics["clicks"],
+        "conversions":      metrics["conversions"],
+        "conversion_value": metrics.get("conversion_value", 0),
+        "updated_at":       datetime.now(timezone.utc).isoformat(),
     }
     try:
         sb.table("ad_spend").upsert(row, on_conflict="client_id,channel,date").execute()
@@ -437,7 +441,7 @@ def fetch_google_spend_monthly(
     clean_cid = customer_id.replace("-", "").replace(" ", "")
     query = (
         "SELECT segments.month, metrics.cost_micros, metrics.impressions, "
-        "metrics.clicks, metrics.conversions "
+        "metrics.clicks, metrics.conversions, metrics.conversions_value "
         "FROM customer "
         f"WHERE segments.date BETWEEN '{start_date.isoformat()}' AND '{end_date.isoformat()}'"
     )
@@ -466,14 +470,16 @@ def fetch_google_spend_monthly(
             m_date = date.fromisoformat(m_str)
             m      = row.get("metrics") or {}
             if m_date not in monthly:
-                monthly[m_date] = {"date": m_date, "spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0}
-            monthly[m_date]["spend"]       += int(m.get("costMicros", 0)) / 1_000_000
-            monthly[m_date]["impressions"] += int(m.get("impressions", 0))
-            monthly[m_date]["clicks"]      += int(m.get("clicks", 0))
-            monthly[m_date]["conversions"] += float(m.get("conversions", 0))
+                monthly[m_date] = {"date": m_date, "spend": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0, "conversion_value": 0.0}
+            monthly[m_date]["spend"]            += int(m.get("costMicros", 0)) / 1_000_000
+            monthly[m_date]["impressions"]      += int(m.get("impressions", 0))
+            monthly[m_date]["clicks"]           += int(m.get("clicks", 0))
+            monthly[m_date]["conversions"]      += float(m.get("conversions", 0))
+            monthly[m_date]["conversion_value"] += float(m.get("conversionsValue", 0))
 
         return [
-            {**v, "spend": round(v["spend"], 2), "conversions": round(v["conversions"], 2)}
+            {**v, "spend": round(v["spend"], 2), "conversions": round(v["conversions"], 2),
+             "conversion_value": round(v["conversion_value"], 2)}
             for v in sorted(monthly.values(), key=lambda x: x["date"])
         ]
     except Exception as exc:
