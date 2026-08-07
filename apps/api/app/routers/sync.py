@@ -149,9 +149,11 @@ async def trigger_metrics_cache_client(pixel_id: str):
 @router.post("/reports/{pixel_id}/weekly", summary="Send weekly report preview")
 async def trigger_weekly_report(
     pixel_id: str,
-    to: str = Query(..., description="Override recipient email address"),
+    to: Optional[str] = Query(None, description="Override recipient email. Omit to use client's configured list."),
 ):
-    """Dispara o relatório semanal para um cliente imediatamente, enviando para o email informado."""
+    """Dispara o relatório semanal para um cliente imediatamente.
+    Se `to` não for informado, usa os destinatários configurados no cadastro do cliente."""
+    from . import notify as _notify
     sb = get_supabase()
     rows = (
         sb.table("clients")
@@ -165,13 +167,17 @@ async def trigger_weekly_report(
         raise HTTPException(status_code=404, detail="Client not found")
     c = rows[0]
 
+    recipients = [to] if to else (_notify._all_client_emails(c) or [])
+    if not recipients:
+        raise HTTPException(status_code=400, detail="Nenhum email configurado para este cliente")
+
     import asyncio
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: reports._send_weekly(c["id"], c["pixel_id"], c.get("name") or pixel_id, [to], c),
+        lambda: reports._send_weekly(c["id"], c["pixel_id"], c.get("name") or pixel_id, recipients, c),
     )
-    return {"sent_to": to, "client": c.get("name"), "type": "weekly"}
+    return {"sent_to": recipients, "client": c.get("name"), "type": "weekly"}
 
 
 _TIKTOK_PINTEREST_HTML = """
