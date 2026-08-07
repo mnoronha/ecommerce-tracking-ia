@@ -112,7 +112,7 @@ _scheduler.add_job(
 _scheduler.add_job(
     meta_attribution_sync.run_daily_sync_all_clients,
     "cron",
-    hour=1,   # 01 UTC = 22:00 BRT — 1ª passagem logo após o dia BRT fechar
+    hour=9,   # 09 UTC = 06:00 BRT — após spend_sync (06 UTC); Meta finaliza dados ~3-6h depois da meia-noite BRT
     minute=0,
     id="meta_attribution_sync_night",
 )

@@ -148,27 +148,60 @@ def _revenue_by_channel(sb, client_id: str, start: str, end: str) -> dict:
     return out
 
 
+def _meta_revenue_from_attributions(sb, client_id: str, start_date: str, end_date: str) -> dict:
+    """Fallback: usa purchase_value da meta_ad_attributions quando não há orders
+    atribuídos via utm_source (ex: clientes sem adapter de ecommerce)."""
+    try:
+        q = (
+            sb.table("meta_ad_attributions")
+            .select("purchases, purchase_value")
+            .eq("client_id", client_id)
+            .gte("date", start_date)
+            .lte("date", end_date)
+            .execute()
+        )
+        rows = q.data or []
+        revenue = sum(float(r.get("purchase_value") or 0) for r in rows)
+        orders  = sum(int(r.get("purchases") or 0) for r in rows)
+        return {"revenue": round(revenue, 2), "orders": orders}
+    except Exception:
+        return {}
+
+
 def _channel_detail(sb, client_id: str, start: str, end: str, start_date: str, end_date: str) -> list[dict]:
     """Merge spend + attributed revenue per ad channel → ROAS, CPA."""
     spend = _spend_by_channel(sb, client_id, start_date, end_date)
     rev   = _revenue_by_channel(sb, client_id, start, end)
+
+    # Fallback Meta: quando não há orders atribuídos via UTM, usa purchase_value
+    # reportado pela própria Meta (meta_ad_attributions). Só entra se revenue=0.
+    meta_order_rev = rev.get("meta_ads", {}).get("revenue", 0)
+    if meta_order_rev == 0 and "meta_ads" in spend:
+        meta_attr = _meta_revenue_from_attributions(sb, client_id, start_date, end_date)
+        if meta_attr.get("revenue", 0) > 0:
+            rev["meta_ads"] = {**meta_attr, "_source": "meta_attributions"}
+
     rows: list[dict] = []
     for ch in sorted(set(spend) | set(rev)):
         s = spend.get(ch, {})
         r = rev.get(ch, {})
-        spd = round(float(s.get("spend") or 0), 2)
-        rvn = round(float(r.get("revenue") or 0), 2)
+        spd  = round(float(s.get("spend") or 0), 2)
+        rvn  = round(float(r.get("revenue") or 0), 2)
         ords = int(r.get("orders") or 0)
+        # conversions from ad_spend (count) — usado quando não há receita atribuída
+        ad_conv = round(float(s.get("conversions") or 0), 0)
         rows.append({
-            "channel":     ch,
-            "label":       _CHANNEL_LABEL.get(ch, ch),
-            "spend":       spd,
-            "revenue":     rvn,
-            "orders":      ords,
-            "roas":        round(rvn / spd, 2) if spd > 0 else None,
-            "cpa":         round(spd / ords, 2) if ords > 0 else None,
-            "impressions": int(s.get("impressions") or 0),
-            "clicks":      int(s.get("clicks") or 0),
+            "channel":          ch,
+            "label":            _CHANNEL_LABEL.get(ch, ch),
+            "spend":            spd,
+            "revenue":          rvn,
+            "orders":           ords,
+            "roas":             round(rvn / spd, 2) if spd > 0 else None,
+            "cpa":              round(spd / ords, 2) if ords > 0 else None,
+            "impressions":      int(s.get("impressions") or 0),
+            "clicks":           int(s.get("clicks") or 0),
+            "ad_conversions":   int(ad_conv),
+            "revenue_source":   r.get("_source", "orders"),
         })
     # Highest spend first
     rows.sort(key=lambda x: x["spend"], reverse=True)
@@ -837,6 +870,7 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
     channel_html = ""
     if m["channels"]:
         rows = ""
+        has_meta_attr = any(c.get("revenue_source") == "meta_attributions" for c in m["channels"])
         for c in m["channels"]:
             roas_now = f'{c["roas"]:.2f}x' if c["roas"] is not None else "—"
             rp = c.get("roas_prev")
@@ -848,14 +882,22 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
                 cmp_cell = f'<span style="color:#9ca3af">era {rp:.2f}x</span>'
             else:
                 cmp_cell = '<span style="color:#9ca3af">—</span>'
+            # Receita: se não há valor, mostra conversões do canal (Google etc.)
+            if c["revenue"] > 0:
+                rev_cell = fmt_brl(c["revenue"])
+            elif c.get("ad_conversions", 0) > 0:
+                rev_cell = f'<span style="color:#9ca3af;font-size:11px">{c["ad_conversions"]} conv.</span>'
+            else:
+                rev_cell = '<span style="color:#9ca3af">—</span>'
             rows += f"""
             <tr style="border-bottom:1px solid #f3f4f6">
               <td style="padding:8px 0;font-size:12px;color:#374151;font-weight:600">{c['label']}</td>
               <td style="padding:8px 0;text-align:right;font-size:12px;color:#6b7280">{fmt_brl(c['spend'])}</td>
-              <td style="padding:8px 0;text-align:right;font-size:12px;color:#111827">{fmt_brl(c['revenue'])}</td>
+              <td style="padding:8px 0;text-align:right;font-size:12px;color:#111827">{rev_cell}</td>
               <td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600;color:#111827">{roas_now}</td>
               <td style="padding:8px 0;text-align:right;font-size:11px">{cmp_cell}</td>
             </tr>"""
+        attr_note = ' · Meta: receita reportada pela plataforma' if has_meta_attr else ' · receita por utm_source'
         channel_html = f"""
         <div style="margin-top:20px">
           <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:13px">ROAS por canal · vs semana anterior</p>
@@ -869,6 +911,7 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
             </tr>
             {rows}
           </table>
+          <p style="margin:5px 0 0;font-size:10px;color:#9ca3af">ROAS = receita ÷ investimento{attr_note}.</p>
         </div>"""
 
     # ── Top produtos da semana ───────────────────────────────────────────────
@@ -1290,18 +1333,26 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
     channel_html = ""
     if m["channels"]:
         crows = ""
+        has_meta_attr = any(c.get("revenue_source") == "meta_attributions" for c in m["channels"])
         for c in m["channels"]:
             roas_s = f'{c["roas"]:.2f}x' if c["roas"] is not None else "—"
             roas_c = "#16a34a" if (c["roas"] is not None and c["roas"] >= 1) else "#dc2626" if c["roas"] is not None else "#9ca3af"
             cpa_s  = fmt_brl(c["cpa"]) if c["cpa"] is not None else "—"
+            if c["revenue"] > 0:
+                rev_cell = fmt_brl(c["revenue"])
+            elif c.get("ad_conversions", 0) > 0:
+                rev_cell = f'<span style="color:#9ca3af;font-size:11px">{c["ad_conversions"]} conv.</span>'
+            else:
+                rev_cell = "—"
             crows += f"""
         <tr style="border-bottom:1px solid #f3f4f6">
           <td style="padding:8px 0;font-size:12px;font-weight:600;color:#111827">{c['label']}</td>
           <td style="padding:8px 0;text-align:right;font-size:12px;color:#6b7280">{fmt_brl(c['spend'])}</td>
-          <td style="padding:8px 0;text-align:right;font-size:12px">{fmt_brl(c['revenue'])}</td>
+          <td style="padding:8px 0;text-align:right;font-size:12px">{rev_cell}</td>
           <td style="padding:8px 0;text-align:right;font-size:12px;font-weight:600;color:{roas_c}">{roas_s}</td>
           <td style="padding:8px 0;text-align:right;font-size:12px;color:#6b7280">{cpa_s}</td>
         </tr>"""
+        attr_note = 'Meta: receita reportada pela plataforma · Google: conversões (sem valor)' if has_meta_attr else 'Receita atribuída por utm_source'
         channel_html = f"""
     <div style="margin-top:22px">
       <p style="margin:0 0 8px;font-weight:600;color:#374151;font-size:14px">Desempenho por canal</p>
@@ -1315,7 +1366,7 @@ def _render_monthly_html(pixel_id: str, client_name: str, m: dict,
         </tr>
         {crows}
       </table>
-      <p style="margin:6px 0 0;font-size:10px;color:#9ca3af">Receita atribuída por origem (utm_source). ROAS = receita ÷ investimento.</p>
+      <p style="margin:6px 0 0;font-size:10px;color:#9ca3af">{attr_note}. ROAS = receita ÷ investimento.</p>
     </div>"""
 
     # Top products
