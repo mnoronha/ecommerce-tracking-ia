@@ -26,14 +26,14 @@ router = APIRouter(prefix="/clients", tags=["clients"])
 
 _SAFE_COLS = (
     "id, name, pixel_id, ecommerce_platform, client_type, is_active, logo_url, "
-    "created_at, updated_at, "
+    "created_at, "
     "meta_pixel_id, meta_ad_account_id, meta_token_health, "
     "google_ads_customer_id, google_ads_token_health, "
     "ga4_property_id, ga4_health, "
     "shopify_domain, shopify_health, shopify_last_sync_at, "
     "merchant_center_id, merchant_center_last_sync_at, "
     "notification_email, alert_emails, "
-    "monthly_revenue_goal, monthly_ad_spend_goal, target_roas, cpa_target, "
+    "monthly_revenue_goal, target_roas, cpa_target, "
     "meta_ads_budget, google_ads_budget, "
     "weekly_report_enabled, monthly_report_enabled"
 )
