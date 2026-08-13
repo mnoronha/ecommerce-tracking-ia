@@ -154,8 +154,8 @@ def check_google_ads(
                 return {"status": "invalid", "error": hint}
             if "DEVELOPER_TOKEN" in txt:
                 return {"status": "invalid", "error": "developer token não aprovado/ inválido"}
-            return {"status": "invalid", "error": "acesso negado: " + txt[:200]}
-        return {"status": "invalid", "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+            return {"status": "invalid", "error": "acesso negado: " + txt[:2000]}
+        return {"status": "invalid", "error": f"HTTP {r.status_code}: {r.text[:2000]}"}
     except Exception as exc:
         return {"status": "invalid", "error": f"{type(exc).__name__}: {exc}"}
 
