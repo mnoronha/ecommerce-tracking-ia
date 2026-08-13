@@ -130,7 +130,7 @@ def check_google_ads(
             headers["login-customer-id"] = mcc.replace("-", "")
 
         r = None
-        for version in ("v21", "v20", "v19"):
+        for version in ("v23", "v22", "v21", "v20", "v19"):
             r = httpx.post(
                 f"https://googleads.googleapis.com/{version}/customers/{clean_cid}/googleAds:search",
                 headers=headers,
@@ -138,8 +138,11 @@ def check_google_ads(
                 json={"query": "SELECT customer.id FROM customer LIMIT 1"},
                 timeout=_TIMEOUT,
             )
-            if r.status_code != 404:
-                break
+            if r.status_code == 404:
+                continue
+            if r.status_code == 400 and "UNSUPPORTED_VERSION" in r.text:
+                continue
+            break
         if r is None:
             return {"status": "invalid", "error": "no version returned a response"}
         if r.status_code == 200:

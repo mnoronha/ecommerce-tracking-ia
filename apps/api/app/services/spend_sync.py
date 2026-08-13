@@ -24,7 +24,7 @@ from ..services import crypto
 
 logger = logging.getLogger(__name__)
 
-_GOOGLE_ADS_API      = "https://googleads.googleapis.com/v21"
+_GOOGLE_ADS_API      = "https://googleads.googleapis.com/v23"
 _TOKEN_URL           = "https://oauth2.googleapis.com/token"
 _TIKTOK_REPORT       = "https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/"
 _META_INSIGHTS       = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
