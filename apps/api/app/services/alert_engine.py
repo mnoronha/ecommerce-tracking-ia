@@ -1798,6 +1798,88 @@ def _eval_spend_data_gap(rule: dict, client: dict) -> list[dict]:
     return findings
 
 
+def _eval_meta_attribution_stale(rule: dict, client: dict) -> list[dict]:
+    """
+    meta_ad_attributions de ontem não foi sincronizado hoje.
+
+    O cron diário roda às 06:00 UTC e atualiza os últimos 7 dias via upsert.
+    Se às 08:00+ UTC ontem ainda não tiver synced_at de hoje, o cron falhou para
+    este cliente (token expirado, API depreciada, etc.) e o valor investido
+    mostrado no dashboard é o capturado during the day anterior — incorreto.
+    """
+    if not client.get("meta_ad_account_id"):
+        return []
+
+    now = _now()
+    # Aguarda até 08:00 UTC para o cron de 06:00 UTC ter tempo de completar.
+    if now.hour < 8:
+        return []
+
+    yesterday   = (now - timedelta(days=1)).date().isoformat()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    sb = get_supabase()
+    try:
+        fresh = (
+            sb.table("meta_ad_attributions")
+            .select("synced_at", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .eq("date", yesterday)
+            .gte("synced_at", today_start)
+            .execute()
+        ).count or 0
+        if fresh > 0:
+            return []
+
+        # Só alerta se já existe histórico anterior (evita falso positivo em cliente novo).
+        historical = (
+            sb.table("meta_ad_attributions")
+            .select("id", count="exact", head=True)
+            .eq("client_id", client["id"])
+            .lt("date", yesterday)
+            .execute()
+        ).count or 0
+        if historical == 0:
+            return []
+
+        last_sync = (
+            sb.table("meta_ad_attributions")
+            .select("synced_at")
+            .eq("client_id", client["id"])
+            .order("synced_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.debug("_eval_meta_attribution_stale(%s): %s", client.get("pixel_id"), exc)
+        return []
+
+    last_iso  = last_sync[0]["synced_at"] if last_sync else None
+    hours_ago = 99.0
+    if last_iso:
+        last_dt   = datetime.fromisoformat(str(last_iso).replace("Z", "+00:00"))
+        hours_ago = (now - last_dt).total_seconds() / 3600
+
+    pixel = client.get("pixel_id") or "unknown"
+    sev   = "critical" if hours_ago > 36 else "warning"
+    return [{
+        "fingerprint": f"meta_attribution_stale:{client['id']}:{now.date().isoformat()}",
+        "title":       f"Gasto Meta desatualizado — {pixel}",
+        "message":     (
+            f"O sync do Meta Ads não atualizou os dados de ontem ({yesterday}). "
+            f"Último sync: {int(hours_ago)}h atrás. "
+            f"O valor investido no dashboard pode estar incorreto. "
+            f"Acesse Meta Ads → Sincronizar para corrigir."
+        ),
+        "severity": sev,
+        "data": {
+            "yesterday":        yesterday,
+            "last_synced_at":   last_iso,
+            "hours_since_sync": round(hours_ago, 1),
+        },
+    }]
+
+
 def _eval_merchant_feed_not_updated(rule: dict, client: dict) -> list[dict]:
     """Feed não atualizado há mais de N dias."""
     if not client.get("merchant_center_id"):
@@ -1875,6 +1957,8 @@ _EVALUATORS = {
     "merchant_feed_not_updated":   _eval_merchant_feed_not_updated,
     # Spend data integrity
     "spend_data_gap":              _eval_spend_data_gap,
+    # Meta attribution sync health
+    "meta_attribution_stale":      _eval_meta_attribution_stale,
 }
 
 
