@@ -11,8 +11,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_ADS_URL     = "https://graph.facebook.com/v19.0/act_{account_id}/insights"
-_ACCOUNT_URL = "https://graph.facebook.com/v19.0/act_{account_id}"
+_ADS_URL     = "https://graph.facebook.com/v22.0/act_{account_id}/insights"
+_ACCOUNT_URL = "https://graph.facebook.com/v22.0/act_{account_id}"
 
 
 def _pick_action(actions: list[dict], action_types: tuple[str, ...]) -> Optional[float]:

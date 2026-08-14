@@ -27,7 +27,7 @@ from .meta_ads import _pick_action
 
 logger = logging.getLogger(__name__)
 
-_GRAPH = "https://graph.facebook.com/v19.0"
+_GRAPH = "https://graph.facebook.com/v22.0"
 
 _PURCHASE_TYPES = (
     "purchase",
