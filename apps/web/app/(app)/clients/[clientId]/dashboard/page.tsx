@@ -203,6 +203,7 @@ interface PacingData {
   needed_per_day_remaining: number | null
   day_of_month:             number
   days_in_month:            number
+  revenue_source?:          'orders' | 'ga4'
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -526,7 +527,14 @@ function PacingWidget({ pacing }: { pacing: PacingData }) {
     <div className="bg-gradient-to-br from-[#1a1f2e] to-[#1a1f2e]/50 rounded-xl border border-[#2a2f3e] p-5">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <h2 className="text-sm font-semibold text-white">Pacing — Meta do Mês</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-white">Pacing — Meta do Mês</h2>
+            {pacing.revenue_source === 'ga4' && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/20 font-medium">
+                via GA4
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
             Dia {pacing.day_of_month} de {pacing.days_in_month}
             {' · '}{pacing.pct_target.toFixed(0)}% do mês decorrido

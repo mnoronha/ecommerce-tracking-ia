@@ -170,6 +170,54 @@ def fetch_overview(
     }
 
 
+def fetch_purchase_revenue(
+    property_id: str,
+    refresh_token: str,
+    start_date: date,
+    end_date: date,
+) -> dict:
+    """
+    Busca receita de compras e número de transações no período.
+    Retorna {"revenue": float, "orders": int} ou {"error": str}.
+    Usado como fallback de pacing quando a tabela orders está vazia.
+    """
+    token = _get_token(refresh_token)
+    if not token:
+        return {"error": "token_refresh_failed"}
+
+    url     = _GA4_API_URL.format(property_id=property_id)
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    body = {
+        "dateRanges": [{"startDate": start_date.isoformat(), "endDate": end_date.isoformat()}],
+        "metrics": [
+            {"name": "purchaseRevenue"},
+            {"name": "transactions"},
+        ],
+        "metricAggregations": ["TOTAL"],
+    }
+    try:
+        resp = httpx.post(url, json=body, headers=headers, timeout=15.0)
+        if resp.status_code != 200:
+            logger.warning("ga4 fetch_purchase_revenue HTTP %s — %s", resp.status_code, resp.text[:200])
+            return {"error": f"HTTP {resp.status_code}"}
+        data = resp.json()
+        # With metricAggregations=TOTAL, aggregate is in data["totals"][0]
+        # Fallback: if no dimensions were used, rows[0] also holds the aggregate
+        totals_list = data.get("totals") or []
+        if totals_list:
+            vals = totals_list[0].get("metricValues", [])
+        else:
+            rows = data.get("rows") or []
+            vals = rows[0].get("metricValues", []) if rows else []
+        revenue = float(vals[0]["value"]) if len(vals) > 0 else 0.0
+        orders  = int(float(vals[1]["value"])) if len(vals) > 1 else 0
+        return {"revenue": round(revenue, 2), "orders": orders}
+    except Exception as exc:
+        logger.error("ga4 fetch_purchase_revenue: %s", exc)
+        return {"error": str(exc)}
+
+
 _AI_REFERRER_DOMAINS = [
     "chatgpt.com", "chat.openai.com", "perplexity.ai",
     "gemini.google.com", "claude.ai", "copilot.microsoft.com",

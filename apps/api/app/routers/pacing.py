@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
+from ..services import crypto, ga4_reporting
 
 from pydantic import BaseModel
 from typing import Optional
@@ -205,7 +206,8 @@ async def get_pacing(pixel_id: str):
     sb = get_supabase()
     client = (
         sb.table("clients")
-        .select("id, monthly_revenue_goal, monthly_ad_spend_goal, target_roas")
+        .select("id, monthly_revenue_goal, monthly_ad_spend_goal, target_roas, "
+                "ga4_property_id, ga4_reporting_enabled, google_ads_refresh_token")
         .eq("pixel_id", pixel_id)
         .eq("is_active", True)
         .limit(1)
@@ -213,7 +215,7 @@ async def get_pacing(pixel_id: str):
     )
     if not (client and client.data):
         raise HTTPException(status_code=404, detail="Client not found")
-    c = client.data[0]
+    c = crypto.decrypt_client_secrets(client.data[0])
 
     # Use BRT (UTC-3) — clientes são brasileiros; meia-noite UTC != virada do mês BRT
     from datetime import timedelta
@@ -263,6 +265,38 @@ async def get_pacing(pixel_id: str):
 
     today_orders = [o for o in mtd_orders if o.get("created_at") >= today_start.isoformat()]
     today_revenue = sum(float(o.get("total_price") or 0) for o in today_orders)
+    today_orders_count = len(today_orders)
+
+    revenue_source = "orders"
+
+    # Fallback GA4: quando não há pedidos na base (sem plataforma de e-commerce),
+    # usa purchaseRevenue do GA4 como fonte de receita para o pacing.
+    if mtd_revenue == 0 and c.get("ga4_reporting_enabled") and c.get("ga4_property_id"):
+        refresh_token = c.get("google_ads_refresh_token")
+        if refresh_token:
+            try:
+                ga4_mtd = ga4_reporting.fetch_purchase_revenue(
+                    property_id=c["ga4_property_id"],
+                    refresh_token=refresh_token,
+                    start_date=month_start_brt.date(),
+                    end_date=now.date(),
+                )
+                if "revenue" in ga4_mtd and ga4_mtd["revenue"] > 0:
+                    mtd_revenue      = ga4_mtd["revenue"]
+                    mtd_orders_count = ga4_mtd["orders"]
+                    revenue_source   = "ga4"
+
+                    ga4_today = ga4_reporting.fetch_purchase_revenue(
+                        property_id=c["ga4_property_id"],
+                        refresh_token=refresh_token,
+                        start_date=now.date(),
+                        end_date=now.date(),
+                    )
+                    if "revenue" in ga4_today:
+                        today_revenue      = ga4_today["revenue"]
+                        today_orders_count = ga4_today["orders"]
+            except Exception as exc:
+                logger.warning("pacing: ga4 fallback failed: %s", exc)
 
     # Linear projection assuming current run-rate continues
     projected_revenue = round(mtd_revenue / fraction_done, 2) if fraction_done > 0 else 0
@@ -284,12 +318,13 @@ async def get_pacing(pixel_id: str):
         "day_of_month":              day_of_month,
         "days_in_month":             days_in_month,
         "fraction_done":             round(fraction_done, 4),
+        "revenue_source":            revenue_source,
         # Revenue side
         "mtd_revenue":               round(mtd_revenue, 2),
         "mtd_orders":                mtd_orders_count,
         "mtd_profit":                round(mtd_profit, 2) if mtd_profit else None,
         "today_revenue":             round(today_revenue, 2),
-        "today_orders":              len(today_orders),
+        "today_orders":              today_orders_count,
         "projected_revenue":         projected_revenue,
         "monthly_revenue_goal":      goal if goal > 0 else None,
         "pct_done":                  pct_done,
