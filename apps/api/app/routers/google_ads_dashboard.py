@@ -112,7 +112,7 @@ async def google_overview(
     def _fetch_spend(d_from, d_to):
         return (
             sb.table("ad_spend")
-            .select("date, spend, impressions, clicks, conversions")
+            .select("date, spend, impressions, clicks, conversions, conversion_value")
             .eq("client_id", client_id)
             .eq("channel", "google_ads")
             .gte("date", str(d_from))
@@ -122,13 +122,15 @@ async def google_overview(
 
     curr_spend_rows = _fetch_spend(d_start, d_end)
     prev_spend_rows = _fetch_spend(d_prev_start, d_prev_end)
-    curr_spend  = round(sum(float(r.get("spend") or 0)     for r in curr_spend_rows), 2)
-    prev_spend  = round(sum(float(r.get("spend") or 0)     for r in prev_spend_rows), 2)
-    curr_impr   = sum(int(r.get("impressions") or 0)       for r in curr_spend_rows)
-    curr_clicks = sum(int(r.get("clicks") or 0)            for r in curr_spend_rows)
-    curr_conv   = round(sum(float(r.get("conversions") or 0) for r in curr_spend_rows), 2)
-    prev_conv   = round(sum(float(r.get("conversions") or 0) for r in prev_spend_rows), 2)
-    has_spend   = len(curr_spend_rows) > 0
+    curr_spend      = round(sum(float(r.get("spend") or 0)            for r in curr_spend_rows), 2)
+    prev_spend      = round(sum(float(r.get("spend") or 0)            for r in prev_spend_rows), 2)
+    curr_impr       = sum(int(r.get("impressions") or 0)              for r in curr_spend_rows)
+    curr_clicks     = sum(int(r.get("clicks") or 0)                   for r in curr_spend_rows)
+    curr_conv       = round(sum(float(r.get("conversions") or 0)      for r in curr_spend_rows), 2)
+    prev_conv       = round(sum(float(r.get("conversions") or 0)      for r in prev_spend_rows), 2)
+    curr_conv_value = round(sum(float(r.get("conversion_value") or 0) for r in curr_spend_rows), 2)
+    prev_conv_value = round(sum(float(r.get("conversion_value") or 0) for r in prev_spend_rows), 2)
+    has_spend       = len(curr_spend_rows) > 0
     spend_by_day: dict = {}
     for r in curr_spend_rows:
         spend_by_day[str(r["date"])[:10]] = float(r.get("spend") or 0)
@@ -173,40 +175,49 @@ async def google_overview(
     )
 
     # ── Totals with deltas ─────────────────────────────────────────────────
-    prev_roas = round(prev_agg["revenue"] / prev_spend, 2) if prev_spend > 0 else None
+    prev_roas       = round(prev_agg["revenue"] / prev_spend, 2) if prev_spend > 0 else None
+    curr_roas_google = round(curr_conv_value / curr_spend, 2) if (curr_spend > 0 and curr_conv_value > 0) else None
+    prev_roas_google = round(prev_conv_value / prev_spend, 2) if (prev_spend > 0 and prev_conv_value > 0) else None
     totals = {
         **curr_agg,
-        "spend":            curr_spend,
-        "has_spend":        has_spend,
-        "impressions":      curr_impr,
-        "clicks":           curr_clicks,
-        "conversions":      curr_conv if curr_conv > 0 else None,
-        "roas":             round(curr_agg["revenue"] / curr_spend, 2) if curr_spend > 0 else None,
-        "total_sent":       curr_match["total_sent"],
+        "spend":             curr_spend,
+        "has_spend":         has_spend,
+        "impressions":       curr_impr,
+        "clicks":            curr_clicks,
+        "conversions":       curr_conv if curr_conv > 0 else None,
+        "conversions_value": curr_conv_value if curr_conv_value > 0 else None,
+        # roas = server-side (pedidos com utm=google ÷ spend) — mede cobertura do tracking
+        "roas":              round(curr_agg["revenue"] / curr_spend, 2) if curr_spend > 0 else None,
+        # roas_google = conversão reportada pelo Google Ads (inclui view-through, enhanced)
+        "roas_google":       curr_roas_google,
+        "total_sent":        curr_match["total_sent"],
         "sent_coverage_pct": sent_coverage_curr,
-        "gclid_pct":        gclid_pct_curr,
-        "gclid":            curr_match["gclid"],
-        "gbraid":           curr_match["gbraid"],
-        "enhanced_only":    curr_match["enhanced_only"],
-        "not_sent":         curr_match["not_sent"],
-        # CPA real = investimento ÷ pedidos atribuídos ao Google (null se sem spend)
-        "cpa": round(curr_spend / curr_agg["orders"], 2) if (has_spend and curr_agg["orders"] > 0) else None,
+        "gclid_pct":         gclid_pct_curr,
+        "gclid":             curr_match["gclid"],
+        "gbraid":            curr_match["gbraid"],
+        "enhanced_only":     curr_match["enhanced_only"],
+        "not_sent":          curr_match["not_sent"],
+        "cpa": round(curr_spend / curr_conv, 2) if (has_spend and curr_conv > 0) else None,
         "avg_ticket": round(curr_agg["revenue"] / curr_agg["orders"], 2) if curr_agg["orders"] > 0 else None,
     }
     prev_totals = {
         **prev_agg,
-        "spend":      prev_spend,
-        "roas":       prev_roas,
-        "conversions": prev_conv if prev_conv > 0 else None,
-        "gclid":      prev_match["gclid"],
-        "total_sent": prev_match["total_sent"],
+        "spend":             prev_spend,
+        "roas":              prev_roas,
+        "roas_google":       prev_roas_google,
+        "conversions":       prev_conv if prev_conv > 0 else None,
+        "conversions_value": prev_conv_value if prev_conv_value > 0 else None,
+        "gclid":             prev_match["gclid"],
+        "total_sent":        prev_match["total_sent"],
     }
     deltas = {
-        "orders":      _delta(curr_agg["orders"],  prev_agg["orders"]),
-        "revenue":     _delta(curr_agg["revenue"], prev_agg["revenue"]),
-        "spend":       _delta(curr_spend, prev_spend),
-        "roas":        _delta(totals["roas"], prev_roas),
-        "conversions": _delta(curr_conv, prev_conv),
+        "orders":            _delta(curr_agg["orders"],  prev_agg["orders"]),
+        "revenue":           _delta(curr_agg["revenue"], prev_agg["revenue"]),
+        "spend":             _delta(curr_spend, prev_spend),
+        "roas":              _delta(totals["roas"], prev_roas),
+        "roas_google":       _delta(curr_roas_google, prev_roas_google),
+        "conversions":       _delta(curr_conv, prev_conv),
+        "conversions_value": _delta(curr_conv_value, prev_conv_value),
         "gclid":       _delta(curr_match["gclid"], prev_match["gclid"]),
         "total_sent":  _delta(curr_match["total_sent"], prev_match["total_sent"]),
     }

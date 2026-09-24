@@ -363,10 +363,15 @@ def fetch_campaign_insights(
         headers["login-customer-id"] = mcc.replace("-", "")
 
     # No LIMIT in GAQL alongside an ORDER BY pageSize quirk — slice client-side.
+    # all_conversions includes secondary/observation actions — used as fallback
+    # when metrics.conversions is 0 (e.g. primary is our UPLOAD_CLICKS but native
+    # tag is secondary, so the client sees conversions in Google Ads UI but our
+    # metrics.conversions returns 0).
     query = (
         "SELECT campaign.name, campaign.id, campaign.status, "
         "metrics.cost_micros, metrics.impressions, metrics.clicks, "
-        "metrics.conversions, metrics.conversions_value "
+        "metrics.conversions, metrics.conversions_value, "
+        "metrics.all_conversions, metrics.all_conversions_value "
         "FROM campaign "
         f"WHERE segments.date BETWEEN '{start_date}' AND '{end_date}' "
         "AND metrics.cost_micros > 0 "
@@ -392,22 +397,29 @@ def fetch_campaign_insights(
         spend = round(int(m.get("costMicros") or 0) / 1_000_000, 2)
         if spend <= 0:
             continue
-        impressions = int(m.get("impressions") or 0)
-        clicks      = int(m.get("clicks") or 0)
-        conversions = float(m.get("conversions") or 0)
-        conv_value  = round(float(m.get("conversionsValue") or 0), 2)
+        impressions  = int(m.get("impressions") or 0)
+        clicks       = int(m.get("clicks") or 0)
+        conversions  = float(m.get("conversions") or 0)
+        conv_value   = round(float(m.get("conversionsValue") or 0), 2)
+        all_conv     = float(m.get("allConversions") or 0)
+        all_conv_val = round(float(m.get("allConversionsValue") or 0), 2)
+        # Use all_conversions as fallback when primary conversions are 0
+        eff_conv     = conversions if conversions > 0 else all_conv
+        eff_conv_val = conv_value  if conv_value  > 0 else all_conv_val
         rows.append({
-            "campaign_id":       camp.get("id"),
-            "campaign_name":     camp.get("name") or "—",
-            "status":            camp.get("status") or "",
-            "spend":             spend,
-            "impressions":       impressions,
-            "clicks":            clicks,
-            "conversions":       conversions,
-            "conversions_value": conv_value,
-            "roas":              round(conv_value / spend, 2) if spend > 0 else None,
-            "cpa":               round(spend / conversions, 2) if conversions > 0 else None,
-            "ctr":               round(clicks / impressions * 100, 2) if impressions > 0 else 0.0,
+            "campaign_id":           camp.get("id"),
+            "campaign_name":         camp.get("name") or "—",
+            "status":                camp.get("status") or "",
+            "spend":                 spend,
+            "impressions":           impressions,
+            "clicks":                clicks,
+            "conversions":           eff_conv     if eff_conv     > 0 else None,
+            "conversions_value":     eff_conv_val if eff_conv_val > 0 else None,
+            "all_conversions":       all_conv     if all_conv     > 0 else None,
+            "all_conversions_value": all_conv_val if all_conv_val > 0 else None,
+            "roas":                  round(eff_conv_val / spend, 2) if (spend > 0 and eff_conv_val > 0) else None,
+            "cpa":                   round(spend / eff_conv, 2)     if eff_conv > 0 else None,
+            "ctr":                   round(clicks / impressions * 100, 2) if impressions > 0 else 0.0,
         })
 
     rows.sort(key=lambda x: x["spend"], reverse=True)
@@ -450,7 +462,8 @@ def fetch_adgroup_insights(
     query = (
         "SELECT campaign.id, ad_group.id, ad_group.name, ad_group.status, "
         "metrics.cost_micros, metrics.impressions, metrics.clicks, "
-        "metrics.conversions, metrics.conversions_value "
+        "metrics.conversions, metrics.conversions_value, "
+        "metrics.all_conversions, metrics.all_conversions_value "
         "FROM ad_group "
         f"WHERE segments.date BETWEEN '{start_date}' AND '{end_date}' "
         "AND metrics.cost_micros > 0 "
@@ -477,10 +490,14 @@ def fetch_adgroup_insights(
         spend = round(int(m.get("costMicros") or 0) / 1_000_000, 2)
         if spend <= 0:
             continue
-        impressions = int(m.get("impressions") or 0)
-        clicks      = int(m.get("clicks") or 0)
-        conversions = float(m.get("conversions") or 0)
-        conv_value  = round(float(m.get("conversionsValue") or 0), 2)
+        impressions  = int(m.get("impressions") or 0)
+        clicks       = int(m.get("clicks") or 0)
+        conversions  = float(m.get("conversions") or 0)
+        conv_value   = round(float(m.get("conversionsValue") or 0), 2)
+        all_conv     = float(m.get("allConversions") or 0)
+        all_conv_val = round(float(m.get("allConversionsValue") or 0), 2)
+        eff_conv     = conversions if conversions > 0 else all_conv
+        eff_conv_val = conv_value  if conv_value  > 0 else all_conv_val
         rows.append({
             "campaign_id":       str(camp.get("id") or ""),
             "adgroup_id":        str(ag.get("id") or ""),
@@ -489,10 +506,10 @@ def fetch_adgroup_insights(
             "spend":             spend,
             "impressions":       impressions,
             "clicks":            clicks,
-            "conversions":       conversions,
-            "conversions_value": conv_value,
-            "roas":              round(conv_value / spend, 2) if spend > 0 else None,
-            "cpa":               round(spend / conversions, 2) if conversions > 0 else None,
+            "conversions":       eff_conv     if eff_conv     > 0 else None,
+            "conversions_value": eff_conv_val if eff_conv_val > 0 else None,
+            "roas":              round(eff_conv_val / spend, 2) if (spend > 0 and eff_conv_val > 0) else None,
+            "cpa":               round(spend / eff_conv, 2)    if eff_conv > 0 else None,
             "ctr":               round(clicks / impressions * 100, 2) if impressions > 0 else 0.0,
         })
 

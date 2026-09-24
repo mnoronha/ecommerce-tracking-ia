@@ -30,6 +30,10 @@ interface Totals {
   ctr?: number | null; cpc?: number | null; cpm?: number | null
   sessions?: number | null
   data_source?: string
+  // Google-reported conversions from ad_spend sync (all primary actions)
+  conversions?: number | null
+  conversions_value?: number | null
+  roas_google?: number | null
 }
 
 interface CampaignRow {
@@ -335,17 +339,20 @@ export default function GoogleAdsPage() {
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
-            <KpiCard label="Investimento"   value={t?.has_spend ? fmt(t.spend) : '—'}                    delta={dlt.spend}   invertDelta accent="rose"
+            <KpiCard label="Investimento"        value={t?.has_spend ? fmt(t.spend) : '—'}                       delta={dlt.spend}            invertDelta accent="rose"
               sub={t && !t.has_spend ? 'sem sync de spend' : undefined} />
-            <KpiCard label="ROAS"           value={t?.roas != null ? `${t.roas.toFixed(2)}x` : '—'}      delta={dlt.roas}    accent="emerald" />
-            <KpiCard label="Compras Google" value={t ? String(t.orders) : '—'}                           delta={dlt.orders}  accent="emerald" />
-            <KpiCard label="Receita Google" value={t ? fmt(t.revenue) : '—'}                             delta={dlt.revenue} accent="emerald" />
-            <KpiCard label="CPA"            value={t?.cpa != null ? fmtD2(t.cpa) : '—'}                 invertDelta />
-            <KpiCard label="Ticket Médio"   value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'}      accent="orange" />
-            <KpiCard label="Impressões"     value={t ? fmtN(t.impressions) : '—'}                        accent="blue" />
-            <KpiCard label="CPM"            value={t?.cpm != null ? fmtD2(t.cpm) : t && t.impressions > 0 ? fmtD2(t.spend / t.impressions * 1000) : '—'} accent="blue" />
-            <KpiCard label="CTR"            value={t?.ctr != null ? `${t.ctr.toFixed(2)}%` : t && t.impressions > 0 ? `${(t.clicks / t.impressions * 100).toFixed(2)}%` : '—'} accent="blue" />
-            <KpiCard label="CPC"            value={t?.cpc != null ? fmtD2(t.cpc) : t && t.clicks > 0 ? fmtD2(t.spend / t.clicks) : '—'} accent="blue" />
+            <KpiCard label="ROAS (Google API)"   value={t?.roas_google != null ? `${t.roas_google.toFixed(2)}x` : '—'} delta={dlt.roas_google} accent="emerald"
+              sub="conv. reportadas pelo Google" />
+            <KpiCard label="Conv. Google (API)"  value={t?.conversions != null ? fmtN(Math.round(t.conversions)) : '—'} delta={dlt.conversions} accent="emerald"
+              sub={t?.conversions_value != null ? fmt(t.conversions_value) : undefined} />
+            <KpiCard label="Compras (tracking)"  value={t ? String(t.orders) : '—'}                              delta={dlt.orders}           accent="teal"
+              sub="pedidos com utm=google" />
+            <KpiCard label="Receita (tracking)"  value={t ? fmt(t.revenue) : '—'}                                delta={dlt.revenue}          accent="teal" />
+            <KpiCard label="CPA"                 value={t?.cpa != null ? fmtD2(t.cpa) : '—'}                    invertDelta />
+            <KpiCard label="Ticket Médio"        value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'}         accent="orange" />
+            <KpiCard label="Impressões"          value={t ? fmtN(t.impressions) : '—'}                           accent="blue" />
+            <KpiCard label="CPM"                 value={t?.cpm != null ? fmtD2(t.cpm) : t && t.impressions > 0 ? fmtD2(t.spend / t.impressions * 1000) : '—'} accent="blue" />
+            <KpiCard label="CTR"                 value={t?.ctr != null ? `${t.ctr.toFixed(2)}%` : t && t.impressions > 0 ? `${(t.clicks / t.impressions * 100).toFixed(2)}%` : '—'} accent="blue" />
           </div>
 
           {/* Charts + Match Types */}
@@ -562,8 +569,8 @@ export default function GoogleAdsPage() {
             <p className="text-sm font-semibold text-blue-400">Como interpretar os dados</p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs text-slate-400 leading-relaxed">
               <div>
-                <p className="text-slate-300 font-medium mb-1">Conv. Google vs pedidos server-side</p>
-                <p>A coluna "Conv." mostra o que o Google Ads reportou. O número entre parênteses e o valor "real" em teal são nossos pedidos com utm_source=google — a diferença revela janelas de view-through ou compras por PIX que o Google não viu.</p>
+                <p className="text-slate-300 font-medium mb-1">Conv. Google (API) vs Compras (tracking)</p>
+                <p>"Conv. Google (API)" e "ROAS (Google API)" usam os dados que o Google Ads reporta — incluem view-through, enhanced conversions e ações secundárias. "Compras (tracking)" conta só pedidos com utm_source=google no nosso banco — mede cobertura de tracking, não volume total.</p>
               </div>
               <div>
                 <p className="text-slate-300 font-medium mb-1">gclid vs Enhanced</p>
