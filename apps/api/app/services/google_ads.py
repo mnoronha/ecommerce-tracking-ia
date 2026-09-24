@@ -403,9 +403,10 @@ def fetch_campaign_insights(
         conv_value   = round(float(m.get("conversionsValue") or 0), 2)
         all_conv     = float(m.get("allConversions") or 0)
         all_conv_val = round(float(m.get("allConversionsValue") or 0), 2)
-        # Use all_conversions as fallback when primary conversions are 0
-        eff_conv     = conversions if conversions > 0 else all_conv
-        eff_conv_val = conv_value  if conv_value  > 0 else all_conv_val
+        # Use metrics.conversions (primary actions only) for display.
+        # all_conversions is kept for reference but NOT used as fallback —
+        # local/branding campaigns with 0 purchases have large all_conversions
+        # (store visits, video views) that would inflate the count.
         rows.append({
             "campaign_id":           camp.get("id"),
             "campaign_name":         camp.get("name") or "—",
@@ -413,12 +414,12 @@ def fetch_campaign_insights(
             "spend":                 spend,
             "impressions":           impressions,
             "clicks":                clicks,
-            "conversions":           eff_conv     if eff_conv     > 0 else None,
-            "conversions_value":     eff_conv_val if eff_conv_val > 0 else None,
+            "conversions":           conversions  if conversions  > 0 else None,
+            "conversions_value":     conv_value   if conv_value   > 0 else None,
             "all_conversions":       all_conv     if all_conv     > 0 else None,
             "all_conversions_value": all_conv_val if all_conv_val > 0 else None,
-            "roas":                  round(eff_conv_val / spend, 2) if (spend > 0 and eff_conv_val > 0) else None,
-            "cpa":                   round(spend / eff_conv, 2)     if eff_conv > 0 else None,
+            "roas":                  round(conv_value / spend, 2) if (spend > 0 and conv_value > 0) else None,
+            "cpa":                   round(spend / conversions, 2) if conversions > 0 else None,
             "ctr":                   round(clicks / impressions * 100, 2) if impressions > 0 else 0.0,
         })
 
@@ -494,10 +495,6 @@ def fetch_adgroup_insights(
         clicks       = int(m.get("clicks") or 0)
         conversions  = float(m.get("conversions") or 0)
         conv_value   = round(float(m.get("conversionsValue") or 0), 2)
-        all_conv     = float(m.get("allConversions") or 0)
-        all_conv_val = round(float(m.get("allConversionsValue") or 0), 2)
-        eff_conv     = conversions if conversions > 0 else all_conv
-        eff_conv_val = conv_value  if conv_value  > 0 else all_conv_val
         rows.append({
             "campaign_id":       str(camp.get("id") or ""),
             "adgroup_id":        str(ag.get("id") or ""),
@@ -506,10 +503,10 @@ def fetch_adgroup_insights(
             "spend":             spend,
             "impressions":       impressions,
             "clicks":            clicks,
-            "conversions":       eff_conv     if eff_conv     > 0 else None,
-            "conversions_value": eff_conv_val if eff_conv_val > 0 else None,
-            "roas":              round(eff_conv_val / spend, 2) if (spend > 0 and eff_conv_val > 0) else None,
-            "cpa":               round(spend / eff_conv, 2)    if eff_conv > 0 else None,
+            "conversions":       conversions if conversions > 0 else None,
+            "conversions_value": conv_value  if conv_value  > 0 else None,
+            "roas":              round(conv_value / spend, 2)   if (spend > 0 and conv_value > 0) else None,
+            "cpa":               round(spend / conversions, 2)  if conversions > 0 else None,
             "ctr":               round(clicks / impressions * 100, 2) if impressions > 0 else 0.0,
         })
 
