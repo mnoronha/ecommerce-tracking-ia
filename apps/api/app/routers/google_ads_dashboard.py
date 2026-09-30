@@ -65,7 +65,7 @@ async def google_overview(
     creds = (
         sb.table("clients")
         .select("id, google_ads_customer_id, google_ads_conversion_action_id, "
-                "google_ads_refresh_token, google_ads_login_customer_id")
+                "google_ads_refresh_token, google_ads_login_customer_id, tracking_enabled")
         .eq("pixel_id", pixel_id)
         .eq("is_active", True)
         .limit(1)
@@ -131,6 +131,9 @@ async def google_overview(
     curr_conv_value = round(sum(float(r.get("conversion_value") or 0) for r in curr_spend_rows), 2)
     prev_conv_value = round(sum(float(r.get("conversion_value") or 0) for r in prev_spend_rows), 2)
     has_spend       = len(curr_spend_rows) > 0
+    # Clientes com tracking nativo (tracking_enabled=false) não usam nosso CAPI.
+    # Para eles, a Google Ads API (ad_spend) é a fonte primária de conversões.
+    use_api_primary = not c.get("tracking_enabled", True)
     spend_by_day: dict = {}
     for r in curr_spend_rows:
         spend_by_day[str(r["date"])[:10]] = float(r.get("spend") or 0)
@@ -190,15 +193,17 @@ async def google_overview(
         "roas":              round(curr_agg["revenue"] / curr_spend, 2) if curr_spend > 0 else None,
         # roas_google = conversão reportada pelo Google Ads (inclui view-through, enhanced)
         "roas_google":       curr_roas_google,
-        "total_sent":        curr_match["total_sent"],
-        "sent_coverage_pct": sent_coverage_curr,
-        "gclid_pct":         gclid_pct_curr,
-        "gclid":             curr_match["gclid"],
-        "gbraid":            curr_match["gbraid"],
-        "enhanced_only":     curr_match["enhanced_only"],
-        "not_sent":          curr_match["not_sent"],
+        # métricas de cobertura CAPI — None quando cliente usa tracking nativo
+        "total_sent":        None if use_api_primary else curr_match["total_sent"],
+        "sent_coverage_pct": None if use_api_primary else sent_coverage_curr,
+        "gclid_pct":         None if use_api_primary else gclid_pct_curr,
+        "gclid":             None if use_api_primary else curr_match["gclid"],
+        "gbraid":            None if use_api_primary else curr_match["gbraid"],
+        "enhanced_only":     None if use_api_primary else curr_match["enhanced_only"],
+        "not_sent":          None if use_api_primary else curr_match["not_sent"],
         "cpa": round(curr_spend / curr_conv, 2) if (has_spend and curr_conv > 0) else None,
         "avg_ticket": round(curr_agg["revenue"] / curr_agg["orders"], 2) if curr_agg["orders"] > 0 else None,
+        "tracking_native":   use_api_primary,
     }
     prev_totals = {
         **prev_agg,
@@ -236,11 +241,25 @@ async def google_overview(
         if mt == "gclid":    daily_map[d]["gclid"]    += 1
         elif "enhanced" in mt: daily_map[d]["enhanced"] += 1
 
+    # Para tracking nativo: série diária usa conversões/receita do ad_spend (API Google)
+    if use_api_primary:
+        api_daily_map = {
+            str(r["date"])[:10]: {
+                "orders":  round(float(r.get("conversions") or 0), 2),
+                "revenue": round(float(r.get("conversion_value") or 0), 2),
+                "gclid": 0, "enhanced": 0,
+            }
+            for r in curr_spend_rows
+        }
     daily = []
     for i in range(days):
         d = str(d_start + timedelta(days=i))
-        row = daily_map.get(d, {"date": d, "orders": 0, "revenue": 0.0, "gclid": 0, "enhanced": 0})
-        row["revenue"] = round(row["revenue"], 2)
+        if use_api_primary:
+            row = api_daily_map.get(d, {"date": d, "orders": 0, "revenue": 0.0, "gclid": 0, "enhanced": 0})
+            row["date"] = d
+        else:
+            row = daily_map.get(d, {"date": d, "orders": 0, "revenue": 0.0, "gclid": 0, "enhanced": 0})
+            row["revenue"] = round(row["revenue"], 2)
         row["spend"]   = round(spend_by_day.get(d, 0.0), 2)
         roas_d         = row["revenue"] / row["spend"] if row["spend"] > 0 else None
         row["roas"]    = round(roas_d, 2) if roas_d is not None else None
@@ -412,23 +431,31 @@ async def google_overview(
         except Exception as exc:
             logger.warning("google_overview: platform campaigns indisponíveis (%s): %s", pixel_id, exc)
 
-    # ── Fallback para clientes sem pedidos server-side ────────────────────────
-    # Clientes que não integram pedidos via webhook (ex: Enutri, Colab55) têm
-    # orders=0 no banco. Usamos conversions/conversions_value da Google Ads API
-    # como fonte primária quando não há dados server-side.
-    if curr_agg["orders"] == 0 and platform_campaigns:
-        api_conv   = sum(float(c.get("conversions") or 0) for c in platform_campaigns)
-        api_rev    = sum(float(c.get("conversions_value") or 0) for c in platform_campaigns)
-        if api_conv > 0 or api_rev > 0:
-            totals["orders"]      = round(api_conv)
-            totals["revenue"]     = round(api_rev, 2)
-            totals["roas"]        = round(api_rev / curr_spend, 2) if curr_spend > 0 else None
-            totals["cpa"]         = round(curr_spend / api_conv, 2) if api_conv > 0 else None
-            totals["avg_ticket"]  = round(api_rev / api_conv, 2) if api_conv > 0 else None
+    # ── Fallback / tracking nativo ─────────────────────────────────────────────
+    # Dois casos em que a Google Ads API vira fonte primária dos KPIs:
+    #   1. Clientes com tracking_enabled=False (tracking nativo Shopify/GA4)
+    #   2. Clientes sem pedidos server-side (webhook não integrado)
+    # Em ambos, curr_conv/curr_conv_value do ad_spend já refletem o que o Google
+    # reporta — sem precisar de chamada extra a platform_campaigns.
+    _api_orders = round(curr_conv) if curr_conv > 0 else (
+        round(sum(float(p.get("conversions") or 0) for p in platform_campaigns))
+        if platform_campaigns else 0
+    )
+    _api_rev = curr_conv_value if curr_conv_value > 0 else (
+        round(sum(float(p.get("conversions_value") or 0) for p in platform_campaigns), 2)
+        if platform_campaigns else 0.0
+    )
+    if use_api_primary or (curr_agg["orders"] == 0 and (_api_orders > 0 or _api_rev > 0)):
+        if _api_orders > 0 or _api_rev > 0:
+            totals["orders"]      = _api_orders
+            totals["revenue"]     = round(_api_rev, 2)
+            totals["roas"]        = round(_api_rev / curr_spend, 2) if curr_spend > 0 else None
+            totals["cpa"]         = round(curr_spend / _api_orders, 2) if _api_orders > 0 else None
+            totals["avg_ticket"]  = round(_api_rev / _api_orders, 2) if _api_orders > 0 else None
             totals["data_source"] = "google_api"
-            deltas["roas"]   = _delta(totals["roas"], prev_roas)
-            deltas["orders"] = _delta(totals["orders"], prev_agg["orders"])
-            deltas["revenue"]= _delta(totals["revenue"], prev_agg["revenue"])
+            deltas["roas"]   = _delta(totals["roas"], prev_roas_google or prev_roas)
+            deltas["orders"] = _delta(totals["orders"], round(prev_conv) if prev_conv > 0 else prev_agg["orders"])
+            deltas["revenue"]= _delta(totals["revenue"], prev_conv_value if prev_conv_value > 0 else prev_agg["revenue"])
 
     return {
         "days":        days,
