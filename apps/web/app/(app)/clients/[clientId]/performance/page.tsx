@@ -10,7 +10,6 @@ import {
   type LeadGenBusiness,
   type Metric,
   type MetricStatus,
-  type PaidMedia,
   type ReportContractV1,
 } from '@/lib/agency-os'
 
@@ -112,7 +111,7 @@ function toLabel(key: string) {
   return KNOWN_LABELS[key] ?? key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
-function ChannelGrid({ data }: { data: ChannelMetrics | PaidMedia }) {
+function ChannelGrid({ data }: { data: ChannelMetrics }) {
   const entries = Object.entries(data).filter((e): e is [string, Metric] => e[1] != null)
   if (entries.length === 0) return <p className="text-xs text-slate-600">Sem métricas disponíveis nesta seção.</p>
 
@@ -219,8 +218,17 @@ function ErrorState({ code, clientId }: { code: ReportErrorCode; clientId: strin
 
 // ── Contract view ─────────────────────────────────────────────────────────────
 
+function JsonDump({ data }: { data: unknown }) {
+  return (
+    <pre className="text-xs text-slate-400 bg-[#0f1117] rounded-xl p-4 overflow-auto max-h-64 whitespace-pre-wrap">
+      {typeof data === 'string' ? data : JSON.stringify(data, null, 2)}
+    </pre>
+  )
+}
+
 function ContractView({ contract, clientId }: { contract: ReportContractV1; clientId: string }) {
-  const { period, business_model, business, paid_media, google_ads, meta_ads, journey, diagnostics, recommendations, governance } = contract
+  const { report, business, paid_media, journey, diagnostics, recommendations, governance } = contract
+  const { period, business_model } = report
   const isEcommerce = business_model === 'ecommerce'
 
   return (
@@ -238,7 +246,7 @@ function ContractView({ contract, clientId }: { contract: ReportContractV1; clie
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${isEcommerce ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' : 'bg-purple-500/10 text-purple-400 border-purple-500/30'}`}>
                 {isEcommerce ? 'E-commerce' : 'Lead Generation'}
               </span>
-              <span className="text-xs text-slate-600 font-mono">{contract.schema}</span>
+              <span className="text-xs text-slate-600 font-mono">{contract.schema_version}</span>
             </div>
           </div>
           {/* Period picker — form submission, no JS required */}
@@ -265,57 +273,43 @@ function ContractView({ contract, clientId }: { contract: ReportContractV1; clie
         : <LeadGenBusinessSection   business={business as LeadGenBusiness} />
       }
 
-      {paid_media != null && (
-        <SectionCard title="Mídia Paga">
-          <ChannelGrid data={paid_media} />
+      {paid_media?.total_spend != null && (
+        <SectionCard title="Mídia Paga — Total">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <MetricCell label="Investimento Total" metric={paid_media.total_spend} fmt="currency" />
+          </div>
         </SectionCard>
       )}
 
-      {google_ads != null && (
+      {paid_media?.google_ads != null && (
         <SectionCard title="Google Ads">
-          <ChannelGrid data={google_ads} />
+          <ChannelGrid data={paid_media.google_ads} />
         </SectionCard>
       )}
 
-      {meta_ads != null && (
+      {paid_media?.meta_ads != null && (
         <SectionCard title="Meta Ads">
-          <ChannelGrid data={meta_ads} />
+          <ChannelGrid data={paid_media.meta_ads} />
         </SectionCard>
       )}
 
-      {journey?.ga4 != null && (
-        <SectionCard title="Jornada — GA4" note="Journey Truth — comportamento de sessão, não resultado de negócio">
-          <ChannelGrid data={journey.ga4} />
-        </SectionCard>
+      {journey != null && (
+        <CollapsibleSection title="Jornada">
+          <JsonDump data={journey} />
+        </CollapsibleSection>
       )}
 
       {recommendations != null && <RecommendationsSection data={recommendations} />}
 
       {diagnostics != null && (
         <CollapsibleSection title="Diagnóstico">
-          <pre className="text-xs text-slate-400 bg-[#0f1117] rounded-xl p-4 overflow-auto max-h-64 whitespace-pre-wrap">
-            {typeof diagnostics === 'string' ? diagnostics : JSON.stringify(diagnostics, null, 2)}
-          </pre>
+          <JsonDump data={diagnostics} />
         </CollapsibleSection>
       )}
 
       {governance != null && (
         <CollapsibleSection title="Governance & Limitações">
-          <div className="bg-[#1a1f2e] rounded-xl p-4">
-            {typeof governance === 'string' ? (
-              <p className="text-sm text-slate-400">{governance}</p>
-            ) : Array.isArray(governance) ? (
-              <ul className="space-y-1 text-sm text-slate-400 list-disc list-inside">
-                {(governance as unknown[]).map((item, i) => (
-                  <li key={i}>{typeof item === 'string' ? item : JSON.stringify(item)}</li>
-                ))}
-              </ul>
-            ) : (
-              <pre className="text-xs text-slate-400 overflow-auto whitespace-pre-wrap">
-                {JSON.stringify(governance, null, 2)}
-              </pre>
-            )}
-          </div>
+          <JsonDump data={governance} />
         </CollapsibleSection>
       )}
     </div>

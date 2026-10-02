@@ -29,6 +29,19 @@ export interface Metric<T = number> {
 
 export type BusinessModel = 'ecommerce' | 'lead_generation'
 
+export interface Period {
+  start: string
+  end: string
+  label?: string
+}
+
+export interface ReportMeta {
+  client_slug:        string
+  business_model:     BusinessModel
+  period:             Period
+  comparison_period?: Period
+}
+
 export interface EcommerceBusiness {
   revenue?: Metric
   orders?: Metric<number>
@@ -45,7 +58,8 @@ export interface LeadGenBusiness {
 
 export interface PaidMedia {
   total_spend?: Metric
-  [key: string]: Metric | undefined
+  google_ads?:  ChannelMetrics
+  meta_ads?:    ChannelMetrics
 }
 
 export interface ChannelMetrics {
@@ -53,23 +67,19 @@ export interface ChannelMetrics {
 }
 
 export interface ReportContractV1 {
-  schema: 'norolabs-report-contract-v1'
-  business_model: BusinessModel
-  period: {
-    start: string
-    end: string
-    label?: string
-  }
-  business: EcommerceBusiness | LeadGenBusiness
-  paid_media?: PaidMedia
-  google_ads?: ChannelMetrics
-  meta_ads?: ChannelMetrics
-  journey?: {
-    ga4?: ChannelMetrics
-  }
-  diagnostics?: unknown
-  recommendations?: unknown
-  governance?: unknown
+  schema_version:   'norolabs-report-contract-v1'
+  report:            ReportMeta
+  client?:           unknown
+  targets?:          unknown
+  business:          EcommerceBusiness | LeadGenBusiness
+  paid_media?:       PaidMedia
+  journey?:          unknown
+  products?:         unknown
+  retention?:        unknown
+  diagnostics?:      unknown
+  recommendations?:  unknown
+  governance?:       unknown
+  provenance?:       unknown
 }
 
 export interface AgencyClientInfo {
