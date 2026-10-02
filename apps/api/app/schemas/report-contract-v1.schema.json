@@ -1,0 +1,846 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://norolabs.local/schemas/v4/report-contract-v1.schema.json",
+  "title": "NoroLabs Report Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": [
+    "schema_version",
+    "report",
+    "client",
+    "targets",
+    "business",
+    "paid_media",
+    "journey",
+    "products",
+    "retention",
+    "diagnostics",
+    "recommendations",
+    "governance",
+    "provenance"
+  ],
+
+  "properties": {
+    "schema_version": {
+      "const": "norolabs-report-contract-v1"
+    },
+
+    "report": {
+      "$ref": "#/$defs/report"
+    },
+
+    "client": {
+      "$ref": "#/$defs/client"
+    },
+
+    "targets": {
+      "type": "object"
+    },
+
+    "business": {
+      "type": "object"
+    },
+
+    "paid_media": {
+      "type": "object"
+    },
+
+    "journey": {
+      "$ref": "#/$defs/journey"
+    },
+
+    "products": {
+      "type": "array"
+    },
+
+    "retention": {
+      "type": "object"
+    },
+
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/narrative"
+      }
+    },
+
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/narrative"
+      }
+    },
+
+    "governance": {
+      "$ref": "#/$defs/governance"
+    },
+
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    }
+  },
+
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "report": {
+            "properties": {
+              "business_model": {
+                "const": "ecommerce"
+              }
+            },
+            "required": [
+              "business_model"
+            ]
+          }
+        }
+      },
+
+      "then": {
+        "properties": {
+          "business": {
+            "$ref": "#/$defs/ecommerce_business"
+          },
+
+          "paid_media": {
+            "$ref": "#/$defs/ecommerce_paid_media"
+          }
+        }
+      }
+    },
+
+    {
+      "if": {
+        "properties": {
+          "report": {
+            "properties": {
+              "business_model": {
+                "const": "lead_generation"
+              }
+            },
+            "required": [
+              "business_model"
+            ]
+          }
+        }
+      },
+
+      "then": {
+        "properties": {
+          "business": {
+            "$ref": "#/$defs/lead_business"
+          },
+
+          "paid_media": {
+            "$ref": "#/$defs/lead_paid_media"
+          }
+        }
+      }
+    }
+  ],
+
+  "$defs": {
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "start",
+        "end"
+      ],
+      "properties": {
+        "start": {
+          "type": "string",
+          "format": "date"
+        },
+        "end": {
+          "type": "string",
+          "format": "date"
+        }
+      }
+    },
+
+    "report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "client_slug",
+        "business_model",
+        "period",
+        "comparison_period"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "weekly",
+            "monthly"
+          ]
+        },
+
+        "client_slug": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "business_model": {
+          "enum": [
+            "ecommerce",
+            "lead_generation"
+          ]
+        },
+
+        "period": {
+          "$ref": "#/$defs/period"
+        },
+
+        "comparison_period": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/period"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slug",
+        "name",
+        "client_id",
+        "business_model",
+        "timezone"
+      ],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "client_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "business_model": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+
+        "timezone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+
+    "comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "previous_value",
+        "absolute_change",
+        "percent_change",
+        "status"
+      ],
+      "properties": {
+        "previous_value": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+
+        "absolute_change": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+
+        "percent_change": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+
+        "status": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+
+      "required": [
+        "value",
+        "status",
+        "unit",
+        "definition",
+        "source",
+        "certification",
+        "mapping_state",
+        "notes",
+        "comparison"
+      ],
+
+      "properties": {
+        "value": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ]
+        },
+
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "definition": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "certification": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "mapping_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+
+        "comparison": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/comparison"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+
+    "ecommerce_business": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "revenue",
+        "orders",
+        "average_order_value",
+        "mer"
+      ],
+      "properties": {
+        "revenue": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "orders": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "average_order_value": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "mer": {
+          "$ref": "#/$defs/metric"
+        }
+      }
+    },
+
+    "lead_business": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "leads",
+        "qualified_leads",
+        "appointments",
+        "cost_per_business_lead"
+      ],
+      "properties": {
+        "leads": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "qualified_leads": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "appointments": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "cost_per_business_lead": {
+          "$ref": "#/$defs/metric"
+        }
+      }
+    },
+
+    "ecommerce_google": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "mapping_state",
+        "spend",
+        "clicks",
+        "impressions",
+        "platform_attributed_conversions",
+        "platform_attributed_value",
+        "platform_roas"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+
+        "mapping_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "spend": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "clicks": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "impressions": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_attributed_conversions": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_attributed_value": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_roas": {
+          "$ref": "#/$defs/metric"
+        }
+      }
+    },
+
+    "ecommerce_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "mapping_state",
+        "mapping",
+        "spend",
+        "platform_attributed_conversions",
+        "platform_attributed_value",
+        "platform_roas"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+
+        "mapping_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "mapping": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+
+        "spend": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_attributed_conversions": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_attributed_value": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_roas": {
+          "$ref": "#/$defs/metric"
+        }
+      }
+    },
+
+    "lead_google": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "mapping_state",
+        "spend",
+        "clicks",
+        "impressions",
+        "platform_attributed_leads"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+
+        "mapping_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "spend": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "clicks": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "impressions": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_attributed_leads": {
+          "$ref": "#/$defs/metric"
+        }
+      }
+    },
+
+    "lead_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "mapping_state",
+        "mapping",
+        "spend",
+        "platform_attributed_leads"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+
+        "mapping_state": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+
+        "mapping": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+
+        "spend": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "platform_attributed_leads": {
+          "$ref": "#/$defs/metric"
+        }
+      }
+    },
+
+    "ecommerce_paid_media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_spend",
+        "google_ads",
+        "meta_ads"
+      ],
+      "properties": {
+        "total_spend": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "google_ads": {
+          "$ref": "#/$defs/ecommerce_google"
+        },
+
+        "meta_ads": {
+          "$ref": "#/$defs/ecommerce_meta"
+        }
+      }
+    },
+
+    "lead_paid_media": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total_spend",
+        "google_ads",
+        "meta_ads"
+      ],
+      "properties": {
+        "total_spend": {
+          "$ref": "#/$defs/metric"
+        },
+
+        "google_ads": {
+          "$ref": "#/$defs/lead_google"
+        },
+
+        "meta_ads": {
+          "$ref": "#/$defs/lead_meta"
+        }
+      }
+    },
+
+    "journey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ga4"
+      ],
+      "properties": {
+        "ga4": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "property_id",
+            "metrics",
+            "source"
+          ],
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+
+            "property_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+
+            "metrics": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+
+            "source": {
+              "const": "GA4"
+            }
+          }
+        }
+      }
+    },
+
+    "narrative": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "source"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completeness",
+        "limitations",
+        "blocked_assertions",
+        "human_review_required"
+      ],
+      "properties": {
+        "completeness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "source_statuses",
+            "period_state",
+            "normalization"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "COMPLETE",
+                "PARTIAL"
+              ]
+            },
+
+            "source_statuses": {
+              "type": "object"
+            },
+
+            "period_state": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+
+            "normalization": {
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          }
+        },
+
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+
+        "blocked_assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+
+        "human_review_required": {
+          "type": "boolean"
+        }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_bundle",
+        "client_report",
+        "builder",
+        "builder_version",
+        "generated_at",
+        "source_run_id"
+      ],
+      "properties": {
+        "evidence_bundle": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "client_report": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "builder": {
+          "type": "string",
+          "minLength": 1
+        },
+
+        "builder_version": {
+          "const": "1.1-model-aware"
+        },
+
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+
+        "source_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

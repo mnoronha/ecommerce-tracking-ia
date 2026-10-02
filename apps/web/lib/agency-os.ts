@@ -21,6 +21,9 @@ export type MetricStatus =
   | 'not_contracted'
   | 'no_data'
   | 'unknown'
+  | 'missing'
+  | 'stale'
+  | 'unresolved_mapping'
 
 export interface Metric<T = number> {
   value: T | null
@@ -36,10 +39,11 @@ export interface Period {
 }
 
 export interface ReportMeta {
+  type:              'weekly' | 'monthly'
   client_slug:        string
   business_model:     BusinessModel
   period:             Period
-  comparison_period?: Period
+  comparison_period?: Period | null
 }
 
 export interface EcommerceBusiness {
@@ -63,7 +67,26 @@ export interface PaidMedia {
 }
 
 export interface ChannelMetrics {
-  [key: string]: Metric | undefined
+  [key: string]: unknown
+}
+
+export function isMetric(value: unknown): value is Metric {
+  return typeof value === 'object' && value !== null && 'value' in value && 'status' in value
+}
+
+// Exact presentation routes observed in the integration directory; no fuzzy routing.
+const CLIENT_ROUTES: Record<string, string> = {
+  'lk-sneakers': 'lk-sneakers', 'dipua': 'dipua', 'dipua-qe5p': 'dipua',
+  'enutri': 'enutri', 'enutri-4sph': 'enutri',
+  'clinica-tarcio-caetano': 'clinica-tarcio-caetano', 'clinica-dr-tarcio-m970': 'clinica-tarcio-caetano',
+  'spiti-auction': 'spiti-auction', 'spiti-auction-d0yf': 'spiti-auction',
+  'zipper-galeria': 'zipper-galeria', 'zipper-galeria-bvlu': 'zipper-galeria',
+}
+
+function canonicalClient(route: string): string {
+  const slug = CLIENT_ROUTES[route]
+  if (!slug) throw new ReportError('not_found', 'Unknown canonical client')
+  return slug
 }
 
 export interface ReportContractV1 {
@@ -154,21 +177,41 @@ export async function listClients(): Promise<AgencyClientInfo[]> {
 export async function getLatestWeeklyReport(
   clientSlug: string,
 ): Promise<ReportContractV1> {
+  return getReport(clientSlug, 'weekly')
+}
+
+export async function getLatestMonthlyReport(clientSlug: string): Promise<ReportContractV1> {
+  return getReport(clientSlug, 'monthly')
+}
+
+export async function getMonthlyReport(clientSlug: string, period: string): Promise<ReportContractV1> {
+  return getReport(clientSlug, 'monthly', period)
+}
+
+async function getReport(clientRoute: string, type: 'weekly' | 'monthly', period?: string): Promise<ReportContractV1> {
+  const clientSlug = canonicalClient(clientRoute)
   const supabase = await createSupabaseServerClient()
-  const { data, error } = await supabase
+  let query = supabase
     .from('agency_report_contracts')
     .select('contract')
     .eq('client_slug', clientSlug)
-    .eq('report_type', 'weekly')
+    .eq('report_type', type)
     .order('period_end', { ascending: false })
     .limit(1)
-    .maybeSingle()
+  if (period) {
+    if (!/^\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}$/.test(period)) {
+      throw new ReportError('not_found', 'Invalid report period')
+    }
+    const [start, end] = period.split('_to_')
+    query = query.eq('period_start', start).eq('period_end', end)
+  }
+  const { data, error } = await query.maybeSingle()
 
   if (error) {
     throw new ReportError('unavailable', `Supabase error: ${error.message}`)
   }
-  if (!data) {
-    throw new ReportError('not_found', `No weekly report found for client "${clientSlug}".`)
+  if (!data || data.contract?.report?.type !== type || data.contract?.report?.client_slug !== clientSlug) {
+    throw new ReportError('not_found', `No ${type} report found for client "${clientSlug}".`)
   }
   return (data as ContractRow).contract
 }
@@ -181,26 +224,5 @@ export async function getWeeklyReport(
   clientSlug: string,
   period: string,
 ): Promise<ReportContractV1> {
-  const [start, end] = period.split('_to_')
-  if (!start || !end) {
-    throw new ReportError('not_found', `Invalid period format: "${period}". Expected YYYY-MM-DD_to_YYYY-MM-DD.`)
-  }
-
-  const supabase = await createSupabaseServerClient()
-  const { data, error } = await supabase
-    .from('agency_report_contracts')
-    .select('contract')
-    .eq('client_slug', clientSlug)
-    .eq('report_type', 'weekly')
-    .eq('period_start', start)
-    .eq('period_end', end)
-    .maybeSingle()
-
-  if (error) {
-    throw new ReportError('unavailable', `Supabase error: ${error.message}`)
-  }
-  if (!data) {
-    throw new ReportError('not_found', `No weekly report found for "${clientSlug}" in period "${period}".`)
-  }
-  return (data as ContractRow).contract
+  return getReport(clientSlug, 'weekly', period)
 }
