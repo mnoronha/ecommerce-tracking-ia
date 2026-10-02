@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # Fallback secret used when no per-client secret is found in the database.
     DEFAULT_WEBHOOK_SECRET: str = ""
 
+    # ── Agency OS / Hermes ingest ─────────────────────────────────────────────
+    # Bearer token that Hermes uses to POST report contracts to this backend.
+    # Server-side only — never expose this key to the client.
+    AGENCY_OS_INGEST_KEY: str = ""
+
     # ── Anthropic ────────────────────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
