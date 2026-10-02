@@ -3,6 +3,9 @@ import Link from 'next/link'
 import {
   getLatestWeeklyReport,
   getWeeklyReport,
+  getLatestMonthlyReport,
+  getMonthlyReport,
+  isMetric,
   ReportError,
   type ReportErrorCode,
   type ChannelMetrics,
@@ -33,6 +36,9 @@ const STATUS_BADGE: Record<MetricStatus, { label: string; className: string; Ico
   not_contracted:   { label: 'Não contratado',       className: 'bg-slate-500/10   text-slate-500   border border-slate-500/30',   Icon: XCircle      },
   no_data:          { label: 'Sem dados',            className: 'bg-slate-500/10   text-slate-500   border border-slate-500/30',   Icon: Info         },
   unknown:          { label: 'Indisponível',         className: 'bg-slate-500/10   text-slate-500   border border-slate-500/30',   Icon: Info         },
+  missing:          { label: 'Dado ausente', className: 'text-yellow-400', Icon: Info },
+  stale:            { label: 'Desatualizado', className: 'text-yellow-400', Icon: Clock },
+  unresolved_mapping: { label: 'Conversão não reconciliada', className: 'text-yellow-400', Icon: Lock },
 }
 
 function StatusBadge({ status }: { status: MetricStatus }) {
@@ -91,7 +97,8 @@ function SectionCard({ title, note, children }: { title: string; note?: string; 
 
 const KNOWN_FORMATS: Record<string, string> = {
   spend: 'currency', cost: 'currency', revenue: 'currency', value: 'currency',
-  roas: 'roas', mer: 'roas',
+  roas: 'roas', mer: 'roas', platform_roas: 'roas',
+  platform_attributed_value: 'currency', cpc: 'currency', cpa: 'currency',
   ctr: 'percent', conversion_rate: 'percent',
 }
 
@@ -103,6 +110,10 @@ const KNOWN_LABELS: Record<string, string> = {
   cost_per_lead: 'CPL', cost_per_business_lead: 'CPL Negócio',
   orders: 'Pedidos', average_order_value: 'Ticket Médio', mer: 'MER',
   total_spend: 'Investimento Total',
+  platform_attributed_conversions: 'Conversões atribuídas pela plataforma',
+  platform_attributed_leads: 'Leads atribuídos pela plataforma',
+  platform_attributed_value: 'Valor atribuído pela plataforma',
+  platform_roas: 'ROAS atribuído pela plataforma',
   sessions: 'Sessões', users: 'Usuários', bounce_rate: 'Bounce',
   avg_session_duration: 'Duração Média',
 }
@@ -112,7 +123,7 @@ function toLabel(key: string) {
 }
 
 function ChannelGrid({ data }: { data: ChannelMetrics }) {
-  const entries = Object.entries(data).filter((e): e is [string, Metric] => e[1] != null)
+  const entries = Object.entries(data).filter((e): e is [string, Metric] => isMetric(e[1]))
   if (entries.length === 0) return <p className="text-xs text-slate-600">Sem métricas disponíveis nesta seção.</p>
 
   return (
@@ -205,6 +216,10 @@ function ErrorState({ code, clientId }: { code: ReportErrorCode; clientId: strin
       <Link href={`/clients/${clientId}/dashboard`} className="inline-flex items-center gap-1.5 text-slate-500 hover:text-white text-xs mb-8 transition-colors">
         <ArrowLeft size={12} /> Voltar ao dashboard
       </Link>
+      <nav className="flex gap-4 mb-6 text-sm text-indigo-400" aria-label="Tipo de relatório">
+        <Link href={`/clients/${clientId}/performance?type=weekly`}>Semanal</Link>
+        <Link href={`/clients/${clientId}/performance?type=monthly`}>Mensal</Link>
+      </nav>
       <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6">
         <div className="flex items-center gap-2 mb-3">
           <AlertTriangle size={16} className="text-red-400" />
@@ -240,7 +255,12 @@ function ContractView({ contract, clientId }: { contract: ReportContractV1; clie
         </Link>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-xl font-bold text-white mb-1">Performance Semanal</h1>
+            <h1 className="text-xl font-bold text-white mb-1">Performance {report.type === 'monthly' ? 'Mensal' : 'Semanal'}</h1>
+            <div className="flex gap-4 mb-3 text-sm text-indigo-400">
+              <Link href={`/clients/${clientId}/performance?type=weekly`}>Semanal</Link>
+              <Link href={`/clients/${clientId}/performance?type=monthly`}>Mensal</Link>
+            </div>
+            {!report.comparison_period && <p className="text-xs text-slate-500 mb-2">Comparação anterior indisponível.</p>}
             <div className="flex items-center gap-3 text-sm text-slate-400">
               <span className="flex items-center gap-1.5"><Clock size={13} />{period.label ?? `${period.start} → ${period.end}`}</span>
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${isEcommerce ? 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30' : 'bg-purple-500/10 text-purple-400 border-purple-500/30'}`}>
@@ -251,6 +271,7 @@ function ContractView({ contract, clientId }: { contract: ReportContractV1; clie
           </div>
           {/* Period picker — form submission, no JS required */}
           <form method="GET" className="flex items-center gap-2">
+            <input type="hidden" name="type" value={report.type} />
             <label className="text-xs text-slate-500">Período</label>
             <input
               name="period"
@@ -261,7 +282,7 @@ function ContractView({ contract, clientId }: { contract: ReportContractV1; clie
             <button type="submit" className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg transition-colors">
               Carregar
             </button>
-            <Link href={`/clients/${clientId}/performance`} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1.5">
+            <Link href={`/clients/${clientId}/performance?type=${report.type}`} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1.5">
               Último
             </Link>
           </form>
@@ -323,18 +344,18 @@ export default async function PerformancePage({
   searchParams,
 }: {
   params:       Promise<{ clientId: string }>
-  searchParams: Promise<{ period?: string }>
+  searchParams: Promise<{ period?: string; type?: string }>
 }) {
   const { clientId } = await params
-  const { period }   = await searchParams
+  const { period, type } = await searchParams
 
   let contract: ReportContractV1 | null = null
   let errorCode: ReportErrorCode | null = null
 
   try {
-    contract = period
-      ? await getWeeklyReport(clientId, period)
-      : await getLatestWeeklyReport(clientId)
+    contract = type === 'monthly'
+      ? period ? await getMonthlyReport(clientId, period) : await getLatestMonthlyReport(clientId)
+      : period ? await getWeeklyReport(clientId, period) : await getLatestWeeklyReport(clientId)
   } catch (err) {
     errorCode = err instanceof ReportError ? err.code : 'unavailable'
   }
