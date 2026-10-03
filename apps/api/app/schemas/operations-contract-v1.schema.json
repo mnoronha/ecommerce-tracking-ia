@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "client_slug", "source_run_id", "generated_at", "current_period", "registry_generated_at", "capabilities", "truth_gates", "target_truth", "source_status", "alerts", "human_dependencies", "workflows", "governance", "provenance"],
+  "properties": {
+    "schema_version": {"const": "norolabs-operations-contract-v1"},
+    "client_slug": {"enum": ["lk-sneakers", "dipua", "enutri", "clinica-tarcio-caetano", "spiti-auction", "zipper-galeria"]},
+    "source_run_id": {"type": "string", "minLength": 1, "maxLength": 160},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "registry_generated_at": {"type": ["string", "null"]},
+    "current_period": {"type": "string", "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"},
+    "capabilities": {"type": "object", "required": ["media_analysis", "conversion_analysis", "journey_analysis", "business_analysis", "collection_automation_readonly", "decision_automation", "execution"], "additionalProperties": false, "properties": {
+      "media_analysis": {"type": "boolean"}, "conversion_analysis": {"type": "boolean"}, "journey_analysis": {"type": "boolean"}, "business_analysis": {"type": "boolean"}, "collection_automation_readonly": {"type": "boolean"}, "decision_automation": {"const": false}, "execution": {"const": false}
+    }},
+    "truth_gates": {"type": "object", "additionalProperties": {"type": "string"}},
+    "target_truth": {"type": "object", "required": ["state", "period", "status"], "properties": {"state": {"type": "string"}, "period": {"type": ["string", "null"]}, "status": {"type": "string"}, "records": {"type": "integer"}}},
+    "source_status": {"type": "object", "additionalProperties": {"type": "string"}},
+    "alerts": {"type": "array", "maxItems": 1000, "items": {"type": "object", "additionalProperties": false, "required": ["alert", "diagnosis", "recommendation"], "properties": {
+      "alert": {"type": "object", "required": ["alert_id", "fingerprint", "client_slug", "type", "severity", "state", "created_at"], "properties": {
+        "alert_id": {"type": "string", "minLength": 1}, "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "client_slug": {"type": "string"}, "type": {"enum": ["COLLECTION_FAILED", "SOURCE_STALE", "PERMISSION_DENIED", "ACCESS_MISSING", "ROUTING_CONFLICT", "EXECUTION_BLOCKED", "UNRESOLVED_MAPPING", "BUSINESS_TRUTH_MISSING"]}, "severity": {"enum": ["P0", "P1", "P2", "OK"]}, "state": {"enum": ["OPEN", "ACKNOWLEDGED", "RESOLVED", "SILENCED"]}, "created_at": {"type": "string", "format": "date-time"}, "details": {"type": "object"}
+      }},
+      "diagnosis": {"type": "object", "required": ["diagnosis_id", "client_slug", "facts", "diagnosis", "confidence"], "properties": {"diagnosis_id": {"type": "string"}, "client_slug": {"type": "string"}, "facts": {"type": "array"}, "diagnosis": {"type": "string"}, "confidence": {"type": "string"}}},
+      "recommendation": {"type": "object", "required": ["recommendation_id", "client_slug", "facts", "diagnosis", "proposed_action", "risk", "rollback", "reevaluation_window", "fields"], "properties": {"recommendation_id": {"type": "string"}, "client_slug": {"type": "string"}, "facts": {"type": "array"}, "diagnosis": {"type": "string"}, "proposed_action": {"type": "string"}, "risk": {"type": "string"}, "rollback": {"type": "string"}, "reevaluation_window": {"type": "string"}, "fields": {"type": "object", "required": ["scope", "human_review_required", "execution_allowed"], "properties": {"scope": {"const": "operational"}, "human_review_required": {"const": true}, "execution_allowed": {"const": false}}}}}
+    }}},
+    "human_dependencies": {"type": "array", "maxItems": 1000, "items": {"type": "object", "required": ["dependency_id", "client_slug", "type", "status", "blocking_level", "requested_action", "created_at"], "properties": {"dependency_id": {"type": "string"}, "client_slug": {"type": "string"}, "type": {"type": "string"}, "status": {"enum": ["OPEN", "IN_PROGRESS"]}, "blocking_level": {"enum": ["BLOCKING", "NON_BLOCKING"]}, "requested_action": {"type": "string"}, "created_at": {"type": "string", "format": "date-time"}}}},
+    "workflows": {"type": "object", "additionalProperties": false, "required": ["creative", "campaign"], "properties": {
+      "creative": {"type": "object", "required": ["state", "service_status", "blockers", "asset_ids", "human_review_required", "automatic_publication"], "properties": {"state": {"const": "BLOCKED"}, "service_status": {"type": "string"}, "blockers": {"type": "array", "items": {"type": "string"}}, "asset_ids": {"type": "array", "items": {"type": "string"}}, "human_review_required": {"const": true}, "automatic_publication": {"const": false}}},
+      "campaign": {"type": "object", "required": ["state", "blockers", "create_paused", "activate_after_creation", "human_review_required"], "properties": {"state": {"const": "BLOCKED"}, "blockers": {"type": "array", "items": {"type": "string"}}, "create_paused": {"const": true}, "activate_after_creation": {"const": false}, "human_review_required": {"const": true}}}
+    }},
+    "governance": {"type": "object", "additionalProperties": false, "required": ["human_review_required", "decision_automation", "execution", "performance_alerts_enabled"], "properties": {"human_review_required": {"const": true}, "decision_automation": {"const": false}, "execution": {"const": false}, "performance_alerts_enabled": {"const": false}}},
+    "provenance": {"type": "object", "required": ["registry", "alerts", "client_truth", "scope"], "properties": {"registry": {"type": "string"}, "alerts": {"type": "string"}, "client_truth": {"type": "string"}, "scope": {"const": "operational_only"}}}
+  }
+}
