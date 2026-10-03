@@ -23,7 +23,8 @@ Contract canonical shape (validated, not transformed):
 import logging
 import hmac
 import json
-from datetime import date
+import hashlib
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -39,6 +40,9 @@ router = APIRouter(prefix="/agency", tags=["agency-os"])
 CANONICAL_CLIENTS = frozenset({"lk-sneakers", "dipua", "enutri", "clinica-tarcio-caetano", "spiti-auction", "zipper-galeria"})
 CONTRACT_SCHEMA = json.loads((Path(__file__).parents[1] / "schemas/report-contract-v1.schema.json").read_text())
 CONTRACT_VALIDATOR = Draft202012Validator(CONTRACT_SCHEMA, format_checker=FormatChecker())
+OPERATIONS_SCHEMA = json.loads((Path(__file__).parents[1] / "schemas/operations-contract-v1.schema.json").read_text())
+OPERATIONS_VALIDATOR = Draft202012Validator(OPERATIONS_SCHEMA, format_checker=FormatChecker())
+CLIENT_PIXELS = {"lk-sneakers": "lk-sneakers", "dipua": "dipua-qe5p", "enutri": "enutri-4sph", "clinica-tarcio-caetano": "clinica-dr-tarcio-m970", "spiti-auction": "spiti-auction-d0yf", "zipper-galeria": "zipper-galeria-bvlu"}
 
 
 # ── Auth dependency ────────────────────────────────────────────────────────────
@@ -151,3 +155,60 @@ async def ingest_report_contract(
         "source_run_id": provenance.get("source_run_id"),
         "period": f"{period_start}_to_{period_end}",
     }
+
+
+class OperationsPayload(BaseModel):
+    contract: dict[str, Any]
+
+
+@router.post("/ingest/operations-contract", summary="Store canonical Hermes operational evidence without recalculating or executing", status_code=200)
+async def ingest_operations_contract(payload: OperationsPayload, authorization: str = Header(default="")):
+    _require_ingest_key(authorization)
+    contract = payload.contract
+    errors = sorted(OPERATIONS_VALIDATOR.iter_errors(contract), key=lambda error: str(list(error.path)))
+    if errors:
+        raise HTTPException(400, detail={"error": "invalid_operations_contract", "paths": [".".join(map(str, error.path)) for error in errors[:20]]})
+    # FormatChecker may lack optional RFC3339 extras in a minimal deployment.
+    # Validate operational timestamps explicitly as well.
+    timestamps = [contract["generated_at"]]
+    timestamps.extend(row["created_at"] for row in contract["human_dependencies"])
+    timestamps.extend(bundle["alert"]["created_at"] for bundle in contract["alerts"])
+    timestamps.extend(bundle["alert"]["last_seen_at"] for bundle in contract["alerts"] if bundle["alert"].get("last_seen_at"))
+    try:
+        if any(datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is None for value in timestamps):
+            raise ValueError("Timezone required")
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, detail="Operational timestamps must be valid and timezone-aware")
+    client = contract["client_slug"]
+    ids = set()
+    for bundle in contract["alerts"]:
+        for name in ("alert", "diagnosis", "recommendation"):
+            if bundle[name]["client_slug"] != client:
+                raise HTTPException(400, detail="Operational evidence client mismatch")
+        alert_id = bundle["alert"]["alert_id"]
+        if alert_id in ids:
+            raise HTTPException(400, detail="Duplicate alert identity")
+        ids.add(alert_id)
+    if any(row["client_slug"] != client for row in contract["human_dependencies"]):
+        raise HTTPException(400, detail="Human dependency client mismatch")
+    encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    if len(encoded) > 2_000_000:
+        raise HTTPException(413, detail="Operational contract exceeds size limit")
+    contract_hash = hashlib.sha256(encoded).hexdigest()
+    try:
+        sb = get_supabase()
+        matching = sb.table("clients").select("id").eq("pixel_id", CLIENT_PIXELS[client]).limit(2).execute().data or []
+        if len(matching) != 1:
+            raise HTTPException(409, detail="Client routing missing or ambiguous")
+        existing = sb.table("agency_operations_contracts").select("contract_hash").eq("client_slug", client).eq("source_run_id", contract["source_run_id"]).limit(1).execute().data or []
+        if existing:
+            if existing[0]["contract_hash"] != contract_hash:
+                raise HTTPException(409, detail="A source run cannot replace its original evidence")
+        else:
+            sb.table("agency_operations_contracts").insert({"client_id": matching[0]["id"], "client_slug": client, "source_run_id": contract["source_run_id"], "generated_at": contract["generated_at"], "schema_version": contract["schema_version"], "contract_hash": contract_hash, "contract": contract}).execute()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Operational contract persistence failed for %s", client)
+        raise HTTPException(500, detail="Operational contract persistence failed") from exc
+    return {"status": "accepted", "client": client, "source_run_id": contract["source_run_id"], "contract_hash": contract_hash}

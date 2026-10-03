@@ -83,7 +83,7 @@ const CLIENT_ROUTES: Record<string, string> = {
   'zipper-galeria': 'zipper-galeria', 'zipper-galeria-bvlu': 'zipper-galeria',
 }
 
-function canonicalClient(route: string): string {
+export function canonicalClient(route: string): string {
   const slug = CLIENT_ROUTES[route]
   if (!slug) throw new ReportError('not_found', 'Unknown canonical client')
   return slug
