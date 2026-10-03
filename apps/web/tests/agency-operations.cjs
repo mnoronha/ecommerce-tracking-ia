@@ -43,6 +43,18 @@ const render = async () => renderToStaticMarkup(await page.default({ params: Pro
   contract.alerts[0].alert.resolution = { reason: 'Synthetic resolution', evidence: 'Synthetic evidence', resolved_by: 'Synthetic reviewer' }
   const resolved = await render()
   assert(resolved.includes('Synthetic resolution') && resolved.includes('Synthetic evidence'))
+  contract.capabilities.media_analysis = false
+  contract.alerts = []
+  contract.provenance = { alert_analysis_state: 'BLOCKED', system_health: { schema: 'norolabs.system-health.v1', client_slug: 'dipua', generated_at: '2026-10-03T12:00:00Z', state: 'ERROR', modules: { weekly: { state: 'ERROR', stale: null, last_run: { run_id: 'FAILED-TEST', at: '2026-10-03T11:00:00Z', state: 'INTERRUPTED', evidence_ref: 'isolated-test' }, last_success: { run_id: 'OLD-SUCCESS', at: '2026-10-02T11:00:00Z', state: 'PASS', evidence_ref: 'isolated-test' }, blockers: ['<script>HEALTH_ESCAPE</script>'], errors: [] }, monthly: { state: 'MISSING', stale: null, last_run: null, last_success: null, blockers: [], errors: [] } } } }
+  const blocked = await render()
+  assert(blocked.includes('lista vazia não confirma ausência de ocorrências'))
+  assert(!blocked.includes('Nenhuma ocorrência registrada nesta atualização.'))
+  assert(blocked.includes('System Health') && blocked.includes('Interrompido') && blocked.includes('Último sucesso:'))
+  assert(blocked.includes('Não determinada') && blocked.includes('Ausente'))
+  assert(blocked.includes('&lt;script&gt;HEALTH_ESCAPE&lt;/script&gt;'))
+  contract.provenance.system_health.client_slug = 'lk-sneakers'
+  await assert.rejects(lib.getLatestOperations('dipua-qe5p'), err => err.code === 'unavailable')
+  contract.provenance.system_health.client_slug = 'dipua'
   missing = true
   const empty = await render()
   assert(empty.includes('Ausência de atualização não confirma que as fontes estão saudáveis.'))
@@ -50,5 +62,5 @@ const render = async () => renderToStaticMarkup(await page.default({ params: Pro
   missing = false
   contract.client_slug = 'lk-sneakers'
   await assert.rejects(lib.getLatestOperations('dipua-qe5p'), err => err.code === 'unavailable')
-  console.log('PASS: canonical routing, operational states, human resolution, escaping, missing snapshots and client isolation')
+  console.log('PASS: canonical routing, human resolution, health failures, unknown freshness, blocked alerts, escaping and client isolation')
 })().catch(error => { console.error(error); process.exitCode = 1 })
