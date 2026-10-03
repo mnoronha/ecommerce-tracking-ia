@@ -180,6 +180,9 @@ async def ingest_operations_contract(payload: OperationsPayload, authorization: 
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(400, detail="Operational timestamps must be valid and timezone-aware")
     client = contract["client_slug"]
+    health = contract["provenance"].get("system_health")
+    if health and health["client_slug"] != client:
+        raise HTTPException(400, detail="System Health client mismatch")
     ids = set()
     for bundle in contract["alerts"]:
         for name in ("alert", "diagnosis", "recommendation"):

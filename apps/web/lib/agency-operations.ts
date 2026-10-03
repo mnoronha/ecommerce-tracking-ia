@@ -10,7 +10,16 @@ export interface OperationalAlert {
     resolution?: { reason?: string; evidence?: string; resolved_by?: string }
   }
   diagnosis: { diagnosis_id: string; diagnosis: string; confidence: string; facts: unknown[] }
-  recommendation: { recommendation_id: string; proposed_action: string; risk: string; rollback: string; reevaluation_window: string }
+  recommendation: { recommendation_id: string; proposed_action: string; risk: string; rollback: string; reevaluation_window: string; fields?: { rationale?: string; priority?: string; blocked_assertions?: string[]; human_review_required?: boolean } }
+}
+
+export interface HealthModule {
+  state: string; availability?: string; stale: boolean | null
+  last_run?: { run_id: string; at: string | null; state: string; evidence_ref: string } | null
+  last_success?: { run_id: string; at: string | null; state: string; evidence_ref: string } | null
+  at?: string | null; evidence_ref?: string | null
+  blockers: string[]; errors: Array<{ code: string; evidence_ref: string }>
+  artifact?: { state: string; at: string | null; evidence_ref: string | null }
 }
 
 export interface OperationsContract {
@@ -27,6 +36,7 @@ export interface OperationsContract {
     campaign: { state: string; blockers: string[]; create_paused: boolean; activate_after_creation: boolean }
   }
   governance: { human_review_required: boolean; decision_automation: boolean; execution: boolean; performance_alerts_enabled: boolean }
+  provenance?: { media_preflight?: string; alert_analysis_state?: string; blocked_assertions?: string[]; system_health?: { schema: string; client_slug: string; generated_at: string; state: string; modules: Record<string, HealthModule> } }
 }
 
 export async function getLatestOperations(route: string): Promise<OperationsContract> {
@@ -41,6 +51,8 @@ export async function getLatestOperations(route: string): Promise<OperationsCont
   const contract = data.contract as OperationsContract
   if (contract.schema_version !== 'norolabs-operations-contract-v1' || contract.client_slug !== client)
     throw new ReportError('unavailable', 'O registro operacional não corresponde a este cliente.')
+  if (contract.provenance?.system_health && (contract.provenance.system_health.client_slug !== client || contract.provenance.system_health.schema !== 'norolabs.system-health.v1'))
+    throw new ReportError('unavailable', 'O registro de saúde não corresponde a este cliente.')
   return contract
 }
 
@@ -51,6 +63,8 @@ export const OPS_LABELS: Record<string, string> = {
   unknown: 'Não confirmado', UNKNOWN: 'Não confirmado', missing: 'Ausente', stale: 'Desatualizado',
   not_contracted: 'Não contratado', NOT_CONTRACTED: 'Não contratado', no_data: 'Sem dados',
   ACTIVE: 'Ativo', BLOCKED: 'Bloqueado', IN_PROGRESS: 'Em andamento', BLOCKING: 'Bloqueia a etapa', NON_BLOCKING: 'Não bloqueia a etapa',
+  READY: 'Pronto', ERROR: 'Erro', STALE: 'Desatualizado', MISSING: 'Ausente', AVAILABLE: 'Disponível', FAIL: 'Falhou', INTERRUPTED: 'Interrompido',
+  collection: 'Coleta', performance_truth: 'Performance Truth', weekly: 'Weekly', monthly: 'Monthly', alerts: 'Alertas', contract_sync: 'Sincronização de contratos',
   COLLECTION_FAILED: 'Falha na coleta', SOURCE_STALE: 'Dados desatualizados', PERMISSION_DENIED: 'Permissão negada', ACCESS_MISSING: 'Acesso ausente',
   ROUTING_CONFLICT: 'Conflito de conta', EXECUTION_BLOCKED: 'Execução bloqueada', UNRESOLVED_MAPPING: 'Conversões não reconciliadas', BUSINESS_TRUTH_MISSING: 'Fonte de negócio ausente',
   CREATIVE_SERVICE_NOT_CONFIRMED: 'Confirmar escopo de produção criativa', CREATIVE_NOT_CONTRACTED: 'Produção criativa não contratada',
