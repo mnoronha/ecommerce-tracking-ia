@@ -55,17 +55,14 @@ def endpoint(monkeypatch):
     rows = []
 
     class Store:
-        def table(self, name):
-            assert name == 'agency_report_contracts'
-            return self
-
-        def upsert(self, row, on_conflict):
-            assert on_conflict == 'client_slug,report_type,period_start,period_end'
-            rows.append(copy.deepcopy(row))
+        def rpc(self, name, payload):
+            assert name == 'agency_store_report_contract'
+            assert set(payload) == {'p_row'}
+            rows.append(copy.deepcopy(payload['p_row']))
             return self
 
         def execute(self):
-            return None
+            return type('Receipt', (), {'data': {'status': 'accepted', 'disposition': 'LATEST'}})()
 
     monkeypatch.setattr(agency_os, 'get_supabase', lambda: Store())
     monkeypatch.setattr(agency_os.settings, 'AGENCY_OS_INGEST_KEY', 'synthetic-test-key')
@@ -132,3 +129,37 @@ def test_invalid_contracts_do_not_write(endpoint, contract, mutation):
 def test_authentication_is_required(endpoint, contract):
     assert send(endpoint, {'contract': contract}, authorized=False).status_code == 401
     assert not endpoint[1]
+
+
+@pytest.mark.parametrize('disposition', ['LATEST', 'REPLAY', 'ARCHIVED'])
+def test_atomic_receipt_and_hash_are_returned(endpoint, contract, monkeypatch, disposition):
+    import hashlib
+    import json
+    class Store:
+        def rpc(self, name, payload):
+            assert payload['p_row']['contract'] == contract
+            return self
+        def execute(self):
+            return type('Receipt', (), {'data': {'status':'accepted','disposition':disposition}})()
+    monkeypatch.setattr(agency_os, 'get_supabase', lambda: Store())
+    response = send(endpoint, {'contract':contract})
+    assert response.status_code == 200
+    assert response.json()['disposition'] == disposition
+    assert response.json()['contract_hash'] == hashlib.sha256(json.dumps(contract,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
+
+
+def test_database_identity_conflict_is_not_accepted(endpoint, contract, monkeypatch):
+    class Store:
+        def rpc(self, *args): return self
+        def execute(self): return type('Receipt', (), {'data':{'status':'conflict','reason':'SOURCE_RUN_EVIDENCE_IMMUTABLE'}})()
+    monkeypatch.setattr(agency_os, 'get_supabase', lambda: Store())
+    assert send(endpoint, {'contract':contract}).status_code == 409
+
+
+@pytest.mark.parametrize('receipt', [None, {}, {'status':'accepted','disposition':'UNKNOWN'}])
+def test_missing_or_invalid_persistence_receipt_is_failure(endpoint, contract, monkeypatch, receipt):
+    class Store:
+        def rpc(self, *args): return self
+        def execute(self): return type('Receipt', (), {'data':receipt})()
+    monkeypatch.setattr(agency_os, 'get_supabase', lambda: Store())
+    assert send(endpoint, {'contract':contract}).status_code == 500
