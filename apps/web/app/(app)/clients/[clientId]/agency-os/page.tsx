@@ -29,6 +29,10 @@ function AlertCard({ bundle }: { bundle: OperationalAlert }) {
         <p><strong>Risco: </strong>{recommendation.risk}</p>
         <p><strong>Como preservar o estado anterior: </strong>{recommendation.rollback}</p>
         <p><strong>Reavaliar: </strong>{recommendation.reevaluation_window}</p>
+        <p><strong>Justificativa: </strong>{recommendation.fields?.rationale || 'Não informada neste contrato.'}</p>
+        <p><strong>Prioridade: </strong>{recommendation.fields?.priority || 'Não informada neste contrato.'}</p>
+        <p>Aprovação humana obrigatória antes de qualquer ação.</p>
+        {recommendation.fields?.blocked_assertions?.map(assertion => <p key={assertion} className="text-amber-200">{assertion}</p>)}
       </div>
     </details>
     {alert.resolution && <div className="rounded bg-emerald-950/40 p-3 text-sm text-emerald-200">
@@ -41,6 +45,7 @@ function AlertCard({ bundle }: { bundle: OperationalAlert }) {
 }
 
 function OperationsView({ contract, clientId }: { contract: OperationsContract; clientId: string }) {
+  const health = contract.provenance?.system_health
   return <div className="space-y-6 p-6 text-slate-200">
     <header className="space-y-2">
       <h1 className="text-2xl font-bold text-white">Agency OS</h1>
@@ -48,6 +53,25 @@ function OperationsView({ contract, clientId }: { contract: OperationsContract; 
       <p className="text-sm text-indigo-200">Revisão humana obrigatória. Decisões e execução automáticas estão bloqueadas.</p>
       <Link href={`/clients/${clientId}/performance?type=monthly`} className="inline-block text-sm text-indigo-400 underline">Ver relatório mensal</Link>
     </header>
+
+    <section className="space-y-3">
+      <h2 className="text-lg font-semibold">System Health</h2>
+      {!health ? <p className="text-sm text-amber-300">Observabilidade ainda não recebida. Ausência de recibos não confirma sucesso.</p> : <>
+        <p className="text-sm">Estado registrado pelo Hermes: <strong>{operationLabel(health.state)}</strong> · {date(health.generated_at)}</p>
+        <div className="grid gap-3 md:grid-cols-2">{Object.entries(health.modules).map(([name, row]) => <article key={name} className={panel}>
+          <h3 className="font-semibold">{operationLabel(name)}</h3>
+          <p className="text-sm">Execução ou artefato: {operationLabel(row.state)}{row.availability && ` · Capacidade: ${operationLabel(row.availability)}`}</p>
+          <p className="text-xs text-slate-400">Última execução: {date(row.last_run?.at || undefined)} · Estado: {row.last_run ? operationLabel(row.last_run.state) : 'Não informado'}</p>
+          <p className="text-xs text-slate-400">Último sucesso: {date(row.last_success?.at || undefined)}</p>
+          {row.at && <p className="text-xs text-slate-400">Artefato registrado em {date(row.at)}</p>}
+          {row.artifact && <p className="text-xs text-slate-400">Relatório armazenado: {operationLabel(row.artifact.state)} · {date(row.artifact.at || undefined)}</p>}
+          <p className="text-xs text-slate-400">Freshness: {row.stale === true ? 'Desatualizado' : row.stale === false ? 'Dentro da janela registrada' : 'Não determinada'}</p>
+          {row.blockers.map(blocker => <p key={blocker} className="break-all text-xs text-amber-300">{blocker}</p>)}
+          {row.errors.map(error => <p key={error.evidence_ref} className="break-all text-xs text-red-300">{error.code} · {error.evidence_ref}</p>)}
+          {(row.evidence_ref || row.last_run?.evidence_ref) && <p className="break-all text-xs text-slate-500">Evidência: {row.evidence_ref || row.last_run?.evidence_ref}</p>}
+        </article>)}</div>
+      </>}
+    </section>
 
     <section className={panel}>
       <h2 className="text-lg font-semibold">Fontes e capacidades</h2>
@@ -74,7 +98,7 @@ function OperationsView({ contract, clientId }: { contract: OperationsContract; 
     <section className="space-y-3">
       <h2 className="text-lg font-semibold">Alertas, diagnóstico e recomendações</h2>
       <p className="text-sm text-slate-400">Alertas de performance aguardam conversões e resultados de negócio certificados. A resolução humana é registrada no Hermes e aparece após a próxima atualização.</p>
-      {contract.alerts.length === 0 ? <p className="text-sm text-slate-400">Nenhuma ocorrência registrada nesta atualização.</p> : contract.alerts.map(bundle => <AlertCard key={bundle.alert.alert_id} bundle={bundle} />)}
+      {contract.capabilities.media_analysis === false || contract.provenance?.alert_analysis_state === 'BLOCKED' ? <p className="text-sm text-amber-300">Análise de alertas bloqueada pelo preflight canônico. Uma lista vazia não confirma ausência de ocorrências. O histórico permanece preservado no Hermes.</p> : contract.alerts.length === 0 ? <p className="text-sm text-slate-400">Nenhuma ocorrência registrada nesta atualização.</p> : contract.alerts.map(bundle => <AlertCard key={bundle.alert.alert_id} bundle={bundle} />)}
     </section>
   </div>
 }
