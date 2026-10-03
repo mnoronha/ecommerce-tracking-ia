@@ -35,6 +35,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/content`,          label: 'Conteúdo IA',     icon: PenLine,          gate: null },
     { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA',  icon: Sparkles,        gate: 'creative_intelligence' },
     { href: `/clients/${clientId}/performance`,  label: 'Performance',     icon: Award,           gate: null },
+    { href: `/clients/${clientId}/agency-os`,    label: 'Agency OS',       icon: ShieldCheck,     gate: null },
     { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',   icon: FileText,        gate: 'ai_insights' },
     { href: `/clients/${clientId}/ai-presence/pipeline`,      label: 'Pipeline',         icon: Rocket,      gate: null },
     { href: `/clients/${clientId}/technical/schema-audit`,    label: 'Schema Audit',     icon: ShieldCheck, gate: null },
