@@ -120,11 +120,18 @@ async def ingest_report_contract(
     if not period_start or not period_end:
         raise HTTPException(400, detail="contract.report.period.start and .end are required")
 
-    # ── Upsert — contract stored verbatim ────────────────────────────────────
+    try:
+        encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        contract_hash = hashlib.sha256(encoded).hexdigest()
+        if datetime.fromisoformat(provenance["generated_at"].replace("Z", "+00:00")).tzinfo is None:
+            raise ValueError("Timezone required")
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(400, detail="Report values and generation timestamp must be canonical and finite")
+
+    # One database transaction preserves history and promotes only newer evidence.
     try:
         sb = get_supabase()
-        sb.table("agency_report_contracts").upsert(
-            {
+        row = {
                 "client_slug":    client_slug,
                 "report_type":    report_type,
                 "business_model": business_model,
@@ -136,9 +143,16 @@ async def ingest_report_contract(
                 "source_run_id":  provenance.get("source_run_id"),
                 "generated_at":   provenance.get("generated_at"),
                 "contract":       contract,
-            },
-            on_conflict="client_slug,report_type,period_start,period_end",
-        ).execute()
+            }
+        stored = sb.rpc("agency_store_report_contract", {"p_row": row}).execute().data
+        if not isinstance(stored, dict):
+            raise ValueError("Atomic report persistence returned no receipt")
+        if stored.get("status") == "conflict":
+            raise HTTPException(409, detail=stored.get("reason", "Report evidence conflicts with its immutable history"))
+        if stored.get("status") != "accepted" or stored.get("disposition") not in {"LATEST", "REPLAY", "ARCHIVED"}:
+            raise ValueError("Atomic report persistence returned an invalid receipt")
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("agency_os ingest upsert failed for %s", client_slug)
         raise HTTPException(500, detail="Report contract persistence failed") from exc
@@ -154,6 +168,8 @@ async def ingest_report_contract(
         "report_type": report_type,
         "source_run_id": provenance.get("source_run_id"),
         "period": f"{period_start}_to_{period_end}",
+        "contract_hash": contract_hash,
+        "disposition": stored["disposition"],
     }
 
 
