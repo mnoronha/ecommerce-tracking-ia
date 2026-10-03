@@ -119,3 +119,35 @@ def test_foreign_client_dependency_rejected(endpoint, contract):
 def test_invalid_date_rejected(endpoint, contract):
     contract['generated_at'] = 'invalid'
     assert send(endpoint, contract).status_code == 400
+
+
+def health_snapshot(client):
+    module = {'state': 'MISSING', 'stale': None, 'errors': [], 'blockers': [], 'last_run': None, 'last_success': None}
+    return {'schema': 'norolabs.system-health.v1', 'client_slug': client, 'generated_at': '2026-10-03T12:00:00Z', 'state': 'UNKNOWN', 'modules': {key: copy.deepcopy(module) for key in ('collection','performance_truth','weekly','monthly','alerts','contract_sync')}, 'policy_ref': 'config/source-freshness-policy.yaml', 'canonical_kpis_recomputed': False, 'execution': False, 'decision_automation': False}
+
+
+def test_health_verbatim_preserves_missing_and_unknown(endpoint, contract):
+    contract['provenance']['system_health'] = health_snapshot(contract['client_slug'])
+    assert send(endpoint, contract).status_code == 200
+    stored = endpoint[1]['rows'][0]['contract']['provenance']['system_health']
+    assert stored == contract['provenance']['system_health']
+    assert stored['modules']['collection']['last_success'] is None
+
+
+def test_foreign_client_health_rejected(endpoint, contract):
+    contract['provenance']['system_health'] = health_snapshot('dipua')
+    assert send(endpoint, contract).status_code == 400
+    assert endpoint[1]['rows'] == []
+
+
+@pytest.mark.parametrize('field', ['execution','decision_automation','canonical_kpis_recomputed'])
+def test_health_cannot_enable_execution_or_kpi_recalculation(endpoint, contract, field):
+    contract['provenance']['system_health'] = health_snapshot(contract['client_slug'])
+    contract['provenance']['system_health'][field] = True
+    assert send(endpoint, contract).status_code == 400
+
+
+def test_health_injected_business_metric_rejected(endpoint, contract):
+    contract['provenance']['system_health'] = health_snapshot(contract['client_slug'])
+    contract['provenance']['system_health']['modules']['collection']['revenue'] = 0
+    assert send(endpoint, contract).status_code == 400
