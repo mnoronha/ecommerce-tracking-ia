@@ -452,6 +452,7 @@ async def get_metrics(
 
 
 # ── GET /clients/{client_id}/changes ─────────────────────────────────────────
+# CCR-014: core_change_log has 0 rows → honest empty list.
 
 @router.get(
     "/clients/{client_id}/changes",
@@ -463,30 +464,12 @@ async def get_changes(
     since: Optional[str] = Query(None, description="ISO-8601 datetime"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ChangeOut]:
-    return [
-        ChangeOut(
-            id="chg_stub_01",
-            client_id=client_id,
-            occurred_at=_STUB_NOW,
-            channel="google_ads",
-            platform_account_id="123-456-7890",
-            entity_type="campaign",
-            campaign_id="20123456789",
-            entity_name_at_time="PMax Geral",
-            change_type=ChangeType.TARGET_ROAS,
-            before=400,
-            after=500,
-            reason="Campanha gastando acima do ritmo",
-            source=ChangeLogSource.HUMAN,
-            reported_by="maicon",
-            confidence=ChangeConfidence.CONFIRMED,
-            match_status=MatchStatus.MATCHED,
-            created_at=_STUB_NOW,
-        )
-    ]
+    # core_change_log is empty — return honest absence rather than fabricated stub
+    return []
 
 
 # ── GET /clients/{client_id}/recommendations ─────────────────────────────────
+# CCR-014: core_recommendations has 0 rows → honest empty list.
 
 @router.get(
     "/clients/{client_id}/recommendations",
@@ -498,24 +481,7 @@ async def get_recommendations(
     status: Optional[str] = Query(None),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[RecommendationOut]:
-    return [
-        RecommendationOut(
-            id="rec_stub_01",
-            diagnosis_id="dia_stub_01",
-            recommendation="Reduzir budget do ADV+ Geral em 15% e reavaliar em 72h",
-            action_proposal=None,
-            priority=Level.HIGH,
-            confidence=Level.MEDIUM,
-            risk=Level.LOW,
-            reversible=True,
-            expected_effect="Conter CPA enquanto criativos são renovados",
-            review_window_days=3,
-            requires_approval=True,
-            visibility_scope=VisibilityScope.AGENCY_ONLY,
-            status=RecommendationStatus.PENDING_REVIEW,
-            created_at=_STUB_NOW,
-        )
-    ]
+    return []
 
 
 # ── GET /clients/{client_id}/report-contracts ─────────────────────────────────
@@ -650,6 +616,7 @@ async def get_report_contracts(
 
 # ── GET /clients/{client_id}/reports ─────────────────────────────────────────
 
+# CCR-014: core_report_narratives has 0 rows → honest empty list.
 @router.get(
     "/clients/{client_id}/reports",
     summary="Report narratives; client_viewer sees only PUBLISHED",
@@ -659,26 +626,12 @@ async def get_reports(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> list[ReportNarrativeOut]:
-    return [
-        ReportNarrativeOut(
-            id="nar_stub_01",
-            report_contract_id="rpc_stub_2026_w40_lk",
-            blocks=[
-                NarrativeBlock(
-                    section="resultado",
-                    statement="Receita da semana: [stub]",
-                    metric_refs={},
-                )
-            ],
-            visibility_scope=VisibilityScope.AGENCY_ONLY,
-            status=NarrativeStatus.DRAFT,
-            created_at=_STUB_NOW,
-        )
-    ]
+    return []
 
 
 # ── GET /alerts ───────────────────────────────────────────────────────────────
 
+# CCR-014: core_alerts table does not exist yet → honest empty list.
 @router.get(
     "/alerts",
     summary="Open (or filtered) alerts",
@@ -695,27 +648,14 @@ async def list_alerts(
     client_id: Optional[str] = Query(None),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[AlertOut]:
-    return [
-        AlertOut(
-            id="alt_stub_01",
-            client_id=client_id or "lk-sneakers",
-            rule_key="cpa_increase",
-            rule_version="v1",
-            metric_key="cpa_meta",
-            entity="ADV+ Geral",
-            observed_snapshot_refs=["snap_stub_124"],
-            baseline_snapshot_refs=["snap_stub_098"],
-            delta_pct=31.2,
-            min_volume_met=True,
-            severity=Level.HIGH,
-            status=AlertStatus.OPEN,
-            created_at=_STUB_NOW,
-        )
-    ]
+    return []
 
 
 # ── GET /alerts/{alert_id}/context ───────────────────────────────────────────
 
+# CCR-014: core_alerts does not exist → 404 for any alert_id.
+# Root cause of HTTP 500: stub used ValueStatus.CERTIFIED which doesn't exist
+# in ValueStatus enum (CERTIFIED belongs to CertificationStatus) → AttributeError.
 @router.get(
     "/alerts/{alert_id}/context",
     summary="Full context package for a single alert (for Hermes diagnosis)",
@@ -725,58 +665,12 @@ async def get_alert_context(
     alert_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> AlertContext:
-    stub_alert = AlertOut(
-        id=alert_id,
-        client_id="lk-sneakers",
-        rule_key="cpa_increase",
-        rule_version="v1",
-        metric_key="cpa_meta",
-        entity="ADV+ Geral",
-        observed_snapshot_refs=["snap_stub_124"],
-        baseline_snapshot_refs=["snap_stub_098"],
-        delta_pct=31.2,
-        min_volume_met=True,
-        severity=Level.HIGH,
-        status=AlertStatus.OPEN,
-        created_at=_STUB_NOW,
-    )
-    return AlertContext(
-        alert=stub_alert,
-        metrics=[
-            MetricValue(metric_key="cpa_meta", value=63.0, unit="BRL",
-                        value_status=ValueStatus.OK, certification_status=CertificationStatus.PROVISIONAL,
-                        snapshot_ids=["snap_stub_124"]),
-            MetricValue(metric_key="cpa_meta_baseline", value=48.0, unit="BRL",
-                        value_status=ValueStatus.CERTIFIED, certification_status=CertificationStatus.CERTIFIED,
-                        snapshot_ids=["snap_stub_098"]),
-        ],
-        changes=[
-            ChangeOut(
-                id="chg_stub_01",
-                client_id="lk-sneakers",
-                occurred_at=_STUB_NOW,
-                channel="meta_ads",
-                platform_account_id="act_stub",
-                entity_type="ad",
-                entity_name_at_time="Criativo Verão 01",
-                change_type=ChangeType.CREATIVE_PAUSE,
-                source=ChangeLogSource.AUTO_META,
-                confidence=ChangeConfidence.CONFIRMED,
-                match_status=MatchStatus.MATCHED,
-                created_at=_STUB_NOW,
-            )
-        ],
-        truth={"business_model": "ecommerce", "currency": "BRL"},
-        health={
-            "business":   SourceState.READY,
-            "meta_ads":   SourceState.READY,
-            "google_ads": SourceState.READY,
-        },
-    )
+    raise HTTPException(404, f"alert not found: {alert_id!r}")
 
 
 # ── GET /alert-rule-suggestions ───────────────────────────────────────────────
 
+# CCR-014: no alert rule suggestions yet → honest empty list.
 @router.get(
     "/alert-rule-suggestions",
     summary="Alert rule recalibration suggestions pending review",
@@ -786,18 +680,7 @@ async def list_alert_rule_suggestions(
     status: Optional[str] = Query("PENDING"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[AlertRuleSuggestionOut]:
-    return [
-        AlertRuleSuggestionOut(
-            id="sug_stub_01",
-            client_id="lk-sneakers",
-            rule_key="cpa_increase",
-            current_version="v1",
-            proposed_params={"threshold_pct": 40, "min_conversions_baseline": 20},
-            evidence=[{"alert_id": "alt_stub_01", "feedback": "NOISE"}],
-            status=AlertRuleSuggestionStatus.PENDING,
-            created_at=_STUB_NOW,
-        )
-    ]
+    return []
 
 
 # ── GET /system/health ────────────────────────────────────────────────────────
@@ -876,6 +759,7 @@ async def get_job(
 #
 # No relationship is inferred — FK chain only. Real DB reads in Etapa 4.
 
+# CCR-014: core_diagnoses has 0 rows → honest empty list.
 @router.get(
     "/alerts/{alert_id}/diagnoses",
     summary="Diagnoses linked to an alert (FK: core_diagnoses.alert_id)",
@@ -885,21 +769,10 @@ async def get_alert_diagnoses(
     alert_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[DiagnosisOut]:
-    return [
-        DiagnosisOut(
-            alert_id=alert_id,
-            facts=[],
-            related_changes=[],
-            hypotheses=[],
-            confidence=Level.MEDIUM,
-            do_not_conclude=[],
-            data_limitations=[],
-            id="dia_stub_01",
-            created_at=_STUB_NOW,
-        )
-    ]
+    return []
 
 
+# CCR-014: core_diagnoses has 0 rows → 404 for any diagnosis_id.
 @router.get(
     "/diagnoses/{diagnosis_id}",
     summary="Single diagnosis by ID",
@@ -909,19 +782,10 @@ async def get_diagnosis(
     diagnosis_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> DiagnosisOut:
-    return DiagnosisOut(
-        alert_id="alt_stub_01",
-        facts=[],
-        related_changes=[],
-        hypotheses=[],
-        confidence=Level.MEDIUM,
-        do_not_conclude=[],
-        data_limitations=[],
-        id=diagnosis_id,
-        created_at=_STUB_NOW,
-    )
+    raise HTTPException(404, f"diagnosis not found: {diagnosis_id!r}")
 
 
+# CCR-014: core_recommendations has 0 rows → honest empty list.
 @router.get(
     "/diagnoses/{diagnosis_id}/recommendations",
     summary="Recommendations linked to a diagnosis (FK: core_recommendations.diagnosis_id)",
@@ -931,20 +795,10 @@ async def get_diagnosis_recommendations(
     diagnosis_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[RecommendationOut]:
-    return [
-        RecommendationOut(
-            diagnosis_id=diagnosis_id,
-            recommendation="[stub] Reduzir budget do ADV+ Geral em 15%",
-            priority=Level.HIGH,
-            confidence=Level.MEDIUM,
-            risk=Level.LOW,
-            reversible=True,
-            id="rec_stub_01",
-            created_at=_STUB_NOW,
-        )
-    ]
+    return []
 
 
+# CCR-014: core_recommendations has 0 rows → 404 for any recommendation_id.
 @router.get(
     "/recommendations/{recommendation_id}",
     summary="Single recommendation by ID",
@@ -954,16 +808,7 @@ async def get_recommendation(
     recommendation_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> RecommendationOut:
-    return RecommendationOut(
-        diagnosis_id="dia_stub_01",
-        recommendation="[stub] Reduzir budget do ADV+ Geral em 15%",
-        priority=Level.HIGH,
-        confidence=Level.MEDIUM,
-        risk=Level.LOW,
-        reversible=True,
-        id=recommendation_id,
-        created_at=_STUB_NOW,
-    )
+    raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
 
 
 # ── POST /diagnoses ───────────────────────────────────────────────────────────

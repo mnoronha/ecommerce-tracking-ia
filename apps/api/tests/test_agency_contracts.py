@@ -788,11 +788,10 @@ class TestCCR011IntelChain:
         data = resp.json()
         assert isinstance(data, list)
 
-    def test_get_diagnosis_200(self):
+    def test_get_diagnosis_404_when_not_found(self):
+        # CCR-014: core_diagnoses is empty → non-existent ID returns 404 (not fabricated stub)
         resp = self._authed_get("/agency/v1/diagnoses/dia_001")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "id" in data
+        assert resp.status_code == 404
 
     def test_get_diagnosis_recommendations_200(self):
         resp = self._authed_get("/agency/v1/diagnoses/dia_001/recommendations")
@@ -800,11 +799,10 @@ class TestCCR011IntelChain:
         data = resp.json()
         assert isinstance(data, list)
 
-    def test_get_recommendation_200(self):
+    def test_get_recommendation_404_when_not_found(self):
+        # CCR-014: core_recommendations is empty → non-existent ID returns 404
         resp = self._authed_get("/agency/v1/recommendations/rec_001")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "id" in data
+        assert resp.status_code == 404
 
     def test_intel_routes_require_auth(self):
         client = _agency_test_client()
