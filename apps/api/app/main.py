@@ -14,6 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from .agency_api.v1 import router as agency_v1_router
 from .agency_api.v1.admin_router import admin_router as agency_v1_admin_router
 from .agency_api.v1.openapi_patch import patch_agency_v1_openapi
+from .agency_api.v1.request_id import AgencyRequestIDMiddleware
 from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
@@ -340,6 +341,11 @@ else:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# ── Agency API request correlation (CCR-012) ──────────────────────────────────
+# Outermost middleware: echoes X-Request-ID for /agency/v1 routes,
+# generates req_<hex12> when absent. Applies to all responses including errors.
+app.add_middleware(AgencyRequestIDMiddleware)
 
 # ── Static files (pixel tracker.js) ──────────────────────────────────────────
 _static_dir = Path(__file__).parent.parent / "static"
