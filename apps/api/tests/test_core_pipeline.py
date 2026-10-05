@@ -380,3 +380,206 @@ class TestPipelineFullRun:
         assert write_kwargs["period_start"] == _P_START
         assert write_kwargs["period_end"] == _P_END
         assert write_kwargs["view"] == "live"
+
+
+# ── Admin endpoint integration (TestClient, same path as production) ──────────
+
+class TestAdminPipelineEndpoint:
+    """
+    Exercises POST /agency/v1/admin/pipeline-run via TestClient.
+    Uses real CollectionResult values matching the production case:
+      meta_spend=7791.46, google_spend=6104.08, revenue_business=261675.15
+      → total_spend=13895.54, mer≈18.8316
+
+    Mocked: collectors, write_snapshot, _upsert_source_state,
+            update_source_reconciliation, pipeline+admin DB reads.
+    NOT mocked: pipeline orchestration, DQG, metric registry, _dep_source.
+    """
+
+    _SNAP_ID = "snap-endpoint-test-001"
+    _CLIENT_ROW = {
+        "id": "3e20e8b9-c1b5-449f-bc5c-eb0a00704387",
+        "client_id": "lk-sneakers",
+        "name": "LK Sneakers",
+        "timezone": "America/Sao_Paulo",
+        "currency": "BRL",
+        "country": "BR",
+        "business_model": "ecommerce",
+        "meta_ad_account_id": "1242062509867163",
+        "meta_access_token": "fake_token",
+        "google_ads_customer_id": "162-897-1213",
+        "google_ads_refresh_token": "fake_refresh",
+        "google_ads_login_customer_id": None,
+        "ga4_property_id": "348553567",
+    }
+
+    @staticmethod
+    def _make_pipeline_db() -> MagicMock:
+        """Mock for app.core.pipeline.get_supabase: handles client + truth loads."""
+        db = MagicMock()
+        client_r = MagicMock()
+        client_r.data = TestAdminPipelineEndpoint._CLIENT_ROW
+        db.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = client_r
+        truth_r = MagicMock()
+        truth_r.data = [{"client_version": 1, "target_version": 1, "conversion_map_version": 1}]
+        db.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = truth_r
+        return db
+
+    @staticmethod
+    def _make_admin_db(snap_id: str) -> MagicMock:
+        """Mock for app.database.get_supabase: handles DS selects + snapshot reads."""
+        db = MagicMock()
+        snap_row = {
+            "id": snap_id,
+            "period_start": "2026-09-28",
+            "period_end": "2026-10-04",
+            "view": "live",
+            "computed_at": "2026-10-05T10:00:00+00:00",
+            "client_truth_version": 1,
+            "target_truth_version": 1,
+            "metrics": [
+                {"metric_key": "mer", "value": 18.8316, "value_status": "OK",
+                 "certification_status": "PROVISIONAL", "unit": "ratio", "currency": None, "domain": "ADS"},
+                {"metric_key": "total_spend", "value": 13895.54, "value_status": "OK",
+                 "certification_status": "PROVISIONAL", "unit": "BRL", "currency": "BRL", "domain": "ADS"},
+                {"metric_key": "revenue_business", "value": 261675.15, "value_status": "OK",
+                 "certification_status": "PROVISIONAL", "unit": "BRL", "currency": "BRL", "domain": "BUSINESS"},
+            ],
+        }
+
+        def table_side(name):
+            t = MagicMock()
+            if name == "core_data_sources":
+                ds_r = MagicMock()
+                ds_r.data = []
+                t.select.return_value.eq.return_value.execute.return_value = ds_r
+            elif name == "core_metric_snapshots":
+                # snapshot by id: .select(cols).eq(id).limit(1).execute()
+                snap_r = MagicMock()
+                snap_r.data = [snap_row]
+                t.select.return_value.eq.return_value.limit.return_value.execute.return_value = snap_r
+                # count: .select(id, count=exact).eq(client_id).eq(period_start).eq(period_end).execute()
+                count_r = MagicMock()
+                count_r.count = 3
+                count_r.data = []
+                t.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value = count_r
+            return t
+
+        db.table.side_effect = table_side
+        return db
+
+    @patch("app.database.get_supabase")
+    @patch("app.core.pipeline.write_snapshot", return_value=_SNAP_ID)
+    @patch("app.core.pipeline.update_source_reconciliation")
+    @patch("app.core.pipeline._upsert_source_state")
+    @patch("app.core.pipeline.collect_business", return_value=CollectionResult(
+        source_system="shopify", semantic_domain="BUSINESS",
+        account_id="lk-sneakers", client_currency="BRL", client_timezone="America/Sao_Paulo",
+        period_start=date(2026, 9, 28), period_end=date(2026, 10, 4),
+        rows=[{"order_id": "o1", "total_price": 261675.15}],
+        aggregates={"revenue_business": 261675.15, "orders_count": 89.0},
+        collected_at=_NOW,
+    ))
+    @patch("app.core.pipeline.collect_ga4", return_value=CollectionResult(
+        source_system="ga4", semantic_domain="JOURNEY",
+        account_id="348553567", client_currency="BRL", client_timezone="America/Sao_Paulo",
+        period_start=date(2026, 9, 28), period_end=date(2026, 10, 4),
+        rows=[{"channel": "Organic Search"}],
+        aggregates={"ga4_sessions": 296909, "ga4_purchases": 54.0, "ga4_revenue": 137577.37},
+        collected_at=_NOW,
+    ))
+    @patch("app.core.pipeline.collect_google_ads", return_value=CollectionResult(
+        source_system="google_ads", semantic_domain="ADS",
+        account_id="1628971213", client_currency="BRL", client_timezone="America/Sao_Paulo",
+        period_start=date(2026, 9, 28), period_end=date(2026, 10, 4),
+        rows=[{"date": "range"}],
+        aggregates={"google_spend": 6104.08, "google_conversions": 42.0, "google_conversion_value": 71302.10},
+        collected_at=_NOW,
+    ))
+    @patch("app.core.pipeline.collect_meta_ads", return_value=CollectionResult(
+        source_system="meta_ads", semantic_domain="ADS",
+        account_id="1242062509867163", client_currency="BRL", client_timezone="America/Sao_Paulo",
+        period_start=date(2026, 9, 28), period_end=date(2026, 10, 4),
+        rows=[{"campaign_id": "c1", "spend": 7791.46}],
+        aggregates={"meta_spend": 7791.46, "meta_conversions": 55.0, "meta_conversion_value": 139850.22},
+        collected_at=_NOW,
+    ))
+    @patch("app.core.pipeline.get_supabase")
+    def test_endpoint_mer_ok_and_snapshot_audit_populated(
+        self,
+        mock_pipeline_db,
+        mock_meta, mock_google, mock_ga4, mock_biz,
+        mock_upsert, mock_recon_update,
+        mock_write,
+        mock_admin_db,
+    ):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.agency_api.v1.admin_router import admin_router, _PIPELINE_TAG
+        from app.agency_api.v1.auth import SCOPE_ADMIN_ONLY, AuthContext
+
+        mock_pipeline_db.return_value = self._make_pipeline_db()
+        mock_admin_db.return_value = self._make_admin_db(self._SNAP_ID)
+
+        test_app = FastAPI()
+        test_app.include_router(admin_router)
+        test_app.dependency_overrides[SCOPE_ADMIN_ONLY] = lambda: AuthContext(scope="agency_admin")
+
+        with TestClient(test_app) as client:
+            resp = client.post("/agency/v1/admin/pipeline-run", json={
+                "client_id": "lk-sneakers",
+                "period_start": "2026-09-28",
+                "period_end": "2026-10-04",
+                "view": "live",
+            })
+
+        assert resp.status_code == 200, f"non-200: {resp.text}"
+        body = resp.json()
+
+        # ── 1. pipeline_tag proves new code is deployed ──────────────────────
+        assert body["pipeline_tag"] == _PIPELINE_TAG, (
+            f"pipeline_tag mismatch: got {body.get('pipeline_tag')!r}, "
+            f"expected {_PIPELINE_TAG!r}. "
+            "Railway may still be running old code."
+        )
+
+        # ── 2. MER must be computed (fix: _dep_source for derived metrics) ───
+        metric_map = {m["metric_key"]: m for m in body["metrics"]}
+
+        total_spend_m = metric_map["total_spend"]
+        assert total_spend_m["value_status"] == "OK"
+        assert abs(total_spend_m["value"] - 13895.54) < 0.01, (
+            f"total_spend expected ≈13895.54 got {total_spend_m['value']}"
+        )
+
+        mer_m = metric_map["mer"]
+        assert mer_m["value_status"] == "OK", (
+            f"mer.value_status expected OK got {mer_m['value_status']}. "
+            "Check _dep_source: derived metrics must register health[m_def.key]."
+        )
+        assert mer_m["value"] is not None, "mer.value must not be None when all sources READY"
+        expected_mer = round(261675.15 / 13895.54, 4)
+        assert abs(mer_m["value"] - expected_mer) < 0.001, (
+            f"mer expected ≈{expected_mer} got {mer_m['value']}"
+        )
+
+        # ── 3. snapshot_audit must be populated (fix: remove schema_version from SELECT) ──
+        assert body.get("snapshot_audit_error") is None, (
+            f"snapshot_audit_error: {body.get('snapshot_audit_error')}"
+        )
+        sa = body.get("snapshot_audit")
+        assert sa is not None, (
+            "snapshot_audit is null. If snapshot_audit_error has a DB column error, "
+            "the schema_version fix in SELECT may not be deployed."
+        )
+        assert sa["snapshot_id"] == self._SNAP_ID
+        assert sa["schema_version"] == "1.1"
+        assert sa["metric_count"] == 3
+        assert sa["total_snapshots_for_period"] == 3
+
+        # ── 4. success + health ───────────────────────────────────────────────
+        assert body["success"] is True
+        assert body["health"]["meta_ads"] == "READY"
+        assert body["health"]["google_ads"] == "READY"
+        assert body["health"]["ga4"] == "READY"
+        assert body["health"]["business"] == "READY"

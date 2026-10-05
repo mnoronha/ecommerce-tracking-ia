@@ -62,7 +62,7 @@ class MetricOut(BaseModel):
 
 class SnapshotAudit(BaseModel):
     snapshot_id:          str
-    schema_version:       str
+    schema_version:       str = "1.1"   # not stored as DB column; returned as constant
     period_start:         str
     period_end:           str
     view:                 str
@@ -72,7 +72,7 @@ class SnapshotAudit(BaseModel):
     metric_count:         int
     metric_keys:          list[str]
     certification_status: Optional[str]
-    total_snapshots_for_period: int = 0   # append-only audit: how many runs for this period
+    total_snapshots_for_period: int = 0
 
 
 class DataSourceAudit(BaseModel):
@@ -87,21 +87,26 @@ class DataSourceAudit(BaseModel):
     last_error:           Optional[str]
 
 
+_PIPELINE_TAG = "bloco2-fix5"  # bump on each deploy to verify Railway is running new code
+
+
 class PipelineRunResponse(BaseModel):
-    run_id:          str
-    client_id:       str
-    period_start:    str
-    period_end:      str
-    view:            str
-    success:         bool
-    snapshot_id:     Optional[str]
-    error:           Optional[str]
-    sources:         list[SourceAudit]
-    metrics:         list[MetricOut]
-    health:          dict[str, str]
-    snapshot_audit:  Optional[SnapshotAudit] = None
-    data_sources:    list[DataSourceAudit] = []
-    ran_at:          str = ""
+    run_id:               str
+    client_id:            str
+    period_start:         str
+    period_end:           str
+    view:                 str
+    success:              bool
+    snapshot_id:          Optional[str]
+    error:                Optional[str]
+    sources:              list[SourceAudit]
+    metrics:              list[MetricOut]
+    health:               dict[str, str]
+    snapshot_audit:       Optional[SnapshotAudit] = None
+    snapshot_audit_error: Optional[str] = None   # diagnostic: why snapshot_audit is null
+    data_sources:         list[DataSourceAudit] = []
+    ran_at:               str = ""
+    pipeline_tag:         str = _PIPELINE_TAG    # non-sensitive deploy marker
 
 
 # ── POST /agency/v1/admin/pipeline-run ────────────────────────────────────────
@@ -155,6 +160,7 @@ async def trigger_pipeline_run(
     # Read full core_data_sources state from DB
     data_sources_out: list[DataSourceAudit] = []
     snap_audit: Optional[SnapshotAudit] = None
+    snap_audit_error: Optional[str] = None
     try:
         from ...database import get_supabase
         db = get_supabase()
@@ -183,11 +189,12 @@ async def trigger_pipeline_run(
             ))
 
         if result.snapshot_id:
-            # Use limit(1)+list instead of single() to avoid APIError on 0 rows
+            # schema_version is NOT a column in core_metric_snapshots — omit from select.
+            # It is returned as the hardcoded constant "1.1" in SnapshotAudit.
             snap_rows = (
                 db.table("core_metric_snapshots")
                 .select(
-                    "id, schema_version, period_start, period_end, view, "
+                    "id, period_start, period_end, view, "
                     "computed_at, client_truth_version, target_truth_version, metrics"
                 )
                 .eq("id", result.snapshot_id)
@@ -214,7 +221,6 @@ async def trigger_pipeline_run(
                 total_snaps = count_r.count if count_r.count is not None else len(count_r.data or [])
                 snap_audit = SnapshotAudit(
                     snapshot_id=s["id"],
-                    schema_version=s.get("schema_version", ""),
                     period_start=str(s.get("period_start", "")),
                     period_end=str(s.get("period_end", "")),
                     view=s.get("view", ""),
@@ -227,11 +233,10 @@ async def trigger_pipeline_run(
                     total_snapshots_for_period=total_snaps,
                 )
             else:
-                logger.warning(
-                    "pipeline-run: snapshot %s not found in DB (just written!)",
-                    result.snapshot_id,
-                )
+                snap_audit_error = f"snapshot {result.snapshot_id} not found in DB"
+                logger.warning("pipeline-run: %s", snap_audit_error)
     except Exception as exc:
+        snap_audit_error = f"audit DB read failed: {exc}"
         logger.error("pipeline-run audit DB read failed: %s", exc)
 
     return PipelineRunResponse(
@@ -247,6 +252,7 @@ async def trigger_pipeline_run(
         metrics=metrics_out,
         health=result.health,
         snapshot_audit=snap_audit,
+        snapshot_audit_error=snap_audit_error,
         data_sources=data_sources_out,
         ran_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -281,7 +287,7 @@ async def pipeline_audit(
 
     snap_q = (
         db.table("core_metric_snapshots")
-        .select("id, schema_version, period_start, period_end, view, computed_at, metrics, health, client_truth_version")
+        .select("id, period_start, period_end, view, computed_at, metrics, health, client_truth_version")
         .eq("client_id", client_id)
         .order("computed_at", desc=True)
         .limit(5)
@@ -297,7 +303,7 @@ async def pipeline_audit(
         raw_m: list[dict] = s.get("metrics") or []
         snaps_out.append({
             "id":            s["id"],
-            "schema_version": s.get("schema_version"),
+            "schema_version": "1.1",   # not a DB column; constant
             "period":         f"{s.get('period_start')} -> {s.get('period_end')}",
             "view":           s.get("view"),
             "computed_at":    str(s.get("computed_at")),
