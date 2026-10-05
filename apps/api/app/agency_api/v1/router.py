@@ -7,7 +7,7 @@ Real implementation replaces stubs incrementally from Etapa 4 onwards.
 Auth: each route declares the allowed scopes via Depends(require_scopes(...)).
 Idempotency-Key header is accepted on all write endpoints (ignored in stubs).
 
-Route inventory (25 routes):
+Route inventory (29 routes):
   GET  /clients
   GET  /clients/{client_id}/truth
   GET  /clients/{client_id}/health
@@ -19,6 +19,10 @@ Route inventory (25 routes):
   GET  /clients/{client_id}/reports
   GET  /alerts
   GET  /alerts/{alert_id}/context
+  GET  /alerts/{alert_id}/diagnoses        [CCR-011]
+  GET  /diagnoses/{diagnosis_id}           [CCR-011]
+  GET  /diagnoses/{diagnosis_id}/recommendations  [CCR-011]
+  GET  /recommendations/{recommendation_id}       [CCR-011]
   GET  /alert-rule-suggestions
   GET  /system/health
   GET  /jobs
@@ -402,7 +406,13 @@ async def get_reports(
     response_model=list[AlertOut],
 )
 async def list_alerts(
-    status: Optional[str] = Query("open"),
+    status: Optional[str] = Query(
+        "open",
+        description=(
+            "Alert status filter. Case-insensitive. "
+            "Accepted values: OPEN, open, RESOLVED, resolved."
+        ),
+    ),
     client_id: Optional[str] = Query(None),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[AlertOut]:
@@ -576,6 +586,104 @@ async def get_job(
         attempt=1,
         started_at=_STUB_NOW,
         finished_at=_STUB_NOW,
+    )
+
+
+# ── CCR-011: consultable intel chain ─────────────────────────────────────────
+#
+# Four additive GET routes that expose the FK chain:
+#   alert → core_diagnoses.alert_id
+#         → core_recommendations.diagnosis_id
+#
+# No relationship is inferred — FK chain only. Real DB reads in Etapa 4.
+
+@router.get(
+    "/alerts/{alert_id}/diagnoses",
+    summary="Diagnoses linked to an alert (FK: core_diagnoses.alert_id)",
+    response_model=list[DiagnosisOut],
+)
+async def get_alert_diagnoses(
+    alert_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[DiagnosisOut]:
+    return [
+        DiagnosisOut(
+            alert_id=alert_id,
+            facts=[],
+            related_changes=[],
+            hypotheses=[],
+            confidence=Level.MEDIUM,
+            do_not_conclude=[],
+            data_limitations=[],
+            id="dia_stub_01",
+            created_at=_STUB_NOW,
+        )
+    ]
+
+
+@router.get(
+    "/diagnoses/{diagnosis_id}",
+    summary="Single diagnosis by ID",
+    response_model=DiagnosisOut,
+)
+async def get_diagnosis(
+    diagnosis_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> DiagnosisOut:
+    return DiagnosisOut(
+        alert_id="alt_stub_01",
+        facts=[],
+        related_changes=[],
+        hypotheses=[],
+        confidence=Level.MEDIUM,
+        do_not_conclude=[],
+        data_limitations=[],
+        id=diagnosis_id,
+        created_at=_STUB_NOW,
+    )
+
+
+@router.get(
+    "/diagnoses/{diagnosis_id}/recommendations",
+    summary="Recommendations linked to a diagnosis (FK: core_recommendations.diagnosis_id)",
+    response_model=list[RecommendationOut],
+)
+async def get_diagnosis_recommendations(
+    diagnosis_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[RecommendationOut]:
+    return [
+        RecommendationOut(
+            diagnosis_id=diagnosis_id,
+            recommendation="[stub] Reduzir budget do ADV+ Geral em 15%",
+            priority=Level.HIGH,
+            confidence=Level.MEDIUM,
+            risk=Level.LOW,
+            reversible=True,
+            id="rec_stub_01",
+            created_at=_STUB_NOW,
+        )
+    ]
+
+
+@router.get(
+    "/recommendations/{recommendation_id}",
+    summary="Single recommendation by ID",
+    response_model=RecommendationOut,
+)
+async def get_recommendation(
+    recommendation_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> RecommendationOut:
+    return RecommendationOut(
+        diagnosis_id="dia_stub_01",
+        recommendation="[stub] Reduzir budget do ADV+ Geral em 15%",
+        priority=Level.HIGH,
+        confidence=Level.MEDIUM,
+        risk=Level.LOW,
+        reversible=True,
+        id=recommendation_id,
+        created_at=_STUB_NOW,
     )
 
 

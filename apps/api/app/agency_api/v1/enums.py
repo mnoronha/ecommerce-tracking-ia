@@ -180,3 +180,21 @@ class LearningCandidateStatus(str, Enum):
     PENDING  = "PENDING"
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+
+
+class MetricDomain(str, Enum):
+    """
+    Semantic domain of a MetricValue — what truth the metric belongs to.
+    Distinct from the source system that provided the raw data.
+
+    Source systems (google_ads, meta_ads, ga4, shopify) are NOT MetricDomain.
+    The Core is the sole authority for assigning domain.
+    Hermes treats a missing or unknown domain as None; it never infers or assigns domain.
+
+    Separation from DataHealthEntry.domain (which mixes semantic + source) is intentional:
+    MetricDomain is the semantic layer only.
+    """
+    BUSINESS   = "BUSINESS"   # Revenue, GMV, orders, profitability, LTV
+    ADS        = "ADS"        # Paid channel: spend, ROAS, CPA, CTR, frequency
+    JOURNEY    = "JOURNEY"    # Web journey: sessions, funnel, bounce rate, engagement
+    CONVERSION = "CONVERSION" # Tracked conversions, attribution quality, match rate

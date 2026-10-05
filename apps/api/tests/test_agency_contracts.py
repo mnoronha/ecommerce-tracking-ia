@@ -39,6 +39,7 @@ from app.agency_api.v1.enums import (
     LearningScope,
     Level,
     MatchStatus,
+    MetricDomain,
     NarrativeStatus,
     RecommendationStatus,
     ReportType,
@@ -695,3 +696,129 @@ class TestCCR007AlertsCasing:
                 headers={"Authorization": f"Bearer {_ADMIN_KEY}"},
             )
         assert resp.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. CCR-010 — MetricDomain enum + MetricValue.domain field
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCCR010MetricDomain:
+    """
+    CCR-010: MetricDomain is BUSINESS/ADS/JOURNEY/CONVERSION.
+    MetricValue.domain is Optional — None means not yet classified by Core.
+    Source system names (google_ads, meta_ads, ga4) are not valid MetricDomain values.
+    Hermes never assigns domain; it is Core-only.
+    """
+
+    def test_metric_domain_four_values(self):
+        expected = {"BUSINESS", "ADS", "JOURNEY", "CONVERSION"}
+        assert {m.value for m in MetricDomain} == expected
+
+    def test_metric_domain_no_source_system_names(self):
+        values = {m.value for m in MetricDomain}
+        for forbidden in ("google_ads", "meta_ads", "ga4", "shopify"):
+            assert forbidden not in values
+
+    def test_metric_value_domain_defaults_none(self):
+        mv = MetricValue(
+            metric_key="revenue",
+            value=1000.0,
+            unit="BRL",
+            value_status=ValueStatus.OK,
+        )
+        assert mv.domain is None
+
+    def test_metric_value_domain_business_valid(self):
+        mv = MetricValue(
+            metric_key="revenue",
+            value=1000.0,
+            unit="BRL",
+            value_status=ValueStatus.OK,
+            domain=MetricDomain.BUSINESS,
+        )
+        assert mv.domain == "BUSINESS"
+
+    def test_metric_value_domain_all_values_accepted(self):
+        for domain in MetricDomain:
+            mv = MetricValue(
+                metric_key="x",
+                value_status=ValueStatus.OK,
+                domain=domain,
+            )
+            assert mv.domain == domain.value
+
+    def test_metric_value_domain_invalid_rejected(self):
+        with pytest.raises((ValidationError, ValueError)):
+            MetricValue(
+                metric_key="x",
+                value_status=ValueStatus.OK,
+                domain="google_ads",  # type: ignore[arg-type]
+            )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. CCR-011 — Intel chain GET routes (alert → diagnosis → recommendation)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCCR011IntelChain:
+    """
+    CCR-011: 4 new GET routes expose the FK chain:
+      GET /alerts/{alert_id}/diagnoses
+      GET /diagnoses/{diagnosis_id}
+      GET /diagnoses/{diagnosis_id}/recommendations
+      GET /recommendations/{recommendation_id}
+    All require at least agency_admin scope.
+    """
+
+    def _authed_get(self, path: str):
+        with (
+            patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
+            patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            return _agency_test_client().get(
+                path,
+                headers={"Authorization": f"Bearer {_ADMIN_KEY}"},
+            )
+
+    def test_get_alert_diagnoses_200(self):
+        resp = self._authed_get("/agency/v1/alerts/alert_001/diagnoses")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_get_diagnosis_200(self):
+        resp = self._authed_get("/agency/v1/diagnoses/dia_001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "id" in data
+
+    def test_get_diagnosis_recommendations_200(self):
+        resp = self._authed_get("/agency/v1/diagnoses/dia_001/recommendations")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_get_recommendation_200(self):
+        resp = self._authed_get("/agency/v1/recommendations/rec_001")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "id" in data
+
+    def test_intel_routes_require_auth(self):
+        client = _agency_test_client()
+        with (
+            patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
+            patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            for path in (
+                "/agency/v1/alerts/alert_001/diagnoses",
+                "/agency/v1/diagnoses/dia_001",
+                "/agency/v1/diagnoses/dia_001/recommendations",
+                "/agency/v1/recommendations/rec_001",
+            ):
+                resp = client.get(path)
+                assert resp.status_code == 401, f"Expected 401 on {path}, got {resp.status_code}"

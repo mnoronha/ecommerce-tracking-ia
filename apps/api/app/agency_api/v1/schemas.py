@@ -49,6 +49,7 @@ from .enums import (
     LearningScope,
     Level,
     MatchStatus,
+    MetricDomain,
     NarrativeStatus,
     RecommendationStatus,
     ReportType,
@@ -164,6 +165,9 @@ class MetricValue(_Base):
     snapshot_ids: list[str] = Field(default_factory=list)
     target: Optional[float] = None
     target_status: Optional[TargetStatus] = None
+    # CCR-010: semantic domain. Filled by the Core only; Hermes never assigns this.
+    # None = domain not yet classified by Core. Source systems are NOT MetricDomain.
+    domain: Optional[MetricDomain] = None
 
 
 class MetricContract(_Base):

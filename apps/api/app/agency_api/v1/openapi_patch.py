@@ -47,6 +47,11 @@ _GRANT_MAP: dict[str, list[str]] = {
     "get_reports_agency_v1_clients__client_id__reports_get":                                           _AHPC,
     "list_alerts_agency_v1_alerts_get":                                                                _AHP,
     "get_alert_context_agency_v1_alerts__alert_id__context_get":                                       _AHP,
+    # CCR-011: consultable intel chain (alert → diagnosis → recommendation)
+    "get_alert_diagnoses_agency_v1_alerts__alert_id__diagnoses_get":                                   _AHP,
+    "get_diagnosis_agency_v1_diagnoses__diagnosis_id__get":                                            _AHP,
+    "get_diagnosis_recommendations_agency_v1_diagnoses__diagnosis_id__recommendations_get":            _AHP,
+    "get_recommendation_agency_v1_recommendations__recommendation_id__get":                            _AHP,
     "list_alert_rule_suggestions_agency_v1_alert_rule_suggestions_get":                                _AHP,
     "system_health_agency_v1_system_health_get":                                                       _AHP,
     "list_jobs_agency_v1_jobs_get":                                                                    _A,
@@ -81,12 +86,21 @@ def patch_agency_v1_openapi(schema: dict) -> None:
             "| Scope | Env var | Allowed operations |\n"
             "|---|---|---|\n"
             "| `agency_admin` | `AGENCY_API_ADMIN_KEY` | All endpoints |\n"
-            "| `hermes_service` | `AGENCY_API_HERMES_KEY` | All reads; intel writes; "
-            "transmits human decisions to `/decision` |\n"
-            "| `platform_web` | `AGENCY_API_PLATFORM_KEY` | All reads; action-event "
-            "and replay writes; narrative transitions |\n"
-            "| `client_viewer` | Supabase Auth JWT | Own-client read-only (reports) |\n\n"
-            "Per-operation allowed scopes are listed in `x-grant-scopes`.\n\n"
+            "| `hermes_service` | `AGENCY_API_HERMES_KEY` | All operational reads; "
+            "intel writes (diagnoses, recommendations, changes, narratives, "
+            "learning candidates, alert feedback); transmits human decisions to "
+            "`/decision` endpoints |\n"
+            "| `platform_web` | `AGENCY_API_PLATFORM_KEY` | All operational reads; "
+            "action-event and replay writes; narrative transitions |\n"
+            "| `client_viewer` | Supabase Auth JWT | Own-client read-only "
+            "(reports only — `GET /clients/{id}/reports`) |\n\n"
+            "**Scope clarification (CCR-009):**\n\n"
+            "- _All operational reads_ means every `GET` route **except** "
+            "`GET /jobs` and `GET /jobs/{id}`, which are `agency_admin` only.\n"
+            "- `client_viewer` has no access to any route except "
+            "`GET /clients/{id}/reports`.\n"
+            "- The grant matrix per operation is the authoritative source — "
+            "see `x-grant-scopes` on each operation.\n\n"
             "**Note — `hermes_service` and `/decision`:** "
             "Hermes acts as a transport layer for a human decision made in Telegram. "
             "The `actor` field in the request body MUST contain the human actor_id, "
