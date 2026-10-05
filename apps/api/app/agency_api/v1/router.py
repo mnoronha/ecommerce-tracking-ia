@@ -41,10 +41,13 @@ Route inventory (29 routes):
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
+
+logger = logging.getLogger(__name__)
 
 from .auth import (
     SCOPE_ADMIN_ONLY,
@@ -123,6 +126,53 @@ _STUB_VERSIONS = TruthVersions(client=1, target=1, conversion_map=1)
 _STUB_PERIOD = Period(start=date(2026, 9, 26), end=date(2026, 10, 2))
 
 
+# ── DB helpers (real reads — Etapa 4) ─────────────────────────────────────────
+
+def _get_db():
+    from ...database import get_supabase
+    return get_supabase()
+
+
+def _parse_period(period_param: Optional[str]) -> tuple[date, date]:
+    """
+    Parse YYYY-MM-DD:YYYY-MM-DD. Defaults to yesterday-6d → yesterday.
+    """
+    if period_param:
+        try:
+            parts = period_param.split(":")
+            if len(parts) == 2:
+                return date.fromisoformat(parts[0]), date.fromisoformat(parts[1])
+        except ValueError:
+            pass
+    today     = datetime.now(timezone.utc).date()
+    yesterday = today - timedelta(days=1)
+    return yesterday - timedelta(days=6), yesterday
+
+
+def _source_to_domain(source_system: str) -> str:
+    return {
+        "shopify":    "business",
+        "meta_ads":   "meta_ads",
+        "google_ads": "google_ads",
+        "ga4":        "ga4",
+    }.get(source_system, source_system)
+
+
+def _load_client_meta(client_id: str) -> Optional[dict]:
+    try:
+        r = (
+            _get_db().table("clients")
+            .select("client_id, name, business_model, timezone, currency, country, is_active")
+            .eq("client_id", client_id)
+            .maybe_single()
+            .execute()
+        )
+        return r.data
+    except Exception as exc:
+        logger.warning("agency_api: client load failed %s: %s", client_id, exc)
+        return None
+
+
 # ── GET /clients ──────────────────────────────────────────────────────────────
 
 @router.get(
@@ -133,17 +183,29 @@ _STUB_PERIOD = Period(start=date(2026, 9, 26), end=date(2026, 10, 2))
 async def list_clients(
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> list[ClientOut]:
-    return [
-        ClientOut(
-            client_id="lk-sneakers",
-            name="LK Sneakers",
-            business_model=BusinessModel.ECOMMERCE,
-            timezone="America/Sao_Paulo",
-            currency="BRL",
-            country="BR",
-            status="active",
+    try:
+        rows = (
+            _get_db().table("clients")
+            .select("client_id, name, business_model, timezone, currency, country, is_active")
+            .not_.is_("client_id", "null")
+            .eq("is_active", True)
+            .execute()
         )
-    ]
+        return [
+            ClientOut(
+                client_id=r["client_id"],
+                name=r.get("name") or r["client_id"],
+                business_model=BusinessModel(r["business_model"]) if r.get("business_model") else BusinessModel.ECOMMERCE,
+                timezone=r.get("timezone") or "America/Sao_Paulo",
+                currency=r.get("currency") or "BRL",
+                country=r.get("country"),
+                status="active" if r.get("is_active") else "inactive",
+            )
+            for r in (rows.data or [])
+        ]
+    except Exception as exc:
+        logger.error("list_clients: DB error: %s", exc)
+        raise HTTPException(503, "database unavailable")
 
 
 # ── GET /clients/{client_id}/truth ────────────────────────────────────────────
@@ -157,22 +219,34 @@ async def get_client_truth(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> TruthOut:
+    try:
+        row = (
+            _get_db().table("core_client_truth")
+            .select("client_id, client_version, client_truth, target_version, target_truth, valid_from")
+            .eq("client_id", client_id)
+            .order("valid_from", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_client_truth: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    if not row.data:
+        raise HTTPException(404, f"truth not found for client {client_id!r}")
+
+    r = row.data[0]
+    vf = r.get("valid_from")
+    if isinstance(vf, str):
+        vf = datetime.fromisoformat(vf.replace("Z", "+00:00"))
+
     return TruthOut(
-        client_id=client_id,
-        client_version=1,
-        client_truth={
-            "name": "LK Sneakers",
-            "business_model": "ecommerce",
-            "timezone": "America/Sao_Paulo",
-            "currency": "BRL",
-            "country": "BR",
-        },
-        target_version=1,
-        target_truth={
-            "revenue_business": {"target": 90000.0, "currency": "BRL"},
-            "mer": {"target": 5.0},
-        },
-        valid_from=_STUB_NOW,
+        client_id=r["client_id"],
+        client_version=r["client_version"],
+        client_truth=r["client_truth"],
+        target_version=r["target_version"],
+        target_truth=r["target_truth"],
+        valid_from=vf,
     )
 
 
@@ -187,18 +261,37 @@ async def get_client_health(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> DataHealthOut:
-    return DataHealthOut(
-        client_id=client_id,
-        health=[
-            DataHealthEntry(domain="business",        source_state=SourceState.READY,            checked_at=_STUB_NOW),
-            DataHealthEntry(domain="google_ads",      source_state=SourceState.READY,            checked_at=_STUB_NOW),
-            DataHealthEntry(domain="meta_ads",        source_state=SourceState.PERMISSION_DENIED, reason="Token sem permissão na conta Meta", checked_at=_STUB_NOW),
-            DataHealthEntry(domain="ga4",             source_state=SourceState.STALE,            reason="Última coleta bem-sucedida há 49h", checked_at=_STUB_NOW),
-            DataHealthEntry(domain="conversion_map",  source_state=SourceState.PARTIAL,          reason="Mapeamento pendente de aprovação", checked_at=_STUB_NOW),
-            DataHealthEntry(domain="notion_truth",    source_state=SourceState.READY,            checked_at=_STUB_NOW),
-        ],
-        checked_at=_STUB_NOW,
-    )
+    now = datetime.now(timezone.utc)
+    try:
+        sources = (
+            _get_db().table("core_data_sources")
+            .select("source_system, source_state, last_error, last_validated_at, updated_at")
+            .eq("client_id", client_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_client_health: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    if not sources.data:
+        raise HTTPException(404, f"no sources found for client {client_id!r}")
+
+    entries: list[DataHealthEntry] = []
+    for s in sources.data:
+        checked_raw = s.get("last_validated_at") or s.get("updated_at")
+        if isinstance(checked_raw, str):
+            checked_at = datetime.fromisoformat(checked_raw.replace("Z", "+00:00"))
+        else:
+            checked_at = now
+
+        entries.append(DataHealthEntry(
+            domain=_source_to_domain(s["source_system"]),
+            source_state=SourceState(s["source_state"]),
+            reason=s.get("last_error"),
+            checked_at=checked_at,
+        ))
+
+    return DataHealthOut(client_id=client_id, health=entries, checked_at=now)
 
 
 # ── GET /clients/{client_id}/pipeline-health ─────────────────────────────────
@@ -212,23 +305,53 @@ async def get_pipeline_health(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> PipelineHealthOut:
+    now = datetime.now(timezone.utc)
+    try:
+        sources = (
+            _get_db().table("core_data_sources")
+            .select("source_system, source_state, last_data_at, reconciliation_state")
+            .eq("client_id", client_id)
+            .execute()
+        )
+        snap = (
+            _get_db().table("core_metric_snapshots")
+            .select("computed_at, view")
+            .eq("client_id", client_id)
+            .order("computed_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_pipeline_health: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    def _parse_dt(v: Optional[str]) -> Optional[datetime]:
+        if not v:
+            return None
+        return datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+    last_collection: dict[str, Optional[datetime]] = {}
+    certification:   dict[str, Optional[str]]      = {}
+
+    for s in (sources.data or []):
+        domain = _source_to_domain(s["source_system"])
+        last_collection[domain] = _parse_dt(s.get("last_data_at"))
+        recon = s.get("reconciliation_state")
+        if recon == "OK" and s["source_state"] == "READY":
+            certification[domain] = CertificationStatus.PROVISIONAL.value
+        else:
+            certification[domain] = None
+
+    last_snap_at: Optional[datetime] = None
+    if snap.data:
+        last_snap_at = _parse_dt(snap.data[0].get("computed_at"))
+
     return PipelineHealthOut(
         client_id=client_id,
-        last_collection={
-            "google_ads": _STUB_NOW,
-            "meta_ads":   _STUB_NOW,
-            "ga4":        None,
-            "shopify":    _STUB_NOW,
-        },
-        certification={
-            "google_ads": CertificationStatus.PROVISIONAL,
-            "meta_ads":   CertificationStatus.PROVISIONAL,
-            "shopify":    CertificationStatus.CERTIFIED,
-        },
-        alert_evaluation_at=_STUB_NOW,
-        notion_sync_at=_STUB_NOW,
-        last_report_at=_STUB_NOW,
-        checked_at=_STUB_NOW,
+        last_collection=last_collection,
+        certification=certification,
+        last_report_at=last_snap_at,
+        checked_at=now,
     )
 
 
@@ -246,34 +369,85 @@ async def get_metrics(
     view: Optional[str] = Query("live", pattern="^(live|certified)$"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> MetricContract:
-    # PRD §7 example — verbatim
+    view_str = view or "live"
+    period_start, period_end = _parse_period(period)
+
+    # Load client metadata
+    client_meta = _load_client_meta(client_id)
+    if not client_meta:
+        raise HTTPException(404, f"client not found: {client_id!r}")
+
+    bm_str  = client_meta.get("business_model") or "ecommerce"
+    tz_str  = client_meta.get("timezone") or "America/Sao_Paulo"
+    cur_str = client_meta.get("currency") or "BRL"
+
+    try:
+        snap = (
+            _get_db().table("core_metric_snapshots")
+            .select("id, metrics, health, client_truth_version, target_truth_version, conversion_map_version, computed_at, view")
+            .eq("client_id", client_id)
+            .eq("period_start", period_start.isoformat())
+            .eq("period_end", period_end.isoformat())
+            .eq("view", view_str)
+            .order("computed_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_metrics: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    if not snap.data:
+        # No snapshot yet — return empty contract, all NO_DATA
+        return MetricContract(
+            client_id=client_id,
+            business_model=BusinessModel(bm_str),
+            timezone=tz_str,
+            currency=cur_str,
+            period=Period(start=period_start, end=period_end),
+            view=view_str,  # type: ignore[arg-type]
+            truth_versions=TruthVersions(client=1, target=1, conversion_map=1),
+            metrics=[],
+            health={},
+        )
+
+    row = snap.data[0]
+    raw_metrics: list[dict] = row.get("metrics") or []
+    raw_health:  dict       = row.get("health")  or {}
+
+    metrics = [
+        MetricValue(
+            metric_key=m["metric_key"],
+            value=m.get("value"),
+            unit=m.get("unit"),
+            currency=m.get("currency"),
+            value_status=ValueStatus(m.get("value_status", "UNKNOWN")),
+            reason_code=m.get("reason_code"),
+            certification_status=CertificationStatus(m["certification_status"]) if m.get("certification_status") else None,
+            snapshot_ids=m.get("snapshot_ids", []),
+            target=m.get("target"),
+            target_status=TargetStatus(m["target_status"]) if m.get("target_status") else None,
+            domain=m.get("domain"),
+        )
+        for m in raw_metrics
+    ]
+
+    health_out = {k: SourceState(v) for k, v in raw_health.items() if v}
+
     return MetricContract(
         client_id=client_id,
-        business_model=BusinessModel.ECOMMERCE,
-        timezone="America/Sao_Paulo",
-        currency="BRL",
-        period=_STUB_PERIOD,
-        view=view or "live",  # type: ignore[arg-type]
-        truth_versions=_STUB_VERSIONS,
-        metrics=[
-            MetricValue(metric_key="revenue_business", value=84210.50, unit="BRL",
-                        value_status=ValueStatus.OK, certification_status=CertificationStatus.PROVISIONAL,
-                        snapshot_ids=["snap_stub_01"], target=90000.0, target_status=TargetStatus.OK),
-            MetricValue(metric_key="mer", value=5.4, unit="x",
-                        value_status=ValueStatus.OK, certification_status=CertificationStatus.PROVISIONAL,
-                        snapshot_ids=["snap_stub_02"]),
-            MetricValue(metric_key="roas_meta", value=None,
-                        value_status=ValueStatus.UNKNOWN, reason_code="SOURCE_PERMISSION_DENIED"),
-            MetricValue(metric_key="ga4_sessions", value=None,
-                        value_status=ValueStatus.STALE, reason_code="LAST_SUCCESS_49H"),
-        ],
-        health={
-            "business":       SourceState.READY,
-            "google_ads":     SourceState.READY,
-            "meta_ads":       SourceState.PERMISSION_DENIED,
-            "ga4":            SourceState.STALE,
-            "conversion_map": SourceState.PARTIAL,
-        },
+        business_model=BusinessModel(bm_str),
+        timezone=tz_str,
+        currency=cur_str,
+        period=Period(start=period_start, end=period_end),
+        view=view_str,  # type: ignore[arg-type]
+        truth_versions=TruthVersions(
+            client=row.get("client_truth_version", 1),
+            target=row.get("target_truth_version", 1),
+            conversion_map=row.get("conversion_map_version", 1),
+        ),
+        metrics=metrics,
+        health=health_out,
     )
 
 
