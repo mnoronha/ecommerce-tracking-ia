@@ -12,6 +12,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from .agency_api.v1 import router as agency_v1_router
+from .agency_api.v1.openapi_patch import patch_agency_v1_openapi
 from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
@@ -32,6 +33,24 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# ── Custom OpenAPI: inject Agency v1.1 metadata (CCR-001/003/004) ─────────────
+# Source of truth: agency_api/v1/openapi_patch.py
+# Regenerate: cd apps/api && python -c "from app.main import app; import json; \
+#   print(json.dumps(app.openapi(), indent=2))" > ../../docs/agency-api-v1.openapi.json
+_orig_openapi = app.openapi
+
+
+def _custom_openapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = _orig_openapi()
+    patch_agency_v1_openapi(schema)
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi  # type: ignore[method-assign]
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

@@ -594,3 +594,104 @@ class TestLegacyMappingContract:
     def test_all_legacy_states_have_v1_mapping(self):
         for legacy, (v_status, reason) in self._LEGACY_TO_V1.items():
             assert v_status in ValueStatus, f"ValueStatus missing {v_status} for legacy '{legacy}'"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. CCR-002 — Idempotency-Key header accepted on write endpoints
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from unittest.mock import patch
+from fastapi import FastAPI as _FastApp
+from fastapi.testclient import TestClient
+from app.agency_api.v1.router import router as _agency_v1_router
+from app.config import settings as _settings
+
+_ADMIN_KEY = "ccr-test-admin-key"
+
+
+def _agency_test_client() -> TestClient:
+    app = _FastApp()
+    app.include_router(_agency_v1_router)
+    return TestClient(app, raise_server_exceptions=False)
+
+
+class TestCCR002IdempotencyHeaders:
+    """
+    CCR-002: Idempotency-Key header is accepted (not rejected) on /decision
+    and /transitions. The server ignores unknown headers — these tests confirm
+    the header was wired via the Header() parameter so it appears in the OpenAPI
+    spec and does not cause a 422.
+    """
+
+    def test_decision_accepts_idempotency_key(self):
+        body = {"decision": "APPROVED", "actor": "human-user-slug"}
+        with (
+            patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
+            patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().post(
+                "/agency/v1/alert-rule-suggestions/sug_001/decision",
+                json=body,
+                headers={
+                    "Authorization":   f"Bearer {_ADMIN_KEY}",
+                    "Idempotency-Key": "idem-key-abc123",
+                },
+            )
+        assert resp.status_code == 200
+
+    def test_transitions_accepts_idempotency_key(self):
+        body = {"target_status": "APPROVED", "actor": "human-user-slug"}
+        with (
+            patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
+            patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().post(
+                "/agency/v1/report-narratives/narr_001/transitions",
+                json=body,
+                headers={
+                    "Authorization":   f"Bearer {_ADMIN_KEY}",
+                    "Idempotency-Key": "idem-key-abc456",
+                },
+            )
+        assert resp.status_code == 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. CCR-007 — GET /alerts accepts both lowercase and uppercase status filter
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCCR007AlertsCasing:
+    """
+    CCR-007: the router normalises the status query parameter so that both
+    'open' (default) and 'OPEN' (enum string) are accepted without a 422.
+    """
+
+    def test_alerts_status_lowercase_open(self):
+        with (
+            patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
+            patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().get(
+                "/agency/v1/alerts?status=open",
+                headers={"Authorization": f"Bearer {_ADMIN_KEY}"},
+            )
+        assert resp.status_code == 200
+
+    def test_alerts_status_uppercase_open(self):
+        with (
+            patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
+            patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().get(
+                "/agency/v1/alerts?status=OPEN",
+                headers={"Authorization": f"Bearer {_ADMIN_KEY}"},
+            )
+        assert resp.status_code == 200

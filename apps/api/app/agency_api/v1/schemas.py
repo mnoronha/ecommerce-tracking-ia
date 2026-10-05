@@ -390,7 +390,17 @@ class AlertRuleSuggestionOut(_Base):
 class AlertRuleSuggestionDecision(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
     decision: Literal["APPROVED", "REJECTED"]
-    actor: str
+    actor: str = Field(
+        description=(
+            "Stable identifier of the human who authorised this decision "
+            "(e.g. a user slug or UUID — not a service identity). "
+            "When transmitted by `hermes_service`, this MUST be the human actor_id, "
+            "never the service name. "
+            "Enforcement of non-service identity is a Core invariant (Etapa 4). "
+            "A future field `approval_event_id` will reference the canonical "
+            "Telegram approval event once that audit chain is available."
+        )
+    )
     note: Optional[str] = None
 
 
@@ -445,3 +455,12 @@ class SystemHealthOut(_Base):
     workers: list[WorkerHealth]
     dead_jobs: list[JobOut]
     checked_at: datetime
+
+
+# ── 17. Error responses ───────────────────────────────────────────────────────
+
+class ErrorOut(_Base):
+    """Standard error envelope returned on 401, 403, 409, 429 and 503."""
+    error: str = Field(description="Machine-readable error code")
+    detail: Optional[str] = Field(default=None, description="Human-readable explanation")
+    request_id: Optional[str] = Field(default=None, description="Echoed from X-Request-ID header")

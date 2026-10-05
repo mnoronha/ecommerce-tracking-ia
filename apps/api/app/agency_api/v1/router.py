@@ -55,6 +55,7 @@ from .auth import (
 from .schemas import (
     ActionEventCreate,
     ActionEventOut,
+    ErrorOut,
     AlertContext,
     AlertFeedbackCreate,
     AlertOut,
@@ -683,6 +684,7 @@ async def create_report_narrative(
 async def transition_narrative(
     narrative_id: str,
     body: NarrativeTransition,
+    idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
     _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "hermes_service", "platform_web"))] = None,
 ) -> ReportNarrativeOut:
     return ReportNarrativeOut(
@@ -696,6 +698,15 @@ async def transition_narrative(
 
 
 # ── POST /alert-rule-suggestions/{suggestion_id}/decision ────────────────────
+#
+# CCR-001: hermes_service ADDED — acts as transport for a human decision made in
+#   Telegram. The `actor` field in the body MUST contain the human actor_id, never
+#   the service identity. Enforcement of this invariant is a Core concern (Etapa 4).
+#   audit_log must record both: auth_scope=hermes_service AND actor=<human_id>.
+#
+# Governance: Hermes CANNOT decide autonomously. If it did, the audit trail would
+#   expose it (actor would be a service name). No breaking schema change now;
+#   `approval_event_id` field planned for v1.2 to reference the canonical audit event.
 
 @router.post(
     "/alert-rule-suggestions/{suggestion_id}/decision",
@@ -705,7 +716,8 @@ async def transition_narrative(
 async def decide_alert_rule_suggestion(
     suggestion_id: str,
     body: AlertRuleSuggestionDecision,
-    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
+    idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "hermes_service", "platform_web"))] = None,
 ) -> AlertRuleSuggestionOut:
     new_status = (
         AlertRuleSuggestionStatus.APPROVED
@@ -741,6 +753,18 @@ async def create_learning_candidate(
 
 
 # ── POST /jobs/{job_id}/replay ────────────────────────────────────────────────
+#
+# CCR-001: platform_web ADDED — platform operators may trigger replay from the
+#   dashboard. hermes_service remains DENIED: Hermes alerts and recommends but does
+#   not execute operational retries directly.
+#
+# audit_log gap (Etapa 4): when called via platform_web, the auth_scope is
+#   "platform_web" but the individual human user is not yet available in this
+#   endpoint (no session/actor parameter). The implementation MUST record:
+#     auth_scope = platform_web | agency_admin
+#     actor_id   = dashboard user (available once session auth is wired, Etapa 4)
+#     job_replay_of = job_id
+#   Until then, actor_id is the scope string — document the gap, do not invent identity.
 
 @router.post(
     "/jobs/{job_id}/replay",
@@ -749,7 +773,7 @@ async def create_learning_candidate(
 )
 async def replay_job(
     job_id: str,
-    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)] = None,
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
 ) -> JobOut:
     return JobOut(
         id=f"job_replay_{job_id}",

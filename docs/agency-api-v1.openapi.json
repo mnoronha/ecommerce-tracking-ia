@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Noro Agency API",
-    "description": "Deterministic Core API — single source of truth for Platform and Hermes.\n\nAuth: `Authorization: Bearer <scope_token>`. Scope tokens are configured as env vars per consumer role (agency_admin, hermes_service, platform_web, client_viewer).\n\nAll contracts carry `schema_version: '1.1'`.",
+    "description": "Deterministic Core API \u2014 single source of truth for Platform and Hermes.\n\nAuth: `Authorization: Bearer <scope_token>`. Scope tokens are configured as env vars per consumer role (agency_admin, hermes_service, platform_web, client_viewer).\n\nAll contracts carry `schema_version: '1.1'`.",
     "version": "1.1"
   },
   "paths": {
@@ -22,6 +22,25 @@
               "type": "string",
               "default": "",
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -49,8 +68,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/truth": {
@@ -58,7 +134,7 @@
         "tags": [
           "agency-v1"
         ],
-        "summary": "Client Truth and Target Truth — current versions",
+        "summary": "Client Truth and Target Truth \u2014 current versions",
         "operationId": "get_client_truth_agency_v1_clients__client_id__truth_get",
         "parameters": [
           {
@@ -78,6 +154,25 @@
               "type": "string",
               "default": "",
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -101,8 +196,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/health": {
@@ -131,6 +283,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -153,8 +324,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/pipeline-health": {
@@ -183,6 +411,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -205,8 +452,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/metrics": {
@@ -214,7 +518,7 @@
         "tags": [
           "agency-v1"
         ],
-        "summary": "Metric contract — live or certified view",
+        "summary": "Metric contract \u2014 live or certified view",
         "operationId": "get_metrics_agency_v1_clients__client_id__metrics_get",
         "parameters": [
           {
@@ -288,6 +592,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -310,8 +633,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/changes": {
@@ -358,6 +738,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -384,8 +783,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/recommendations": {
@@ -430,6 +886,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -456,8 +931,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/report-contracts": {
@@ -503,6 +1035,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -529,8 +1080,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/clients/{client_id}/reports": {
@@ -559,6 +1167,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -585,8 +1212,66 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web",
+          "client_viewer"
+        ]
       }
     },
     "/agency/v1/alerts": {
@@ -639,6 +1324,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -665,8 +1369,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/alerts/{alert_id}/context": {
@@ -695,6 +1456,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -717,8 +1497,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/alert-rule-suggestions": {
@@ -755,6 +1592,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -781,8 +1637,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/system/health": {
@@ -801,6 +1714,25 @@
               "type": "string",
               "default": "",
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -824,8 +1756,65 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/jobs": {
@@ -873,6 +1862,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -899,8 +1907,63 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin"
+        ]
       }
     },
     "/agency/v1/jobs/{job_id}": {
@@ -929,6 +1992,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -951,8 +2033,63 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin"
+        ]
       }
     },
     "/agency/v1/diagnoses": {
@@ -988,6 +2125,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1020,8 +2176,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service"
+        ]
       }
     },
     "/agency/v1/recommendations": {
@@ -1057,6 +2279,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1089,8 +2330,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service"
+        ]
       }
     },
     "/agency/v1/changes": {
@@ -1126,6 +2433,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1158,8 +2484,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service"
+        ]
       }
     },
     "/agency/v1/action-events": {
@@ -1195,6 +2587,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1227,8 +2638,75 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/alert-feedback": {
@@ -1264,6 +2742,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1289,8 +2786,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service"
+        ]
       }
     },
     "/agency/v1/report-narratives": {
@@ -1326,6 +2889,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1358,8 +2940,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service"
+        ]
       }
     },
     "/agency/v1/report-narratives/{narrative_id}/transitions": {
@@ -1367,7 +3015,7 @@
         "tags": [
           "agency-v1"
         ],
-        "summary": "Transition narrative status (READY_FOR_REVIEW → APPROVED → PUBLISHED)",
+        "summary": "Transition narrative status (READY_FOR_REVIEW \u2192 APPROVED \u2192 PUBLISHED)",
         "operationId": "transition_narrative_agency_v1_report_narratives__narrative_id__transitions_post",
         "parameters": [
           {
@@ -1380,6 +3028,22 @@
             }
           },
           {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -1387,6 +3051,25 @@
               "type": "string",
               "default": "",
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1420,8 +3103,75 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/alert-rule-suggestions/{suggestion_id}/decision": {
@@ -1442,6 +3192,22 @@
             }
           },
           {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
             "name": "authorization",
             "in": "header",
             "required": false,
@@ -1449,6 +3215,25 @@
               "type": "string",
               "default": "",
               "title": "Authorization"
+            }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
             }
           }
         ],
@@ -1482,8 +3267,75 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service",
+          "platform_web"
+        ]
       }
     },
     "/agency/v1/learning-candidates": {
@@ -1519,6 +3371,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -1551,8 +3422,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "hermes_service"
+        ]
       }
     },
     "/agency/v1/jobs/{job_id}/replay": {
@@ -1581,6 +3518,25 @@
               "default": "",
               "title": "Authorization"
             }
+          },
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": false,
+            "description": "Client-generated UUID for this request. Echoed back in the response as X-Request-ID. Use the same value across retries of the same logical request.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Correlation-ID",
+            "in": "header",
+            "required": false,
+            "description": "Trace ID propagated across the Hermes \u2192 Core \u2192 Platform call chain. Set by the first caller; forwarded unchanged by all intermediaries.",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -1603,8 +3559,74 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Unauthorised \u2014 missing, malformed or unrecognised Bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden \u2014 token valid but scope not permitted for this operation (see x-grant-scopes)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests \u2014 back off and retry after Retry-After seconds",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Agency API auth not configured on this server \u2014 check env vars",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict \u2014 idempotent replay submitted with a different payload, or resource already exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            }
           }
-        }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "x-grant-scopes": [
+          "agency_admin",
+          "platform_web"
+        ]
       }
     }
   },
@@ -2027,7 +4049,8 @@
           },
           "actor": {
             "type": "string",
-            "title": "Actor"
+            "title": "Actor",
+            "description": "Stable identifier of the human who authorised this decision (e.g. a user slug or UUID \u2014 not a service identity). When transmitted by `hermes_service`, this MUST be the human actor_id, never the service name. Enforcement of non-service identity is a Core invariant (Etapa 4). A future field `approval_event_id` will reference the canonical Telegram approval event once that audit chain is available."
           },
           "note": {
             "anyOf": [
@@ -3183,7 +5206,7 @@
           "HIGH"
         ],
         "title": "Level",
-        "description": "Generic LOW / MEDIUM / HIGH — used for confidence, priority and risk."
+        "description": "Generic LOW / MEDIUM / HIGH \u2014 used for confidence, priority and risk."
       },
       "MatchStatus": {
         "type": "string",
@@ -4154,6 +6177,52 @@
           "status"
         ],
         "title": "WorkerHealth"
+      },
+      "ErrorOut": {
+        "title": "ErrorOut",
+        "description": "Standard error envelope for 401, 403, 409, 429 and 503 responses.",
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "Machine-readable error code (e.g. 'unauthorized', 'forbidden', 'conflict')"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail",
+            "description": "Human-readable explanation. Absent on 4xx responses that must not leak information."
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id",
+            "description": "Echoed from X-Request-ID request header, when provided."
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Per-scope Bearer token (env-var, server-side only).\n\n| Scope | Env var | Allowed operations |\n|---|---|---|\n| `agency_admin` | `AGENCY_API_ADMIN_KEY` | All endpoints |\n| `hermes_service` | `AGENCY_API_HERMES_KEY` | All reads; intel writes; transmits human decisions to `/decision` |\n| `platform_web` | `AGENCY_API_PLATFORM_KEY` | All reads; action-event and replay writes; narrative transitions |\n| `client_viewer` | Supabase Auth JWT | Own-client read-only (reports) |\n\nPer-operation allowed scopes are listed in `x-grant-scopes`.\n\n**Note \u2014 `hermes_service` and `/decision`:** Hermes acts as a transport layer for a human decision made in Telegram. The `actor` field in the request body MUST contain the human actor_id, not the service identity. Enforcement of non-service identity is a Core invariant (Etapa 4). A future `approval_event_id` field will reference the canonical audit event."
       }
     }
   }

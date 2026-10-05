@@ -296,3 +296,106 @@ class TestAuthContextStructure:
     def test_require_scopes_raises_on_empty(self):
         with pytest.raises(ValueError, match="at least one scope"):
             require_scopes()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. Grant matrix — CCR-001 approved scope assignments on real router
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from fastapi import FastAPI as _FastApp
+from app.agency_api.v1.router import router as _agency_v1_router
+
+
+def _agency_test_client() -> TestClient:
+    """TestClient mounting the real agency v1 router (paths already include /agency/v1)."""
+    _app = _FastApp()
+    _app.include_router(_agency_v1_router)
+    return TestClient(_app, raise_server_exceptions=False)
+
+
+_HERMES_TEST_KEY   = "hermes-grant-matrix-test"
+_PLATFORM_TEST_KEY = "platform-grant-matrix-test"
+
+
+class TestGrantMatrix:
+    """
+    CCR-001: verify that require_scopes() in router.py matches the governance
+    decisions approved in the Etapa 2 CCR review.
+
+    Key rules confirmed:
+    - hermes_service MAY call /decision (transmits a human decision from Telegram)
+    - hermes_service MUST NOT call /replay (operational action — admin/platform only)
+    - platform_web MAY call /replay (dashboard operator)
+    - platform_web and hermes_service MUST NOT call admin-only /jobs list
+    """
+
+    def test_hermes_can_call_decision(self):
+        """CCR-001: hermes is permitted on /decision to transmit a human decision."""
+        with (
+            patch.object(settings, "AGENCY_API_HERMES_KEY",   _HERMES_TEST_KEY),
+            patch.object(settings, "AGENCY_API_ADMIN_KEY",    ""),
+            patch.object(settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().post(
+                "/agency/v1/alert-rule-suggestions/sug_001/decision",
+                json={"decision": "APPROVED", "actor": "human-user-slug"},
+                headers={"Authorization": f"Bearer {_HERMES_TEST_KEY}"},
+            )
+        assert resp.status_code == 200
+
+    def test_hermes_denied_replay(self):
+        """CCR-001: hermes_service MUST NOT replay jobs — governance denies autonomous ops."""
+        with (
+            patch.object(settings, "AGENCY_API_HERMES_KEY",   _HERMES_TEST_KEY),
+            patch.object(settings, "AGENCY_API_ADMIN_KEY",    ""),
+            patch.object(settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().post(
+                "/agency/v1/jobs/job_001/replay",
+                headers={"Authorization": f"Bearer {_HERMES_TEST_KEY}"},
+            )
+        assert resp.status_code == 403
+
+    def test_platform_web_can_call_replay(self):
+        """CCR-001: platform_web (dashboard operator) is now permitted on /replay."""
+        with (
+            patch.object(settings, "AGENCY_API_PLATFORM_KEY", _PLATFORM_TEST_KEY),
+            patch.object(settings, "AGENCY_API_ADMIN_KEY",    ""),
+            patch.object(settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().post(
+                "/agency/v1/jobs/job_001/replay",
+                headers={"Authorization": f"Bearer {_PLATFORM_TEST_KEY}"},
+            )
+        assert resp.status_code == 200
+
+    def test_platform_web_denied_admin_only_jobs(self):
+        """platform_web cannot list jobs — GET /jobs is agency_admin only."""
+        with (
+            patch.object(settings, "AGENCY_API_PLATFORM_KEY", _PLATFORM_TEST_KEY),
+            patch.object(settings, "AGENCY_API_ADMIN_KEY",    ""),
+            patch.object(settings, "AGENCY_API_HERMES_KEY",   ""),
+            patch.object(settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().get(
+                "/agency/v1/jobs",
+                headers={"Authorization": f"Bearer {_PLATFORM_TEST_KEY}"},
+            )
+        assert resp.status_code == 403
+
+    def test_hermes_denied_admin_only_jobs(self):
+        """hermes_service cannot list jobs — GET /jobs is agency_admin only."""
+        with (
+            patch.object(settings, "AGENCY_API_HERMES_KEY",   _HERMES_TEST_KEY),
+            patch.object(settings, "AGENCY_API_ADMIN_KEY",    ""),
+            patch.object(settings, "AGENCY_API_PLATFORM_KEY", ""),
+            patch.object(settings, "SUPABASE_JWT_SECRET",     ""),
+        ):
+            resp = _agency_test_client().get(
+                "/agency/v1/jobs",
+                headers={"Authorization": f"Bearer {_HERMES_TEST_KEY}"},
+            )
+        assert resp.status_code == 403
