@@ -72,6 +72,7 @@ class SnapshotAudit(BaseModel):
     metric_count:         int
     metric_keys:          list[str]
     certification_status: Optional[str]
+    total_snapshots_for_period: int = 0   # append-only audit: how many runs for this period
 
 
 class DataSourceAudit(BaseModel):
@@ -182,24 +183,35 @@ async def trigger_pipeline_run(
             ))
 
         if result.snapshot_id:
-            snap_row = (
+            # Use limit(1)+list instead of single() to avoid APIError on 0 rows
+            snap_rows = (
                 db.table("core_metric_snapshots")
                 .select(
                     "id, schema_version, period_start, period_end, view, "
                     "computed_at, client_truth_version, target_truth_version, metrics"
                 )
                 .eq("id", result.snapshot_id)
-                .single()
+                .limit(1)
                 .execute()
             )
-            if snap_row.data:
-                s = snap_row.data
+            if snap_rows.data:
+                s = snap_rows.data[0]
                 raw_metrics: list[dict] = s.get("metrics") or []
                 metric_keys = [m.get("metric_key", "") for m in raw_metrics]
                 cert_statuses = [
                     m.get("certification_status") for m in raw_metrics
                     if m.get("certification_status")
                 ]
+                # Count ALL snapshots for this client+period for append-only audit
+                count_r = (
+                    db.table("core_metric_snapshots")
+                    .select("id", count="exact")
+                    .eq("client_id", body.client_id)
+                    .eq("period_start", str(s.get("period_start", "")))
+                    .eq("period_end",   str(s.get("period_end", "")))
+                    .execute()
+                )
+                total_snaps = count_r.count if count_r.count is not None else len(count_r.data or [])
                 snap_audit = SnapshotAudit(
                     snapshot_id=s["id"],
                     schema_version=s.get("schema_version", ""),
@@ -212,6 +224,12 @@ async def trigger_pipeline_run(
                     metric_count=len(raw_metrics),
                     metric_keys=metric_keys,
                     certification_status=cert_statuses[0] if cert_statuses else None,
+                    total_snapshots_for_period=total_snaps,
+                )
+            else:
+                logger.warning(
+                    "pipeline-run: snapshot %s not found in DB (just written!)",
+                    result.snapshot_id,
                 )
     except Exception as exc:
         logger.error("pipeline-run audit DB read failed: %s", exc)

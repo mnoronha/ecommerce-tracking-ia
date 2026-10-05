@@ -328,6 +328,9 @@ def run_pipeline(
                 for k in DERIVED_DEPS.get(m_def.key, [])
             ]
             src_state = _worst_state(dep_states) if dep_states else "READY"
+            # Register this derived metric's state so downstream derived deps
+            # (e.g. mer depends on total_spend) can find it in health.
+            health[m_def.key] = src_state
 
         raw_value = all_aggs.get(m_def.key)
         v_status  = _source_state_to_value_status(src_state, raw_value)
@@ -416,17 +419,24 @@ def run_pipeline(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _dep_source(metric_key: str) -> str:
-    """Map a metric_key to its source_system for health lookup."""
+    """Map a metric_key to its health-lookup key.
+
+    For derived metrics (source_system="derived"), return the metric_key itself
+    so the health dict can be populated as derived states are computed.
+    For source metrics, map to the semantic domain key used in the health dict.
+    """
     m = METRIC_REGISTRY.get(metric_key)
     if not m:
         return "MISSING"
-    # Map source_system → health domain key
+    if m.source_system == "derived":
+        # Derived metrics are registered in health under their own key,
+        # not under "derived" (which is never in the health dict).
+        return metric_key
     mapping = {
         "shopify":    "business",
         "meta_ads":   "meta_ads",
         "google_ads": "google_ads",
         "ga4":        "ga4",
-        "derived":    "derived",
     }
     return mapping.get(m.source_system, m.source_system)
 

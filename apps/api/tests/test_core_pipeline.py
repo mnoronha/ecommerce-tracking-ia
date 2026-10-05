@@ -203,6 +203,120 @@ class TestPipelineHelpers:
         assert _source_state_to_value_status("READY",             None)  == "NO_DATA"  # absence ≠ zero
 
 
+# ── MER derived state propagation ────────────────────────────────────────────
+
+class TestMERDerivedState:
+    """MER must be OK when both revenue_business and total_spend are OK.
+
+    Root cause of the original bug: _dep_source("total_spend") returned "derived"
+    which is never a key in the health dict → health.get("derived") = None →
+    _STATE_RANK.get(None, 6) = 6 = MISSING → MER was MISSING even when all
+    sources were READY.
+
+    Fix: _dep_source returns metric_key for derived metrics; health[m_def.key]
+    is set after computing each derived state.
+    """
+
+    @patch("app.core.pipeline.write_snapshot", return_value="snap-mer-test")
+    @patch("app.core.pipeline.update_source_reconciliation")
+    @patch("app.core.pipeline._upsert_source_state")
+    @patch("app.core.pipeline.collect_business",   return_value=_GOOD_BUSINESS_RESULT)
+    @patch("app.core.pipeline.collect_ga4",        return_value=_GOOD_GA4_RESULT)
+    @patch("app.core.pipeline.collect_google_ads", return_value=_GOOD_GOOGLE_RESULT)
+    @patch("app.core.pipeline.collect_meta_ads",   return_value=_GOOD_META_RESULT)
+    @patch("app.core.pipeline.get_supabase")
+    def test_mer_ok_when_all_sources_ready(
+        self, mock_sb, mock_meta, mock_google, mock_ga4, mock_biz,
+        mock_upsert, mock_recon_update, mock_write,
+    ):
+        mock_client = MagicMock()
+        mock_client.data = {
+            "id": "uuid-lk", "client_id": "lk-sneakers", "name": "LK",
+            "timezone": "America/Sao_Paulo", "currency": "BRL", "country": "BR",
+            "business_model": "ecommerce",
+            "meta_ad_account_id": "1242062509867163", "meta_access_token": "tok",
+            "google_ads_customer_id": "162-897-1213", "google_ads_refresh_token": "ref",
+            "google_ads_login_customer_id": None, "ga4_property_id": "348553567",
+        }
+        mock_truth = MagicMock()
+        mock_truth.data = [{"client_version": 1, "target_version": 1, "conversion_map_version": 1}]
+        mock_sb_i = MagicMock()
+        mock_sb_i.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = mock_client
+        mock_sb_i.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = mock_truth
+        mock_sb.return_value = mock_sb_i
+
+        from app.core.pipeline import run_pipeline
+        result = run_pipeline("lk-sneakers", _P_START, _P_END)
+
+        metric_map = {m["metric_key"]: m for m in result.metrics}
+
+        # total_spend: meta_spend=1000 + google_spend=500 = 1500
+        ts = metric_map["total_spend"]
+        assert ts["value"] == 1500.0, f"total_spend expected 1500.0 got {ts['value']}"
+        assert ts["value_status"] == "OK", f"total_spend status expected OK got {ts['value_status']}"
+
+        # mer: revenue_business=84210.5 / total_spend=1500 = 56.14
+        mer = metric_map["mer"]
+        assert mer["value"] is not None, "mer value must not be None when all sources READY"
+        assert mer["value_status"] == "OK", f"mer status expected OK got {mer['value_status']}"
+        assert abs(mer["value"] - round(84210.50 / 1500.0, 4)) < 0.001
+
+    @patch("app.core.pipeline.write_snapshot", return_value="snap-mer-missing")
+    @patch("app.core.pipeline.update_source_reconciliation")
+    @patch("app.core.pipeline._upsert_source_state")
+    @patch("app.core.pipeline.collect_business",   return_value=_GOOD_BUSINESS_RESULT)
+    @patch("app.core.pipeline.collect_ga4",        return_value=_GOOD_GA4_RESULT)
+    @patch("app.core.pipeline.collect_google_ads", return_value=CollectionResult(
+        source_system="google_ads", semantic_domain="ADS",
+        account_id="1628971213", client_currency="BRL", client_timezone="America/Sao_Paulo",
+        period_start=_P_START, period_end=_P_END,
+        rows=[], aggregates={}, collected_at=_NOW,
+        error="token error: PERMISSION_DENIED",
+    ))
+    @patch("app.core.pipeline.collect_meta_ads",  return_value=CollectionResult(
+        source_system="meta_ads", semantic_domain="ADS",
+        account_id="1242062509867163", client_currency="BRL", client_timezone="America/Sao_Paulo",
+        period_start=_P_START, period_end=_P_END,
+        rows=[], aggregates={}, collected_at=_NOW,
+        error="token invalid: permission denied",
+    ))
+    @patch("app.core.pipeline.get_supabase")
+    def test_mer_missing_when_ad_sources_unavailable(
+        self, mock_sb, mock_meta, mock_google, mock_ga4, mock_biz,
+        mock_upsert, mock_recon_update, mock_write,
+    ):
+        mock_client = MagicMock()
+        mock_client.data = {
+            "id": "uuid-lk", "client_id": "lk-sneakers", "name": "LK",
+            "timezone": "America/Sao_Paulo", "currency": "BRL", "country": "BR",
+            "business_model": "ecommerce",
+            "meta_ad_account_id": "1242062509867163", "meta_access_token": "tok",
+            "google_ads_customer_id": "162-897-1213", "google_ads_refresh_token": "ref",
+            "google_ads_login_customer_id": None, "ga4_property_id": "348553567",
+        }
+        mock_truth = MagicMock()
+        mock_truth.data = [{"client_version": 1, "target_version": 1, "conversion_map_version": 1}]
+        mock_sb_i = MagicMock()
+        mock_sb_i.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = mock_client
+        mock_sb_i.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = mock_truth
+        mock_sb.return_value = mock_sb_i
+
+        from app.core.pipeline import run_pipeline
+        result = run_pipeline("lk-sneakers", _P_START, _P_END)
+
+        metric_map = {m["metric_key"]: m for m in result.metrics}
+
+        # total_spend should be 0 in all_aggs but MISSING state (ad sources unavailable)
+        ts = metric_map["total_spend"]
+        assert ts["value"] is None, "total_spend value must be None when ad sources unavailable"
+        assert ts["value_status"] == "MISSING"
+
+        # mer should also be MISSING (depends on total_spend which is MISSING)
+        mer = metric_map["mer"]
+        assert mer["value"] is None
+        assert mer["value_status"] == "MISSING"
+
+
 # ── Pipeline full run (mocked) ────────────────────────────────────────────────
 
 class TestPipelineFullRun:
