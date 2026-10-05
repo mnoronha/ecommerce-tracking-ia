@@ -90,13 +90,25 @@ def resolve_secret(ref: SecretRef) -> str:
         return value
 
     if ref.provider == SecretProvider.ONEPASSWORD:
-        # Etapa 5: wire 1Password Connect SDK here.
+        # Etapa 5: wire 1Password Connect SDK.
+        # Pre-req: OP_CONNECT_URL + OP_CONNECT_TOKEN set in Railway (never client-side).
+        # SDK: pip install onepasswordconnectsdk
+        #
         # from onepasswordconnectsdk import new_client
-        # op = new_client(url=OP_CONNECT_URL, token=OP_CONNECT_TOKEN)
-        # return op.get_item(ref.item, vault=ref.vault).fields[ref.field_name].value
+        # from app.config import settings
+        # op = new_client(url=settings.OP_CONNECT_URL, token=settings.OP_CONNECT_TOKEN)
+        # item = op.get_item(ref.item, vault=ref.vault)
+        # field = next(f for f in item.fields if f.label == ref.field_name)
+        # return field.value
+        from app.config import settings  # noqa: PLC0415 — lazy import to avoid cycle at module init
+        if not settings.OP_CONNECT_URL or not settings.OP_CONNECT_TOKEN:
+            raise SecretResolutionError(
+                "1Password Connect not configured (OP_CONNECT_URL / OP_CONNECT_TOKEN missing). "
+                "See docs/etapa-2-report.md §5 for setup instructions."
+            )
         raise SecretResolutionError(
-            f"1Password Connect not yet wired (Etapa 5). "
-            f"Ref: {ref.vault}/{ref.item}/{ref.field_name}"
+            "1Password Connect SDK not yet installed (Etapa 5). "
+            f"Run: pip install onepasswordconnectsdk  |  Ref: {ref.vault}/{ref.item}/{ref.field_name}"
         )
 
     if ref.provider == SecretProvider.SUPABASE_VAULT:

@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     GOOGLE_ADS_REFRESH_TOKEN:     str = ""  # agency MCC refresh token
     GOOGLE_ADS_MANAGER_ID:        str = ""  # MCC account ID (optional)
 
+    # ── 1Password Connect (SecretRef provider — Etapa 5 wiring) ─────────────
+    # Deploy a 1Password Connect server, then set these two vars.
+    # Used by secret_ref.resolve_secret() when provider = ONEPASSWORD.
+    # Docs: https://developer.1password.com/docs/connect
+    OP_CONNECT_URL:   str = ""  # e.g. https://op-connect.internal.norolabs.com
+    OP_CONNECT_TOKEN: str = ""  # Connect API token (service account, server-side only)
+
     # ── RAG / Content Production ─────────────────────────────────────────
     VOYAGE_API_KEY: str = ""  # Voyage AI (embeddings)
 
