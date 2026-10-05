@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from .agency_api.v1 import router as agency_v1_router
 from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
@@ -377,6 +378,9 @@ app.include_router(search_console_router.router)
 app.include_router(shopify_revenue_router.router)
 app.include_router(technical_seo_router.router)
 app.include_router(agency_os.router)
+
+# ── Agency API v1 (stubs — Etapa 1) ──────────────────────────────────────────
+app.include_router(agency_v1_router)
 
 # ── Noro Platform Public REST API (v1) ────────────────────────────────────────
 app.include_router(public_api_router)

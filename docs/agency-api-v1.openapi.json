@@ -1,0 +1,4160 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Noro Agency API",
+    "description": "Deterministic Core API — single source of truth for Platform and Hermes.\n\nAuth: `Authorization: Bearer <scope_token>`. Scope tokens are configured as env vars per consumer role (agency_admin, hermes_service, platform_web, client_viewer).\n\nAll contracts carry `schema_version: '1.1'`.",
+    "version": "1.1"
+  },
+  "paths": {
+    "/agency/v1/clients": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "List active clients with business_model, timezone and currency",
+        "operationId": "list_clients_agency_v1_clients_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ClientOut"
+                  },
+                  "title": "Response List Clients Agency V1 Clients Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/truth": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Client Truth and Target Truth — current versions",
+        "operationId": "get_client_truth_agency_v1_clients__client_id__truth_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TruthOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/health": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Data Health by domain with source_state",
+        "operationId": "get_client_health_agency_v1_clients__client_id__health_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataHealthOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/pipeline-health": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Last collection, certification, alert evaluation, notion sync and report",
+        "operationId": "get_pipeline_health_agency_v1_clients__client_id__pipeline_health_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineHealthOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/metrics": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Metric contract — live or certified view",
+        "operationId": "get_metrics_agency_v1_clients__client_id__metrics_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "YYYY-MM-DD:YYYY-MM-DD",
+              "title": "Period"
+            },
+            "description": "YYYY-MM-DD:YYYY-MM-DD"
+          },
+          {
+            "name": "grain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "day",
+              "title": "Grain"
+            }
+          },
+          {
+            "name": "view",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(live|certified)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "live",
+              "title": "View"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricContract"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/changes": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Change log for a client",
+        "operationId": "get_changes_agency_v1_clients__client_id__changes_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO-8601 datetime",
+              "title": "Since"
+            },
+            "description": "ISO-8601 datetime"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ChangeOut"
+                  },
+                  "title": "Response Get Changes Agency V1 Clients  Client Id  Changes Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/recommendations": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Recommendations and their current status",
+        "operationId": "get_recommendations_agency_v1_clients__client_id__recommendations_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecommendationOut"
+                  },
+                  "title": "Response Get Recommendations Agency V1 Clients  Client Id  Recommendations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/report-contracts": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Core report contracts generated by the Deterministic Core",
+        "operationId": "get_report_contracts_agency_v1_clients__client_id__report_contracts_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "report_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(WEEKLY|MONTHLY)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Report Type"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CoreReportContractOut"
+                  },
+                  "title": "Response Get Report Contracts Agency V1 Clients  Client Id  Report Contracts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/clients/{client_id}/reports": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Report narratives; client_viewer sees only PUBLISHED",
+        "operationId": "get_reports_agency_v1_clients__client_id__reports_get",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ReportNarrativeOut"
+                  },
+                  "title": "Response Get Reports Agency V1 Clients  Client Id  Reports Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/alerts": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Open (or filtered) alerts",
+        "operationId": "list_alerts_agency_v1_alerts_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "open",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "client_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertOut"
+                  },
+                  "title": "Response List Alerts Agency V1 Alerts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/alerts/{alert_id}/context": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Full context package for a single alert (for Hermes diagnosis)",
+        "operationId": "get_alert_context_agency_v1_alerts__alert_id__context_get",
+        "parameters": [
+          {
+            "name": "alert_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Alert Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertContext"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/alert-rule-suggestions": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Alert rule recalibration suggestions pending review",
+        "operationId": "list_alert_rule_suggestions_agency_v1_alert_rule_suggestions_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": "PENDING",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AlertRuleSuggestionOut"
+                  },
+                  "title": "Response List Alert Rule Suggestions Agency V1 Alert Rule Suggestions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/system/health": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "API, database, workers, queues and overdue jobs",
+        "operationId": "system_health_agency_v1_system_health_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemHealthOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/jobs": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "List recent job executions",
+        "operationId": "list_jobs_agency_v1_jobs_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/JobOut"
+                  },
+                  "title": "Response List Jobs Agency V1 Jobs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Single job execution detail",
+        "operationId": "get_job_agency_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/diagnoses": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Create a structured diagnosis linked to an alert (Hermes)",
+        "operationId": "create_diagnosis_agency_v1_diagnoses_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiagnosisCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiagnosisOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/recommendations": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Create a recommendation linked to a diagnosis (Hermes)",
+        "operationId": "create_recommendation_agency_v1_recommendations_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecommendationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecommendationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/changes": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Record a HUMAN change log entry (Hermes via Telegram)",
+        "operationId": "create_change_agency_v1_changes_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/action-events": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Record a decision event (approved, ignored, executed, etc.)",
+        "operationId": "create_action_event_agency_v1_action_events_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionEventCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionEventOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/alert-feedback": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Mark an alert as useful or noise (Hermes)",
+        "operationId": "create_alert_feedback_agency_v1_alert_feedback_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertFeedbackCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/report-narratives": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Create a narrative (DRAFT) referencing a report contract (Hermes)",
+        "operationId": "create_report_narrative_agency_v1_report_narratives_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportNarrativeCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportNarrativeOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/report-narratives/{narrative_id}/transitions": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Transition narrative status (READY_FOR_REVIEW → APPROVED → PUBLISHED)",
+        "operationId": "transition_narrative_agency_v1_report_narratives__narrative_id__transitions_post",
+        "parameters": [
+          {
+            "name": "narrative_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Narrative Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NarrativeTransition"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportNarrativeOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/alert-rule-suggestions/{suggestion_id}/decision": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Approve or reject a rule recalibration suggestion",
+        "operationId": "decide_alert_rule_suggestion_agency_v1_alert_rule_suggestions__suggestion_id__decision_post",
+        "parameters": [
+          {
+            "name": "suggestion_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Suggestion Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertRuleSuggestionDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRuleSuggestionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/learning-candidates": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Propose a learning candidate (Hermes)",
+        "operationId": "create_learning_candidate_agency_v1_learning_candidates_post",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearningCandidateCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningCandidateOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agency/v1/jobs/{job_id}/replay": {
+      "post": {
+        "tags": [
+          "agency-v1"
+        ],
+        "summary": "Re-execute a failed or DEAD job",
+        "operationId": "replay_job_agency_v1_jobs__job_id__replay_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActionEventCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "recommendation_id": {
+            "type": "string",
+            "title": "Recommendation Id"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/ActionEventType"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "change_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recommendation_id",
+          "event_type",
+          "actor"
+        ],
+        "title": "ActionEventCreate"
+      },
+      "ActionEventOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "recommendation_id": {
+            "type": "string",
+            "title": "Recommendation Id"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/ActionEventType"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "change_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Id"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "recommendation_id",
+          "event_type",
+          "actor",
+          "id",
+          "created_at"
+        ],
+        "title": "ActionEventOut"
+      },
+      "ActionEventType": {
+        "type": "string",
+        "enum": [
+          "APPROVED",
+          "IGNORED",
+          "EXECUTED_CONFIRMED",
+          "RESOLVED",
+          "EXPIRED"
+        ],
+        "title": "ActionEventType"
+      },
+      "ActionProposal": {
+        "properties": {
+          "platform": {
+            "type": "string",
+            "title": "Platform"
+          },
+          "platform_account_id": {
+            "type": "string",
+            "title": "Platform Account Id"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "entity_id": {
+            "type": "string",
+            "title": "Entity Id"
+          },
+          "entity_name_at_time": {
+            "type": "string",
+            "title": "Entity Name At Time"
+          },
+          "change_type": {
+            "$ref": "#/components/schemas/ChangeType"
+          },
+          "before": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "platform",
+          "platform_account_id",
+          "entity_type",
+          "entity_id",
+          "entity_name_at_time",
+          "change_type"
+        ],
+        "title": "ActionProposal"
+      },
+      "AlertContext": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "alert": {
+            "$ref": "#/components/schemas/AlertOut"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricValue"
+            },
+            "type": "array",
+            "title": "Metrics"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeOut"
+            },
+            "type": "array",
+            "title": "Changes"
+          },
+          "truth": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Truth"
+          },
+          "health": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SourceState"
+            },
+            "type": "object",
+            "title": "Health"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alert",
+          "metrics",
+          "changes",
+          "truth",
+          "health"
+        ],
+        "title": "AlertContext"
+      },
+      "AlertFeedbackCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "alert_id": {
+            "type": "string",
+            "title": "Alert Id"
+          },
+          "feedback": {
+            "type": "string",
+            "enum": [
+              "USEFUL",
+              "NOISE"
+            ],
+            "title": "Feedback"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alert_id",
+          "feedback",
+          "actor"
+        ],
+        "title": "AlertFeedbackCreate"
+      },
+      "AlertOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "rule_key": {
+            "type": "string",
+            "title": "Rule Key"
+          },
+          "rule_version": {
+            "type": "string",
+            "title": "Rule Version"
+          },
+          "metric_key": {
+            "type": "string",
+            "title": "Metric Key"
+          },
+          "entity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity"
+          },
+          "observed_snapshot_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Observed Snapshot Refs"
+          },
+          "baseline_snapshot_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Baseline Snapshot Refs"
+          },
+          "delta_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delta Pct"
+          },
+          "min_volume_met": {
+            "type": "boolean",
+            "title": "Min Volume Met",
+            "default": true
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AlertStatus",
+            "default": "OPEN"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "client_id",
+          "rule_key",
+          "rule_version",
+          "metric_key",
+          "severity",
+          "created_at"
+        ],
+        "title": "AlertOut"
+      },
+      "AlertRuleSuggestionDecision": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "APPROVED",
+              "REJECTED"
+            ],
+            "title": "Decision"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "decision",
+          "actor"
+        ],
+        "title": "AlertRuleSuggestionDecision"
+      },
+      "AlertRuleSuggestionOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "rule_key": {
+            "type": "string",
+            "title": "Rule Key"
+          },
+          "current_version": {
+            "type": "string",
+            "title": "Current Version"
+          },
+          "proposed_params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Proposed Params"
+          },
+          "evidence": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AlertRuleSuggestionStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "client_id",
+          "rule_key",
+          "current_version",
+          "proposed_params",
+          "evidence",
+          "status",
+          "created_at"
+        ],
+        "title": "AlertRuleSuggestionOut"
+      },
+      "AlertRuleSuggestionStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "REJECTED"
+        ],
+        "title": "AlertRuleSuggestionStatus"
+      },
+      "AlertStatus": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "RESOLVED"
+        ],
+        "title": "AlertStatus"
+      },
+      "BusinessModel": {
+        "type": "string",
+        "enum": [
+          "ecommerce",
+          "lead_generation",
+          "local_lead_generation",
+          "auction"
+        ],
+        "title": "BusinessModel"
+      },
+      "CertificationStatus": {
+        "type": "string",
+        "enum": [
+          "PROVISIONAL",
+          "CERTIFIED",
+          "SUPERSEDED"
+        ],
+        "title": "CertificationStatus"
+      },
+      "ChangeConfidence": {
+        "type": "string",
+        "enum": [
+          "CONFIRMED",
+          "PROBABLE",
+          "UNKNOWN"
+        ],
+        "title": "ChangeConfidence",
+        "description": "Confidence for change log entries (distinct from Level used in intel objects)."
+      },
+      "ChangeCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel"
+          },
+          "platform_account_id": {
+            "type": "string",
+            "title": "Platform Account Id"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
+          },
+          "adset_or_adgroup_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adset Or Adgroup Id"
+          },
+          "ad_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Id"
+          },
+          "entity_name_at_time": {
+            "type": "string",
+            "title": "Entity Name At Time"
+          },
+          "change_type": {
+            "$ref": "#/components/schemas/ChangeType"
+          },
+          "before": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChangeLogSource"
+          },
+          "reported_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported By"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/ChangeConfidence",
+            "default": "CONFIRMED"
+          },
+          "linked_action_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Action Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "occurred_at",
+          "channel",
+          "platform_account_id",
+          "entity_type",
+          "entity_name_at_time",
+          "change_type",
+          "source"
+        ],
+        "title": "ChangeCreate"
+      },
+      "ChangeLogSource": {
+        "type": "string",
+        "enum": [
+          "AUTO_GOOGLE_ADS",
+          "AUTO_META",
+          "HUMAN"
+        ],
+        "title": "ChangeLogSource"
+      },
+      "ChangeOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel"
+          },
+          "platform_account_id": {
+            "type": "string",
+            "title": "Platform Account Id"
+          },
+          "entity_type": {
+            "type": "string",
+            "title": "Entity Type"
+          },
+          "campaign_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Campaign Id"
+          },
+          "adset_or_adgroup_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Adset Or Adgroup Id"
+          },
+          "ad_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ad Id"
+          },
+          "entity_name_at_time": {
+            "type": "string",
+            "title": "Entity Name At Time"
+          },
+          "change_type": {
+            "$ref": "#/components/schemas/ChangeType"
+          },
+          "before": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before"
+          },
+          "after": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ChangeLogSource"
+          },
+          "reported_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reported By"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/ChangeConfidence",
+            "default": "CONFIRMED"
+          },
+          "linked_action_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked Action Id"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "external_change_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Change Id"
+          },
+          "match_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "matched_change_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matched Change Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "occurred_at",
+          "channel",
+          "platform_account_id",
+          "entity_type",
+          "entity_name_at_time",
+          "change_type",
+          "source",
+          "id",
+          "created_at"
+        ],
+        "title": "ChangeOut"
+      },
+      "ChangeType": {
+        "type": "string",
+        "enum": [
+          "BUDGET",
+          "TARGET_ROAS",
+          "TARGET_CPA",
+          "BID_STRATEGY",
+          "CREATIVE_LAUNCH",
+          "CREATIVE_PAUSE",
+          "CAMPAIGN_LAUNCH",
+          "CAMPAIGN_PAUSE",
+          "AUDIENCE",
+          "LANDING_PAGE",
+          "OFFER",
+          "TRACKING",
+          "OTHER"
+        ],
+        "title": "ChangeType"
+      },
+      "ClientOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "business_model": {
+            "$ref": "#/components/schemas/BusinessModel"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "country": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Country"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "inactive",
+              "onboarding"
+            ],
+            "title": "Status",
+            "default": "active"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "name",
+          "business_model",
+          "timezone",
+          "currency"
+        ],
+        "title": "ClientOut"
+      },
+      "CoreReportContractOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "report_contract_id": {
+            "type": "string",
+            "title": "Report Contract Id"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "report_type": {
+            "$ref": "#/components/schemas/ReportType"
+          },
+          "period": {
+            "$ref": "#/components/schemas/Period"
+          },
+          "contract": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Contract"
+          },
+          "truth_versions": {
+            "$ref": "#/components/schemas/TruthVersions"
+          },
+          "period_closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Closed At"
+          },
+          "certification_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Certification Coverage"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          },
+          "supersedes_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersedes Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_contract_id",
+          "client_id",
+          "report_type",
+          "period",
+          "contract",
+          "truth_versions",
+          "generated_at"
+        ],
+        "title": "CoreReportContractOut"
+      },
+      "DataHealthEntry": {
+        "properties": {
+          "domain": {
+            "type": "string",
+            "title": "Domain"
+          },
+          "source_state": {
+            "$ref": "#/components/schemas/SourceState"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "domain",
+          "source_state",
+          "checked_at"
+        ],
+        "title": "DataHealthEntry"
+      },
+      "DataHealthOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "health": {
+            "items": {
+              "$ref": "#/components/schemas/DataHealthEntry"
+            },
+            "type": "array",
+            "title": "Health"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "health",
+          "checked_at"
+        ],
+        "title": "DataHealthOut"
+      },
+      "DiagnosisCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "alert_id": {
+            "type": "string",
+            "title": "Alert Id"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/TextWithRefs"
+            },
+            "type": "array",
+            "title": "Facts"
+          },
+          "localization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Localization"
+          },
+          "related_changes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Related Changes"
+          },
+          "hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/Hypothesis"
+            },
+            "type": "array",
+            "title": "Hypotheses"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "do_not_conclude": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Do Not Conclude"
+          },
+          "data_limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Data Limitations"
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alert_id",
+          "facts",
+          "confidence"
+        ],
+        "title": "DiagnosisCreate"
+      },
+      "DiagnosisOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "alert_id": {
+            "type": "string",
+            "title": "Alert Id"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/TextWithRefs"
+            },
+            "type": "array",
+            "title": "Facts"
+          },
+          "localization": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Localization"
+          },
+          "related_changes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Related Changes"
+          },
+          "hypotheses": {
+            "items": {
+              "$ref": "#/components/schemas/Hypothesis"
+            },
+            "type": "array",
+            "title": "Hypotheses"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "do_not_conclude": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Do Not Conclude"
+          },
+          "data_limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Data Limitations"
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alert_id",
+          "facts",
+          "confidence",
+          "id",
+          "created_at"
+        ],
+        "title": "DiagnosisOut"
+      },
+      "EvidenceLevel": {
+        "type": "string",
+        "enum": [
+          "OBSERVATION",
+          "WEAK",
+          "MODERATE",
+          "STRONG"
+        ],
+        "title": "EvidenceLevel"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Hypothesis": {
+        "properties": {
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "supporting_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Supporting Refs"
+          },
+          "how_to_verify": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "How To Verify"
+          }
+        },
+        "type": "object",
+        "required": [
+          "statement"
+        ],
+        "title": "Hypothesis"
+      },
+      "JobOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "job_type": {
+            "type": "string",
+            "title": "Job Type"
+          },
+          "run_key": {
+            "type": "string",
+            "title": "Run Key"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "attempt": {
+            "type": "integer",
+            "title": "Attempt",
+            "default": 0
+          },
+          "next_retry_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Retry At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "replay_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replay Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "job_type",
+          "run_key",
+          "status"
+        ],
+        "title": "JobOut"
+      },
+      "JobStatus": {
+        "type": "string",
+        "enum": [
+          "QUEUED",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED",
+          "DEAD"
+        ],
+        "title": "JobStatus"
+      },
+      "LearningCandidateCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/LearningScope"
+          },
+          "evidence_level": {
+            "$ref": "#/components/schemas/EvidenceLevel"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          },
+          "context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          }
+        },
+        "type": "object",
+        "required": [
+          "statement",
+          "scope",
+          "evidence_level"
+        ],
+        "title": "LearningCandidateCreate"
+      },
+      "LearningCandidateOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/LearningScope"
+          },
+          "evidence_level": {
+            "$ref": "#/components/schemas/EvidenceLevel"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Evidence Refs"
+          },
+          "context": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Context"
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Id"
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LearningCandidateStatus",
+            "default": "PENDING"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "statement",
+          "scope",
+          "evidence_level",
+          "id",
+          "created_at"
+        ],
+        "title": "LearningCandidateOut"
+      },
+      "LearningCandidateStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "APPROVED",
+          "REJECTED"
+        ],
+        "title": "LearningCandidateStatus"
+      },
+      "LearningScope": {
+        "type": "string",
+        "enum": [
+          "CLIENT",
+          "BUSINESS_MODEL",
+          "AGENCY"
+        ],
+        "title": "LearningScope"
+      },
+      "Level": {
+        "type": "string",
+        "enum": [
+          "LOW",
+          "MEDIUM",
+          "HIGH"
+        ],
+        "title": "Level",
+        "description": "Generic LOW / MEDIUM / HIGH — used for confidence, priority and risk."
+      },
+      "MatchStatus": {
+        "type": "string",
+        "enum": [
+          "MATCHED",
+          "AUTO_PENDING_CONTEXT",
+          "HUMAN_UNCONFIRMED"
+        ],
+        "title": "MatchStatus"
+      },
+      "MetricContract": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "business_model": {
+            "$ref": "#/components/schemas/BusinessModel"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "currency": {
+            "type": "string",
+            "title": "Currency"
+          },
+          "period": {
+            "$ref": "#/components/schemas/Period"
+          },
+          "view": {
+            "type": "string",
+            "enum": [
+              "live",
+              "certified"
+            ],
+            "title": "View"
+          },
+          "truth_versions": {
+            "$ref": "#/components/schemas/TruthVersions"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/MetricValue"
+            },
+            "type": "array",
+            "title": "Metrics"
+          },
+          "health": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SourceState"
+            },
+            "type": "object",
+            "title": "Health"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "business_model",
+          "timezone",
+          "currency",
+          "period",
+          "view",
+          "truth_versions",
+          "metrics",
+          "health"
+        ],
+        "title": "MetricContract"
+      },
+      "MetricRef": {
+        "properties": {
+          "snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Snapshot Ids"
+          },
+          "baseline_snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Baseline Snapshot Ids"
+          },
+          "contract_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contract Path"
+          },
+          "presentation": {
+            "type": "string",
+            "title": "Presentation"
+          }
+        },
+        "type": "object",
+        "required": [
+          "presentation"
+        ],
+        "title": "MetricRef",
+        "description": "Points to one or more snapshots (for diagnoses/recommendations) or\nto a contract path (for narratives).\n\nAt least one of snapshot_ids or contract_path must be provided."
+      },
+      "MetricValue": {
+        "properties": {
+          "metric_key": {
+            "type": "string",
+            "title": "Metric Key"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currency"
+          },
+          "value_status": {
+            "$ref": "#/components/schemas/ValueStatus"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Code"
+          },
+          "certification_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CertificationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshot_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Snapshot Ids"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "target_status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TargetStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "metric_key",
+          "value_status"
+        ],
+        "title": "MetricValue"
+      },
+      "NarrativeBlock": {
+        "properties": {
+          "section": {
+            "type": "string",
+            "title": "Section"
+          },
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "metric_refs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricRef"
+            },
+            "type": "object",
+            "title": "Metric Refs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "section",
+          "statement"
+        ],
+        "title": "NarrativeBlock"
+      },
+      "NarrativeStatus": {
+        "type": "string",
+        "enum": [
+          "DRAFT",
+          "READY_FOR_REVIEW",
+          "APPROVED",
+          "PUBLISHED",
+          "SUPERSEDED"
+        ],
+        "title": "NarrativeStatus"
+      },
+      "NarrativeTransition": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "target_status": {
+            "$ref": "#/components/schemas/NarrativeStatus"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_status",
+          "actor"
+        ],
+        "title": "NarrativeTransition"
+      },
+      "Period": {
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start"
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End"
+          }
+        },
+        "type": "object",
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Period"
+      },
+      "PipelineHealthOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "last_collection": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Last Collection"
+          },
+          "certification": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Certification"
+          },
+          "alert_evaluation_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alert Evaluation At"
+          },
+          "notion_sync_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notion Sync At"
+          },
+          "last_report_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Report At"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "last_collection",
+          "certification",
+          "checked_at"
+        ],
+        "title": "PipelineHealthOut"
+      },
+      "RecommendationCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "diagnosis_id": {
+            "type": "string",
+            "title": "Diagnosis Id"
+          },
+          "recommendation": {
+            "type": "string",
+            "title": "Recommendation"
+          },
+          "action_proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionProposal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "reversible": {
+            "type": "boolean",
+            "title": "Reversible"
+          },
+          "expected_effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Effect"
+          },
+          "review_window_days": {
+            "type": "integer",
+            "title": "Review Window Days",
+            "default": 3
+          },
+          "requires_approval": {
+            "type": "boolean",
+            "title": "Requires Approval",
+            "default": true
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          }
+        },
+        "type": "object",
+        "required": [
+          "diagnosis_id",
+          "recommendation",
+          "priority",
+          "confidence",
+          "risk",
+          "reversible"
+        ],
+        "title": "RecommendationCreate"
+      },
+      "RecommendationOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "diagnosis_id": {
+            "type": "string",
+            "title": "Diagnosis Id"
+          },
+          "recommendation": {
+            "type": "string",
+            "title": "Recommendation"
+          },
+          "action_proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ActionProposal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "priority": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "risk": {
+            "$ref": "#/components/schemas/Level"
+          },
+          "reversible": {
+            "type": "boolean",
+            "title": "Reversible"
+          },
+          "expected_effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Effect"
+          },
+          "review_window_days": {
+            "type": "integer",
+            "title": "Review Window Days",
+            "default": 3
+          },
+          "requires_approval": {
+            "type": "boolean",
+            "title": "Requires Approval",
+            "default": true
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RecommendationStatus",
+            "default": "PENDING_REVIEW"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "diagnosis_id",
+          "recommendation",
+          "priority",
+          "confidence",
+          "risk",
+          "reversible",
+          "id",
+          "created_at"
+        ],
+        "title": "RecommendationOut"
+      },
+      "RecommendationStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING_REVIEW",
+          "APPROVED",
+          "IGNORED",
+          "EXECUTED_CONFIRMED",
+          "RESOLVED",
+          "EXPIRED"
+        ],
+        "title": "RecommendationStatus"
+      },
+      "ReportNarrativeCreate": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "report_contract_id": {
+            "type": "string",
+            "title": "Report Contract Id"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/NarrativeBlock"
+            },
+            "type": "array",
+            "title": "Blocks"
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_contract_id",
+          "blocks"
+        ],
+        "title": "ReportNarrativeCreate"
+      },
+      "ReportNarrativeOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "report_contract_id": {
+            "type": "string",
+            "title": "Report Contract Id"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/NarrativeBlock"
+            },
+            "type": "array",
+            "title": "Blocks"
+          },
+          "visibility_scope": {
+            "$ref": "#/components/schemas/VisibilityScope",
+            "default": "AGENCY_ONLY"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/NarrativeStatus",
+            "default": "DRAFT"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_contract_id",
+          "blocks",
+          "id",
+          "created_at"
+        ],
+        "title": "ReportNarrativeOut"
+      },
+      "ReportType": {
+        "type": "string",
+        "enum": [
+          "WEEKLY",
+          "MONTHLY"
+        ],
+        "title": "ReportType"
+      },
+      "ServiceStatus": {
+        "type": "string",
+        "enum": [
+          "UP",
+          "DOWN",
+          "DEGRADED"
+        ],
+        "title": "ServiceStatus"
+      },
+      "SourceState": {
+        "type": "string",
+        "enum": [
+          "READY",
+          "PARTIAL",
+          "STALE",
+          "NO_DATA",
+          "MISSING",
+          "ACCESS_MISSING",
+          "PERMISSION_DENIED",
+          "NOT_CONTRACTED",
+          "NOT_APPLICABLE",
+          "ERROR"
+        ],
+        "title": "SourceState",
+        "description": "State of a data source (core_data_sources, core_data_health)."
+      },
+      "SystemHealthOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "api": {
+            "type": "string",
+            "const": "UP",
+            "title": "Api",
+            "default": "UP"
+          },
+          "database": {
+            "$ref": "#/components/schemas/ServiceStatus"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerHealth"
+            },
+            "type": "array",
+            "title": "Workers"
+          },
+          "dead_jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobOut"
+            },
+            "type": "array",
+            "title": "Dead Jobs"
+          },
+          "checked_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Checked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "database",
+          "workers",
+          "dead_jobs",
+          "checked_at"
+        ],
+        "title": "SystemHealthOut"
+      },
+      "TargetStatus": {
+        "type": "string",
+        "enum": [
+          "OK",
+          "UNKNOWN",
+          "BEHIND",
+          "AT_RISK",
+          "MET"
+        ],
+        "title": "TargetStatus"
+      },
+      "TextWithRefs": {
+        "properties": {
+          "statement": {
+            "type": "string",
+            "title": "Statement"
+          },
+          "metric_refs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MetricRef"
+            },
+            "type": "object",
+            "title": "Metric Refs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "statement"
+        ],
+        "title": "TextWithRefs",
+        "description": "A human-readable statement that may contain {{mN}} placeholders."
+      },
+      "TruthOut": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "1.1",
+            "title": "Schema Version",
+            "default": "1.1"
+          },
+          "client_id": {
+            "type": "string",
+            "title": "Client Id"
+          },
+          "client_version": {
+            "type": "integer",
+            "title": "Client Version"
+          },
+          "client_truth": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Client Truth"
+          },
+          "target_version": {
+            "type": "integer",
+            "title": "Target Version"
+          },
+          "target_truth": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Target Truth"
+          },
+          "valid_from": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Valid From"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client_id",
+          "client_version",
+          "client_truth",
+          "target_version",
+          "target_truth",
+          "valid_from"
+        ],
+        "title": "TruthOut"
+      },
+      "TruthVersions": {
+        "properties": {
+          "client": {
+            "type": "integer",
+            "title": "Client"
+          },
+          "target": {
+            "type": "integer",
+            "title": "Target"
+          },
+          "conversion_map": {
+            "type": "integer",
+            "title": "Conversion Map"
+          }
+        },
+        "type": "object",
+        "required": [
+          "client",
+          "target",
+          "conversion_map"
+        ],
+        "title": "TruthVersions"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValueStatus": {
+        "type": "string",
+        "enum": [
+          "OK",
+          "PARTIAL",
+          "STALE",
+          "NO_DATA",
+          "MISSING",
+          "UNKNOWN",
+          "NOT_APPLICABLE"
+        ],
+        "title": "ValueStatus",
+        "description": "State of a specific metric value (core_metric_snapshots, metric contracts)."
+      },
+      "VisibilityScope": {
+        "type": "string",
+        "enum": [
+          "AGENCY_ONLY",
+          "CLIENT_VISIBLE"
+        ],
+        "title": "VisibilityScope"
+      },
+      "WorkerHealth": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ServiceStatus"
+          },
+          "last_heartbeat": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Heartbeat"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "status"
+        ],
+        "title": "WorkerHealth"
+      }
+    }
+  }
+}

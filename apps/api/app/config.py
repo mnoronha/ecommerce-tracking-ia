@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     # ── Supabase ─────────────────────────────────────────────────────────
     SUPABASE_URL: str = ""
     SUPABASE_SERVICE_KEY: str = ""
+    # JWT secret for validating Supabase Auth tokens (client_viewer auth).
+    # Found in: Supabase dashboard → Settings → API → JWT Secret
+    SUPABASE_JWT_SECRET: str = ""
+    # Anon key (read-only, public). Required for client-side Supabase operations.
+    # Scheduled for rotation in key migration plan (docs/etapa-2-key-migration-plan.md).
+    SUPABASE_ANON_KEY: str = ""
 
     # ── Segurança / LGPD ─────────────────────────────────────────────────
     # Chave Fernet (base64) para encriptar credenciais em repouso. Gerar com:
@@ -31,6 +37,16 @@ class Settings(BaseSettings):
     # Bearer token that Hermes uses to POST report contracts to this backend.
     # Server-side only — never expose this key to the client.
     AGENCY_OS_INGEST_KEY: str = ""
+
+    # ── Agency API v1 — per-scope service tokens ─────────────────────────────
+    # Configure in Railway / env. Never commit values.
+    # Etapa 2 will replace these with full OAuth + Supabase role binding.
+    AGENCY_API_ADMIN_KEY:    str = ""   # agency_admin  — full read/write
+    AGENCY_API_HERMES_KEY:   str = ""   # hermes_service — reads truth_*/core_*; writes intel_*
+    AGENCY_API_PLATFORM_KEY: str = ""   # platform_web  — agency view reads; action-events writes
+    # AGENCY_API_CLIENT_KEY is DEPRECATED — client_viewer uses Supabase JWT (SUPABASE_JWT_SECRET).
+    # Kept for Railway env-var compatibility only; auth module does NOT use it.
+    AGENCY_API_CLIENT_KEY:   str = ""
 
     # ── Anthropic ────────────────────────────────────────────────────────
     ANTHROPIC_API_KEY: str = ""
