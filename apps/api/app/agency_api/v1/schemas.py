@@ -197,6 +197,8 @@ class CoreReportContractOut(_Base):
     certification_coverage: Optional[float] = None
     generated_at: datetime
     supersedes_id: Optional[str] = None
+    # CCR-013: explicit provenance to distinguish real contracts from stubs/absence
+    provenance_status: Literal["REAL", "STUB", "MISSING"] = "REAL"
 
 
 # ── 6. Change log ─────────────────────────────────────────────────────────────
