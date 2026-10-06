@@ -216,8 +216,23 @@ def require_scopes(*allowed_scopes: str) -> Callable:
 
 # ── Pre-built scope combinations ──────────────────────────────────────────────
 # Import these in router.py via Depends(SCOPE_*).
+#
+# READ scopes   — for GET endpoints (includes human-relay roles but still excludes client_viewer)
+# WRITE scopes  — for POST/PATCH endpoints; READ ≠ WRITE to make grants explicit
+#
+# Matrix:
+#   SCOPE_READ_ANY       = admin + hermes + platform  (GET endpoints)
+#   SCOPE_WRITE_ANY      = admin + hermes + platform  (POST endpoints where all three write)
+#   SCOPE_HERMES_WRITE   = admin + hermes             (Hermes-authored objects: diagnoses, changes, narratives)
+#   SCOPE_PLATFORM_WRITE = admin + platform           (human-authored objects: outcomes, UI decisions)
+#   SCOPE_ADMIN_ONLY     = admin                      (system operations, job replay)
+#
+# Note: SCOPE_READ_ANY and SCOPE_WRITE_ANY have the same grant matrix deliberately.
+# They are separate callables so router.py can document intent and tests can override
+# read vs. write independently.
 
 SCOPE_READ_ANY       = require_scopes("agency_admin", "hermes_service", "platform_web")
+SCOPE_WRITE_ANY      = require_scopes("agency_admin", "hermes_service", "platform_web")
 SCOPE_HERMES_WRITE   = require_scopes("agency_admin", "hermes_service")
 SCOPE_PLATFORM_WRITE = require_scopes("agency_admin", "platform_web")
 SCOPE_ADMIN_ONLY     = require_scopes("agency_admin")

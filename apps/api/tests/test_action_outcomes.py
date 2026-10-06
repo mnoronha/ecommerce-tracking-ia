@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
 
 from app.agency_api.v1.auth import (
-    SCOPE_HERMES_WRITE, SCOPE_READ_ANY, AuthContext,
+    SCOPE_HERMES_WRITE, SCOPE_PLATFORM_WRITE, SCOPE_READ_ANY, SCOPE_WRITE_ANY, AuthContext,
 )
 from app.agency_api.v1.router import router as agency_router
 
@@ -80,8 +80,10 @@ def _single_db(row: dict):
 def _app():
     app = FastAPI()
     app.include_router(agency_router)
-    app.dependency_overrides[SCOPE_READ_ANY]     = lambda: _AUTH_ADMIN
-    app.dependency_overrides[SCOPE_HERMES_WRITE] = lambda: _AUTH_HERMES
+    app.dependency_overrides[SCOPE_READ_ANY]      = lambda: _AUTH_ADMIN
+    app.dependency_overrides[SCOPE_WRITE_ANY]     = lambda: _AUTH_ADMIN
+    app.dependency_overrides[SCOPE_PLATFORM_WRITE] = lambda: _AUTH_ADMIN
+    app.dependency_overrides[SCOPE_HERMES_WRITE]  = lambda: _AUTH_HERMES
     return app
 
 

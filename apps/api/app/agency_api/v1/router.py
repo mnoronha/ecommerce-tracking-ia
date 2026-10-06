@@ -60,6 +60,7 @@ from .auth import (
     SCOPE_HERMES_WRITE,
     SCOPE_PLATFORM_WRITE,
     SCOPE_READ_ANY,
+    SCOPE_WRITE_ANY,
     AuthContext,
     require_scopes,
 )
@@ -1915,7 +1916,7 @@ def _action_event_row_to_out(row: dict) -> ActionEventOut:
 async def create_action_event(
     body: ActionEventCreate,
     idempotency_key: Optional[str] = Header(default=None),
-    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_WRITE_ANY)] = None,
 ) -> ActionEventOut:
     db = _get_db()
     occurred = (body.occurred_at or datetime.now(timezone.utc)).isoformat()
@@ -2012,7 +2013,7 @@ async def transition_narrative(
     narrative_id: str,
     body: NarrativeTransition,
     idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
-    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_WRITE_ANY)] = None,
 ) -> ReportNarrativeOut:
     if not _is_valid_uuid(narrative_id):
         raise HTTPException(404, f"narrative not found: {narrative_id!r}")
@@ -2054,6 +2055,17 @@ async def transition_narrative(
             f"invalid transition {current.value!r} → {target_str!r}; "
             f"allowed from {current.value!r}: {[s.value for s in allowed] or 'none'}"
         )
+
+    # Governance: hermes_service may flag READY_FOR_REVIEW but cannot approve or publish.
+    # Approval/publication require a human-bearing scope (agency_admin or platform_web).
+    _caller_scope = getattr(_auth, "scope", "") if _auth else ""
+    if target_enum in (NarrativeStatus.APPROVED, NarrativeStatus.PUBLISHED):
+        if _caller_scope == "hermes_service":
+            raise HTTPException(
+                403,
+                f"hermes_service cannot perform {target_str!r} transition; "
+                "approval and publication require agency_admin or platform_web"
+            )
 
     now_utc = datetime.now(timezone.utc)
     updates: dict = {"status": target_str}
@@ -2163,7 +2175,7 @@ def _outcome_row_to_out(row: dict) -> OutcomeOut:
 )
 async def create_outcome(
     body: OutcomeCreate,
-    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
 ) -> OutcomeOut:
     db = _get_db()
     try:
@@ -2206,7 +2218,7 @@ async def decide_alert_rule_suggestion(
     suggestion_id: str,
     body: AlertRuleSuggestionDecision,
     idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
-    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_WRITE_ANY)] = None,
 ) -> AlertRuleSuggestionOut:
     new_status = (
         AlertRuleSuggestionStatus.APPROVED
