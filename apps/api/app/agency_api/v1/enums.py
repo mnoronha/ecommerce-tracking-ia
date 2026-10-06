@@ -198,6 +198,13 @@ class LearningCandidateStatus(str, Enum):
     REJECTED = "REJECTED"
 
 
+class OutcomeStatus(str, Enum):
+    PENDING       = "PENDING"
+    MEASURING     = "MEASURING"
+    CONFIRMED     = "CONFIRMED"
+    INCONCLUSIVE  = "INCONCLUSIVE"
+
+
 class MetricDomain(str, Enum):
     """
     Semantic domain of a MetricValue — what truth the metric belongs to.

@@ -647,15 +647,48 @@ class TestCCR002IdempotencyHeaders:
         assert resp.status_code == 200
 
     def test_transitions_accepts_idempotency_key(self):
+        from unittest.mock import MagicMock
+        _NAR_UUID = "00000000-0000-0000-0000-000000000099"
+        _CONTRACT_UUID = "00000000-0000-0000-0000-000000000100"
+        nar_row = {
+            "id": _NAR_UUID,
+            "report_contract_id": _CONTRACT_UUID,
+            "blocks": [],
+            "visibility_scope": "AGENCY_ONLY",
+            "status": "READY_FOR_REVIEW",
+            "approved_by": None, "approved_at": None,
+            "published_at": None, "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        contract_row = {
+            "id": _CONTRACT_UUID, "client_slug": "lk-sneakers",
+            "report_type": "weekly",
+            "period_start": "2026-01-01", "period_end": "2026-01-07",
+        }
+        call_index = [0]
+        responses = [[nar_row], [nar_row], [contract_row]]
+        def _seq_table(_name):
+            m = MagicMock()
+            for method in ("select","eq","in_","order","limit","is_","insert","update","neq","maybe_single"):
+                getattr(m, method).return_value = m
+            def _execute():
+                idx = call_index[0]; call_index[0] += 1
+                if idx < len(responses):
+                    return MagicMock(data=responses[idx])
+                return MagicMock(data=[])
+            m.execute.side_effect = _execute
+            return m
+        db = MagicMock(); db.table.side_effect = _seq_table
+
         body = {"target_status": "APPROVED", "actor": "human-user-slug"}
         with (
             patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
             patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
             patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
             patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+            patch("app.agency_api.v1.router._get_db", return_value=db),
         ):
             resp = _agency_test_client().post(
-                "/agency/v1/report-narratives/narr_001/transitions",
+                f"/agency/v1/report-narratives/{_NAR_UUID}/transitions",
                 json=body,
                 headers={
                     "Authorization":   f"Bearer {_ADMIN_KEY}",

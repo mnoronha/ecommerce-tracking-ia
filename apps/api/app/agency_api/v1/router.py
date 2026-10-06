@@ -66,6 +66,7 @@ from .auth import (
 from .schemas import (
     ActionEventCreate,
     ActionEventOut,
+    ActionEventType,
     ErrorOut,
     AlertContext,
     AlertFeedbackCreate,
@@ -108,6 +109,8 @@ from .schemas import (
     NarrativeBlock,
     NarrativeStatus,
     NarrativeTransition,
+    OutcomeCreate,
+    OutcomeOut,
     Period,
     PipelineHealthOut,
     RecommendationCreate,
@@ -652,7 +655,51 @@ async def get_entity_performance(
 
 
 # ── GET /clients/{client_id}/changes ─────────────────────────────────────────
-# CCR-014: core_change_log has 0 rows → honest empty list.
+
+def _change_row_to_out(row: dict) -> ChangeOut:
+    try:
+        change_type = ChangeType(row.get("change_type", "OTHER"))
+    except ValueError:
+        change_type = ChangeType.OTHER
+    try:
+        source = ChangeLogSource(row.get("source", "HUMAN"))
+    except ValueError:
+        source = ChangeLogSource.HUMAN
+    try:
+        confidence = ChangeConfidence(row.get("confidence", "CONFIRMED"))
+    except ValueError:
+        confidence = ChangeConfidence.CONFIRMED
+    match_status = None
+    if row.get("match_status"):
+        try:
+            match_status = MatchStatus(row["match_status"])
+        except ValueError:
+            pass
+    return ChangeOut(
+        client_id=str(row.get("client_id", "")),
+        occurred_at=_parse_ts_utc(row.get("occurred_at")) or datetime.now(timezone.utc),
+        channel=row.get("channel", ""),
+        platform_account_id=row.get("platform_account_id", ""),
+        entity_type=row.get("entity_type", ""),
+        entity_name_at_time=row.get("entity_name_at_time", ""),
+        change_type=change_type,
+        before=row.get("before_state"),
+        after=row.get("after_state"),
+        reason=row.get("reason"),
+        source=source,
+        reported_by=row.get("reported_by"),
+        confidence=confidence,
+        linked_action_id=str(row["linked_action_id"]) if row.get("linked_action_id") else None,
+        campaign_id=row.get("campaign_id"),
+        adset_or_adgroup_id=row.get("adset_or_adgroup_id"),
+        ad_id=row.get("ad_id"),
+        id=str(row["id"]),
+        external_change_id=row.get("external_change_id"),
+        match_status=match_status,
+        matched_change_id=str(row["matched_change_id"]) if row.get("matched_change_id") else None,
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+    )
+
 
 @router.get(
     "/clients/{client_id}/changes",
@@ -661,11 +708,25 @@ async def get_entity_performance(
 )
 async def get_changes(
     client_id: str,
-    since: Optional[str] = Query(None, description="ISO-8601 datetime"),
+    since: Optional[str] = Query(None, description="ISO-8601 datetime filter (occurred_at >=)"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ChangeOut]:
-    # core_change_log is empty — return honest absence rather than fabricated stub
-    return []
+    db = _get_db()
+    try:
+        q = (
+            db.table("core_change_log")
+            .select("*")
+            .eq("client_id", client_id)
+            .order("occurred_at", desc=True)
+            .limit(100)
+        )
+        if since:
+            q = q.gte("occurred_at", since)
+        res = q.execute()
+    except Exception as exc:
+        logger.error("get_changes: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+    return [_change_row_to_out(r) for r in (res.data or [])]
 
 
 # ── GET /clients/{client_id}/recommendations ─────────────────────────────────
@@ -816,7 +877,58 @@ async def get_report_contracts(
 
 # ── GET /clients/{client_id}/reports ─────────────────────────────────────────
 
-# CCR-014: core_report_narratives has 0 rows → honest empty list.
+_VALID_TRANSITIONS: dict[NarrativeStatus, set[NarrativeStatus]] = {
+    NarrativeStatus.DRAFT:            {NarrativeStatus.READY_FOR_REVIEW},
+    NarrativeStatus.READY_FOR_REVIEW: {NarrativeStatus.APPROVED, NarrativeStatus.DRAFT},
+    NarrativeStatus.APPROVED:         {NarrativeStatus.PUBLISHED, NarrativeStatus.DRAFT},
+    NarrativeStatus.PUBLISHED:        set(),
+    NarrativeStatus.SUPERSEDED:       set(),
+}
+
+
+def _narrative_row_to_out(
+    row: dict,
+    contract: dict | None = None,
+    truth_versions: "TruthVersions | None" = None,
+) -> ReportNarrativeOut:
+    raw_status = row.get("status", "DRAFT")
+    try:
+        status = NarrativeStatus(raw_status)
+    except ValueError:
+        status = NarrativeStatus.DRAFT
+
+    period_start = None
+    period_end = None
+    report_type = None
+    if contract:
+        try:
+            period_start = date.fromisoformat(str(contract["period_start"])) if contract.get("period_start") else None
+            period_end   = date.fromisoformat(str(contract["period_end"])) if contract.get("period_end") else None
+        except (ValueError, KeyError):
+            pass
+        try:
+            report_type = ReportType((contract.get("report_type") or "weekly").upper())
+        except ValueError:
+            pass
+
+    return ReportNarrativeOut(
+        id=str(row["id"]),
+        report_contract_id=str(row["report_contract_id"]),
+        blocks=row.get("blocks") or [],
+        visibility_scope=row.get("visibility_scope", "AGENCY_ONLY"),
+        status=status,
+        approved_by=row.get("approved_by"),
+        approved_at=_parse_ts_utc(row.get("approved_at")),
+        published_at=_parse_ts_utc(row.get("published_at")),
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+        client_id=contract.get("client_slug") if contract else None,
+        report_type=report_type,
+        period_start=period_start,
+        period_end=period_end,
+        truth_versions=truth_versions,
+    )
+
+
 @router.get(
     "/clients/{client_id}/reports",
     summary="Report narratives; client_viewer sees only PUBLISHED",
@@ -824,9 +936,101 @@ async def get_report_contracts(
 )
 async def get_reports(
     client_id: str,
+    status: Optional[str] = Query(None, description="Filter by lifecycle status"),
+    report_type: Optional[str] = Query(None, pattern="^(WEEKLY|MONTHLY)$"),
     _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> list[ReportNarrativeOut]:
-    return []
+    db = _get_db()
+    try:
+        # Step 1: contracts for this client
+        cq = (
+            db.table("agency_report_contracts")
+            .select("id, client_slug, report_type, period_start, period_end")
+            .eq("client_slug", client_id)
+        )
+        if report_type:
+            cq = cq.eq("report_type", report_type.lower())
+        contracts_res = cq.execute()
+    except Exception as exc:
+        logger.error("get_reports: contracts DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+
+    if not contracts_res.data:
+        return []
+
+    contract_ids = [str(r["id"]) for r in contracts_res.data]
+    contract_meta = {str(r["id"]): r for r in contracts_res.data}
+
+    try:
+        nq = (
+            db.table("core_report_narratives")
+            .select("*")
+            .in_("report_contract_id", contract_ids)
+            .order("created_at", desc=True)
+        )
+        # client_viewer sees only PUBLISHED; agency_admin sees all or filtered
+        if _auth and _auth.scope == "client_viewer":
+            nq = nq.eq("status", "PUBLISHED")
+        elif status:
+            nq = nq.eq("status", status.upper())
+        narratives_res = nq.execute()
+    except Exception as exc:
+        logger.error("get_reports: narratives DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+
+    truth_versions = _load_truth_versions(client_id)
+    return [
+        _narrative_row_to_out(r, contract_meta.get(str(r["report_contract_id"])), truth_versions)
+        for r in (narratives_res.data or [])
+    ]
+
+
+@router.get(
+    "/report-narratives/{narrative_id}",
+    summary="Single report narrative by ID",
+    response_model=ReportNarrativeOut,
+)
+async def get_report_narrative(
+    narrative_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
+) -> ReportNarrativeOut:
+    if not _is_valid_uuid(narrative_id):
+        raise HTTPException(404, f"narrative not found: {narrative_id!r}")
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_report_narratives")
+            .select("*")
+            .eq("id", narrative_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_report_narrative: DB error %s: %s", narrative_id, exc)
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"narrative not found: {narrative_id!r}")
+
+    if _auth and _auth.scope == "client_viewer" and row.get("status") != "PUBLISHED":
+        raise HTTPException(404, "narrative not found")
+
+    # Fetch contract context
+    contract: dict | None = None
+    try:
+        cr = (
+            db.table("agency_report_contracts")
+            .select("id, client_slug, report_type, period_start, period_end")
+            .eq("id", str(row["report_contract_id"]))
+            .limit(1)
+            .execute()
+        )
+        contract = cr.data[0] if (cr and cr.data) else None
+    except Exception:
+        pass
+
+    truth_versions = _load_truth_versions(contract["client_slug"]) if contract else None
+    return _narrative_row_to_out(row, contract, truth_versions)
 
 
 # ── Alert helpers ─────────────────────────────────────────────────────────────
@@ -1620,7 +1824,7 @@ async def create_recommendation_for_diagnosis(
 
 @router.post(
     "/changes",
-    summary="Record a HUMAN change log entry (Hermes via Telegram)",
+    summary="Record a HUMAN change log entry",
     response_model=ChangeOut,
     status_code=201,
 )
@@ -1629,10 +1833,78 @@ async def create_change(
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
 ) -> ChangeOut:
-    return ChangeOut(**body.model_dump(), id="chg_stub_new", created_at=_STUB_NOW)
+    db = _get_db()
+    try:
+        ins = db.table("core_change_log").insert({
+            "client_id":           body.client_id,
+            "occurred_at":         body.occurred_at.isoformat(),
+            "channel":             body.channel,
+            "platform_account_id": body.platform_account_id,
+            "entity_type":         body.entity_type,
+            "entity_name_at_time": body.entity_name_at_time,
+            "change_type":         body.change_type if isinstance(body.change_type, str) else body.change_type.value,
+            "confidence":          body.confidence if isinstance(body.confidence, str) else body.confidence.value,
+            "source":              body.source if isinstance(body.source, str) else body.source.value,
+            "campaign_id":         body.campaign_id,
+            "adset_or_adgroup_id": body.adset_or_adgroup_id,
+            "ad_id":               body.ad_id,
+            "before_state":        body.before,
+            "after_state":         body.after,
+            "reason":              body.reason,
+            "reported_by":         body.reported_by,
+            "linked_action_id":    body.linked_action_id,
+        }).execute()
+    except Exception as exc:
+        logger.error("create_change: insert failed: %s", exc)
+        raise HTTPException(503, "database error")
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    return _change_row_to_out(row)
+
+
+# ── GET /recommendations/{recommendation_id}/action-events ───────────────────
+
+@router.get(
+    "/recommendations/{recommendation_id}/action-events",
+    summary="Action events for a recommendation",
+    response_model=list[ActionEventOut],
+)
+async def get_recommendation_action_events(
+    recommendation_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[ActionEventOut]:
+    if not _is_valid_uuid(recommendation_id):
+        return []
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_action_events")
+            .select("*")
+            .eq("recommendation_id", recommendation_id)
+            .order("occurred_at", desc=True)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_recommendation_action_events: DB error %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    return [_action_event_row_to_out(r) for r in (res.data or [])]
 
 
 # ── POST /action-events ───────────────────────────────────────────────────────
+
+def _action_event_row_to_out(row: dict) -> ActionEventOut:
+    return ActionEventOut(
+        recommendation_id=str(row["recommendation_id"]),
+        event_type=row.get("event_type", "APPROVED"),
+        actor=row.get("actor", ""),
+        occurred_at=_parse_ts_utc(row.get("occurred_at")),
+        note=row.get("note"),
+        change_id=str(row["change_id"]) if row.get("change_id") else None,
+        id=str(row["id"]),
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+    )
+
 
 @router.post(
     "/action-events",
@@ -1643,9 +1915,26 @@ async def create_change(
 async def create_action_event(
     body: ActionEventCreate,
     idempotency_key: Optional[str] = Header(default=None),
-    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "hermes_service", "platform_web"))] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> ActionEventOut:
-    return ActionEventOut(**body.model_dump(), id="evt_stub_01", created_at=_STUB_NOW)
+    db = _get_db()
+    occurred = (body.occurred_at or datetime.now(timezone.utc)).isoformat()
+    try:
+        ins = db.table("core_action_events").insert({
+            "recommendation_id": body.recommendation_id,
+            "event_type":        body.event_type if isinstance(body.event_type, str) else body.event_type.value,
+            "actor":             body.actor,
+            "occurred_at":       occurred,
+            "note":              body.note,
+            "change_id":         body.change_id,
+        }).execute()
+    except Exception as exc:
+        logger.error("create_action_event: insert failed: %s", exc)
+        raise HTTPException(503, "database error")
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    return _action_event_row_to_out(row)
 
 
 # ── POST /alert-feedback ──────────────────────────────────────────────────────
@@ -1676,30 +1965,225 @@ async def create_report_narrative(
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
 ) -> ReportNarrativeOut:
-    return ReportNarrativeOut(**body.model_dump(), id="nar_stub_new", created_at=_STUB_NOW)
+    db = _get_db()
+    # Verify the contract exists
+    if not _is_valid_uuid(body.report_contract_id):
+        raise HTTPException(422, f"invalid report_contract_id: {body.report_contract_id!r}")
+    try:
+        cr = (
+            db.table("agency_report_contracts")
+            .select("id, client_slug, report_type, period_start, period_end")
+            .eq("id", body.report_contract_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("create_report_narrative: contract lookup failed: %s", exc)
+        raise HTTPException(503, "database error")
+    contract = cr.data[0] if (cr and cr.data) else None
+    if not contract:
+        raise HTTPException(404, f"report_contract not found: {body.report_contract_id!r}")
+
+    try:
+        ins = db.table("core_report_narratives").insert({
+            "report_contract_id": body.report_contract_id,
+            "blocks":             [b.model_dump(mode="json") for b in body.blocks],
+            "visibility_scope":   body.visibility_scope if isinstance(body.visibility_scope, str) else body.visibility_scope.value,
+            "status":             "DRAFT",
+        }).execute()
+    except Exception as exc:
+        logger.error("create_report_narrative: insert failed: %s", exc)
+        raise HTTPException(503, "database error")
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    truth_versions = _load_truth_versions(contract.get("client_slug", ""))
+    return _narrative_row_to_out(row, contract, truth_versions)
 
 
 # ── POST /report-narratives/{narrative_id}/transitions ───────────────────────
 
 @router.post(
     "/report-narratives/{narrative_id}/transitions",
-    summary="Transition narrative status (READY_FOR_REVIEW → APPROVED → PUBLISHED)",
+    summary="Transition narrative lifecycle: DRAFT→READY_FOR_REVIEW→APPROVED→PUBLISHED",
     response_model=ReportNarrativeOut,
 )
 async def transition_narrative(
     narrative_id: str,
     body: NarrativeTransition,
     idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
-    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "hermes_service", "platform_web"))] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> ReportNarrativeOut:
-    return ReportNarrativeOut(
-        id=narrative_id,
-        report_contract_id="rpc_stub_01",
-        blocks=[],
-        visibility_scope=VisibilityScope.AGENCY_ONLY,
-        status=body.target_status,
-        created_at=_STUB_NOW,
+    if not _is_valid_uuid(narrative_id):
+        raise HTTPException(404, f"narrative not found: {narrative_id!r}")
+    db = _get_db()
+
+    # Fetch current narrative
+    try:
+        res = (
+            db.table("core_report_narratives")
+            .select("*")
+            .eq("id", narrative_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("transition_narrative: fetch failed %s: %s", narrative_id, exc)
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"narrative not found: {narrative_id!r}")
+
+    try:
+        current = NarrativeStatus(row.get("status", "DRAFT"))
+    except ValueError:
+        current = NarrativeStatus.DRAFT
+    target = body.target_status
+
+    # target may be a plain str (use_enum_values=True on _Base) or NarrativeStatus
+    target_str = str(target)
+    try:
+        target_enum = NarrativeStatus(target_str)
+    except ValueError:
+        raise HTTPException(422, f"unknown target_status: {target_str!r}")
+
+    allowed = _VALID_TRANSITIONS.get(current, set())
+    if target_enum not in allowed:
+        raise HTTPException(
+            422,
+            f"invalid transition {current.value!r} → {target_str!r}; "
+            f"allowed from {current.value!r}: {[s.value for s in allowed] or 'none'}"
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    updates: dict = {"status": target_str}
+    if target_enum == NarrativeStatus.APPROVED:
+        updates["approved_by"] = body.actor
+        updates["approved_at"] = now_utc.isoformat()
+    elif target_enum == NarrativeStatus.PUBLISHED:
+        updates["published_at"] = now_utc.isoformat()
+
+    try:
+        upd = (
+            db.table("core_report_narratives")
+            .update(updates)
+            .eq("id", narrative_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("transition_narrative: update failed %s: %s", narrative_id, exc)
+        raise HTTPException(503, "database error")
+
+    updated_row = (upd.data[0] if (upd and upd.data) else None) or {**row, **updates}
+
+    # On PUBLISHED: supersede any previous PUBLISHED narrative for same contract
+    if target_enum == NarrativeStatus.PUBLISHED:
+        try:
+            db.table("core_report_narratives").update({"status": "SUPERSEDED"}).eq(
+                "report_contract_id", str(row["report_contract_id"])
+            ).eq("status", "PUBLISHED").neq("id", narrative_id).execute()
+        except Exception as exc:
+            logger.warning("transition_narrative: supersede failed: %s", exc)
+
+    contract: dict | None = None
+    try:
+        cr = (
+            db.table("agency_report_contracts")
+            .select("id, client_slug, report_type, period_start, period_end")
+            .eq("id", str(row["report_contract_id"]))
+            .limit(1)
+            .execute()
+        )
+        contract = cr.data[0] if (cr and cr.data) else None
+    except Exception:
+        pass
+
+    truth_versions = _load_truth_versions(contract["client_slug"]) if contract else None
+    return _narrative_row_to_out(updated_row, contract, truth_versions)
+
+
+# ── GET /action-events/{action_event_id}/outcomes ────────────────────────────
+
+@router.get(
+    "/action-events/{action_event_id}/outcomes",
+    summary="Outcomes measured for an action event",
+    response_model=list[OutcomeOut],
+)
+async def get_action_event_outcomes(
+    action_event_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[OutcomeOut]:
+    if not _is_valid_uuid(action_event_id):
+        return []
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_outcomes")
+            .select("*")
+            .eq("action_event_id", action_event_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_action_event_outcomes: DB error %s: %s", action_event_id, exc)
+        raise HTTPException(503, "database error")
+    return [_outcome_row_to_out(r) for r in (res.data or [])]
+
+
+# ── POST /outcomes ────────────────────────────────────────────────────────────
+
+def _outcome_row_to_out(row: dict) -> OutcomeOut:
+    from .enums import OutcomeStatus as _OutcomeStatus
+    try:
+        status = _OutcomeStatus(row.get("status", "PENDING"))
+    except ValueError:
+        status = _OutcomeStatus.PENDING
+    return OutcomeOut(
+        action_event_id=str(row["action_event_id"]),
+        measurement_period=row.get("measurement_period") or {},
+        metric_refs=row.get("metric_refs") or [],
+        before_state=row.get("before_state"),
+        after_state=row.get("after_state"),
+        delta=row.get("delta"),
+        status=status,
+        measured_at=_parse_ts_utc(row.get("measured_at")),
+        id=str(row["id"]),
+        recommendation_id=str(row["recommendation_id"]) if row.get("recommendation_id") else None,
+        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+        created_by=row.get("created_by", "human"),
     )
+
+
+@router.post(
+    "/outcomes",
+    summary="Record a measured outcome for an action event",
+    response_model=OutcomeOut,
+    status_code=201,
+)
+async def create_outcome(
+    body: OutcomeCreate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> OutcomeOut:
+    db = _get_db()
+    try:
+        ins = db.table("core_outcomes").insert({
+            "action_event_id":    body.action_event_id,
+            "measurement_period": body.measurement_period,
+            "metric_refs":        body.metric_refs,
+            "before_state":       body.before_state,
+            "after_state":        body.after_state,
+            "delta":              body.delta,
+            "status":             body.status if isinstance(body.status, str) else body.status.value,
+            "measured_at":        body.measured_at.isoformat() if body.measured_at else None,
+        }).execute()
+    except Exception as exc:
+        logger.error("create_outcome: insert failed: %s", exc)
+        raise HTTPException(503, "database error")
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    return _outcome_row_to_out(row)
 
 
 # ── POST /alert-rule-suggestions/{suggestion_id}/decision ────────────────────
@@ -1722,7 +2206,7 @@ async def decide_alert_rule_suggestion(
     suggestion_id: str,
     body: AlertRuleSuggestionDecision,
     idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
-    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "hermes_service", "platform_web"))] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> AlertRuleSuggestionOut:
     new_status = (
         AlertRuleSuggestionStatus.APPROVED

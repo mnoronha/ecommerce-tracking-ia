@@ -53,6 +53,7 @@ from .enums import (
     MatchStatus,
     MetricDomain,
     NarrativeStatus,
+    OutcomeStatus,
     RecommendationStatus,
     ReportType,
     ServiceStatus,
@@ -420,6 +421,12 @@ class ReportNarrativeOut(ReportNarrativeCreate):
     approved_at: Optional[datetime] = None
     published_at: Optional[datetime] = None
     created_at: datetime
+    # Contract context — populated when available from the join
+    client_id: Optional[str] = None
+    report_type: Optional[ReportType] = None
+    period_start: Optional[date] = None
+    period_end: Optional[date] = None
+    truth_versions: Optional[TruthVersions] = None
 
 
 class NarrativeTransition(_Base):
@@ -564,7 +571,29 @@ class EntityPerformanceOut(_Base):
     rows: list[CampaignPerformanceRow]
 
 
-# ── 18. Error responses ───────────────────────────────────────────────────────
+# ── 18. Outcomes ─────────────────────────────────────────────────────────────
+
+class OutcomeCreate(_Base):
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    action_event_id: str
+    measurement_period: dict[str, Any] = Field(default_factory=dict)
+    metric_refs: list[str] = Field(default_factory=list)
+    before_state: Optional[dict[str, Any]] = None
+    after_state: Optional[dict[str, Any]] = None
+    delta: Optional[dict[str, Any]] = None
+    status: OutcomeStatus = OutcomeStatus.PENDING
+    measured_at: Optional[datetime] = None
+
+
+class OutcomeOut(OutcomeCreate):
+    id: str
+    recommendation_id: Optional[str] = None
+    client_id: Optional[str] = None
+    created_at: datetime
+    created_by: str = "human"
+
+
+# ── 19. Error responses ───────────────────────────────────────────────────────
 
 class ErrorOut(_Base):
     """Standard error envelope returned on 401, 403, 409, 429 and 503."""
