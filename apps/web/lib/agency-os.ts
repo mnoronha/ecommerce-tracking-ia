@@ -213,7 +213,7 @@ async function getReport(clientRoute: string, type: 'weekly' | 'monthly', period
     throw new ReportError('not_found', `No ${type} report found for client "${clientSlug}".`)
   }
 
-  return target.contract as ReportContractV1
+  return target.contract as unknown as ReportContractV1
 }
 
 /**

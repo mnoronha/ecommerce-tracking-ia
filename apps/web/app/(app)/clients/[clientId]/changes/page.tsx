@@ -62,6 +62,13 @@ function fmtDate(iso: string) {
   })
 }
 
+function renderState(value: unknown): string | null {
+  if (value == null) return null
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  try { return JSON.stringify(value, null, 2) } catch { return String(value) }
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ChangesPage() {
@@ -213,13 +220,13 @@ export default function ChangesPage() {
                           <p className="text-xs text-slate-300">{ch.reason}</p>
                         </div>
                       )}
-                      {(ch.before || ch.after) && (
+                      {(ch.before != null || ch.after != null) && (
                         <div className="grid grid-cols-2 gap-3">
                           {ch.before != null && (
                             <div>
                               <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Antes</p>
                               <pre className="text-[10px] text-slate-400 bg-[#0f1117] rounded p-2 overflow-auto">
-                                {JSON.stringify(ch.before, null, 2)}
+                                {renderState(ch.before)}
                               </pre>
                             </div>
                           )}
@@ -227,7 +234,7 @@ export default function ChangesPage() {
                             <div>
                               <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Depois</p>
                               <pre className="text-[10px] text-slate-400 bg-[#0f1117] rounded p-2 overflow-auto">
-                                {JSON.stringify(ch.after, null, 2)}
+                                {renderState(ch.after)}
                               </pre>
                             </div>
                           )}
