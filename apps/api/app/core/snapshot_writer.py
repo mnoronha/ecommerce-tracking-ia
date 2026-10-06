@@ -90,6 +90,7 @@ def build_metric_value(
     certification_status: str = "PROVISIONAL",
     reason_code: str | None = None,
     target: float | None = None,
+    target_ratio: float | None = None,
     target_status: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -112,6 +113,8 @@ def build_metric_value(
         mv["reason_code"] = reason_code
     if target is not None:
         mv["target"] = target
+    if target_ratio is not None:
+        mv["target_ratio"] = target_ratio
     if target_status is not None:
         mv["target_status"] = target_status
     return mv

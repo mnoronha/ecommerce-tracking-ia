@@ -101,6 +101,90 @@ def _google_clean(cid: str) -> str:
     return cid.replace("-", "").replace(" ", "")
 
 
+# ── ad_campaigns campaign-level persistence (P3) ─────────────────────────────
+
+def _persist_campaign_rows(
+    client_uuid: str,
+    platform: str,
+    period_end: date,
+    rows: list[dict[str, Any]],
+) -> None:
+    """
+    Persist campaign-level rows to ad_campaigns.
+    Uses delete+insert for idempotency (partial unique index enforces no concurrent dupes).
+    Meta rows use 'meta_purchases'/'meta_revenue' field names.
+    Google rows (from Core collector summary_row) do not have campaign-level data — skip.
+    """
+    if not rows:
+        return
+
+    date_str = period_end.isoformat()
+    insert_rows: list[dict[str, Any]] = []
+
+    for r in rows:
+        campaign_id = str(r.get("campaign_id") or "")
+        if not campaign_id:
+            continue
+
+        spend   = float(r.get("spend") or 0)
+        impr    = int(r.get("impressions") or 0)
+        clicks  = int(r.get("clicks") or 0)
+
+        # Meta: meta_purchases / meta_revenue; Google campaign rows (future): conversions / conversions_value
+        convs   = int(float(r.get("meta_purchases") or r.get("conversions") or 0))
+        revenue = float(r.get("meta_revenue") or r.get("conversions_value") or 0)
+
+        roas = round(revenue / spend, 4) if spend > 0 else None
+        cpa  = round(spend / convs, 2)   if convs  > 0 else None
+        ctr  = round(clicks / impr * 100, 4) if impr > 0 else None
+        cpc  = float(r["cpc"]) if r.get("cpc") is not None else (round(spend / clicks, 2) if clicks > 0 else None)
+        cpm  = float(r["cpm"]) if r.get("cpm") is not None else (round(spend / impr * 1000, 2) if impr > 0 else None)
+
+        insert_rows.append({
+            "client_id":     client_uuid,
+            "platform":      platform,
+            "campaign_id":   campaign_id,
+            "campaign_name": r.get("campaign_name") or None,
+            "date":          date_str,
+            "spend":         spend,
+            "impressions":   impr,
+            "clicks":        clicks,
+            "conversions":   convs,
+            "revenue":       revenue,
+            "roas":          roas,
+            "cpa":           cpa,
+            "ctr":           ctr,
+            "cpc":           cpc,
+            "cpm":           cpm,
+            # ad_id, adset_id intentionally omitted → NULL → campaign-level row
+        })
+
+    if not insert_rows:
+        return
+
+    campaign_ids = [r["campaign_id"] for r in insert_rows]
+    try:
+        sb = get_supabase()
+        # Delete-then-insert for idempotency; partial index prevents concurrent dupes
+        sb.table("ad_campaigns").delete() \
+            .eq("client_id", client_uuid) \
+            .eq("platform", platform) \
+            .eq("date", date_str) \
+            .is_("ad_id", "null") \
+            .in_("campaign_id", campaign_ids) \
+            .execute()
+        sb.table("ad_campaigns").insert(insert_rows).execute()
+        logger.info(
+            "pipeline: persisted %d campaign rows platform=%s date=%s",
+            len(insert_rows), platform, date_str,
+        )
+    except Exception as exc:
+        logger.warning(
+            "pipeline: ad_campaigns persistence failed %s/%s/%s: %s",
+            client_uuid, platform, date_str, exc,
+        )
+
+
 # ── core_data_sources updater ─────────────────────────────────────────────────
 
 def _upsert_source_state(
@@ -178,11 +262,11 @@ def run_pipeline(
     currency    = c.get("currency") or "BRL"
     tz          = c.get("timezone") or "America/Sao_Paulo"
 
-    # ── Load truth versions ───────────────────────────────────────────────────
+    # ── Load truth versions + target_truth ───────────────────────────────────
     try:
         truth_row = (
             sb.table("core_client_truth")
-            .select("client_version, target_version, conversion_map_version")
+            .select("client_version, target_version, conversion_map_version, target_truth")
             .eq("client_id", client_id)
             .order("valid_from", desc=True)
             .limit(1)
@@ -195,6 +279,8 @@ def run_pipeline(
     ctv = int(tv.get("client_version", 1))
     ttv = int(tv.get("target_version", 1))
     cmv = int(tv.get("conversion_map_version", 1))
+    raw_tt = tv.get("target_truth") or {}
+    target_truth: dict = raw_tt if isinstance(raw_tt, dict) else {}
 
     # ── Collect + DQG per source ──────────────────────────────────────────────
     sources:     list[SourceResult] = []
@@ -220,6 +306,7 @@ def run_pipeline(
         health["meta_ads"] = dqg.source_state
         if dqg.source_state in ("READY", "PARTIAL"):
             all_aggs.update(coll.aggregates)
+            _persist_campaign_rows(client_uuid, "meta", period_end, coll.rows)
         sources.append(SourceResult("meta_ads", src_key, coll, dqg))
     else:
         health["meta_ads"] = "NOT_CONTRACTED"
@@ -245,6 +332,7 @@ def run_pipeline(
         health["google_ads"] = dqg.source_state
         if dqg.source_state in ("READY", "PARTIAL"):
             all_aggs.update(coll.aggregates)
+            _persist_campaign_rows(client_uuid, "google", period_end, coll.rows)
         sources.append(SourceResult("google_ads", src_key, coll, dqg))
     else:
         health["google_ads"] = "NOT_CONTRACTED"
@@ -292,16 +380,23 @@ def run_pipeline(
     sources.append(SourceResult("shopify", src_key, coll, dqg))
 
     # ── Derived metrics ───────────────────────────────────────────────────────
-    meta_spend   = all_aggs.get("meta_spend",   0.0)
-    google_spend = all_aggs.get("google_spend", 0.0)
+    meta_spend   = all_aggs.get("meta_spend",   0.0) or 0.0
+    google_spend = all_aggs.get("google_spend", 0.0) or 0.0
     total_spend  = round(meta_spend + google_spend, 2)
     all_aggs["total_spend"] = total_spend
 
-    rev = all_aggs.get("revenue_business", 0.0)
-    if total_spend > 0:
-        all_aggs["mer"] = round(rev / total_spend, 4)
-    else:
-        all_aggs["mer"] = None  # type: ignore[assignment]
+    rev = all_aggs.get("revenue_business", 0.0) or 0.0
+    all_aggs["mer"] = round(rev / total_spend, 4) if total_spend > 0 else None  # type: ignore[assignment]
+
+    meta_cv    = all_aggs.get("meta_conversion_value", 0.0) or 0.0
+    google_cv  = all_aggs.get("google_conversion_value", 0.0) or 0.0
+    meta_convs = all_aggs.get("meta_conversions", 0.0) or 0.0
+    google_convs = all_aggs.get("google_conversions", 0.0) or 0.0
+
+    all_aggs["roas_meta"]   = round(meta_cv / meta_spend, 4) if meta_spend > 0 else None  # type: ignore[assignment]
+    all_aggs["roas_google"] = round(google_cv / google_spend, 4) if google_spend > 0 else None  # type: ignore[assignment]
+    all_aggs["cpa_meta"]    = round(meta_spend / meta_convs, 2) if meta_convs > 0 else None  # type: ignore[assignment]
+    all_aggs["cpa_google"]  = round(google_spend / google_convs, 2) if google_convs > 0 else None  # type: ignore[assignment]
 
     # ── Build metric values ───────────────────────────────────────────────────
     metric_values: list[dict[str, Any]] = []
@@ -335,6 +430,19 @@ def run_pipeline(
         raw_value = all_aggs.get(m_def.key)
         v_status  = _source_state_to_value_status(src_state, raw_value)
 
+        # Wire target from target_truth (P2). Deterministic: no threshold policy.
+        tt_entry = target_truth.get(m_def.key)
+        tgt: float | None = None
+        tgt_ratio: float | None = None
+        if isinstance(tt_entry, dict) and "target" in tt_entry:
+            try:
+                tgt = float(tt_entry["target"])
+                visible_value = raw_value if v_status in ("OK", "PARTIAL") else None
+                if visible_value is not None and tgt and tgt > 0:
+                    tgt_ratio = round(visible_value / tgt, 4)
+            except (TypeError, ValueError):
+                tgt = None
+
         mv = build_metric_value(
             metric_key=m_def.key,
             value=raw_value if v_status in ("OK", "PARTIAL") else None,
@@ -343,6 +451,8 @@ def run_pipeline(
             currency=m_def.currency,
             domain=m_def.domain.value,
             certification_status="PROVISIONAL",
+            target=tgt,
+            target_ratio=tgt_ratio,
         )
         metric_values.append(mv)
 

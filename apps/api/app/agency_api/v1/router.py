@@ -71,6 +71,7 @@ from .schemas import (
     AlertRuleSuggestionStatus,
     AlertStatus,
     BusinessModel,
+    CampaignPerformanceRow,
     CertificationStatus,
     ChangeCreate,
     ChangeConfidence,
@@ -81,8 +82,10 @@ from .schemas import (
     CoreReportContractOut,
     DataHealthEntry,
     DataHealthOut,
+    DataSourceDetail,
     DiagnosisCreate,
     DiagnosisOut,
+    EntityPerformanceOut,
     EvidenceLevel,
     Hypothesis,
     JobOut,
@@ -162,7 +165,7 @@ def _load_client_meta(client_id: str) -> Optional[dict]:
     try:
         r = (
             _get_db().table("clients")
-            .select("client_id, name, business_model, timezone, currency, country, is_active")
+            .select("id, client_id, name, business_model, timezone, currency, country, is_active")
             .eq("client_id", client_id)
             .maybe_single()
             .execute()
@@ -307,9 +310,13 @@ async def get_pipeline_health(
 ) -> PipelineHealthOut:
     now = datetime.now(timezone.utc)
     try:
-        sources = (
+        sources_res = (
             _get_db().table("core_data_sources")
-            .select("source_system, source_state, last_data_at, reconciliation_state")
+            .select(
+                "source_key, source_system, semantic_domain, source_state, "
+                "last_attempt_at, last_data_at, last_validated_at, "
+                "last_reconciled_at, reconciliation_state, last_error"
+            )
             .eq("client_id", client_id)
             .execute()
         )
@@ -332,8 +339,9 @@ async def get_pipeline_health(
 
     last_collection: dict[str, Optional[datetime]] = {}
     certification:   dict[str, Optional[str]]      = {}
+    source_details:  list[DataSourceDetail]        = []
 
-    for s in (sources.data or []):
+    for s in (sources_res.data or []):
         domain = _source_to_domain(s["source_system"])
         last_collection[domain] = _parse_dt(s.get("last_data_at"))
         recon = s.get("reconciliation_state")
@@ -341,6 +349,19 @@ async def get_pipeline_health(
             certification[domain] = CertificationStatus.PROVISIONAL.value
         else:
             certification[domain] = None
+
+        source_details.append(DataSourceDetail(
+            source_key=s.get("source_key") or s["source_system"],
+            source_system=s["source_system"],
+            semantic_domain=s.get("semantic_domain"),
+            source_state=SourceState(s["source_state"]),
+            last_attempt_at=_parse_dt(s.get("last_attempt_at")),
+            last_data_at=_parse_dt(s.get("last_data_at")),
+            last_validated_at=_parse_dt(s.get("last_validated_at")),
+            last_reconciled_at=_parse_dt(s.get("last_reconciled_at")),
+            reconciliation_state=s.get("reconciliation_state"),
+            last_error=s.get("last_error"),
+        ))
 
     last_snap_at: Optional[datetime] = None
     if snap.data:
@@ -350,6 +371,7 @@ async def get_pipeline_health(
         client_id=client_id,
         last_collection=last_collection,
         certification=certification,
+        sources=source_details,
         last_report_at=last_snap_at,
         checked_at=now,
     )
@@ -448,6 +470,105 @@ async def get_metrics(
         ),
         metrics=metrics,
         health=health_out,
+    )
+
+
+# ── GET /clients/{client_id}/entity-performance ──────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/entity-performance",
+    summary="Campaign-level performance rows (P3 — Wave 1)",
+    response_model=EntityPerformanceOut,
+)
+async def get_entity_performance(
+    client_id: str,
+    period_start: str = Query(..., description="YYYY-MM-DD"),
+    period_end: str   = Query(..., description="YYYY-MM-DD"),
+    platform: Optional[str] = Query(None, description="meta | google"),
+    level: str = Query("campaign", pattern="^campaign$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> EntityPerformanceOut:
+    try:
+        ps = date.fromisoformat(period_start)
+        pe = date.fromisoformat(period_end)
+    except ValueError:
+        raise HTTPException(422, "period_start and period_end must be YYYY-MM-DD")
+
+    try:
+        client_meta = _load_client_meta(client_id)
+        if not client_meta:
+            raise HTTPException(404, f"client not found: {client_id!r}")
+
+        client_uuid = client_meta.get("id") or client_id
+
+        count_q = (
+            _get_db().table("ad_campaigns")
+            .select("id", count="exact")
+            .eq("client_id", client_uuid)
+            .gte("date", ps.isoformat())
+            .lte("date", pe.isoformat())
+            .is_("ad_id", "null")
+        )
+        if platform:
+            count_q = count_q.eq("platform", platform.lower())
+        count_res = count_q.execute()
+        total = count_res.count or 0
+
+        offset = (page - 1) * page_size
+        rows_q = (
+            _get_db().table("ad_campaigns")
+            .select(
+                "platform, campaign_id, campaign_name, date, "
+                "spend, impressions, clicks, conversions, revenue, "
+                "roas, cpa, ctr, cpc, cpm"
+            )
+            .eq("client_id", client_uuid)
+            .gte("date", ps.isoformat())
+            .lte("date", pe.isoformat())
+            .is_("ad_id", "null")
+            .order("spend", desc=True)
+            .range(offset, offset + page_size - 1)
+        )
+        if platform:
+            rows_q = rows_q.eq("platform", platform.lower())
+        rows_res = rows_q.execute()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_entity_performance: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    perf_rows = [
+        CampaignPerformanceRow(
+            platform=r["platform"],
+            campaign_id=r["campaign_id"],
+            campaign_name=r.get("campaign_name"),
+            date=date.fromisoformat(str(r["date"])),
+            spend=float(r["spend"]) if r.get("spend") is not None else None,
+            impressions=r.get("impressions"),
+            clicks=r.get("clicks"),
+            conversions=r.get("conversions"),
+            revenue=float(r["revenue"]) if r.get("revenue") is not None else None,
+            roas=float(r["roas"]) if r.get("roas") is not None else None,
+            cpa=float(r["cpa"]) if r.get("cpa") is not None else None,
+            ctr=float(r["ctr"]) if r.get("ctr") is not None else None,
+            cpc=float(r["cpc"]) if r.get("cpc") is not None else None,
+            cpm=float(r["cpm"]) if r.get("cpm") is not None else None,
+        )
+        for r in (rows_res.data or [])
+    ]
+
+    return EntityPerformanceOut(
+        client_id=client_id,
+        level="campaign",
+        period=Period(start=ps, end=pe),
+        platform=platform.lower() if platform else None,
+        total_rows=total,
+        page=page,
+        page_size=page_size,
+        rows=perf_rows,
     )
 
 

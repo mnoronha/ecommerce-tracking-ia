@@ -141,11 +141,28 @@ class DataHealthOut(_Base):
     checked_at: datetime
 
 
+class DataSourceDetail(_Base):
+    """Full detail for one row of core_data_sources (P1 — Wave 1)."""
+    source_key: str
+    source_system: str
+    semantic_domain: Optional[str] = None
+    source_state: SourceState
+    last_attempt_at: Optional[datetime] = None
+    last_data_at: Optional[datetime] = None
+    last_validated_at: Optional[datetime] = None
+    last_reconciled_at: Optional[datetime] = None
+    reconciliation_state: Optional[str] = None
+    last_error: Optional[str] = None
+    # delta/tolerance are computed transiently during reconciliation and are NOT
+    # stored per-source in core_data_sources — intentionally absent here.
+
+
 class PipelineHealthOut(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
     client_id: str
     last_collection: dict[str, Optional[datetime]]
     certification: dict[str, Optional[str]]
+    sources: list[DataSourceDetail] = Field(default_factory=list)  # P1
     alert_evaluation_at: Optional[datetime] = None
     notion_sync_at: Optional[datetime] = None
     last_report_at: Optional[datetime] = None
@@ -164,6 +181,7 @@ class MetricValue(_Base):
     certification_status: Optional[CertificationStatus] = None
     snapshot_ids: list[str] = Field(default_factory=list)
     target: Optional[float] = None
+    target_ratio: Optional[float] = None  # P2: value/target, deterministic, no policy threshold
     target_status: Optional[TargetStatus] = None
     # CCR-010: semantic domain. Filled by the Core only; Hermes never assigns this.
     # None = domain not yet classified by Core. Source systems are NOT MetricDomain.
@@ -463,7 +481,38 @@ class SystemHealthOut(_Base):
     checked_at: datetime
 
 
-# ── 17. Error responses ───────────────────────────────────────────────────────
+# ── 17. Entity performance — campaign rows (P3 — Wave 1) ─────────────────────
+
+class CampaignPerformanceRow(_Base):
+    platform: str
+    campaign_id: str
+    campaign_name: Optional[str] = None
+    date: date
+    spend: Optional[float] = None
+    impressions: Optional[int] = None
+    clicks: Optional[int] = None
+    conversions: Optional[int] = None
+    revenue: Optional[float] = None
+    roas: Optional[float] = None
+    cpa: Optional[float] = None
+    ctr: Optional[float] = None
+    cpc: Optional[float] = None
+    cpm: Optional[float] = None
+
+
+class EntityPerformanceOut(_Base):
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    level: Literal["campaign"] = "campaign"
+    period: Period
+    platform: Optional[str] = None
+    total_rows: int
+    page: int
+    page_size: int
+    rows: list[CampaignPerformanceRow]
+
+
+# ── 18. Error responses ───────────────────────────────────────────────────────
 
 class ErrorOut(_Base):
     """Standard error envelope returned on 401, 403, 409, 429 and 503."""

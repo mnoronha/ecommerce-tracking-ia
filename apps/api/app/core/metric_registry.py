@@ -90,6 +90,26 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         source_system="derived", unit="x", aggregation="derived",
         zero_semantics="no_spend",
     ),
+    "roas_meta": MetricDef(
+        key="roas_meta", domain=MetricDomain.ADS,
+        source_system="derived", unit="x", aggregation="derived",
+        zero_semantics="no_spend",
+    ),
+    "roas_google": MetricDef(
+        key="roas_google", domain=MetricDomain.ADS,
+        source_system="derived", unit="x", aggregation="derived",
+        zero_semantics="no_spend",
+    ),
+    "cpa_meta": MetricDef(
+        key="cpa_meta", domain=MetricDomain.ADS,
+        source_system="derived", unit="BRL", aggregation="derived",
+        zero_semantics="ok", currency="BRL",
+    ),
+    "cpa_google": MetricDef(
+        key="cpa_google", domain=MetricDomain.ADS,
+        source_system="derived", unit="BRL", aggregation="derived",
+        zero_semantics="ok", currency="BRL",
+    ),
 
     # ── JOURNEY (GA4) ─────────────────────────────────────────────────────────
     "ga4_sessions": MetricDef(
@@ -112,6 +132,10 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
 
 # Metrics that require ALL their input sources to be READY before computing.
 DERIVED_DEPS: dict[str, list[str]] = {
-    "total_spend": ["meta_spend", "google_spend"],
-    "mer": ["revenue_business", "total_spend"],
+    "total_spend":  ["meta_spend", "google_spend"],
+    "mer":          ["revenue_business", "total_spend"],
+    "roas_meta":    ["meta_conversion_value", "meta_spend"],
+    "roas_google":  ["google_conversion_value", "google_spend"],
+    "cpa_meta":     ["meta_spend", "meta_conversions"],
+    "cpa_google":   ["google_spend", "google_conversions"],
 }
