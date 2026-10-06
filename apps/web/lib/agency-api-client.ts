@@ -6,12 +6,12 @@
  * NEVER import in 'use client' components — use /api/v1/* BFF routes instead.
  *
  * Required env vars (server-side, never NEXT_PUBLIC_*):
+ *   AGENCY_API_BASE_URL      — Agency API base URL (e.g. https://tracking.noroia.com.br)
  *   AGENCY_API_PLATFORM_KEY  — platform_web service token
- *   AGENCY_API_URL            — Railway base URL (falls back to NEXT_PUBLIC_API_URL)
  */
 
 const _BASE =
-  process.env.AGENCY_API_URL ||
+  process.env.AGENCY_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   'https://ecommerce-tracking-ia-production.up.railway.app'
 

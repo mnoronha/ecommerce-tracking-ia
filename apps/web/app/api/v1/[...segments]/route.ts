@@ -12,7 +12,7 @@ import { NextResponse }      from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
 
 const _BASE =
-  process.env.AGENCY_API_URL ||
+  process.env.AGENCY_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_URL ||
   'https://ecommerce-tracking-ia-production.up.railway.app'
 
