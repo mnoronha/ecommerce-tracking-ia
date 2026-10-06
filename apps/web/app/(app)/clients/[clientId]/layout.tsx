@@ -5,7 +5,7 @@ import { usePathname, useParams } from 'next/navigation'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
 import { CriticalAlertsBar } from '@/components/alerts/critical-alerts-bar'
-import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench, History, Rocket, UserCheck, Award } from 'lucide-react'
+import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench, History, Rocket, UserCheck, Award, HeartPulse, Lightbulb, GitCommit } from 'lucide-react'
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -44,8 +44,11 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `/clients/${clientId}/technical/history`,         label: 'Histórico Técnico', icon: History,    gate: null },
     { href: `/clients/${clientId}/technical/onboarding`,      label: 'Onboarding',       icon: UserCheck,  gate: null },
     { href: `/clients/${clientId}/metas`,       label: 'Metas',           icon: Target,          gate: null },
-    { href: `/clients/${clientId}/alertas`,     label: 'Alertas',         icon: Bell,            gate: null },
-    { href: `/clients/${clientId}/diagnostics`, label: 'Diagnóstico',     icon: Activity,        gate: null },
+    { href: `/clients/${clientId}/alertas`,         label: 'Alertas',         icon: Bell,        gate: null },
+    { href: `/clients/${clientId}/diagnostics`,     label: 'Diagnóstico',     icon: Activity,    gate: null },
+    { href: `/clients/${clientId}/data-health`,     label: 'Saúde dos Dados', icon: HeartPulse,  gate: null },
+    { href: `/clients/${clientId}/recommendations`, label: 'Recomendações',   icon: Lightbulb,   gate: null },
+    { href: `/clients/${clientId}/changes`,         label: 'Mudanças',        icon: GitCommit,   gate: null },
     { href: `/clients/${clientId}/cogs`,        label: 'Custos & Margem', icon: DollarSign,      gate: null },
     { href: `/clients/${clientId}/settings`,    label: 'Configurações',   icon: Settings,        gate: null },
     { href: `/clients/${clientId}/users`,       label: 'Usuários',        icon: UserCog,         gate: null },

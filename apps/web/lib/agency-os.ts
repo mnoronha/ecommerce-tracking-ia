@@ -1,16 +1,17 @@
 /**
  * agency-os.ts — server-side only.
  *
- * Types for norolabs-report-contract-v1 and Supabase query helpers that read
- * contracts stored in agency_report_contracts.
+ * Types for norolabs-report-contract-v1 and helpers that read report contracts
+ * from the Agency API (/agency/v1/clients/{slug}/report-contracts).
  *
  * Rules:
  * - Never import from client components ("use client" boundary).
  * - Never recalculate or normalise contract fields — read and pass through only.
  * - Metrics come from Agency OS / Hermes and are stored verbatim.
+ * - Source of truth: Agency API, not Supabase directly.
  */
 
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { agencyApiFetch, AgencyApiError } from '@/lib/agency-api-client'
 
 // ── Contract types ────────────────────────────────────────────────────────────
 
@@ -125,58 +126,44 @@ export class ReportError extends Error {
   }
 }
 
-// ── Row type (matches agency_report_contracts table) ─────────────────────────
+// ── Agency API response shape (CoreReportContractOut) ──────────────────────────
 
-interface ContractRow {
-  client_slug:             string
-  report_type:             string
-  business_model:          string
-  period_start:            string
-  period_end:              string
-  comparison_period_start: string | null
-  comparison_period_end:   string | null
-  schema_version:          string
-  source_run_id:           string | null
-  generated_at:            string | null
-  contract:                ReportContractV1
-  updated_at:              string
+interface CoreReportContractOut {
+  report_contract_id: string
+  client_id:          string
+  report_type:        'WEEKLY' | 'MONTHLY'
+  period:             { start: string; end: string }
+  contract:           Record<string, unknown>
+  generated_at:       string
+  provenance_status:  'REAL' | 'STUB' | 'MISSING'
 }
 
-// ── Query helpers (server-side, use Supabase with session RLS) ────────────────
+// ── Query helpers (server-side, via Agency API) ───────────────────────────────
 
-/** List all clients that have at least one stored report contract. */
+/** List all active clients from Agency API. */
 export async function listClients(): Promise<AgencyClientInfo[]> {
-  const supabase = await createSupabaseServerClient()
-  const { data, error } = await supabase
-    .from('agency_report_contracts')
-    .select('client_slug, business_model, period_end')
-    .order('client_slug')
-    .order('period_end', { ascending: false })
-
-  if (error) {
-    throw new ReportError('unavailable', `Supabase error listing clients: ${error.message}`)
-  }
-
-  // Deduplicate — keep only the most-recent row per slug
-  const seen = new Set<string>()
-  const clients: AgencyClientInfo[] = []
-  for (const row of (data ?? [])) {
-    if (!seen.has(row.client_slug)) {
-      seen.add(row.client_slug)
-      clients.push({
-        slug:             row.client_slug,
-        business_model:   row.business_model as BusinessModel,
-        latest_period_end: row.period_end,
-      })
+  try {
+    const rows = await agencyApiFetch<Array<{
+      client_id: string
+      business_model?: string
+      status?: string
+    }>>('clients')
+    return rows
+      .filter(r => r.status !== 'inactive')
+      .map(r => ({
+        slug:           r.client_id,
+        business_model: r.business_model as BusinessModel | undefined,
+      }))
+  } catch (err) {
+    if (err instanceof AgencyApiError) {
+      throw new ReportError('unavailable', `Agency API error: ${err.message}`)
     }
+    throw new ReportError('unavailable', 'Could not list clients')
   }
-  return clients
 }
 
 /** Fetch the most-recent weekly report for a client. */
-export async function getLatestWeeklyReport(
-  clientSlug: string,
-): Promise<ReportContractV1> {
+export async function getLatestWeeklyReport(clientSlug: string): Promise<ReportContractV1> {
   return getReport(clientSlug, 'weekly')
 }
 
@@ -190,39 +177,49 @@ export async function getMonthlyReport(clientSlug: string, period: string): Prom
 
 async function getReport(clientRoute: string, type: 'weekly' | 'monthly', period?: string): Promise<ReportContractV1> {
   const clientSlug = canonicalClient(clientRoute)
-  const supabase = await createSupabaseServerClient()
-  let query = supabase
-    .from('agency_report_contracts')
-    .select('contract')
-    .eq('client_slug', clientSlug)
-    .eq('report_type', type)
-    .order('period_end', { ascending: false })
-    .limit(1)
-  if (period) {
-    if (!/^\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}$/.test(period)) {
-      throw new ReportError('not_found', 'Invalid report period')
-    }
-    const [start, end] = period.split('_to_')
-    query = query.eq('period_start', start).eq('period_end', end)
-  }
-  const { data, error } = await query.maybeSingle()
 
-  if (error) {
-    throw new ReportError('unavailable', `Supabase error: ${error.message}`)
+  if (period && !/^\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}$/.test(period)) {
+    throw new ReportError('not_found', 'Invalid report period')
   }
-  if (!data || data.contract?.report?.type !== type || data.contract?.report?.client_slug !== clientSlug) {
+
+  let contracts: CoreReportContractOut[]
+  try {
+    contracts = await agencyApiFetch<CoreReportContractOut[]>(
+      `clients/${clientSlug}/report-contracts`,
+      { report_type: type.toUpperCase() as 'WEEKLY' | 'MONTHLY' },
+    )
+  } catch (err) {
+    if (err instanceof AgencyApiError) {
+      throw new ReportError('unavailable', `Agency API error: ${err.message}`)
+    }
+    throw new ReportError('unavailable', 'Could not fetch report contracts')
+  }
+
+  if (!contracts || contracts.length === 0) {
     throw new ReportError('not_found', `No ${type} report found for client "${clientSlug}".`)
   }
-  return (data as ContractRow).contract
+
+  // If a specific period is requested, filter client-side
+  let target: CoreReportContractOut | undefined = contracts[0]
+  if (period) {
+    const [start, end] = period.split('_to_')
+    target = contracts.find(c => c.period.start === start && c.period.end === end)
+    if (!target) {
+      throw new ReportError('not_found', `No ${type} report found for period "${period}".`)
+    }
+  }
+
+  if (target.provenance_status === 'MISSING') {
+    throw new ReportError('not_found', `No ${type} report found for client "${clientSlug}".`)
+  }
+
+  return target.contract as ReportContractV1
 }
 
 /**
  * Fetch a specific weekly report by period.
  * period format: YYYY-MM-DD_to_YYYY-MM-DD (e.g. 2026-09-21_to_2026-09-27)
  */
-export async function getWeeklyReport(
-  clientSlug: string,
-  period: string,
-): Promise<ReportContractV1> {
+export async function getWeeklyReport(clientSlug: string, period: string): Promise<ReportContractV1> {
   return getReport(clientSlug, 'weekly', period)
 }

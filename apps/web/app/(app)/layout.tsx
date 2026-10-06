@@ -2,15 +2,33 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart2, Users, LogOut, Bell, LayoutDashboard, CreditCard, Settings, Wallet } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { BarChart2, Users, LogOut, Bell, LayoutDashboard, CreditCard, Settings, Wallet, Activity } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router   = useRouter()
+  const [isOwner, setIsOwner] = useState(false)
 
-  const isClientsRoot = pathname === '/dashboard' || pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas' || pathname === '/billing' || pathname === '/configuracoes' || pathname === '/financeiro'
+  useEffect(() => {
+    const check = async () => {
+      const supabase = createSupabaseBrowserClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data } = await supabase
+        .from('agency_members')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('role', 'owner')
+        .maybeSingle()
+      setIsOwner(!!data)
+    }
+    check()
+  }, [])
+
+  const isClientsRoot = pathname === '/dashboard' || pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas' || pathname === '/billing' || pathname === '/configuracoes' || pathname === '/financeiro' || pathname === '/system-health'
 
   async function handleSignOut() {
     const supabase = createSupabaseBrowserClient()
@@ -39,11 +57,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Link href="/alertas" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/alertas' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
               <Bell size={13} />Alertas
             </Link>
-            <Link href="/financeiro" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/financeiro' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
-              <Wallet size={13} />Financeiro
-            </Link>
+            {isOwner && (
+              <Link href="/financeiro" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/financeiro' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
+                <Wallet size={13} />Financeiro
+              </Link>
+            )}
             <Link href="/billing" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/billing' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
               <CreditCard size={13} />Plano
+            </Link>
+            <Link href="/system-health" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/system-health' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
+              <Activity size={13} />Sistema
             </Link>
             <Link href="/configuracoes" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/configuracoes' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
               <Settings size={13} />Config

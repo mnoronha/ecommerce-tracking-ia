@@ -14,6 +14,96 @@ import { supabase } from '@/lib/supabase'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
+// ── Core Narratives (Agency API) ──────────────────────────────────────────────
+
+interface CoreNarrative {
+  id:                 string
+  report_contract_id: string
+  status:             string
+  visibility_scope:   string
+  approved_by?:       string
+  published_at?:      string
+  created_at:         string
+  client_id?:         string
+  report_type?:       string
+  period_start?:      string
+  period_end?:        string
+  blocks:             unknown[]
+}
+
+const NARRATIVE_STATUS_BADGE: Record<string, string> = {
+  DRAFT:            'bg-slate-500/15 text-slate-400',
+  READY_FOR_REVIEW: 'bg-yellow-500/15 text-yellow-400',
+  APPROVED:         'bg-emerald-500/15 text-emerald-400',
+  PUBLISHED:        'bg-indigo-500/15 text-indigo-400',
+  SUPERSEDED:       'bg-slate-600/15 text-slate-600',
+}
+
+function CoreNarrativesSection({ clientId }: { clientId: string }) {
+  const [items,   setItems]   = useState<CoreNarrative[]>([])
+  const [loading, setLoading] = useState(true)
+  const [open,    setOpen]    = useState(false)
+
+  useEffect(() => {
+    fetch(`/api/v1/clients/${clientId}/reports`)
+      .then(r => r.ok ? r.json() : [])
+      .then(setItems)
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false))
+  }, [clientId])
+
+  if (loading) return null
+  if (items.length === 0) return null
+
+  return (
+    <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-[#252b3b] transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <FileText size={14} className="text-indigo-400" />
+          <span className="text-sm font-semibold text-white">Relatórios Core ({items.length})</span>
+          <span className="text-xs text-slate-500">· Agency API</span>
+        </div>
+        <span className="text-slate-600 text-xs">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-[#2a2f3e] overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#2a2f3e]">
+                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Tipo</th>
+                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Período</th>
+                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Status</th>
+                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Publicado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map(n => (
+                <tr key={n.id} className="border-b border-[#2a2f3e] last:border-0">
+                  <td className="px-4 py-2.5 text-xs text-slate-400">{n.report_type || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-400">
+                    {n.period_start && n.period_end ? `${n.period_start} → ${n.period_end}` : '—'}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${NARRATIVE_STATUS_BADGE[n.status] || 'bg-slate-500/15 text-slate-400'}`}>
+                      {n.status}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-500">
+                    {n.published_at ? new Date(n.published_at).toLocaleDateString('pt-BR') : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 type InsightType = 'all' | 'weekly_report' | 'monthly_report' | 'recommendation' | 'anomaly' | 'pattern'
 type Severity    = 'all' | 'info' | 'warning' | 'critical'
 type ReportType  = 'weekly' | 'monthly'
@@ -372,6 +462,9 @@ export default function ReportsPage() {
             {sendError}
           </div>
         )}
+
+        {/* Core narratives (Agency API) */}
+        <CoreNarrativesSection clientId={clientId} />
 
         {/* Relatórios automáticos — ativar/desativar por cliente */}
         <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5 space-y-4">
