@@ -72,7 +72,7 @@ def _make_db(
             getattr(m, method).return_value = m
 
         if name == "clients":
-            m.execute.return_value = MagicMock(data=client_meta)
+            m.execute.return_value = MagicMock(data=[client_meta] if client_meta is not None else None)
         elif name == "ad_campaigns":
             m.execute.return_value = MagicMock(data=rows, count=row_count)
         else:

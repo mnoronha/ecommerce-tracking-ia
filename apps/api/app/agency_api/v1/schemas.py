@@ -128,9 +128,21 @@ class TruthOut(_Base):
 # ── 3. Data health and pipeline health ───────────────────────────────────────
 
 class DataHealthEntry(_Base):
-    domain: str  # "business"|"google_ads"|"meta_ads"|"ga4"|"conversion_map"|"notion_truth"
+    domain: str  # "business"|"google_ads"|"meta_ads"|"ga4"
+    source_key: Optional[str] = None
+    source_system: Optional[str] = None
+    semantic_domain: Optional[str] = None
     source_state: SourceState
-    reason: Optional[str] = None
+    # Derived statuses (deterministic — no arbitrary thresholds beyond DQG defaults)
+    collection_status: str = "UNKNOWN"      # OK | NO_DATA | STALE | ERROR | NOT_APPLICABLE
+    freshness_status: str = "UNKNOWN"       # FRESH | STALE | UNKNOWN
+    reconciliation_status: str = "UNKNOWN"  # OK | DEGRADED | UNKNOWN
+    last_attempt_at: Optional[datetime] = None
+    last_data_at: Optional[datetime] = None
+    last_validated_at: Optional[datetime] = None
+    last_reconciled_at: Optional[datetime] = None
+    reconciliation_state: Optional[str] = None
+    reason: Optional[str] = None  # last_error, kept for backward compat
     checked_at: datetime
 
 
@@ -255,28 +267,27 @@ class ChangeOut(ChangeCreate):
 class AlertOut(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
     id: str
-    client_id: str
-    rule_key: str
-    rule_version: str
-    metric_key: str
-    entity: Optional[str] = None
-    observed_snapshot_refs: list[str] = Field(default_factory=list)
-    baseline_snapshot_refs: list[str] = Field(default_factory=list)
-    delta_pct: Optional[float] = None
-    min_volume_met: bool = True
-    severity: Level
+    client_id: Optional[str] = None       # slug — None for system-wide alerts
+    alert_type: str                         # JOB_FAILED | JOB_STUCK | SOURCE_STALE | SOURCE_ERROR | RECONCILIATION_FAILED | PIPELINE_NOT_RUN
+    severity: str                           # HIGH | MEDIUM | LOW
     status: AlertStatus = AlertStatus.OPEN
-    created_at: datetime
+    title: str
+    message: str
+    dedup_key: str                          # fingerprint used for upsert dedup
+    source_key: Optional[str] = None
+    job_id: Optional[str] = None
+    evidence: dict = Field(default_factory=dict)
+    occurrence_count: int = 1
+    detected_at: datetime                   # when first seen (created_at from DB)
     resolved_at: Optional[datetime] = None
 
 
 class AlertContext(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
     alert: AlertOut
-    metrics: list[MetricValue]
-    changes: list[ChangeOut]
-    truth: dict[str, Any]
-    health: dict[str, SourceState]
+    metrics: list[MetricValue] = Field(default_factory=list)
+    recent_jobs: list[dict] = Field(default_factory=list)
+    evidence: dict = Field(default_factory=dict)
 
 
 # ── 8. Diagnoses (intel) ──────────────────────────────────────────────────────
@@ -472,12 +483,32 @@ class WorkerHealth(_Base):
     note: Optional[str] = None
 
 
+class SchedulerJobStatus(_Base):
+    """One APScheduler job as observed at health-check time."""
+    job_id: str
+    trigger: str
+    next_run_time: Optional[datetime] = None
+    last_run_status: Optional[str] = None  # "ok" | "error" from APScheduler event
+    last_run_at: Optional[str] = None      # ISO string from _JOB_RUNS
+
+
 class SystemHealthOut(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
+    overall_status: ServiceStatus = ServiceStatus.UP
     api: Literal["UP"] = "UP"
     database: ServiceStatus
-    workers: list[WorkerHealth]
-    dead_jobs: list[JobOut]
+    scheduler: ServiceStatus = ServiceStatus.UP
+    scheduled_jobs: list[SchedulerJobStatus] = Field(default_factory=list)
+    workers: list[WorkerHealth]           # kept for backward compat; empty in APScheduler model
+    running_jobs: int = 0
+    queued_jobs: int = 0
+    failed_jobs_last_24h: int = 0
+    # Stuck thresholds (documented here, not hidden):
+    #   RUNNING > 120 min = STUCK; QUEUED > 240 min = QUEUED_STALE
+    stuck_jobs: list[JobOut] = Field(default_factory=list)
+    dead_jobs: list[JobOut]               # kept for backward compat; same as stuck_jobs
+    last_successful_pipeline_run: Optional[datetime] = None
+    last_pipeline_error: Optional[str] = None
     checked_at: datetime
 
 

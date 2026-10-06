@@ -21,6 +21,9 @@ from .config import settings
 from .limiter import limiter
 from .routers import agency_os, ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, finance as finance_router, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, portal_users, search_console as search_console_router, setup, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
 from .services import ai_analyst, ai_visibility_analyst, ai_visibility_collector, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, finance_alerts, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, search_console_sync, sessionization, shopify_sync, spend_sync
+from .core.core_scheduler import run_core_pipeline_all_clients
+from .core.alert_evaluator import evaluate_system_alerts as _evaluate_system_alerts
+from .core.scheduler_registry import register as _register_scheduler
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -72,6 +75,7 @@ def _record_job_run(event) -> None:
 
 
 _scheduler = BackgroundScheduler()
+_register_scheduler(_scheduler, _JOB_RUNS)
 _scheduler.add_listener(_record_job_run, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 _scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
 _scheduler.add_job(
@@ -253,6 +257,19 @@ _scheduler.add_job(
     hour=7,
     minute=0,  # 07:00 UTC — rede de segurança: cifra tokens novos gravados em texto puro
     id="credentials_encrypt",
+)
+_scheduler.add_job(
+    run_core_pipeline_all_clients,
+    "cron",
+    hour=7,
+    minute=15,  # 07:15 UTC = 04:15 BRT — após spend_sync (06:00) e metrics_cache (06:30)
+    id="core_pipeline_daily",
+)
+_scheduler.add_job(
+    _evaluate_system_alerts,
+    "interval",
+    minutes=30,  # detects PIPELINE_NOT_RUN if daily job missed
+    id="core_alert_system_check",
 )
 _scheduler.add_job(
     shopify_sync.run_hourly_for_all_clients,

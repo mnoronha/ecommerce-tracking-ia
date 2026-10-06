@@ -145,8 +145,9 @@ class TargetStatus(str, Enum):
 
 
 class AlertStatus(str, Enum):
-    OPEN     = "OPEN"
-    RESOLVED = "RESOLVED"
+    OPEN         = "OPEN"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    RESOLVED     = "RESOLVED"
 
 
 class RecommendationStatus(str, Enum):

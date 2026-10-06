@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from unittest.mock import MagicMock, patch
 
 from app.agency_api.v1.auth import SCOPE_ANY_AUTH, SCOPE_READ_ANY, AuthContext
 from app.agency_api.v1.request_id import AgencyRequestIDMiddleware
@@ -98,6 +99,17 @@ class TestCCR014HonestAbsence:
         assert resp.json() == []
 
 
+def _make_no_alert_db() -> MagicMock:
+    """DB mock that returns None for any alert lookup (simulates 'not found')."""
+    m = MagicMock()
+    for method in ("select", "eq", "in_", "like", "order", "limit", "is_", "maybe_single"):
+        getattr(m, method).return_value = m
+    m.execute.return_value = MagicMock(data=None)
+    db = MagicMock()
+    db.table.return_value = m
+    return db
+
+
 class TestCCR014NotFoundByID:
     """GET by non-existent ID returns 404, not 500 and not fabricated data."""
 
@@ -112,14 +124,18 @@ class TestCCR014NotFoundByID:
         (CERTIFIED belongs to CertificationStatus) → AttributeError at runtime.
         Fix: raise 404 — alert not found.
         """
-        resp = client.get("/agency/v1/alerts/alt_stub_01/context")
+        db = _make_no_alert_db()
+        with patch("app.agency_api.v1.router._get_db", return_value=db):
+            resp = client.get("/agency/v1/alerts/alt_stub_01/context")
         assert resp.status_code == 404, (
             f"Expected 404 for unknown alert_id, got {resp.status_code}. "
             f"Was 500 before CCR-014 due to ValueStatus.CERTIFIED AttributeError."
         )
 
     def test_alert_context_arbitrary_id_is_404(self, client):
-        resp = client.get("/agency/v1/alerts/nonexistent-id-xyz/context")
+        db = _make_no_alert_db()
+        with patch("app.agency_api.v1.router._get_db", return_value=db):
+            resp = client.get("/agency/v1/alerts/nonexistent-id-xyz/context")
         assert resp.status_code == 404, resp.text
 
     def test_diagnosis_by_id_is_404(self, client):
@@ -219,10 +235,12 @@ class TestCCR014RequestIDPreserved:
 
     def test_request_id_echoed_on_404(self, client):
         """404 responses must also echo X-Request-ID."""
-        resp = client.get(
-            "/agency/v1/alerts/alt_stub_01/context",
-            headers={"X-Request-ID": _REQUEST_ID},
-        )
+        db = _make_no_alert_db()
+        with patch("app.agency_api.v1.router._get_db", return_value=db):
+            resp = client.get(
+                "/agency/v1/alerts/alt_stub_01/context",
+                headers={"X-Request-ID": _REQUEST_ID},
+            )
         assert resp.status_code == 404
         assert resp.headers.get("x-request-id") == _REQUEST_ID, (
             f"X-Request-ID not echoed on 404: {resp.headers.get('x-request-id')!r}"
