@@ -7,7 +7,7 @@ Real implementation replaces stubs incrementally from Etapa 4 onwards.
 Auth: each route declares the allowed scopes via Depends(require_scopes(...)).
 Idempotency-Key header is accepted on all write endpoints (ignored in stubs).
 
-Route inventory (30 routes):
+Route inventory (32 routes):
   GET  /clients
   GET  /clients/{client_id}/truth
   GET  /clients/{client_id}/health
@@ -20,16 +20,16 @@ Route inventory (30 routes):
   GET  /clients/{client_id}/alerts
   GET  /alerts
   GET  /alerts/{alert_id}/context
-  GET  /alerts/{alert_id}/diagnoses        [CCR-011]
-  GET  /diagnoses/{diagnosis_id}           [CCR-011]
-  GET  /diagnoses/{diagnosis_id}/recommendations  [CCR-011]
-  GET  /recommendations/{recommendation_id}       [CCR-011]
+  GET  /alerts/{alert_id}/diagnoses
+  GET  /diagnoses/{diagnosis_id}
+  GET  /diagnoses/{diagnosis_id}/recommendations
+  GET  /recommendations/{recommendation_id}
   GET  /alert-rule-suggestions
   GET  /system/health
   GET  /jobs
   GET  /jobs/{job_id}
-  POST /diagnoses
-  POST /recommendations
+  POST /alerts/{alert_id}/diagnoses        [Hermes write]
+  POST /diagnoses/{diagnosis_id}/recommendations  [Hermes write]
   POST /changes
   POST /action-events
   POST /alert-feedback
@@ -38,11 +38,14 @@ Route inventory (30 routes):
   POST /alert-rule-suggestions/{suggestion_id}/decision
   POST /learning-candidates
   POST /jobs/{job_id}/replay
+  GET  /clients/{client_id}/entity-performance
+  GET  /clients/{client_id}/data-source/{source_key}
 """
 
 from __future__ import annotations
 
 import logging
+import uuid as _uuid_mod
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
@@ -86,9 +89,11 @@ from .schemas import (
     DataSourceDetail,
     DiagnosisCreate,
     DiagnosisOut,
+    DiagnosisStatus,
     EntityPerformanceOut,
     EvidenceLevel,
-    Hypothesis,
+    EvidenceRefs,
+    HypothesisType,
     JobOut,
     JobStatus,
     LearningCandidateCreate,
@@ -111,6 +116,7 @@ from .schemas import (
     ReportNarrativeCreate,
     ReportNarrativeOut,
     ReportType,
+    RootCauseHypothesis,
     SchedulerJobStatus,
     ServiceStatus,
     SourceState,
@@ -896,6 +902,53 @@ def _fetch_slug_map(rows: list[dict]) -> dict[str, str]:
         return {}
 
 
+def _diagnosis_row_to_out(row: dict) -> DiagnosisOut:
+    """Convert a core_diagnoses row to DiagnosisOut."""
+    return DiagnosisOut(
+        id=str(row["id"]),
+        alert_id=str(row["alert_id"]),
+        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        status=row.get("status", "DRAFT"),
+        summary=row.get("summary", ""),
+        root_cause_hypotheses=row.get("root_cause_hypotheses") or [],
+        evidence=row.get("evidence") or {},
+        confidence=row.get("confidence"),
+        limitations=row.get("limitations"),
+        fingerprint=row.get("fingerprint"),
+        created_at=row["created_at"],
+        created_by=row.get("created_by", "hermes"),
+    )
+
+
+def _recommendation_row_to_out(row: dict) -> RecommendationOut:
+    """Convert a core_recommendations row to RecommendationOut."""
+    return RecommendationOut(
+        id=str(row["id"]),
+        diagnosis_id=str(row["diagnosis_id"]),
+        alert_id=str(row["alert_id"]),
+        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        title=row.get("title", ""),
+        action=row.get("action", ""),
+        rationale=row.get("rationale", ""),
+        priority=row.get("priority", "MEDIUM"),
+        risk=row.get("risk"),
+        expected_impact=row.get("expected_impact"),
+        requires_human_approval=row.get("requires_human_approval", True),
+        status=row.get("status", "PROPOSED"),
+        fingerprint=row.get("fingerprint"),
+        created_at=row["created_at"],
+        created_by=row.get("created_by", "hermes"),
+    )
+
+
+def _is_valid_uuid(value: str) -> bool:
+    try:
+        _uuid_mod.UUID(value)
+        return True
+    except ValueError:
+        return False
+
+
 # ── GET /clients/{client_id}/alerts ───────────────────────────────────────────
 
 @router.get(
@@ -1296,15 +1349,8 @@ async def get_job(
     return _job_row_to_out(row)
 
 
-# ── CCR-011: consultable intel chain ─────────────────────────────────────────
-#
-# Four additive GET routes that expose the FK chain:
-#   alert → core_diagnoses.alert_id
-#         → core_recommendations.diagnosis_id
-#
-# No relationship is inferred — FK chain only. Real DB reads in Etapa 4.
+# ── Intel chain: GET endpoints (real DB reads) ────────────────────────────────
 
-# CCR-014: core_diagnoses has 0 rows → honest empty list.
 @router.get(
     "/alerts/{alert_id}/diagnoses",
     summary="Diagnoses linked to an alert (FK: core_diagnoses.alert_id)",
@@ -1314,10 +1360,23 @@ async def get_alert_diagnoses(
     alert_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[DiagnosisOut]:
-    return []
+    if not _is_valid_uuid(alert_id):
+        return []
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_diagnoses")
+            .select("*")
+            .eq("alert_id", alert_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return [_diagnosis_row_to_out(r) for r in (res.data or [])]
+    except Exception as exc:
+        logger.error("get_alert_diagnoses: DB error %s: %s", alert_id, exc)
+        raise HTTPException(503, "database error")
 
 
-# CCR-014: core_diagnoses has 0 rows → 404 for any diagnosis_id.
 @router.get(
     "/diagnoses/{diagnosis_id}",
     summary="Single diagnosis by ID",
@@ -1327,10 +1386,26 @@ async def get_diagnosis(
     diagnosis_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> DiagnosisOut:
-    raise HTTPException(404, f"diagnosis not found: {diagnosis_id!r}")
+    if not _is_valid_uuid(diagnosis_id):
+        raise HTTPException(404, f"diagnosis not found: {diagnosis_id!r}")
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_diagnoses")
+            .select("*")
+            .eq("id", diagnosis_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_diagnosis: DB error %s: %s", diagnosis_id, exc)
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"diagnosis not found: {diagnosis_id!r}")
+    return _diagnosis_row_to_out(row)
 
 
-# CCR-014: core_recommendations has 0 rows → honest empty list.
 @router.get(
     "/diagnoses/{diagnosis_id}/recommendations",
     summary="Recommendations linked to a diagnosis (FK: core_recommendations.diagnosis_id)",
@@ -1340,10 +1415,23 @@ async def get_diagnosis_recommendations(
     diagnosis_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[RecommendationOut]:
-    return []
+    if not _is_valid_uuid(diagnosis_id):
+        return []
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_recommendations")
+            .select("*")
+            .eq("diagnosis_id", diagnosis_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return [_recommendation_row_to_out(r) for r in (res.data or [])]
+    except Exception as exc:
+        logger.error("get_diagnosis_recommendations: DB error %s: %s", diagnosis_id, exc)
+        raise HTTPException(503, "database error")
 
 
-# CCR-014: core_recommendations has 0 rows → 404 for any recommendation_id.
 @router.get(
     "/recommendations/{recommendation_id}",
     summary="Single recommendation by ID",
@@ -1353,39 +1441,179 @@ async def get_recommendation(
     recommendation_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> RecommendationOut:
-    raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+    if not _is_valid_uuid(recommendation_id):
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_recommendations")
+            .select("*")
+            .eq("id", recommendation_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_recommendation: DB error %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+    return _recommendation_row_to_out(row)
 
 
-# ── POST /diagnoses ───────────────────────────────────────────────────────────
+# ── Intel chain: POST endpoints (Hermes write) ────────────────────────────────
 
 @router.post(
-    "/diagnoses",
-    summary="Create a structured diagnosis linked to an alert (Hermes)",
+    "/alerts/{alert_id}/diagnoses",
+    summary="Create a structured diagnosis for an alert (Hermes write)",
     response_model=DiagnosisOut,
     status_code=201,
 )
-async def create_diagnosis(
+async def create_diagnosis_for_alert(
+    alert_id: str,
     body: DiagnosisCreate,
-    idempotency_key: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
 ) -> DiagnosisOut:
-    return DiagnosisOut(**body.model_dump(), id="dia_stub_01", created_at=_STUB_NOW)
+    db = _get_db()
 
+    # Verify alert exists; read client_id for propagation
+    try:
+        alert_res = (
+            db.table("alerts")
+            .select("id, client_id")
+            .eq("id", alert_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("create_diagnosis: alert lookup failed %s: %s", alert_id, exc)
+        raise HTTPException(503, "database error")
 
-# ── POST /recommendations ─────────────────────────────────────────────────────
+    alert_row = alert_res.data[0] if (alert_res and alert_res.data) else None
+    if not alert_row:
+        raise HTTPException(404, f"alert not found: {alert_id!r}")
+
+    client_uuid = alert_row.get("client_id")
+
+    # Idempotency: if key provided, check for existing diagnosis with same fingerprint
+    fingerprint: Optional[str] = None
+    if idempotency_key:
+        fingerprint = f"diag:{alert_id}:{idempotency_key}"
+        try:
+            dup = (
+                db.table("core_diagnoses")
+                .select("*")
+                .eq("fingerprint", fingerprint)
+                .limit(1)
+                .execute()
+            )
+            if dup and dup.data:
+                return _diagnosis_row_to_out(dup.data[0])
+        except Exception:
+            pass  # dedup lookup failed — proceed with insert
+
+    created_by = getattr(_auth, "scope", "hermes") if _auth else "hermes"
+    try:
+        ins = db.table("core_diagnoses").insert({
+            "alert_id":              alert_id,
+            "client_id":             client_uuid,
+            "status":                body.status if isinstance(body.status, str) else body.status.value,
+            "summary":               body.summary,
+            "root_cause_hypotheses": [h.model_dump(mode="json") for h in body.root_cause_hypotheses],
+            "evidence":              body.evidence.model_dump(mode="json"),
+            "confidence":            body.confidence if isinstance(body.confidence, str) or body.confidence is None else body.confidence.value,
+            "limitations":           body.limitations,
+            "fingerprint":           fingerprint,
+            "created_by":            created_by,
+        }).execute()
+    except Exception as exc:
+        logger.error("create_diagnosis: insert failed %s: %s", alert_id, exc)
+        raise HTTPException(503, "database error")
+
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    return _diagnosis_row_to_out(row)
+
 
 @router.post(
-    "/recommendations",
-    summary="Create a recommendation linked to a diagnosis (Hermes)",
+    "/diagnoses/{diagnosis_id}/recommendations",
+    summary="Create a recommendation for a diagnosis (Hermes write)",
     response_model=RecommendationOut,
     status_code=201,
 )
-async def create_recommendation(
+async def create_recommendation_for_diagnosis(
+    diagnosis_id: str,
     body: RecommendationCreate,
-    idempotency_key: Optional[str] = Header(default=None),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
 ) -> RecommendationOut:
-    return RecommendationOut(**body.model_dump(), id="rec_stub_01", created_at=_STUB_NOW)
+    db = _get_db()
+
+    # Verify diagnosis exists; inherit alert_id + client_id
+    try:
+        diag_res = (
+            db.table("core_diagnoses")
+            .select("id, alert_id, client_id")
+            .eq("id", diagnosis_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("create_recommendation: diag lookup failed %s: %s", diagnosis_id, exc)
+        raise HTTPException(503, "database error")
+
+    diag_row = diag_res.data[0] if (diag_res and diag_res.data) else None
+    if not diag_row:
+        raise HTTPException(404, f"diagnosis not found: {diagnosis_id!r}")
+
+    alert_id   = str(diag_row["alert_id"])
+    client_uuid = diag_row.get("client_id")
+
+    # Idempotency
+    fingerprint: Optional[str] = None
+    if idempotency_key:
+        fingerprint = f"rec:{diagnosis_id}:{idempotency_key}"
+        try:
+            dup = (
+                db.table("core_recommendations")
+                .select("*")
+                .eq("fingerprint", fingerprint)
+                .limit(1)
+                .execute()
+            )
+            if dup and dup.data:
+                return _recommendation_row_to_out(dup.data[0])
+        except Exception:
+            pass
+
+    created_by = getattr(_auth, "scope", "hermes") if _auth else "hermes"
+    priority_val = body.priority if isinstance(body.priority, str) else body.priority.value
+    try:
+        ins = db.table("core_recommendations").insert({
+            "diagnosis_id":            diagnosis_id,
+            "alert_id":                alert_id,
+            "client_id":               client_uuid,
+            "title":                   body.title,
+            "action":                  body.action,
+            "rationale":               body.rationale,
+            "priority":                priority_val,
+            "risk":                    body.risk,
+            "expected_impact":         body.expected_impact,
+            "requires_human_approval": body.requires_human_approval,
+            "status":                  "PROPOSED",
+            "fingerprint":             fingerprint,
+            "created_by":              created_by,
+        }).execute()
+    except Exception as exc:
+        logger.error("create_recommendation: insert failed %s: %s", diagnosis_id, exc)
+        raise HTTPException(503, "database error")
+
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    return _recommendation_row_to_out(row)
 
 
 # ── POST /changes ─────────────────────────────────────────────────────────────

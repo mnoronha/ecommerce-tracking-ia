@@ -43,7 +43,9 @@ from .enums import (
     ChangeConfidence,
     ChangeLogSource,
     ChangeType,
+    DiagnosisStatus,
     EvidenceLevel,
+    HypothesisType,
     JobStatus,
     LearningCandidateStatus,
     LearningScope,
@@ -292,63 +294,82 @@ class AlertContext(_Base):
 
 # ── 8. Diagnoses (intel) ──────────────────────────────────────────────────────
 
-class Hypothesis(_Base):
-    statement: str
-    supporting_refs: list[str] = Field(default_factory=list)
-    how_to_verify: Optional[str] = None
+class RootCauseHypothesis(_Base):
+    """One hypothesis in a Hermes diagnosis. type distinguishes fact from inference."""
+    type: HypothesisType
+    description: str
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class EvidenceRefs(_Base):
+    """Structured references to Core canonical context — no raw payload copies."""
+    alert_id: Optional[str] = None
+    source_key: Optional[str] = None
+    job_id: Optional[str] = None
+    metric_refs: list[str] = Field(default_factory=list)
+    snapshot_refs: list[str] = Field(default_factory=list)
+    period: Optional[str] = None
+    source_state: Optional[str] = None
+    value_status: Optional[str] = None
+    certification_status: Optional[str] = None
 
 
 class DiagnosisCreate(_Base):
+    """Request body for POST /alerts/{alert_id}/diagnoses (Hermes write)."""
+    summary: str = Field(min_length=1)
+    root_cause_hypotheses: list[RootCauseHypothesis] = Field(default_factory=list)
+    evidence: EvidenceRefs = Field(default_factory=EvidenceRefs)
+    confidence: Optional[Level] = None
+    limitations: Optional[str] = None
+    status: DiagnosisStatus = DiagnosisStatus.DRAFT
+
+
+class DiagnosisOut(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
-    alert_id: str
-    facts: list[TextWithRefs]
-    localization: Optional[str] = None
-    related_changes: list[str] = Field(default_factory=list)
-    hypotheses: list[Hypothesis] = Field(default_factory=list)
-    confidence: Level
-    do_not_conclude: list[str] = Field(default_factory=list)
-    data_limitations: list[str] = Field(default_factory=list)
-    visibility_scope: VisibilityScope = VisibilityScope.AGENCY_ONLY
-
-
-class DiagnosisOut(DiagnosisCreate):
     id: str
+    alert_id: str
+    client_id: Optional[str] = None
+    status: DiagnosisStatus
+    summary: str
+    root_cause_hypotheses: list[dict] = Field(default_factory=list)
+    evidence: dict = Field(default_factory=dict)
+    confidence: Optional[str] = None
+    limitations: Optional[str] = None
+    fingerprint: Optional[str] = None
     created_at: datetime
+    created_by: str = "hermes"
 
 
 # ── 9. Recommendations (intel) ────────────────────────────────────────────────
 
-class ActionProposal(_Base):
-    platform: str
-    platform_account_id: str
-    entity_type: str
-    entity_id: str
-    entity_name_at_time: str
-    change_type: ChangeType
-    before: Optional[Any] = None
-    after: Optional[Any] = None
-    unit: Optional[str] = None
-
-
 class RecommendationCreate(_Base):
+    """Request body for POST /diagnoses/{diagnosis_id}/recommendations (Hermes write)."""
+    title: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    priority: Level = Level.MEDIUM
+    risk: Optional[str] = None
+    expected_impact: Optional[str] = None
+    requires_human_approval: bool = True
+
+
+class RecommendationOut(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
-    diagnosis_id: str
-    recommendation: str
-    action_proposal: Optional[ActionProposal] = None
-    priority: Level
-    confidence: Level
-    risk: Level
-    reversible: bool
-    expected_effect: Optional[str] = None
-    review_window_days: int = 3
-    requires_approval: bool = True
-    visibility_scope: VisibilityScope = VisibilityScope.AGENCY_ONLY
-
-
-class RecommendationOut(RecommendationCreate):
     id: str
-    status: RecommendationStatus = RecommendationStatus.PENDING_REVIEW
+    diagnosis_id: str
+    alert_id: str
+    client_id: Optional[str] = None
+    title: str
+    action: str
+    rationale: str
+    priority: str
+    risk: Optional[str] = None
+    expected_impact: Optional[str] = None
+    requires_human_approval: bool
+    status: str = "PROPOSED"
+    fingerprint: Optional[str] = None
     created_at: datetime
+    created_by: str = "hermes"
 
 
 # ── 10. Action events ─────────────────────────────────────────────────────────

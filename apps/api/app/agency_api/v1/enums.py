@@ -150,9 +150,24 @@ class AlertStatus(str, Enum):
     RESOLVED     = "RESOLVED"
 
 
+class DiagnosisStatus(str, Enum):
+    DRAFT = "DRAFT"
+    FINAL = "FINAL"
+
+
+class HypothesisType(str, Enum):
+    FACT       = "FACT"
+    HYPOTHESIS = "HYPOTHESIS"
+    UNKNOWN    = "UNKNOWN"
+
+
 class RecommendationStatus(str, Enum):
-    PENDING_REVIEW       = "PENDING_REVIEW"
+    PROPOSED             = "PROPOSED"
     APPROVED             = "APPROVED"
+    REJECTED             = "REJECTED"
+    EXECUTED             = "EXECUTED"
+    # Legacy values kept for backward compat with action-events / narratives layer
+    PENDING_REVIEW       = "PENDING_REVIEW"
     IGNORED              = "IGNORED"
     EXECUTED_CONFIRMED   = "EXECUTED_CONFIRMED"
     RESOLVED             = "RESOLVED"

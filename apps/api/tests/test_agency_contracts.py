@@ -52,7 +52,6 @@ from app.agency_api.v1.enums import (
 from app.agency_api.v1.metric_refs import missing_refs, validate_refs_in_blocks
 from app.agency_api.v1.schemas import (
     ActionEventCreate,
-    ActionProposal,
     AlertFeedbackCreate,
     AlertOut,
     AlertRuleSuggestionDecision,
@@ -61,7 +60,7 @@ from app.agency_api.v1.schemas import (
     DataHealthEntry,
     DataHealthOut,
     DiagnosisCreate,
-    Hypothesis,
+    EvidenceRefs,
     LearningCandidateCreate,
     MetricContract,
     MetricRef,
@@ -71,6 +70,7 @@ from app.agency_api.v1.schemas import (
     Period,
     RecommendationCreate,
     ReportNarrativeCreate,
+    RootCauseHypothesis,
     TextWithRefs,
     TruthVersions,
 )
@@ -218,95 +218,100 @@ class TestMetricContractExample:
 
 
 class TestDiagnosisExample:
-    """PRD §6 diagnosis example."""
+    """Hermes diagnosis contract (M15 schema)."""
 
     _example = {
-        "schema_version": "1.1",
-        "alert_id": "alt_01J_stub",
-        "facts": [
+        "summary": "Meta ROAS caiu 35% vs baseline 7d — source meta_ads entrou em STALE",
+        "root_cause_hypotheses": [
             {
-                "statement": "Compras Meta caíram {{m1}} vs. baseline de 14 dias",
-                "metric_refs": {
-                    "m1": {
-                        "snapshot_ids": ["snap_124"],
-                        "baseline_snapshot_ids": ["snap_098"],
-                        "presentation": "delta_pct",
-                    }
-                },
-            }
-        ],
-        "localization": "Deterioração concentrada entre carrinho e checkout",
-        "related_changes": ["chg_88"],
-        "hypotheses": [
+                "type": "FACT",
+                "description": "Source meta_ads:act_123 em estado STALE há 48h",
+                "evidence_refs": [],
+            },
             {
-                "statement": "Mudança de frete",
-                "supporting_refs": [],
-                "how_to_verify": "Confirmar com cliente",
-            }
+                "type": "HYPOTHESIS",
+                "description": "Saturação de criativos no ADV+ Geral",
+                "evidence_refs": ["snapshot:snap_124"],
+            },
         ],
+        "evidence": {
+            "alert_id": "alert-001",
+            "source_key": "meta_ads:act_123",
+            "source_state": "STALE",
+        },
         "confidence": "MEDIUM",
-        "do_not_conclude": ["Que o problema é o checkout sem dado da plataforma de e-commerce"],
-        "data_limitations": ["GA4 STALE há 2 dias"],
-        "visibility_scope": "AGENCY_ONLY",
+        "limitations": "GA4 STALE — atribuição cross-device não verificável",
+        "status": "DRAFT",
     }
 
     def test_parses_clean(self):
         d = DiagnosisCreate.model_validate(self._example)
-        assert d.confidence == Level.MEDIUM
-        assert d.visibility_scope == VisibilityScope.AGENCY_ONLY
+        # use_enum_values=True → values stored as str
+        assert str(d.confidence) in ("MEDIUM", Level.MEDIUM)
+        assert str(d.status) in ("DRAFT", "DiagnosisStatus.DRAFT")
 
-    def test_metric_ref_fields(self):
+    def test_hypothesis_types(self):
         d = DiagnosisCreate.model_validate(self._example)
-        ref = d.facts[0].metric_refs["m1"]
-        assert ref.snapshot_ids == ["snap_124"]
-        assert ref.baseline_snapshot_ids == ["snap_098"]
-        assert ref.presentation == "delta_pct"
+        # use_enum_values=True → stored as str
+        types = [h.type if isinstance(h.type, str) else h.type.value
+                 for h in d.root_cause_hypotheses]
+        assert "FACT" in types
+        assert "HYPOTHESIS" in types
 
-    def test_default_visibility_agency_only(self):
-        payload = dict(self._example)
-        del payload["visibility_scope"]
-        d = DiagnosisCreate.model_validate(payload)
-        assert d.visibility_scope == VisibilityScope.AGENCY_ONLY
+    def test_evidence_refs_structure(self):
+        d = DiagnosisCreate.model_validate(self._example)
+        assert d.evidence.source_key == "meta_ads:act_123"
+        assert d.evidence.source_state == "STALE"
+
+    def test_summary_required(self):
+        with pytest.raises(ValidationError):
+            DiagnosisCreate.model_validate({"confidence": "MEDIUM"})
+
+    def test_default_status_is_draft(self):
+        d = DiagnosisCreate.model_validate({"summary": "test"})
+        assert str(d.status) in ("DRAFT", "DiagnosisStatus.DRAFT")
 
 
 class TestRecommendationExample:
-    """PRD §6 recommendation example."""
+    """Hermes recommendation contract (M15 schema)."""
 
     _example = {
-        "schema_version": "1.1",
-        "diagnosis_id": "dia_01J_stub",
-        "recommendation": "Reduzir budget do ADV+ Geral em 15% e reavaliar em 72h",
-        "action_proposal": {
-            "platform": "meta_ads",
-            "platform_account_id": "act_123",
-            "entity_type": "campaign",
-            "entity_id": "120210000000",
-            "entity_name_at_time": "ADV+ Geral",
-            "change_type": "BUDGET",
-            "before": 500,
-            "after": 425,
-            "unit": "BRL/dia",
-        },
+        "title": "Reduzir budget ADV+ em 15%",
+        "action": "Reduzir budget diário de R$500 → R$425 na campanha ADV+ Geral",
+        "rationale": "Conter CPA enquanto criativos são renovados",
         "priority": "HIGH",
-        "confidence": "MEDIUM",
-        "risk": "LOW",
-        "reversible": True,
-        "expected_effect": "Conter CPA enquanto criativos são renovados",
-        "review_window_days": 3,
-        "requires_approval": True,
-        "visibility_scope": "AGENCY_ONLY",
+        "risk": "Potencial queda de alcance em 72h",
+        "expected_impact": "CPA reduz ~15% no período de renovação",
+        "requires_human_approval": True,
     }
 
     def test_parses_clean(self):
         r = RecommendationCreate.model_validate(self._example)
         assert r.priority == Level.HIGH
-        assert r.risk == Level.LOW
+        assert r.requires_human_approval is True
 
-    def test_action_proposal_uses_platform_ids(self):
-        r = RecommendationCreate.model_validate(self._example)
-        assert r.action_proposal is not None
-        assert r.action_proposal.entity_id == "120210000000"
-        assert r.action_proposal.change_type == ChangeType.BUDGET
+    def test_default_priority_is_medium(self):
+        r = RecommendationCreate.model_validate({
+            "title": "Test",
+            "action": "Do X",
+            "rationale": "Because Y",
+        })
+        assert r.priority == Level.MEDIUM
+
+    def test_requires_human_approval_defaults_true(self):
+        r = RecommendationCreate.model_validate({
+            "title": "Test",
+            "action": "Do X",
+            "rationale": "Because Y",
+        })
+        assert r.requires_human_approval is True
+
+    def test_missing_title_fails(self):
+        with pytest.raises(ValidationError):
+            RecommendationCreate.model_validate({
+                "action": "Do X",
+                "rationale": "Because Y",
+            })
 
 
 class TestChangeLogExample:
@@ -387,14 +392,9 @@ class TestReportNarrativeExample:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestValidationErrors:
-    def test_diagnosis_missing_confidence_fails(self):
+    def test_diagnosis_missing_summary_fails(self):
         with pytest.raises(ValidationError):
-            DiagnosisCreate.model_validate({
-                "schema_version": "1.1",
-                "alert_id": "alt_01",
-                "facts": [],
-                # confidence is required — omitted
-            })
+            DiagnosisCreate.model_validate({})  # summary is required
 
     def test_unknown_value_status_fails(self):
         with pytest.raises(ValidationError):
@@ -426,13 +426,12 @@ class TestValidationErrors:
                 "health": {},
             })
 
-    def test_recommendation_missing_priority_fails(self):
+    def test_recommendation_missing_title_fails(self):
         with pytest.raises(ValidationError):
             RecommendationCreate.model_validate({
-                "schema_version": "1.1",
-                "diagnosis_id": "dia_01",
-                "recommendation": "Reduce budget",
-                # priority, confidence, risk, reversible required — omitted
+                "action": "Do X",
+                "rationale": "Because Y",
+                # title is required — omitted
             })
 
     def test_change_missing_source_fails(self):
@@ -544,11 +543,16 @@ class TestSchemaVersion:
         })
         assert mc.schema_version == "1.1"
 
-    def test_diagnosis_has_version(self):
-        d = DiagnosisCreate.model_validate({
-            "alert_id": "alt_01",
-            "facts": [],
-            "confidence": "MEDIUM",
+    def test_diagnosis_out_has_version(self):
+        from app.agency_api.v1.schemas import DiagnosisOut
+        from datetime import datetime, timezone
+        d = DiagnosisOut.model_validate({
+            "id": "diag-001",
+            "alert_id": "alert-001",
+            "status": "DRAFT",
+            "summary": "test",
+            "created_at": datetime(2026, 10, 6, tzinfo=timezone.utc),
+            "created_by": "hermes",
         })
         assert d.schema_version == "1.1"
 
@@ -770,12 +774,24 @@ class TestCCR011IntelChain:
     All require at least agency_admin scope.
     """
 
+    @staticmethod
+    def _empty_db():
+        from unittest.mock import MagicMock
+        m = MagicMock()
+        tbl = MagicMock()
+        for method in ("select", "eq", "in_", "order", "limit", "is_", "insert", "update", "maybe_single"):
+            getattr(tbl, method).return_value = tbl
+        tbl.execute.return_value = MagicMock(data=[])
+        m.table.return_value = tbl
+        return m
+
     def _authed_get(self, path: str):
         with (
             patch.object(_settings, "AGENCY_API_ADMIN_KEY",    _ADMIN_KEY),
             patch.object(_settings, "AGENCY_API_HERMES_KEY",   ""),
             patch.object(_settings, "AGENCY_API_PLATFORM_KEY", ""),
             patch.object(_settings, "SUPABASE_JWT_SECRET",     ""),
+            patch("app.agency_api.v1.router._get_db", return_value=self._empty_db()),
         ):
             return _agency_test_client().get(
                 path,
