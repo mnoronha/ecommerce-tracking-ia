@@ -179,7 +179,8 @@ _FRESHNESS_HOURS: dict[str, int] = {
 # Dedup key builders per source_system (returns a hashable key per row)
 _DEDUP_KEY: dict[str, Any] = {
     "meta_ads":   lambda r: r.get("campaign_id"),
-    "google_ads": lambda r: r.get("date"),
+    # campaign_id: per-campaign rows (new). date: summary_row fallback (old, no campaign_id).
+    "google_ads": lambda r: r.get("campaign_id") or r.get("date"),
     "ga4":        lambda r: r.get("channel"),
     "shopify":    lambda r: r.get("id") or r.get("order_id"),  # orders table PK is "id"
 }
