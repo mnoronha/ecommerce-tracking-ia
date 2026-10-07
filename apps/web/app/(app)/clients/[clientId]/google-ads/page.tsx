@@ -12,7 +12,7 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
-import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
+import { useDatePeriod, periodToQuery, periodToRange, type Period } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import { ColHeader } from '@/components/ui/metric-tooltip'
 
@@ -34,6 +34,11 @@ interface Totals {
   conversions?: number | null
   conversions_value?: number | null
   roas_google?: number | null
+}
+
+interface CoreSnap {
+  business_model: string
+  metrics: Array<{ metric_key: string; value: number | null }>
 }
 
 interface CampaignRow {
@@ -80,6 +85,12 @@ interface OverviewData {
 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function toCoreApiPeriod(period: Period, from: string, to: string): string {
+  const { start, end } = periodToRange(period, from, to)
+  const f = (d: Date) => d.toISOString().split('T')[0]
+  return `${f(start)}:${f(end)}`
+}
 
 const fmt   = (n: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(n)
 const fmtD2 = (n: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 2 }).format(n)
@@ -269,18 +280,21 @@ export default function GoogleAdsPage() {
   const pixelId = params.clientId as string
 
   const { period, from, to, setPreset, setCustom } = useDatePeriod()
-  const [data,    setData]    = useState<OverviewData | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [data,      setData]      = useState<OverviewData | null>(null)
+  const [coreSnap,  setCoreSnap]  = useState<CoreSnap | null>(null)
+  const [loading,   setLoading]   = useState(true)
   const [campExpanded, setCampExpanded] = useState<Set<string>>(new Set())
 
   const load = useCallback(async (q: string) => {
     setLoading(true)
-    try {
-      const res  = await fetch(`${API_URL}/google-ads/${pixelId}/overview?${q}`)
-      if (res.ok) setData(await res.json())
-    } catch (_) {}
+    await Promise.allSettled([
+      fetch(`${API_URL}/google-ads/${pixelId}/overview?${q}`)
+        .then(r => r.ok ? r.json() : null).then(d => { if (d) setData(d) }).catch(() => {}),
+      fetch(`/api/v1/clients/${pixelId}/metrics?period=${toCoreApiPeriod(period, from, to)}`)
+        .then(r => r.ok ? r.json() : null).then(d => { if (d) setCoreSnap(d) }).catch(() => {}),
+    ])
     setLoading(false)
-  }, [pixelId])
+  }, [pixelId, period, from, to])
 
   useEffect(() => {
     if (period === 'custom' && (!from || !to)) return
@@ -302,6 +316,11 @@ export default function GoogleAdsPage() {
   }))
 
   const campaignsWithProducts = (data?.campaigns || []).filter(c => c.orders > 0 && c.top_products.length > 0)
+
+  const isEcommerce = coreSnap?.business_model === 'ecommerce'
+  const coreM: Record<string, number | null> = Object.fromEntries(
+    (coreSnap?.metrics ?? []).map(m => [m.metric_key, m.value ?? null])
+  )
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -341,14 +360,33 @@ export default function GoogleAdsPage() {
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
             <KpiCard label="Investimento"        value={t?.has_spend ? fmt(t.spend) : '—'}                       delta={dlt.spend}            invertDelta accent="rose"
               sub={t && !t.has_spend ? 'sem sync de spend' : undefined} />
-            <KpiCard label="ROAS (Google API)"   value={t?.roas_google != null ? `${t.roas_google.toFixed(2)}x` : '—'} delta={dlt.roas_google} accent="emerald"
-              sub="conv. reportadas pelo Google" />
-            <KpiCard label="Conv. Google (API)"  value={t?.conversions != null ? fmtN(Math.round(t.conversions)) : '—'} delta={dlt.conversions} accent="emerald"
-              sub={t?.conversions_value != null ? fmt(t.conversions_value) : undefined} />
+            {isEcommerce ? (
+              <KpiCard label="ROAS Google (e-com)"
+                value={coreM.google_roas_ecommerce != null ? `${coreM.google_roas_ecommerce.toFixed(2)}x` : '—'}
+                accent="emerald" sub="conversões PURCHASE" />
+            ) : (
+              <KpiCard label="ROAS (Google API)"   value={t?.roas_google != null ? `${t.roas_google.toFixed(2)}x` : '—'} delta={dlt.roas_google} accent="emerald"
+                sub="conv. reportadas pelo Google" />
+            )}
+            {isEcommerce ? (
+              <KpiCard label="Compras Google (API)"
+                value={coreM.google_purchase_conversions != null ? fmtN(Math.round(coreM.google_purchase_conversions)) : '—'}
+                accent="emerald"
+                sub={coreM.google_purchase_conversion_value != null ? `${fmt(coreM.google_purchase_conversion_value)} · PURCHASE` : 'categoria PURCHASE'} />
+            ) : (
+              <KpiCard label="Conv. Google (API)"  value={t?.conversions != null ? fmtN(Math.round(t.conversions)) : '—'} delta={dlt.conversions} accent="emerald"
+                sub={t?.conversions_value != null ? fmt(t.conversions_value) : undefined} />
+            )}
             <KpiCard label="Compras (tracking)"  value={t ? String(t.orders) : '—'}                              delta={dlt.orders}           accent="teal"
               sub="pedidos com utm=google" />
             <KpiCard label="Receita (tracking)"  value={t ? fmt(t.revenue) : '—'}                                delta={dlt.revenue}          accent="teal" />
-            <KpiCard label="CPA"                 value={t?.cpa != null ? fmtD2(t.cpa) : '—'}                    invertDelta />
+            {isEcommerce ? (
+              <KpiCard label="CPA Google (e-com)"
+                value={coreM.google_cpa_ecommerce != null ? fmtD2(coreM.google_cpa_ecommerce) : '—'}
+                invertDelta sub="gasto / compras PURCHASE" />
+            ) : (
+              <KpiCard label="CPA"               value={t?.cpa != null ? fmtD2(t.cpa) : '—'}                    invertDelta />
+            )}
             <KpiCard label="Ticket Médio"        value={t?.avg_ticket != null ? fmt(t.avg_ticket) : '—'}         accent="orange" />
             <KpiCard label="Impressões"          value={t ? fmtN(t.impressions) : '—'}                           accent="blue" />
             <KpiCard label="CPM"                 value={t?.cpm != null ? fmtD2(t.cpm) : t && t.impressions > 0 ? fmtD2(t.spend / t.impressions * 1000) : '—'} accent="blue" />
