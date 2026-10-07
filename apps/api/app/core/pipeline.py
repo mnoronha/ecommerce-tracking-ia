@@ -427,10 +427,13 @@ def run_pipeline(
     all_aggs["cpa_meta"]    = round(meta_spend / meta_convs, 2) if meta_convs > 0 else None  # type: ignore[assignment]
     all_aggs["cpa_google"]  = round(google_spend / google_convs, 2) if google_convs > 0 else None  # type: ignore[assignment]
 
-    google_purchase_convs = all_aggs.get("google_purchase_conversions", 0.0) or 0.0
-    google_purchase_cv    = all_aggs.get("google_purchase_conversion_value", 0.0) or 0.0
-    all_aggs["google_roas_ecommerce"] = round(google_purchase_cv / google_spend, 4) if google_spend > 0 else None  # type: ignore[assignment]
-    all_aggs["google_cpa_ecommerce"]  = round(google_spend / google_purchase_convs, 2) if google_purchase_convs > 0 else None  # type: ignore[assignment]
+    # Only compute ecommerce derived metrics when purchase query succeeded (not None).
+    # If _fetch_google_purchase_range failed, keys are absent from all_aggs — leave derived as None.
+    google_purchase_convs = all_aggs.get("google_purchase_conversions")
+    google_purchase_cv    = all_aggs.get("google_purchase_conversion_value")
+    if google_purchase_convs is not None and google_purchase_cv is not None:
+        all_aggs["google_roas_ecommerce"] = round(google_purchase_cv / google_spend, 4) if google_spend > 0 else None  # type: ignore[assignment]
+        all_aggs["google_cpa_ecommerce"]  = round(google_spend / google_purchase_convs, 2) if google_purchase_convs > 0 else None  # type: ignore[assignment]
 
     # ── Build metric values ───────────────────────────────────────────────────
     metric_values: list[dict[str, Any]] = []

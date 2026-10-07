@@ -114,11 +114,14 @@ def _fetch_google_purchase_range(
         return None
 
     clean_cid = customer_id.replace("-", "").replace(" ", "")
+    # FROM conversion_action (not customer) so conversion_action.category is a valid filter.
+    # segments.conversion_action_category cannot be used as a WHERE filter on the customer resource.
     query = (
-        "SELECT metrics.conversions, metrics.conversions_value "
-        "FROM customer "
+        "SELECT conversion_action.id, conversion_action.category, "
+        "metrics.conversions, metrics.conversions_value "
+        "FROM conversion_action "
         f"WHERE segments.date BETWEEN '{period_start.isoformat()}' AND '{period_end.isoformat()}' "
-        "AND segments.conversion_action_category = 'PURCHASE'"
+        "AND conversion_action.category = 'PURCHASE'"
     )
 
     headers: dict = {
