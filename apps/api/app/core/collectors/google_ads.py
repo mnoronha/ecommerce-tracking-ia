@@ -98,9 +98,13 @@ def _fetch_google_purchase_range(
     manager_id: Optional[str] = None,
 ) -> Optional[dict]:
     """
-    GAQL query filtered to PURCHASE category actions only.
-    Returns {purchase_conversions, purchase_conversion_value} or None on failure.
-    Uses the same token infrastructure as _fetch_google_range.
+    Aggregate PURCHASE-category conversions for the period.
+    Returns {purchase_conversions, purchase_conversion_value, purchase_actions} or None on failure.
+
+    Strategy: query FROM campaign with segments.conversion_action_category in SELECT
+    (not WHERE — category is not reliably filterable server-side in v23).
+    Filter PURCHASE rows client-side. FROM campaign is the same resource the
+    legacy collector uses and is known to work with this account setup.
     """
     if not all([
         settings.GOOGLE_ADS_DEVELOPER_TOKEN,
@@ -114,14 +118,13 @@ def _fetch_google_purchase_range(
         return None
 
     clean_cid = customer_id.replace("-", "").replace(" ", "")
-    # FROM conversion_action (not customer) so conversion_action.category is a valid filter.
-    # segments.conversion_action_category cannot be used as a WHERE filter on the customer resource.
+    # segments.conversion_action + segments.conversion_action_category in SELECT
+    # gives one row per (campaign × date × conversion_action). Filter PURCHASE in Python.
     query = (
-        "SELECT conversion_action.id, conversion_action.category, "
+        "SELECT segments.conversion_action, segments.conversion_action_category, "
         "metrics.conversions, metrics.conversions_value "
-        "FROM conversion_action "
-        f"WHERE segments.date BETWEEN '{period_start.isoformat()}' AND '{period_end.isoformat()}' "
-        "AND conversion_action.category = 'PURCHASE'"
+        "FROM campaign "
+        f"WHERE segments.date BETWEEN '{period_start.isoformat()}' AND '{period_end.isoformat()}'"
     )
 
     headers: dict = {
@@ -142,15 +145,28 @@ def _fetch_google_purchase_range(
             )
             return None
         results = resp.json().get("results") or []
-        total_convs = 0.0
-        total_value = 0.0
+        total_convs  = 0.0
+        total_value  = 0.0
+        action_names: set = set()
         for row in results:
+            seg = row.get("segments") or {}
+            if seg.get("conversionActionCategory") != "PURCHASE":
+                continue
             m = row.get("metrics") or {}
             total_convs += float(m.get("conversions", 0))
             total_value += float(m.get("conversionsValue", 0))
+            action_resource = seg.get("conversionAction", "")
+            if action_resource:
+                action_names.add(action_resource)
+        logger.info(
+            "core/google_ads: purchase query for %s → %.2f convs, %d PURCHASE actions: %s",
+            customer_id, total_convs, len(action_names),
+            ", ".join(sorted(action_names)) or "none",
+        )
         return {
             "purchase_conversions":      round(total_convs, 2),
             "purchase_conversion_value": round(total_value, 2),
+            "purchase_actions":          sorted(action_names),
         }
     except Exception as exc:
         logger.warning("core/google_ads: purchase fetch failed for %s: %s", customer_id, exc)
