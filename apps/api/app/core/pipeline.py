@@ -358,6 +358,11 @@ def run_pipeline(
         if dqg.source_state in ("READY", "PARTIAL"):
             all_aggs.update(coll.aggregates)
         sources.append(SourceResult("ga4", src_key, coll, dqg))
+    elif not c.get("ga4_property_id"):
+        # Property ID not configured — data pathway absent, not merely un-contracted
+        src_key = f"ga4:{client_id}"
+        _upsert_source_state(client_id, src_key, "MISSING", "ga4_property_id_missing", False)
+        health["ga4"] = "MISSING"
     else:
         health["ga4"] = "NOT_CONTRACTED"
 
