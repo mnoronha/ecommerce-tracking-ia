@@ -373,6 +373,35 @@ class RecommendationOut(_Base):
     created_by: str = "hermes"
 
 
+# ── 9b. Recommendation decision (human-only) ─────────────────────────────────
+
+class RecommendationDecision(_Base):
+    """
+    Request body for POST /recommendations/{id}/decision.
+
+    Allowed scopes: agency_admin, platform_web.
+    hermes_service is EXPLICITLY excluded — Hermes cannot approve autonomously.
+
+    decision semantics:
+      ACCEPTED → recommendation.status = APPROVED (human approval for possible future execution)
+      REJECTED → recommendation.status = REJECTED
+      DEFERRED → recommendation.status = DEFERRED (revisit later; does NOT authorise any external change)
+
+    actor MUST be a stable human identifier (user slug or UUID), never a service name.
+    reason is optional but strongly recommended for REJECTED and DEFERRED.
+    """
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    decision: Literal["ACCEPTED", "REJECTED", "DEFERRED"]
+    actor: str = Field(
+        description=(
+            "Stable identifier of the human making this decision "
+            "(e.g. a user slug or UUID — not a service identity). "
+            "Passing a service name here is an audit contract violation."
+        )
+    )
+    reason: Optional[str] = None
+
+
 # ── 10. Action events ─────────────────────────────────────────────────────────
 
 class ActionEventCreate(_Base):

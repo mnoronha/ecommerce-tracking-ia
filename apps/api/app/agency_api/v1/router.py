@@ -36,6 +36,7 @@ Route inventory (32 routes):
   POST /report-narratives
   POST /report-narratives/{narrative_id}/transitions
   POST /alert-rule-suggestions/{suggestion_id}/decision
+  POST /recommendations/{recommendation_id}/decision  [human-only, PLATFORM_WRITE]
   POST /learning-candidates
   POST /jobs/{job_id}/replay
   GET  /clients/{client_id}/entity-performance
@@ -118,6 +119,7 @@ from .schemas import (
     Period,
     PipelineHealthOut,
     RecommendationCreate,
+    RecommendationDecision,
     RecommendationOut,
     RecommendationStatus,
     ReportNarrativeCreate,
@@ -1690,6 +1692,123 @@ async def get_recommendation(
     if not row:
         raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
     return _recommendation_row_to_out(row)
+
+
+# ── POST /recommendations/{recommendation_id}/decision ───────────────────────
+#
+# Human Decision Contract — Core invariants:
+#   1. Scope SCOPE_PLATFORM_WRITE: agency_admin + platform_web only.
+#      hermes_service is DENIED at the auth layer — Hermes cannot approve autonomously.
+#   2. Decision is always human: `actor` in body MUST be a human identifier.
+#   3. DEFERRED ≠ ACCEPTED: DEFERRED does not authorise any external write or Change.
+#   4. Idempotency via Idempotency-Key header: fingerprint stored in decision_fingerprint.
+#   5. Audit trail: every decision writes a core_action_events row with actor + timestamp.
+#   6. Terminal states (APPROVED, REJECTED, EXECUTED) block further decisions (422).
+
+_VALID_DECISION_SOURCES: frozenset[str] = frozenset({"PROPOSED", "DEFERRED"})
+
+_DECISION_TO_STATUS: dict[str, str] = {
+    "ACCEPTED": "APPROVED",
+    "REJECTED": "REJECTED",
+    "DEFERRED": "DEFERRED",
+}
+
+_DECISION_TO_EVENT: dict[str, str] = {
+    "ACCEPTED": "APPROVED",
+    "REJECTED": "REJECTED",
+    "DEFERRED": "DEFERRED",
+}
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/decision",
+    summary="Record a human decision on a recommendation (ACCEPTED / REJECTED / DEFERRED)",
+    response_model=RecommendationOut,
+)
+async def decide_recommendation(
+    recommendation_id: str,
+    body: RecommendationDecision,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> RecommendationOut:
+    if not _is_valid_uuid(recommendation_id):
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+    db = _get_db()
+
+    # Load current recommendation
+    try:
+        res = (
+            db.table("core_recommendations")
+            .select("*")
+            .eq("id", recommendation_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("decide_recommendation: fetch failed %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+
+    # Idempotency: if same Idempotency-Key already stored, return current row unchanged
+    fingerprint: Optional[str] = None
+    if idempotency_key:
+        fingerprint = f"dec:{recommendation_id}:{idempotency_key}"
+        if row.get("decision_fingerprint") == fingerprint:
+            return _recommendation_row_to_out(row)
+
+    # State machine: only PROPOSED and DEFERRED accept a new decision
+    current_status = row.get("status", "PROPOSED")
+    if current_status not in _VALID_DECISION_SOURCES:
+        raise HTTPException(
+            422,
+            f"recommendation {recommendation_id!r} is in terminal state {current_status!r}; "
+            "decisions can only be made on PROPOSED or DEFERRED recommendations",
+        )
+
+    decision   = body.decision
+    new_status = _DECISION_TO_STATUS[decision]
+    event_type = _DECISION_TO_EVENT[decision]
+    now_utc    = datetime.now(timezone.utc)
+
+    # Persist status change (+ idempotency fingerprint if key supplied)
+    update_payload: dict = {"status": new_status, "updated_at": now_utc.isoformat()}
+    if fingerprint:
+        update_payload["decision_fingerprint"] = fingerprint
+    try:
+        upd = (
+            db.table("core_recommendations")
+            .update(update_payload)
+            .eq("id", recommendation_id)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("decide_recommendation: update failed %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    updated_row = (upd.data[0] if (upd and upd.data) else None) or {**row, **update_payload}
+
+    # Audit trail: insert action event (non-fatal on failure — rec already updated)
+    try:
+        db.table("core_action_events").insert({
+            "recommendation_id": recommendation_id,
+            "event_type":        event_type,
+            "actor":             body.actor,
+            "occurred_at":       now_utc.isoformat(),
+            "note":              body.reason,
+        }).execute()
+    except Exception as exc:
+        logger.warning(
+            "decide_recommendation: audit event insert failed (status already updated) %s: %s",
+            recommendation_id, exc,
+        )
+
+    logger.info(
+        "decide_recommendation: %s %s→%s actor=%s scope=%s",
+        recommendation_id, current_status, new_status, body.actor,
+        getattr(_auth, "scope", "unknown") if _auth else "unknown",
+    )
+    return _recommendation_row_to_out(updated_row)
 
 
 # ── Intel chain: POST endpoints (Hermes write) ────────────────────────────────

@@ -102,6 +102,8 @@ class JobStatus(str, Enum):
 
 class ActionEventType(str, Enum):
     APPROVED             = "APPROVED"
+    REJECTED             = "REJECTED"
+    DEFERRED             = "DEFERRED"
     IGNORED              = "IGNORED"
     EXECUTED_CONFIRMED   = "EXECUTED_CONFIRMED"
     RESOLVED             = "RESOLVED"
@@ -165,6 +167,7 @@ class RecommendationStatus(str, Enum):
     PROPOSED             = "PROPOSED"
     APPROVED             = "APPROVED"
     REJECTED             = "REJECTED"
+    DEFERRED             = "DEFERRED"
     EXECUTED             = "EXECUTED"
     # Legacy values kept for backward compat with action-events / narratives layer
     PENDING_REVIEW       = "PENDING_REVIEW"
