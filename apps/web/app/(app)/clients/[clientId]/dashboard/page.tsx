@@ -102,6 +102,14 @@ interface Insight {
   created_at: string
 }
 
+interface MetricValue {
+  metric_key:   string
+  value:        number | null
+  value_status: string
+  unit?:        string
+  currency?:    string
+}
+
 interface CohortMonth {
   label:     string   // e.g. "Abr 2025"
   newBuyers: number
@@ -794,6 +802,8 @@ export default function DashboardPage() {
   const [ga4TopPages, setGa4TopPages]   = useState<Ga4TopPage[]>([])
   const [ltvStats, setLtvStats]         = useState<LtvStats | null>(null)
   const [refundsSummary, setRefundsSummary] = useState<{ count: number; total: number; rate_pct: number } | null>(null)
+  const [canonicalMetrics, setCanonicalMetrics] = useState<MetricValue[]>([])
+  const [businessModel,    setBusinessModel]    = useState<string>('ecommerce')
 
   // Derived from allOrdersRaw + country filter — recomputes only when raw data
   // or country changes, not on every unrelated setState (insights, pacing, etc.)
@@ -820,6 +830,14 @@ export default function DashboardPage() {
     [params?.clientId],
   )
 
+  const periodForApi = useMemo(() => {
+    const now = new Date()
+    if (period === 'custom' && from && to) return `${from}:${to}`
+    const d = period === '1d' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : 90
+    const start = new Date(); start.setDate(start.getDate() - d)
+    return `${start.toISOString().split('T')[0]}:${now.toISOString().split('T')[0]}`
+  }, [period, from, to])
+
   // Cache clientId so we don't hit Supabase on every filter change
   const clientIdRef = useRef<string | null>(null)
 
@@ -833,6 +851,19 @@ export default function DashboardPage() {
     setGa4Summary(null)
     setKpis(null)
   }, [CLIENT_PIXEL_ID])
+
+  // Fetch canonical KPIs from Agency API (pre-computed snapshots — not live orders)
+  useEffect(() => {
+    setCanonicalMetrics([])
+    fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/metrics?period=${periodForApi}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        if (data.metrics?.length) setCanonicalMetrics(data.metrics)
+        if (data.business_model) setBusinessModel(data.business_model)
+      })
+      .catch(() => {})
+  }, [CLIENT_PIXEL_ID, periodForApi])
 
   const loadData = useCallback(async () => {
     if (period === 'custom' && (!from || !to)) return
@@ -1397,6 +1428,15 @@ export default function DashboardPage() {
     if (activeTab === 'clients') loadClientsTab()
   }, [activeTab, loadClientsTab])
 
+  // ── KPI labels — branch by business_model (from Agency API MetricContract) ──
+  const isLeadGen = businessModel === 'lead_gen'
+  const kpiLabels = {
+    revenue:  isLeadGen ? 'Faturamento' : 'Receita',
+    orders:   isLeadGen ? 'Conversões'  : 'Pedidos',
+    visitors: isLeadGen ? 'Sessões'     : 'Visitantes',
+    aov:      isLeadGen ? 'Custo/Conv.' : 'Ticket Médio',
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">
@@ -1474,10 +1514,30 @@ export default function DashboardPage() {
           <PacingWidget pacing={pacing} />
         )}
 
-        {/* KPIs — clicáveis abrem drilldown */}
+        {/* Métricas certificadas — Agency API (pré-computadas, aparecem quando o pipeline rodou) */}
+        {canonicalMetrics.length > 0 && (
+          <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl px-5 py-3">
+            <div className="flex items-center gap-2 mb-2.5">
+              <span className="text-xs font-semibold text-indigo-300">Certificado</span>
+              <span className="text-[10px] text-slate-500">· Agency API · core_metric_snapshots</span>
+            </div>
+            <div className="flex flex-wrap gap-6">
+              {canonicalMetrics.map(m => m.value != null && (
+                <div key={m.metric_key}>
+                  <p className="text-[10px] text-slate-500 mb-0.5 capitalize">{m.metric_key.replace(/_/g, ' ')}</p>
+                  <p className="text-sm font-bold text-white">
+                    {(m.unit === 'BRL' || m.currency === 'BRL') ? fmt(m.value) : m.value.toLocaleString('pt-BR')}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* KPIs ao vivo — clicáveis abrem drilldown */}
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <KPICard
-            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0 ? 'Receita (GA4)' : 'Receita'}
+            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0 ? `${kpiLabels.revenue} (GA4)` : kpiLabels.revenue}
             value={
               kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0
                 ? fmt(ga4Summary.revenue)
@@ -1506,7 +1566,7 @@ export default function DashboardPage() {
             />
           )}
           <KPICard
-            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'Pedidos (GA4)' : 'Pedidos'}
+            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? `${kpiLabels.orders} (GA4)` : kpiLabels.orders}
             value={
               kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0
                 ? ga4Summary.purchases.toLocaleString('pt-BR')
@@ -1519,7 +1579,7 @@ export default function DashboardPage() {
             hint={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'via Google Analytics 4' : undefined}
             onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('orders')} />
           <KPICard
-            title={kpis?.totalVisitors === 0 && ga4Summary ? 'Sessões (GA4)' : 'Visitantes'}
+            title={kpis?.totalVisitors === 0 && ga4Summary ? `${kpiLabels.visitors} (GA4)` : kpiLabels.visitors}
             value={
               kpis?.totalVisitors === 0 && ga4Summary
                 ? ga4Summary.sessions.toLocaleString('pt-BR')
@@ -1536,7 +1596,7 @@ export default function DashboardPage() {
             }
             color="bg-purple-500/10 text-purple-400" />
           <KPICard
-            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'Ticket Médio (GA4)' : 'Ticket Médio'}
+            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? `${kpiLabels.aov} (GA4)` : kpiLabels.aov}
             value={
               kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 && ga4Summary.revenue > 0
                 ? fmt(ga4Summary.revenue / ga4Summary.purchases)

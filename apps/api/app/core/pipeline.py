@@ -235,6 +235,7 @@ def run_pipeline(
             sb.table("clients")
             .select(
                 "id, client_id, name, timezone, currency, country, business_model, "
+                "ecommerce_platform, shopify_health, "
                 "meta_ad_account_id, meta_access_token, "
                 "google_ads_customer_id, google_ads_refresh_token, google_ads_login_customer_id, "
                 "ga4_property_id"
@@ -360,24 +361,47 @@ def run_pipeline(
     else:
         health["ga4"] = "NOT_CONTRACTED"
 
-    # — Business (Shopify) ─────────────────────────────────────────────────────
-    src_key = f"shopify:{client_id}"
-    coll    = collect_business(
-        client_uuid=client_uuid,
-        client_id=client_id,
-        period_start=period_start,
-        period_end=period_end,
-        client_currency=currency,
-        client_timezone=tz,
-    )
-    dqg = run_dqg(coll)
-    _upsert_source_state(
-        client_id, src_key, dqg.source_state, coll.error, dqg.has_data,
-    )
-    health["business"] = dqg.source_state
-    # Business: 0 orders is valid data — include even with source_state=NO_DATA
-    all_aggs.update(coll.aggregates)
-    sources.append(SourceResult("shopify", src_key, coll, dqg))
+    # — Business ───────────────────────────────────────────────────────────────
+    # Semantic state rules (in order of precedence):
+    #   MISSING     → no adapter for this platform (data pathway absent)
+    #   ACCESS_MISSING → adapter exists, credential invalid/rejected (cannot trust 0)
+    #   NO_DATA     → adapter OK, credential valid, query ran, zero results returned
+    #   READY/PARTIAL → data collected
+    _PLATFORMS_WITH_ADAPTER = frozenset({"shopify"})
+    platform       = (c.get("ecommerce_platform") or "").lower()
+    shopify_health = (c.get("shopify_health") or "").lower()
+    src_key        = f"shopify:{client_id}"
+
+    if platform not in _PLATFORMS_WITH_ADAPTER:
+        _upsert_source_state(
+            client_id, src_key, "MISSING", f"adapter_missing:{platform or 'unknown'}", False,
+        )
+        health["business"] = "MISSING"
+        # revenue_business absent from aggregates → MISSING in snapshot, not 0
+    elif shopify_health == "invalid":
+        # Token rejected by Shopify — webhook sync broken, local DB cannot be trusted as current
+        _upsert_source_state(
+            client_id, src_key, "ACCESS_MISSING", f"shopify_health:invalid", False,
+        )
+        health["business"] = "ACCESS_MISSING"
+        # revenue_business absent from aggregates → ACCESS_MISSING in snapshot, not 0
+    else:
+        coll = collect_business(
+            client_uuid=client_uuid,
+            client_id=client_id,
+            period_start=period_start,
+            period_end=period_end,
+            client_currency=currency,
+            client_timezone=tz,
+        )
+        dqg = run_dqg(coll)
+        _upsert_source_state(
+            client_id, src_key, dqg.source_state, coll.error, dqg.has_data,
+        )
+        health["business"] = dqg.source_state
+        # Business: 0 orders is valid data — include even with source_state=NO_DATA
+        all_aggs.update(coll.aggregates)
+        sources.append(SourceResult("shopify", src_key, coll, dqg))
 
     # ── Derived metrics ───────────────────────────────────────────────────────
     meta_spend   = all_aggs.get("meta_spend",   0.0) or 0.0

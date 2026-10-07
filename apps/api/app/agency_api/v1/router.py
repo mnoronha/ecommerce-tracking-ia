@@ -40,6 +40,9 @@ Route inventory (32 routes):
   POST /jobs/{job_id}/replay
   GET  /clients/{client_id}/entity-performance
   GET  /clients/{client_id}/data-source/{source_key}
+  GET  /dashboard
+  GET  /clients/{client_id}/action-events
+  POST /clients/{client_id}/pipeline/trigger
 """
 
 from __future__ import annotations
@@ -1321,6 +1324,29 @@ async def get_alert_context(
     )
 
 
+# ── GET /dashboard ───────────────────────────────────────────────────────────
+
+@router.get(
+    "/dashboard",
+    summary="Agency dashboard — per-client aggregates via get_agency_dashboard RPC",
+    response_model=list[dict],
+)
+async def get_agency_dashboard_summary(
+    agency_id: str = Query(..., description="Agency UUID"),
+    days: int = Query(30, ge=1, le=90),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[dict]:
+    try:
+        res = _get_db().rpc("get_agency_dashboard", {
+            "p_agency_id": agency_id,
+            "p_days": days,
+        }).execute()
+        return res.data or []
+    except Exception as exc:
+        logger.error("get_agency_dashboard_summary: RPC error: %s", exc)
+        raise HTTPException(503, "database unavailable")
+
+
 # ── GET /alert-rule-suggestions ───────────────────────────────────────────────
 
 # CCR-014: no alert rule suggestions yet → honest empty list.
@@ -1892,6 +1918,53 @@ async def get_recommendation_action_events(
     return [_action_event_row_to_out(r) for r in (res.data or [])]
 
 
+# ── GET /clients/{client_id}/action-events ────────────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/action-events",
+    summary="Flat action events list for a client (2-step: recommendations → events)",
+    response_model=list[ActionEventOut],
+)
+async def get_client_action_events(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[ActionEventOut]:
+    client = _load_client_meta(client_id)
+    if not client:
+        raise HTTPException(404, f"client not found: {client_id!r}")
+
+    db = _get_db()
+    try:
+        recs_res = (
+            db.table("core_recommendations")
+            .select("id")
+            .eq("client_id", client["id"])
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_client_action_events: recs query failed for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+
+    rec_ids = [str(r["id"]) for r in (recs_res.data or [])]
+    if not rec_ids:
+        return []
+
+    try:
+        events_res = (
+            db.table("core_action_events")
+            .select("*")
+            .in_("recommendation_id", rec_ids)
+            .order("occurred_at", desc=True)
+            .limit(100)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_client_action_events: events query failed for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+
+    return [_action_event_row_to_out(r) for r in (events_res.data or [])]
+
+
 # ── POST /action-events ───────────────────────────────────────────────────────
 
 def _action_event_row_to_out(row: dict) -> ActionEventOut:
@@ -2315,4 +2388,89 @@ async def replay_job(
         status=JobStatus.QUEUED,
         attempt=1,
         replay_of=job_id,
+    )
+
+
+# ── POST /clients/{client_id}/pipeline/trigger ────────────────────────────────
+#
+# First-run trigger — creates a new QUEUED job without requiring an existing job.
+# Used for multi-client onboarding before the daily scheduler has ever run.
+# period_end default: today - 1 (e.g. 2026-10-05 when today=2026-10-06).
+# period_start: period_end - 6 days (e.g. 2026-09-29→2026-10-05 for default).
+# For LK-equivalent window pass period_end=2026-10-04 → 2026-09-28→2026-10-04.
+
+@router.post(
+    "/clients/{client_id}/pipeline/trigger",
+    summary="Trigger a first (or fresh) Core pipeline run for a client",
+    response_model=JobOut,
+)
+async def trigger_pipeline(
+    client_id: str,
+    background_tasks: BackgroundTasks,
+    period_end_str: Optional[str] = Query(
+        None,
+        alias="period_end",
+        description="ISO date for period_end (default: yesterday). period_start = period_end - 6d.",
+    ),
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
+) -> JobOut:
+    from datetime import date as _date
+    from ...core.core_scheduler import run_core_pipeline_for_client
+
+    # Resolve period
+    if period_end_str:
+        try:
+            period_end = _date.fromisoformat(period_end_str)
+        except ValueError:
+            raise HTTPException(422, detail=f"invalid period_end: {period_end_str!r}")
+    else:
+        period_end = _date.today() - timedelta(days=1)
+    period_start = period_end - timedelta(days=6)
+
+    # Verify client exists
+    try:
+        res = _get_db().table("clients").select("client_id").eq("client_id", client_id).limit(1).execute()
+    except Exception as exc:
+        logger.error("trigger_pipeline: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, detail="database unavailable")
+    if not (res and res.data):
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+
+    # Insert QUEUED job (no replay_of — first run)
+    run_key = f"core_pipeline:{client_id}:{period_end.isoformat()}"
+    job_id  = str(_uuid_mod.uuid4())
+    try:
+        ins = _get_db().table("core_job_runs").insert({
+            "id":         job_id,
+            "job_type":   "core_pipeline",
+            "run_key":    run_key,
+            "status":     "QUEUED",
+            "attempt":    1,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+        job_id = ins.data[0]["id"] if ins.data else job_id
+    except Exception as exc:
+        # Unique constraint = same period already queued/ran; return existing
+        logger.warning("trigger_pipeline: job insert failed for %s (%s): %s", client_id, run_key, exc)
+        try:
+            ex = _get_db().table("core_job_runs").select("*").eq("run_key", run_key).limit(1).execute()
+            if ex.data:
+                row = ex.data[0]
+                return JobOut(
+                    id=row["id"], job_type=row["job_type"], run_key=row["run_key"],
+                    status=JobStatus(row["status"]), attempt=row["attempt"],
+                )
+        except Exception:
+            pass
+        raise HTTPException(409, detail=f"job already exists for period {period_end.isoformat()}")
+
+    background_tasks.add_task(run_core_pipeline_for_client, job_id, client_id, period_start, period_end)
+    logger.info("trigger_pipeline: queued %s for %s (%s→%s)", job_id, client_id, period_start, period_end)
+
+    return JobOut(
+        id=job_id,
+        job_type="core_pipeline",
+        run_key=run_key,
+        status=JobStatus.QUEUED,
+        attempt=1,
     )
