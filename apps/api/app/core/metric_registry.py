@@ -78,6 +78,16 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         source_system="google_ads", unit="BRL", aggregation="sum",
         zero_semantics="ok", currency="BRL",
     ),
+    "google_purchase_conversions": MetricDef(
+        key="google_purchase_conversions", domain=MetricDomain.ADS,
+        source_system="google_ads", unit="conversions", aggregation="sum",
+        zero_semantics="ok",
+    ),
+    "google_purchase_conversion_value": MetricDef(
+        key="google_purchase_conversion_value", domain=MetricDomain.ADS,
+        source_system="google_ads", unit="BRL", aggregation="sum",
+        zero_semantics="ok", currency="BRL",
+    ),
 
     # ── ADS — Derived ─────────────────────────────────────────────────────────
     "total_spend": MetricDef(
@@ -110,6 +120,16 @@ METRIC_REGISTRY: dict[str, MetricDef] = {
         source_system="derived", unit="BRL", aggregation="derived",
         zero_semantics="ok", currency="BRL",
     ),
+    "google_roas_ecommerce": MetricDef(
+        key="google_roas_ecommerce", domain=MetricDomain.ADS,
+        source_system="derived", unit="x", aggregation="derived",
+        zero_semantics="no_spend",
+    ),
+    "google_cpa_ecommerce": MetricDef(
+        key="google_cpa_ecommerce", domain=MetricDomain.ADS,
+        source_system="derived", unit="BRL", aggregation="derived",
+        zero_semantics="ok", currency="BRL",
+    ),
 
     # ── JOURNEY (GA4) ─────────────────────────────────────────────────────────
     "ga4_sessions": MetricDef(
@@ -137,5 +157,7 @@ DERIVED_DEPS: dict[str, list[str]] = {
     "roas_meta":    ["meta_conversion_value", "meta_spend"],
     "roas_google":  ["google_conversion_value", "google_spend"],
     "cpa_meta":     ["meta_spend", "meta_conversions"],
-    "cpa_google":   ["google_spend", "google_conversions"],
+    "cpa_google":            ["google_spend", "google_conversions"],
+    "google_roas_ecommerce": ["google_purchase_conversion_value", "google_spend"],
+    "google_cpa_ecommerce":  ["google_spend", "google_purchase_conversions"],
 }

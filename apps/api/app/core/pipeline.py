@@ -427,6 +427,11 @@ def run_pipeline(
     all_aggs["cpa_meta"]    = round(meta_spend / meta_convs, 2) if meta_convs > 0 else None  # type: ignore[assignment]
     all_aggs["cpa_google"]  = round(google_spend / google_convs, 2) if google_convs > 0 else None  # type: ignore[assignment]
 
+    google_purchase_convs = all_aggs.get("google_purchase_conversions", 0.0) or 0.0
+    google_purchase_cv    = all_aggs.get("google_purchase_conversion_value", 0.0) or 0.0
+    all_aggs["google_roas_ecommerce"] = round(google_purchase_cv / google_spend, 4) if google_spend > 0 else None  # type: ignore[assignment]
+    all_aggs["google_cpa_ecommerce"]  = round(google_spend / google_purchase_convs, 2) if google_purchase_convs > 0 else None  # type: ignore[assignment]
+
     # ── Build metric values ───────────────────────────────────────────────────
     metric_values: list[dict[str, Any]] = []
     # source_system → health domain key (health uses domain names, not source_system)
