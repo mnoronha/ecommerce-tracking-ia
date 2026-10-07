@@ -42,7 +42,9 @@ def _insert_running_job(sb, client_id: str, period_end: date) -> Optional[str]:
 
 
 def _insert_queued_replay(sb, client_id: str, period_end: date, replay_of: str) -> str:
-    run_key = f"{_JOB_TYPE}:{client_id}:{period_end.isoformat()}"
+    # Suffix with replay_of[:8] so the run_key is unique even when replaying a SUCCEEDED job.
+    # The router parser uses only parts[0..2]; the suffix is informational provenance only.
+    run_key = f"{_JOB_TYPE}:{client_id}:{period_end.isoformat()}:replay:{replay_of[:8]}"
     job_id = str(uuid.uuid4())
     try:
         res = sb.table("core_job_runs").insert({

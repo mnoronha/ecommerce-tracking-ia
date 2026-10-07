@@ -2360,10 +2360,11 @@ async def replay_job(
     if not original:
         raise HTTPException(404, detail=f"job not found: {job_id!r}")
 
-    # Parse run_key: core_pipeline:{client_id}:{period_end}
+    # Parse run_key: core_pipeline:{client_id}:{period_end}[:{any suffix}]
+    # Suffix present on replay jobs (e.g. :replay:{id[:8]}) — ignored for parsing.
     run_key = original.get("run_key", "")
     parts = run_key.split(":")
-    if len(parts) != 3 or parts[0] != "core_pipeline":
+    if len(parts) < 3 or parts[0] != "core_pipeline":
         raise HTTPException(422, detail=f"run_key format not replayable: {run_key!r}")
     client_id = parts[1]
     try:
