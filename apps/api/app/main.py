@@ -25,6 +25,7 @@ from .core.core_scheduler import run_core_pipeline_all_clients
 from .core.alert_evaluator import evaluate_system_alerts as _evaluate_system_alerts
 from .core.scheduler_registry import register as _register_scheduler
 from .core.weekly_review import run_weekly_review_all_clients
+from .core.monthly_review import run_monthly_review_all_clients
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -273,6 +274,14 @@ _scheduler.add_job(
     hour=8,
     minute=0,   # 08:00 UTC = 05:00 BRT segunda — após core_pipeline (07:15) fechar domingo
     id="weekly_review",
+)
+_scheduler.add_job(
+    run_monthly_review_all_clients,
+    "cron",
+    day=1,
+    hour=8,
+    minute=30,  # 08:30 UTC = 05:30 BRT — 1º do mês, após core_pipeline (07:15) fechar mês anterior
+    id="monthly_review",
 )
 _scheduler.add_job(
     _evaluate_system_alerts,

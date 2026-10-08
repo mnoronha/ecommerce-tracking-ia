@@ -35,6 +35,7 @@ Route inventory (32 routes):
   POST /alert-feedback
   POST /report-narratives
   POST /report-narratives/{narrative_id}/transitions
+  POST /clients/{client_id}/monthly-review/replay
   POST /alert-rule-suggestions/{suggestion_id}/decision
   POST /recommendations/{recommendation_id}/decision  [human-only, PLATFORM_WRITE]
   POST /learning-candidates
@@ -2200,6 +2201,19 @@ async def create_report_narrative(
 
 # ── POST /report-narratives/{narrative_id}/transitions ───────────────────────
 
+
+def _trigger_report_delivery(narrative_id: str, contract_id: str, approved_by: str) -> None:
+    """Background delivery task fired when a narrative transitions to PUBLISHED."""
+    try:
+        from ...core.report_publisher import publish_narrative_report
+        publish_narrative_report(narrative_id, contract_id, approved_by)
+    except Exception as exc:
+        logger.error(
+            "_trigger_report_delivery: failed narrative=%s contract=%s: %s",
+            narrative_id, contract_id, exc,
+        )
+
+
 @router.post(
     "/report-narratives/{narrative_id}/transitions",
     summary="Transition narrative lifecycle: DRAFT→READY_FOR_REVIEW→APPROVED→PUBLISHED",
@@ -2208,6 +2222,7 @@ async def create_report_narrative(
 async def transition_narrative(
     narrative_id: str,
     body: NarrativeTransition,
+    background_tasks: BackgroundTasks,
     idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
     _auth: Annotated[AuthContext, Depends(SCOPE_WRITE_ANY)] = None,
 ) -> ReportNarrativeOut:
@@ -2284,7 +2299,7 @@ async def transition_narrative(
 
     updated_row = (upd.data[0] if (upd and upd.data) else None) or {**row, **updates}
 
-    # On PUBLISHED: supersede any previous PUBLISHED narrative for same contract
+    # On PUBLISHED: supersede previous PUBLISHED narrative + fire delivery
     if target_enum == NarrativeStatus.PUBLISHED:
         try:
             db.table("core_report_narratives").update({"status": "SUPERSEDED"}).eq(
@@ -2292,6 +2307,12 @@ async def transition_narrative(
             ).eq("status", "PUBLISHED").neq("id", narrative_id).execute()
         except Exception as exc:
             logger.warning("transition_narrative: supersede failed: %s", exc)
+        background_tasks.add_task(
+            _trigger_report_delivery,
+            narrative_id=narrative_id,
+            contract_id=str(row["report_contract_id"]),
+            approved_by=body.actor,
+        )
 
     contract: dict | None = None
     try:
@@ -2885,6 +2906,93 @@ async def replay_weekly_review(
     return JobOut(
         id=new_job_id,
         job_type="weekly_review",
+        run_key=run_key,
+        status=JobStatus.QUEUED,
+        attempt=1,
+        replay_of=replay_of,
+    )
+
+
+# ── POST /clients/{client_id}/monthly-review/replay ───────────────────────────
+#
+# Trigger a fresh Monthly Account Review contract for a client.
+# Defaults to the most recently completed calendar month (auto-detected from UTC date).
+# Optional year/month params force a specific month (useful for backfill / testing).
+#
+# Scope: agency_admin or platform_web.
+# Returns: QUEUED job record; execution runs in BackgroundTasks.
+# Idempotency: contract write is delete+insert on (client_slug, report_type='monthly', period_end).
+
+@router.post(
+    "/clients/{client_id}/monthly-review/replay",
+    summary="Trigger (or replay) a Monthly Account Review for a client",
+    response_model=JobOut,
+    status_code=202,
+)
+async def replay_monthly_review(
+    client_id: str,
+    background_tasks: BackgroundTasks,
+    year: Optional[int] = Query(None, description="Year of the closed month. Defaults to last completed month."),
+    month: Optional[int] = Query(None, description="Month (1-12) of the closed month. Defaults to last completed month."),
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
+) -> JobOut:
+    from ...core.monthly_review import (
+        execute_monthly_review_replay,
+        queue_monthly_review_replay,
+        _last_completed_month,
+        _month_bounds,
+    )
+
+    if (year is None) != (month is None):
+        raise HTTPException(422, detail="year and month must both be provided or both omitted")
+
+    if year is not None and month is not None:
+        if not (1 <= month <= 12):
+            raise HTTPException(422, detail=f"invalid month: {month!r}")
+        if year < 2020 or year > 2100:
+            raise HTTPException(422, detail=f"invalid year: {year!r}")
+    else:
+        year, month = _last_completed_month()
+
+    # Validate client exists
+    try:
+        res = _get_db().table("clients").select("client_id").eq("client_id", client_id).limit(1).execute()
+    except Exception as exc:
+        logger.error("replay_monthly_review: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, detail="database unavailable")
+    if not (res and res.data):
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+
+    _, period_end = _month_bounds(year, month)
+
+    replay_of = str(_uuid_mod.uuid4())
+    try:
+        prior = (
+            _get_db().table("core_job_runs")
+            .select("id")
+            .eq("job_type", "monthly_review")
+            .like("run_key", f"monthly_review:{client_id}:{period_end.isoformat()}%")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if prior and prior.data:
+            replay_of = prior.data[0]["id"]
+    except Exception:
+        pass
+
+    db = _get_db()
+    new_job_id = queue_monthly_review_replay(db, client_id, year, month, replay_of)
+    background_tasks.add_task(execute_monthly_review_replay, new_job_id, client_id, year, month)
+
+    run_key = f"monthly_review:{client_id}:{period_end.isoformat()}"
+    logger.info(
+        "replay_monthly_review: queued %s for %s (%d-%02d)",
+        new_job_id, client_id, year, month,
+    )
+    return JobOut(
+        id=new_job_id,
+        job_type="monthly_review",
         run_key=run_key,
         status=JobStatus.QUEUED,
         attempt=1,

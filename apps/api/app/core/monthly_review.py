@@ -1,33 +1,30 @@
 """
-Weekly Account Review orchestrator.
+Monthly Account Review orchestrator.
 
-Assembles the Hermes handoff contract for each client's completed weekly period.
+Assembles the Hermes handoff contract for each client's completed calendar month.
 Does NOT generate narrative, call Hermes, or invent analysis.
 
 Flow per client:
-  1. Load current-week snapshot (latest computed_at for period_end)
-  2. Load prior-week snapshot (period_end - 7 days)
-  3. Load active alerts (operational + performance)
-  4. Build contract JSONB: metrics, WoW, data quality, alerts, target_truth
+  1. Load month's final snapshot (period_end = last day of month, from daily pipeline)
+  2. Load prior month's final snapshot (for MoM comparison)
+  3. Load active alerts
+  4. Build contract JSONB: metrics, MoM, data quality, alerts, target_truth
   5. Write to agency_report_contracts (delete+insert for idempotency)
-  6. Write core_job_runs record RUNNING → SUCCEEDED | FAILED
+  6. Create core_report_narratives DRAFT via report_draft_builder
+  7. Write core_job_runs record RUNNING → SUCCEEDED | FAILED
 
-Period definition (Mon-Sun, America/Sao_Paulo):
-  period_end   = last Sunday (UTC date; scheduler fires at 08:00 UTC Mon = 05:00 BRT)
-  period_start = period_end - 6 days
-  comparison   = prior week (period_start/end - 7 days)
+Period definition:
+  Scheduler fires on 1st of month at 08:30 UTC (after daily core pipeline 07:15).
+  period_end   = last day of previous month (daily pipeline wrote this snapshot on 1st)
+  period_start = first day of previous month
+  comparison   = the month before that (MoM)
 
-review_status:
-  BLOCKED          — no snapshot for this period (pipeline didn't run or too early)
-  PARTIAL          — snapshot found but ≥1 critical source (meta/google/business) degraded
-  READY_FOR_REVIEW — snapshot found, all contracted ad sources OK or PARTIAL
-
-Scheduler: Monday 08:00 UTC via main.py APScheduler.
-Replay:    POST /clients/{client_id}/weekly-review/replay via Agency API router.
+Scheduler: 1st of month 08:30 UTC via main.py APScheduler.
+Replay:    POST /clients/{client_id}/monthly-review/replay via Agency API router.
 """
-
 from __future__ import annotations
 
+import calendar
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -35,32 +32,45 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-_JOB_TYPE   = "weekly_review"
-_SCHEMA_VER = "core-weekly-review-v1"
+_JOB_TYPE    = "monthly_review"
+_SCHEMA_VER  = "core-monthly-review-v1"
 _ERROR_TRUNC = 2000
 
-# Sources whose degradation downgrades the review status to PARTIAL.
-# ga4 degradation is informational only (NOT_CONTRACTED is normal for many clients).
 _CRITICAL_SOURCES = frozenset({"meta_ads", "google_ads", "business"})
 _DEGRADED_STATES  = frozenset({"ERROR", "ACCESS_MISSING", "PERMISSION_DENIED", "MISSING", "STALE"})
+
+_MONTH_PT = [
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
 
 
 # ── Period helpers ─────────────────────────────────────────────────────────────
 
-def _last_completed_week() -> tuple[date, date]:
+def _last_completed_month() -> tuple[int, int]:
     """
-    Most recently completed Mon-Sun week, computed from UTC date.
-    today.weekday(): Mon=0 … Sun=6 → days since last Sunday = weekday + 1.
+    Returns (year, month) for the most recently completed calendar month.
+    Scheduler fires on 1st → previous month just closed.
     """
     today = date.today()
-    period_end   = today - timedelta(days=today.weekday() + 1)
-    period_start = period_end - timedelta(days=6)
-    return period_start, period_end
+    last_of_prev = date(today.year, today.month, 1) - timedelta(days=1)
+    return last_of_prev.year, last_of_prev.month
 
 
-def _iso_week_label(d: date) -> str:
-    yr, wk, _ = d.isocalendar()
-    return f"Semana {wk}/{yr}"
+def _month_bounds(year: int, month: int) -> tuple[date, date]:
+    first = date(year, month, 1)
+    last  = date(year, month, calendar.monthrange(year, month)[1])
+    return first, last
+
+
+def _prior_month(year: int, month: int) -> tuple[int, int]:
+    if month == 1:
+        return year - 1, 12
+    return year, month - 1
+
+
+def _month_label(year: int, month: int) -> str:
+    return f"{_MONTH_PT[month - 1]} {year}"
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
@@ -80,7 +90,7 @@ def _load_active_clients(sb) -> list[dict]:
         )
         return [c for c in (res.data or []) if c.get("client_id")]
     except Exception as exc:
-        logger.error("weekly_review: client list failed: %s", exc)
+        logger.error("monthly_review: client list failed: %s", exc)
         return []
 
 
@@ -95,12 +105,11 @@ def _load_client(sb, client_id: str) -> Optional[dict]:
         )
         return res.data
     except Exception as exc:
-        logger.warning("weekly_review: client load failed %s: %s", client_id, exc)
+        logger.warning("monthly_review: client load failed %s: %s", client_id, exc)
         return None
 
 
 def _load_snapshot(sb, client_id: str, period_end: date) -> Optional[dict]:
-    """Latest snapshot for this client/period_end (may be multiple runs; take newest)."""
     try:
         res = (
             sb.table("core_metric_snapshots")
@@ -113,7 +122,7 @@ def _load_snapshot(sb, client_id: str, period_end: date) -> Optional[dict]:
         )
         return res.data[0] if res.data else None
     except Exception as exc:
-        logger.warning("weekly_review: snapshot load failed %s/%s: %s", client_id, period_end, exc)
+        logger.warning("monthly_review: snapshot load failed %s/%s: %s", client_id, period_end, exc)
         return None
 
 
@@ -136,7 +145,6 @@ def _load_target_truth(sb, client_id: str) -> dict:
 
 
 def _load_active_alerts(sb, client_uuid: str) -> list[dict]:
-    """Active (non-resolved) alerts for this client by UUID."""
     try:
         res = (
             sb.table("alerts")
@@ -160,7 +168,7 @@ def _load_active_alerts(sb, client_uuid: str) -> list[dict]:
             for r in (res.data or [])
         ]
     except Exception as exc:
-        logger.warning("weekly_review: alerts load failed %s: %s", client_uuid, exc)
+        logger.warning("monthly_review: alerts load failed %s: %s", client_uuid, exc)
         return []
 
 
@@ -172,12 +180,8 @@ def _metrics_to_dict(metrics_jsonb: Any) -> dict[str, dict]:
     return {m["metric_key"]: m for m in metrics_jsonb if isinstance(m, dict) and "metric_key" in m}
 
 
-def _compute_wow(current: dict[str, dict], prior: dict[str, dict]) -> dict[str, dict]:
-    """
-    WoW % change for metrics present in both snapshots with OK or PARTIAL status.
-    change_pct = (current - prior) / abs(prior) * 100, rounded to 1 decimal.
-    None when prior is zero.
-    """
+def _compute_mom(current: dict[str, dict], prior: dict[str, dict]) -> dict[str, dict]:
+    """MoM % change for metrics present in both snapshots with OK or PARTIAL status."""
     _USABLE = frozenset({"OK", "PARTIAL"})
     changes: dict[str, dict] = {}
     for key, cur_m in current.items():
@@ -213,10 +217,10 @@ def _overall_quality(health: dict, snapshot_found: bool) -> str:
 
 def _build_limitations(health: dict, snapshot_found: bool, prior_found: bool) -> list[str]:
     if not snapshot_found:
-        return ["snapshot_not_found: pipeline may not have run for this period"]
+        return ["snapshot_not_found: daily pipeline may not have run for period_end"]
     lims: list[str] = []
     if not prior_found:
-        lims.append("prior_snapshot_not_found: WoW comparison unavailable")
+        lims.append("prior_snapshot_not_found: MoM comparison unavailable")
     for src, state in health.items():
         if state in _DEGRADED_STATES:
             lims.append(f"{src}: {state}")
@@ -225,13 +229,13 @@ def _build_limitations(health: dict, snapshot_found: bool, prior_found: bool) ->
 
 # ── Main contract builder ──────────────────────────────────────────────────────
 
-def build_weekly_review_contract(
+def build_monthly_review_contract(
     client_id: str,
-    period_start: date,
-    period_end: date,
+    year: int,
+    month: int,
 ) -> dict:
     """
-    Assemble the full Hermes handoff contract.
+    Assemble the full Hermes handoff contract for a completed calendar month.
     Pure data — no narrative generated, no Hermes call made.
     """
     sb = _get_db()
@@ -247,8 +251,9 @@ def build_weekly_review_contract(
     client_uuid    = client["id"]
     business_model = client.get("business_model") or "ecommerce"
 
-    prior_start = period_start - timedelta(days=7)
-    prior_end   = period_end   - timedelta(days=7)
+    period_start, period_end = _month_bounds(year, month)
+    prior_year, prior_month  = _prior_month(year, month)
+    prior_start, prior_end   = _month_bounds(prior_year, prior_month)
 
     snapshot       = _load_snapshot(sb, client_id, period_end)
     prior_snapshot = _load_snapshot(sb, client_id, prior_end)
@@ -261,7 +266,7 @@ def build_weekly_review_contract(
     health: dict          = (snapshot or {}).get("health") or {}
     current_metrics: dict = _metrics_to_dict((snapshot or {}).get("metrics"))
     prior_metrics: dict   = _metrics_to_dict((prior_snapshot or {}).get("metrics"))
-    wow_changes           = _compute_wow(current_metrics, prior_metrics) if (snapshot_found and prior_found) else {}
+    mom_changes = _compute_mom(current_metrics, prior_metrics) if (snapshot_found and prior_found) else {}
 
     overall     = _overall_quality(health, snapshot_found)
     limitations = _build_limitations(health, snapshot_found, prior_found)
@@ -278,7 +283,6 @@ def build_weekly_review_contract(
     def _slim_prior(m: dict) -> dict:
         return {"value": m.get("value"), "value_status": m.get("value_status")}
 
-    # Target truth: expose only {metric_key: {target, unit}} — no internal config details
     tt_slim = {
         k: {"target": v.get("target"), "unit": v.get("unit")}
         for k, v in target_truth.items()
@@ -297,12 +301,14 @@ def build_weekly_review_contract(
         "period": {
             "start": period_start.isoformat(),
             "end":   period_end.isoformat(),
-            "label": _iso_week_label(period_end),
+            "label": _month_label(year, month),
+            "year":  year,
+            "month": month,
         },
         "comparison_period": {
             "start": prior_start.isoformat(),
             "end":   prior_end.isoformat(),
-            "label": _iso_week_label(prior_end),
+            "label": _month_label(prior_year, prior_month),
         },
         "data_quality": {
             "sources":              health,
@@ -313,7 +319,7 @@ def build_weekly_review_contract(
         },
         "metrics_current": {k: _slim_current(v) for k, v in current_metrics.items()},
         "metrics_prior":   {k: _slim_prior(v)   for k, v in prior_metrics.items()},
-        "wow_changes":     wow_changes,
+        "mom_changes":     mom_changes,
         "target_truth":    tt_slim,
         "active_alerts":   active_alerts,
         "source_snapshot_id":       str(snapshot["id"])       if snapshot       else None,
@@ -337,7 +343,7 @@ def _insert_running_job(sb, client_id: str, period_end: date) -> Optional[str]:
         }).execute()
         return res.data[0]["id"] if res.data else job_id
     except Exception as exc:
-        logger.warning("weekly_review: job insert failed %s: %s", client_id, exc)
+        logger.warning("monthly_review: job insert failed %s: %s", client_id, exc)
         return None
 
 
@@ -356,7 +362,7 @@ def _insert_queued_replay(sb, client_id: str, period_end: date, replay_of: str) 
         }).execute()
         return res.data[0]["id"] if res.data else job_id
     except Exception as exc:
-        logger.warning("weekly_review: replay insert failed %s: %s", client_id, exc)
+        logger.warning("monthly_review: replay insert failed %s: %s", client_id, exc)
         return job_id
 
 
@@ -367,39 +373,37 @@ def _finish_job(sb, job_id: str, status: str, error: Optional[str] = None) -> No
             payload["error"] = error[:_ERROR_TRUNC]
         sb.table("core_job_runs").update(payload).eq("id", job_id).execute()
     except Exception as exc:
-        logger.warning("weekly_review: job finish failed %s: %s", job_id, exc)
+        logger.warning("monthly_review: job finish failed %s: %s", job_id, exc)
 
 
 def _write_contract(
     sb,
     client_id: str,
-    period_start: date,
-    period_end: date,
+    year: int,
+    month: int,
     contract: dict,
     source_run_id: Optional[str] = None,
 ) -> Optional[str]:
-    """
-    Delete+insert for idempotency on (client_slug='weekly', period_end).
-    Returns the inserted contract UUID or None on failure.
-    """
-    prior_start    = period_start - timedelta(days=7)
-    prior_end      = period_end   - timedelta(days=7)
+    """Delete+insert for idempotency on (client_slug, report_type='monthly', period_end)."""
+    period_start, period_end   = _month_bounds(year, month)
+    py, pm                     = _prior_month(year, month)
+    prior_start, prior_end     = _month_bounds(py, pm)
     business_model = contract.get("client", {}).get("business_model", "ecommerce")
-    now            = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).isoformat()
 
     try:
         sb.table("agency_report_contracts").delete() \
             .eq("client_slug", client_id) \
-            .eq("report_type", "weekly") \
+            .eq("report_type", "monthly") \
             .eq("period_end",  period_end.isoformat()) \
             .execute()
     except Exception as exc:
-        logger.warning("weekly_review: contract delete failed %s: %s", client_id, exc)
+        logger.warning("monthly_review: contract delete failed %s: %s", client_id, exc)
 
     try:
         res = sb.table("agency_report_contracts").insert({
             "client_slug":             client_id,
-            "report_type":             "weekly",
+            "report_type":             "monthly",
             "business_model":          business_model,
             "period_start":            period_start.isoformat(),
             "period_end":              period_end.isoformat(),
@@ -415,90 +419,90 @@ def _write_contract(
         row = res.data[0] if res.data else None
         return str(row["id"]) if row else None
     except Exception as exc:
-        logger.error("weekly_review: contract insert failed %s: %s", client_id, exc)
+        logger.error("monthly_review: contract insert failed %s: %s", client_id, exc)
         return None
 
 
 # ── Public entrypoints ─────────────────────────────────────────────────────────
 
-def run_weekly_review_for_client(
+def run_monthly_review_for_client(
     client_id: str,
-    period_start: date,
-    period_end: date,
+    year: int,
+    month: int,
     job_id: Optional[str] = None,
 ) -> None:
     """
-    Build and persist the weekly review contract for one client.
+    Build and persist the monthly review contract for one client.
     job_id: if provided, transitions an existing QUEUED record (replay path).
-             if None, creates a new RUNNING record.
     """
+    _, period_end = _month_bounds(year, month)
     sb = _get_db()
 
     if job_id:
         try:
             sb.table("core_job_runs").update({"status": "RUNNING"}).eq("id", job_id).execute()
         except Exception as exc:
-            logger.warning("weekly_review: replay → RUNNING failed %s: %s", job_id, exc)
+            logger.warning("monthly_review: replay → RUNNING failed %s: %s", job_id, exc)
     else:
         job_id = _insert_running_job(sb, client_id, period_end)
 
     run_id = f"{_JOB_TYPE}:{client_id}:{period_end.isoformat()}"
     try:
-        contract    = build_weekly_review_contract(client_id, period_start, period_end)
-        contract_id = _write_contract(sb, client_id, period_start, period_end, contract, source_run_id=run_id)
+        contract    = build_monthly_review_contract(client_id, year, month)
+        contract_id = _write_contract(sb, client_id, year, month, contract, source_run_id=run_id)
         if contract_id:
             from .report_draft_builder import create_narrative_draft
-            create_narrative_draft(sb, contract_id, "weekly", contract.get("review_status", "BLOCKED"))
+            create_narrative_draft(sb, contract_id, "monthly", contract.get("review_status", "BLOCKED"))
         status = "SUCCEEDED"
         error  = None
         logger.info(
-            "weekly_review: %s %s → %s (review_status=%s)",
-            client_id, period_end, status, contract.get("review_status"),
+            "monthly_review: %s %d-%02d → %s (review_status=%s)",
+            client_id, year, month, status, contract.get("review_status"),
         )
     except Exception as exc:
         status = "FAILED"
         error  = str(exc)[:_ERROR_TRUNC]
-        logger.error("weekly_review: %s failed: %s", client_id, exc)
+        logger.error("monthly_review: %s failed: %s", client_id, exc)
 
     if job_id:
         _finish_job(sb, job_id, status, error)
 
 
-def run_weekly_review_all_clients() -> None:
+def run_monthly_review_all_clients() -> None:
     """
     Scheduler entry point.
-    Determines the most recently completed Mon-Sun week and runs for all active clients.
+    Fires on 1st of month after the daily pipeline closes the previous month's snapshot.
     """
-    period_start, period_end = _last_completed_week()
+    year, month = _last_completed_month()
     sb = _get_db()
     clients = _load_active_clients(sb)
     logger.info(
-        "weekly_review: running for %d clients — period %s→%s",
-        len(clients), period_start, period_end,
+        "monthly_review: running for %d clients — %s",
+        len(clients), _month_label(year, month),
     )
     for c in clients:
         cid = c["client_id"]
         try:
-            run_weekly_review_for_client(cid, period_start, period_end)
+            run_monthly_review_for_client(cid, year, month)
         except Exception as exc:
-            logger.error("weekly_review: unexpected error for %s: %s", cid, exc)
+            logger.error("monthly_review: unexpected error for %s: %s", cid, exc)
 
 
-def queue_weekly_review_replay(
+def queue_monthly_review_replay(
     sb,
     client_id: str,
-    period_end: date,
+    year: int,
+    month: int,
     replay_of: str,
 ) -> str:
-    """Queue a QUEUED replay job. Returns new job_id."""
+    _, period_end = _month_bounds(year, month)
     return _insert_queued_replay(sb, client_id, period_end, replay_of)
 
 
-def execute_weekly_review_replay(
+def execute_monthly_review_replay(
     job_id: str,
     client_id: str,
-    period_end: date,
+    year: int,
+    month: int,
 ) -> None:
-    """Background task body for replay — transitions QUEUED → RUNNING → SUCCEEDED|FAILED."""
-    period_start = period_end - timedelta(days=6)
-    run_weekly_review_for_client(client_id, period_start, period_end, job_id=job_id)
+    run_monthly_review_for_client(client_id, year, month, job_id=job_id)
