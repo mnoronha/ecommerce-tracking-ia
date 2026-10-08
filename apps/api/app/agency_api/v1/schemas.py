@@ -735,7 +735,7 @@ class BalanceSnapshotOut(_Base):
     """Latest balance snapshot for a single platform."""
     platform: str
     billing_model: Optional[str] = None        # "prepaid" | "postpaid" | None
-    collection_status: Optional[str] = None   # "PASS" | "BLOCKED" | "PERMISSION_DENIED" | "NOT_SUPPORTED"
+    collection_status: Optional[str] = None    # "PASS" | "BLOCKED" | "PERMISSION_DENIED" | "NOT_SUPPORTED"
     balance_available: Optional[float] = None  # actual balance in major currency units
     balance_status: str                        # OK | LOW | CRITICAL | EXHAUSTED | NO_DATA | MISSING | …
     currency: Optional[str] = None
@@ -745,6 +745,11 @@ class BalanceSnapshotOut(_Base):
     estimated_days_remaining: Optional[float] = None
     threshold_low: Optional[float] = None
     threshold_critical: Optional[float] = None
+    # ── Metas & Orçamento contract ─────────────────────────────────────────────
+    days_threshold_low: int = 3         # days remaining ≤ this → LOW alert
+    days_threshold_critical: int = 1    # days remaining ≤ this → CRITICAL alert
+    source_state: Optional[str] = None  # alias for collection_status (Goals & Budget tab)
+    # ──────────────────────────────────────────────────────────────────────────
     collected_at: Optional[datetime] = None
     error: Optional[str] = None
 
@@ -755,6 +760,7 @@ class ClientBalanceOut(_Base):
     client_id: str
     snapshots: list[BalanceSnapshotOut]
     any_prepaid: bool
+    monitoring_enabled: bool = False  # alias for any_prepaid (Goals & Budget tab)
 
 
 class BalanceTriggerOut(_Base):

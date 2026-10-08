@@ -223,7 +223,7 @@ async def list_alerts_for_client(
 
     q = (
         sb.table("alerts")
-        .select("id, severity, fingerprint, title, message, data, created_at, resolved_at, alert_rule_id")
+        .select("id, type, severity, fingerprint, title, message, data, created_at, resolved_at, alert_rule_id")
         .eq("client_id", client.data[0]["id"])
         .order("created_at", desc=True)
         .limit(limit)

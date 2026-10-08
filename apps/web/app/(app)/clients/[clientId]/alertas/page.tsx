@@ -15,7 +15,9 @@ type Severity = 'critical' | 'warning' | 'info'
 
 type Alert = {
   id: string
+  type?: string
   severity: Severity
+  fingerprint?: string
   title: string
   message: string
   data: Record<string, unknown>
@@ -96,8 +98,11 @@ const RULE_DESC: Record<string, string> = {
   views_drop:             'Pageviews das últimas 2h despencaram vs o mesmo horário dos 7 dias (ignora tráfego baixo).',
   zero_sales:             'Nenhuma venda online em horário comercial por X horas seguidas.',
   checkout_drop:          'Checkouts iniciados nas últimas 2h despencaram vs baseline (ignora volume baixo).',
-  low_balance_meta:       'Saldo pré-pago da Meta abaixo do limite.',
-  low_balance_google:     'Saldo/dias restantes do Google estimados baixos pelo ritmo de gasto.',
+  low_balance_meta:         'Saldo pré-pago da Meta abaixo do limite.',
+  low_balance_google:       'Saldo/dias restantes do Google estimados baixos pelo ritmo de gasto.',
+  ACCOUNT_BALANCE_LOW:      'Dias restantes ≤ 3 dias pelo ritmo atual de gasto. Planejar recarga.',
+  ACCOUNT_BALANCE_CRITICAL: 'Dias restantes ≤ 1 dia. Recarga urgente para evitar pausa nas campanhas.',
+  ACCOUNT_BALANCE_EXHAUSTED:'Saldo zerado. Campanhas podem ter parado. Recarga imediata necessária.',
   google_conversion_drop: 'Conversões enviadas ao Google 24h abaixo da mediana 7d. Só canal consistente (evita falso).',
   high_ticket_anomaly:    'Pedido muito acima do ticket médio — apenas informativo.',
   roas_drop_channel:      'ROAS 24h do canal caiu vs 7d mesmo com investimento ativo (mínimo de spend).',
@@ -126,11 +131,70 @@ function fmtRelative(iso: string) {
   return fmtDate(iso)
 }
 
+// ── Balance alert data renderer ───────────────────────────────────────────────
+
+const _PLATFORM_LABEL: Record<string, string> = { google: 'Google Ads', meta: 'Meta Ads' }
+
+function BalanceAlertView({ data }: { data: Record<string, unknown> }) {
+  const balance  = data.balance  as number | null | undefined
+  const currency = (data.currency as string | undefined) ?? ''
+  const days     = data.estimated_days_remaining as number | null | undefined
+  const avg      = data.avg_daily_spend as number | null | undefined
+  const window_  = data.spend_avg_window_days as number | undefined
+  const platform = (data.platform as string | undefined) ?? ''
+  const snapshot = data.snapshot_at as string | undefined
+
+  const fmtBrl = (v: number) =>
+    v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+  const daysColor =
+    days == null ? 'text-slate-400'
+    : days <= 1  ? 'text-red-400 font-semibold'
+    : days <= 3  ? 'text-yellow-400'
+    :              'text-slate-300'
+
+  return (
+    <div className="mt-2 bg-[#0f1117] rounded-lg px-3 py-2.5 border border-[#2a2f3e] text-xs space-y-1.5">
+      <div className="flex flex-wrap gap-x-5 gap-y-1 items-baseline">
+        {balance != null && (
+          <span>
+            <span className="text-slate-500">Saldo </span>
+            <span className="text-white font-medium">R$ {fmtBrl(balance)} {currency}</span>
+          </span>
+        )}
+        {avg != null && (
+          <span className="text-slate-400">
+            <span className="text-slate-500">Gasto médio </span>
+            R$ {fmtBrl(avg)}/dia{window_ ? ` (${window_}d)` : ''}
+          </span>
+        )}
+        {days != null && (
+          <span className={daysColor}>
+            <span className="text-slate-500">Autonomia </span>
+            {days.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} dia(s)
+          </span>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-x-4 text-slate-600">
+        {platform && <span>{_PLATFORM_LABEL[platform] ?? platform}</span>}
+        {snapshot && (
+          <span>Leitura: {new Date(snapshot).toLocaleString('pt-BR', {
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+          })}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Alert data pretty-printer ─────────────────────────────────────────────────
 
 function AlertDataView({ data }: { data: Record<string, unknown> }) {
   const keys = Object.keys(data).filter(k => k !== 'check')
   if (keys.length === 0) return null
+
+  // Balance alerts: show structured view
+  if (typeof data.balance_status === 'string') return <BalanceAlertView data={data} />
 
   // Show key findings if present
   const finding = data.finding as Record<string, unknown> | undefined

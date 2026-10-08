@@ -121,6 +121,12 @@ class Settings(BaseSettings):
     DATAFORSEO_LOGIN:    str = ""  # API login (email)
     DATAFORSEO_PASSWORD: str = ""  # API password
 
+    # ── Telegram (agency ops channel) ─────────────────────────────────────────
+    # Single agency-level bot → one ops channel for all operational alerts.
+    # Set in Railway. Find chat_id via @userinfobot or getUpdates.
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID:   str = ""
+
 
 @lru_cache()
 def get_settings() -> Settings:

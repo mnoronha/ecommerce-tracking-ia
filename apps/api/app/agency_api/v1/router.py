@@ -3077,6 +3077,7 @@ async def get_client_balance(
             spend_avg_window_days=row.get("spend_avg_window_days"),
             spend_data_days=row.get("spend_data_days"),
             estimated_days_remaining=row.get("estimated_days_remaining"),
+            source_state=row.get("collection_status"),
             collected_at=row.get("snapshot_at"),
             error=row.get("error"),
         ))
@@ -3085,6 +3086,7 @@ async def get_client_balance(
         client_id=client_id,
         snapshots=snapshots,
         any_prepaid=any_prepaid,
+        monitoring_enabled=any_prepaid,
     )
 
 

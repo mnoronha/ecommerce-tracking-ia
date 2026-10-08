@@ -22,6 +22,7 @@ from .collectors.balance import (
     collect_meta_balance,
 )
 from .alert_evaluator import evaluate_balance_alerts
+from .balance_notifier import dispatch_balance_notifications
 
 logger = logging.getLogger(__name__)
 
@@ -249,12 +250,17 @@ def _check_client(client: dict, sb) -> dict:
             client_id, snap.get("balance_status"), snap.get("balance"), snap.get("estimated_days_remaining"),
         )
 
-    # Trigger alert evaluation if any platform was checked
+    # Trigger alert evaluation + Telegram dispatch if any platform was checked
     if results["platforms"]:
         try:
             evaluate_balance_alerts(client_id)
         except Exception as exc:
             logger.error("balance_monitor: alert eval failed %s: %s", client_id, exc)
+
+        try:
+            dispatch_balance_notifications(client_id)
+        except Exception as exc:
+            logger.error("balance_monitor: telegram dispatch failed %s: %s", client_id, exc)
 
     return results
 
