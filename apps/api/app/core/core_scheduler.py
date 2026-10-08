@@ -128,6 +128,11 @@ def run_core_pipeline_all_clients() -> None:
             evaluate_operational_alerts(client_id)
         except Exception as exc:
             logger.warning("core_scheduler: alert eval failed for %s: %s", client_id, exc)
+        try:
+            from ..core.performance_alert_evaluator import evaluate_performance_alerts
+            evaluate_performance_alerts(client_id)
+        except Exception as exc:
+            logger.warning("core_scheduler: perf alert eval failed for %s: %s", client_id, exc)
 
 
 def run_core_pipeline_for_client(
@@ -159,3 +164,8 @@ def run_core_pipeline_for_client(
         evaluate_operational_alerts(client_id)
     except Exception as exc:
         logger.warning("core_scheduler: alert eval failed after replay %s: %s", job_id, exc)
+    try:
+        from ..core.performance_alert_evaluator import evaluate_performance_alerts
+        evaluate_performance_alerts(client_id)
+    except Exception as exc:
+        logger.warning("core_scheduler: perf alert eval failed after replay %s: %s", job_id, exc)
