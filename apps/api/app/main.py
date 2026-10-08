@@ -24,6 +24,7 @@ from .services import ai_analyst, ai_visibility_analyst, ai_visibility_collector
 from .core.core_scheduler import run_core_pipeline_all_clients
 from .core.alert_evaluator import evaluate_system_alerts as _evaluate_system_alerts
 from .core.scheduler_registry import register as _register_scheduler
+from .core.weekly_review import run_weekly_review_all_clients
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -264,6 +265,14 @@ _scheduler.add_job(
     hour=7,
     minute=15,  # 07:15 UTC = 04:15 BRT — após spend_sync (06:00) e metrics_cache (06:30)
     id="core_pipeline_daily",
+)
+_scheduler.add_job(
+    run_weekly_review_all_clients,
+    "cron",
+    day_of_week="mon",
+    hour=8,
+    minute=0,   # 08:00 UTC = 05:00 BRT segunda — após core_pipeline (07:15) fechar domingo
+    id="weekly_review",
 )
 _scheduler.add_job(
     _evaluate_system_alerts,

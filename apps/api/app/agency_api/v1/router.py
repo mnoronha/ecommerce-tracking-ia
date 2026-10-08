@@ -45,6 +45,7 @@ Route inventory (32 routes):
   GET  /dashboard
   GET  /clients/{client_id}/action-events
   POST /clients/{client_id}/pipeline/trigger
+  POST /clients/{client_id}/weekly-review/replay
 """
 
 from __future__ import annotations
@@ -2800,4 +2801,92 @@ async def get_meta_insights(
         row_count=row_count,
         note=note,
         request_id=request_id,
+    )
+
+
+# ── POST /clients/{client_id}/weekly-review/replay ────────────────────────────
+#
+# Trigger a fresh Weekly Account Review contract for a client.
+# Defaults to the most recently completed Mon-Sun week (auto-detected from UTC date).
+# Optional period_end param forces a specific week (useful for backfill / testing).
+#
+# Scope: agency_admin or platform_web (same as pipeline replay).
+# Returns: QUEUED job record; execution runs in BackgroundTasks.
+# Idempotency: contract write is delete+insert on (client_slug, report_type, period_end).
+
+@router.post(
+    "/clients/{client_id}/weekly-review/replay",
+    summary="Trigger (or replay) a Weekly Account Review for a client",
+    response_model=JobOut,
+    status_code=202,
+)
+async def replay_weekly_review(
+    client_id: str,
+    background_tasks: BackgroundTasks,
+    period_end_str: Optional[str] = Query(
+        None,
+        description="ISO date for period_end (Sunday). Defaults to last completed Sunday.",
+    ),
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
+) -> JobOut:
+    from ...core.weekly_review import (
+        execute_weekly_review_replay,
+        queue_weekly_review_replay,
+        _last_completed_week,
+    )
+
+    # Determine period
+    if period_end_str:
+        try:
+            period_end = date.fromisoformat(period_end_str)
+        except ValueError:
+            raise HTTPException(422, detail=f"invalid period_end: {period_end_str!r}")
+    else:
+        _, period_end = _last_completed_week()
+
+    period_start = period_end - timedelta(days=6)
+
+    # Validate client exists
+    try:
+        res = _get_db().table("clients").select("client_id").eq("client_id", client_id).limit(1).execute()
+    except Exception as exc:
+        logger.error("replay_weekly_review: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, detail="database unavailable")
+    if not (res and res.data):
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+
+    # Find most recent weekly_review job for this period to use as replay_of
+    replay_of = str(_uuid_mod.uuid4())  # sentinel when no prior job exists
+    try:
+        prior = (
+            _get_db().table("core_job_runs")
+            .select("id")
+            .eq("job_type", "weekly_review")
+            .like("run_key", f"weekly_review:{client_id}:{period_end.isoformat()}%")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if prior and prior.data:
+            replay_of = prior.data[0]["id"]
+    except Exception:
+        pass
+
+    # Queue and execute in background
+    db = _get_db()
+    new_job_id = queue_weekly_review_replay(db, client_id, period_end, replay_of)
+    background_tasks.add_task(execute_weekly_review_replay, new_job_id, client_id, period_end)
+
+    run_key = f"weekly_review:{client_id}:{period_end.isoformat()}"
+    logger.info(
+        "replay_weekly_review: queued %s for %s (%s→%s)",
+        new_job_id, client_id, period_start, period_end,
+    )
+    return JobOut(
+        id=new_job_id,
+        job_type="weekly_review",
+        run_key=run_key,
+        status=JobStatus.QUEUED,
+        attempt=1,
+        replay_of=replay_of,
     )
