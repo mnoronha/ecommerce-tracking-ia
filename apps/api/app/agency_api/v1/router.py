@@ -41,6 +41,7 @@ Route inventory (32 routes):
   POST /jobs/{job_id}/replay
   GET  /clients/{client_id}/entity-performance
   GET  /clients/{client_id}/data-source/{source_key}
+  GET  /clients/{client_id}/meta/insights         [READ-ONLY diagnostic, SCOPE_READ_ANY]
   GET  /dashboard
   GET  /clients/{client_id}/action-events
   POST /clients/{client_id}/pipeline/trigger
@@ -108,6 +109,8 @@ from .schemas import (
     LearningScope,
     Level,
     MatchStatus,
+    MetaInsightRow,
+    MetaInsightsOut,
     MetricContract,
     MetricRef,
     MetricValue,
@@ -2593,4 +2596,197 @@ async def trigger_pipeline(
         run_key=run_key,
         status=JobStatus.QUEUED,
         attempt=1,
+    )
+
+
+# ── GET /clients/{client_id}/meta/insights ────────────────────────────────────
+#
+# READ-ONLY diagnostic — reads from meta_ad_attributions (pre-aggregated by the
+# legacy collector).  Never loads Meta access tokens.  Never writes.
+# Hermes cannot reach this endpoint (SCOPE_READ_ANY excludes hermes_service on
+# any path that would expose client secrets, but here there are no secrets anyway
+# — keeping SCOPE_READ_ANY consistent with other diagnostic routes).
+
+_META_VALID_AGGREGATIONS = frozenset({"daily", "monthly"})
+_META_VALID_LEVELS       = frozenset({"account", "campaign", "adset", "ad"})
+_META_DB_FETCH_LIMIT     = 50_000   # hard safety cap on raw rows pulled from DB
+
+
+@router.get(
+    "/clients/{client_id}/meta/insights",
+    summary="Meta Ads diagnostic — READ-ONLY insights from meta_ad_attributions",
+    response_model=MetaInsightsOut,
+)
+async def get_meta_insights(
+    client_id: str,
+    date_from: str = Query(..., description="YYYY-MM-DD inclusive start"),
+    date_to:   str = Query(..., description="YYYY-MM-DD inclusive end"),
+    aggregation: str = Query("daily",    pattern="^(daily|monthly)$"),
+    level:       str = Query("campaign", pattern="^(account|campaign|adset|ad)$"),
+    limit: int = Query(500, ge=1, le=2000, description="Max rows in response"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> MetaInsightsOut:
+    from collections import defaultdict
+
+    # ── 1. Validate date params ───────────────────────────────────────────────
+    try:
+        d_from = date.fromisoformat(date_from)
+        d_to   = date.fromisoformat(date_to)
+    except ValueError:
+        raise HTTPException(422, "date_from and date_to must be YYYY-MM-DD")
+    if d_from > d_to:
+        raise HTTPException(422, "date_from must be <= date_to")
+
+    # ── 2. Resolve client UUID (no token) ─────────────────────────────────────
+    client_meta = _load_client_meta(client_id)
+    if not client_meta:
+        raise HTTPException(404, f"client not found: {client_id!r}")
+    client_uuid = client_meta["id"]
+
+    # ── 3. Load account_id (no token) ────────────────────────────────────────
+    account_id = "unknown"
+    try:
+        acc_res = (
+            _get_db().table("clients")
+            .select("meta_ad_account_id")
+            .eq("id", client_uuid)
+            .limit(1)
+            .execute()
+        )
+        if acc_res.data and acc_res.data[0].get("meta_ad_account_id"):
+            raw_acc = acc_res.data[0]["meta_ad_account_id"]
+            account_id = raw_acc if str(raw_acc).startswith("act_") else f"act_{raw_acc}"
+    except Exception as exc:
+        logger.warning("get_meta_insights: could not load account_id for %s: %s", client_id, exc)
+
+    # ── 4. Fetch raw rows from meta_ad_attributions ───────────────────────────
+    try:
+        raw_res = (
+            _get_db().table("meta_ad_attributions")
+            .select(
+                "date, campaign_id, campaign_name, "
+                "adset_id, adset_name, ad_id, ad_name, "
+                "spend, impressions, clicks, purchases, purchase_value"
+            )
+            .eq("client_id", client_uuid)
+            .gte("date", d_from.isoformat())
+            .lte("date", d_to.isoformat())
+            .order("date", desc=False)
+            .limit(_META_DB_FETCH_LIMIT)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_meta_insights: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    raw_rows = raw_res.data or []
+
+    # ── 5. NO_DATA short-circuit ──────────────────────────────────────────────
+    request_id = str(_uuid_mod.uuid4())
+    if not raw_rows:
+        return MetaInsightsOut(
+            client_id=client_id,
+            account_id=account_id,
+            date_from=date_from,
+            date_to=date_to,
+            aggregation=aggregation,
+            level=level,
+            rows=[],
+            row_count=0,
+            note=f"NO_DATA: no rows in meta_ad_attributions for {client_id!r} between {date_from} and {date_to}",
+            request_id=request_id,
+        )
+
+    # ── 6. Aggregate in Python ───────────────────────────────────────────────
+    # key: (period_str, campaign_id|None, campaign_name|None,
+    #        adset_id|None, adset_name|None, ad_id|None, ad_name|None)
+    # The level controls which entity fields are kept (others set to None).
+
+    def _period_key(row_date: str) -> str:
+        if aggregation == "monthly":
+            return row_date[:7]   # YYYY-MM
+        return row_date           # YYYY-MM-DD
+
+    def _entity_key(r: dict) -> tuple:
+        if level == "account":
+            return (None, None, None, None, None, None)
+        if level == "campaign":
+            return (r.get("campaign_id"), r.get("campaign_name"), None, None, None, None)
+        if level == "adset":
+            return (
+                r.get("campaign_id"), r.get("campaign_name"),
+                r.get("adset_id"), r.get("adset_name"),
+                None, None,
+            )
+        # ad
+        return (
+            r.get("campaign_id"), r.get("campaign_name"),
+            r.get("adset_id"), r.get("adset_name"),
+            r.get("ad_id"), r.get("ad_name"),
+        )
+
+    Bucket = dict  # typed alias for clarity
+    buckets: dict[tuple, Bucket] = defaultdict(lambda: {
+        "spend": 0.0, "impressions": 0, "clicks": 0,
+        "purchases": 0.0, "purchase_value": 0.0,
+        "has_any": False,
+    })
+
+    for r in raw_rows:
+        pk  = _period_key(str(r["date"]))
+        ek  = _entity_key(r)
+        key = (pk, *ek)
+        b   = buckets[key]
+        b["spend"]          += float(r.get("spend") or 0)
+        b["impressions"]    += int(r.get("impressions") or 0)
+        b["clicks"]         += int(r.get("clicks") or 0)
+        b["purchases"]      += float(r.get("purchases") or 0)
+        b["purchase_value"] += float(r.get("purchase_value") or 0)
+        b["has_any"] = True
+
+    # Sort keys for deterministic output
+    sorted_keys = sorted(buckets.keys())
+    row_count   = len(sorted_keys)
+    truncated   = row_count > limit
+    output_keys = sorted_keys[:limit]
+
+    out_rows: list[MetaInsightRow] = []
+    for key in output_keys:
+        pk, cid, cname, sid, sname, aid, aname = key
+        b = buckets[key]
+        purchases      = round(b["purchases"], 2)
+        purchase_value = round(b["purchase_value"], 2)
+        out_rows.append(MetaInsightRow(
+            period=pk,
+            campaign_id=cid,
+            campaign_name=cname,
+            adset_id=sid,
+            adset_name=sname,
+            ad_id=aid,
+            ad_name=aname,
+            spend=round(b["spend"], 2),
+            impressions=b["impressions"],
+            clicks=b["clicks"],
+            conversions=purchases if purchases > 0 else None,
+            conversion_value=purchase_value if purchase_value > 0 else None,
+        ))
+
+    note: Optional[str] = None
+    if truncated:
+        note = f"TRUNCATED: response limited to {limit} rows; {row_count} total available"
+    if len(raw_rows) >= _META_DB_FETCH_LIMIT:
+        fetch_note = f"DB_FETCH_LIMIT_HIT: only {_META_DB_FETCH_LIMIT} raw rows were loaded; widen date range with care"
+        note = f"{note}; {fetch_note}" if note else fetch_note
+
+    return MetaInsightsOut(
+        client_id=client_id,
+        account_id=account_id,
+        date_from=date_from,
+        date_to=date_to,
+        aggregation=aggregation,
+        level=level,
+        rows=out_rows,
+        row_count=row_count,
+        note=note,
+        request_id=request_id,
     )

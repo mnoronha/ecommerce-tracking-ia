@@ -569,6 +569,41 @@ class SystemHealthOut(_Base):
     checked_at: datetime
 
 
+# ── 17. Meta Ads Diagnostic Insights (READ-ONLY) ─────────────────────────────
+# Sourced from meta_ad_attributions (daily sync, no live API call at read time).
+# Credential path: Core only — token never loaded in this contract.
+
+class MetaInsightRow(_Base):
+    """One aggregated row from meta_ad_attributions."""
+    period: str                          # YYYY-MM-DD (daily) | YYYY-MM (monthly)
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    adset_id: Optional[str] = None
+    adset_name: Optional[str] = None
+    ad_id: Optional[str] = None
+    ad_name: Optional[str] = None
+    spend: float
+    impressions: int
+    clicks: int
+    conversions: Optional[float] = None       # None when no purchase events recorded
+    conversion_value: Optional[float] = None  # None when no purchase value recorded
+
+
+class MetaInsightsOut(_Base):
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    account_id: str         # act_{id} — no token, no secret
+    date_from: str
+    date_to: str
+    aggregation: str        # daily | monthly
+    level: str              # account | campaign | adset | ad
+    rows: list[MetaInsightRow]
+    row_count: int          # total aggregated rows available (may exceed len(rows) when truncated)
+    data_source: str = "meta_ad_attributions"
+    note: Optional[str] = None
+    request_id: str
+
+
 # ── 17. Entity performance — campaign rows (P3 — Wave 1) ─────────────────────
 
 class CampaignPerformanceRow(_Base):
