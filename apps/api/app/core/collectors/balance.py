@@ -2,7 +2,7 @@
 Balance collector for prepaid ad accounts.
 
 Supported platforms:
-  google — GAQL billing_setup (payment_setting) + account_budget remaining micros
+  google — GAQL billing_setup (active billing check) + account_budget remaining micros
   meta   — Graph API balance field
 
 Primary alert rule: estimated_days_remaining (balance / avg_daily_spend).
@@ -13,6 +13,7 @@ NEVER treats campaign_budget, daily_budget, or spend_cap as balance.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Optional
 
@@ -88,30 +89,62 @@ def _compute_days(balance: Optional[float], avg_daily_spend: Optional[float]) ->
 # ── Google Ads ─────────────────────────────────────────────────────────────────
 
 _BILLING_SETUP_QUERY = (
-    "SELECT billing_setup.id, billing_setup.status, billing_setup.payment_setting "
+    "SELECT billing_setup.status "
     "FROM billing_setup "
     "WHERE billing_setup.status = 'APPROVED' "
-    "ORDER BY billing_setup.id DESC LIMIT 1"
+    "LIMIT 1"
 )
 
 _ACCOUNT_BUDGET_QUERY = (
     "SELECT "
-    "  account_budget.id, "
     "  account_budget.status, "
     "  account_budget.adjusted_spending_limit_micros, "
+    "  account_budget.adjusted_spending_limit_type, "
     "  account_budget.amount_served_micros, "
     "  account_budget.approved_spending_limit_micros, "
     "  account_budget.total_adjustments_micros "
     "FROM account_budget "
     "WHERE account_budget.status = 'APPROVED' "
-    "ORDER BY account_budget.id DESC LIMIT 1"
+    "LIMIT 1"
 )
 
-_PAYMENT_SETTING_LABEL: dict[str, str] = {
-    "PAY_MANUALLY":      "prepaid",
-    "AUTOMATIC_BILLING": "postpaid",
-    "MANUAL_CPC_BIDDING": "manual",
-}
+
+def _extract_google_error(resp_text: str, http_status: int) -> tuple[str, dict]:
+    """Parse a Google Ads API non-200 response; returns (human_msg, raw_dict). Never leaks tokens."""
+    try:
+        body = json.loads(resp_text)
+    except Exception:
+        return f"HTTP {http_status}: {resp_text[:200]}", {"http_status": http_status}
+
+    error   = body.get("error", {})
+    details = error.get("details", [])
+    gaf     = next((d for d in details if "GoogleAdsFailure" in d.get("@type", "")), {})
+    first   = (gaf.get("errors") or [{}])[0]
+
+    raw: dict[str, Any] = {
+        "http_status":    http_status,
+        "status":         error.get("status"),
+        "message":        (error.get("message") or "")[:300],
+        "request_id":     gaf.get("requestId"),
+        "ads_error_code": first.get("errorCode"),
+        "ads_message":    (first.get("message") or "")[:200],
+        "field_path": [
+            p.get("fieldName")
+            for p in first.get("location", {}).get("fieldPathElements", [])
+        ],
+    }
+
+    parts = [f"HTTP {http_status}"]
+    if raw["ads_message"]:
+        parts.append(raw["ads_message"])
+    elif raw["message"]:
+        parts.append(raw["message"])
+    if raw["field_path"]:
+        parts.append(f"field_path={raw['field_path']}")
+    if raw["request_id"]:
+        parts.append(f"request_id={raw['request_id']}")
+
+    return "; ".join(parts), raw
 
 
 def _google_headers(token: str, manager_id: Optional[str] = None) -> dict:
@@ -161,7 +194,8 @@ def collect_google_balance(
 ) -> BalanceSnapshot:
     """
     Queries Google Ads GAQL for:
-      1. billing_setup.payment_setting (confirms prepaid / billing model)
+      1. billing_setup — confirms active billing (no payment_setting: that field is not
+         available on billing_setup in Google Ads API v23; prepaid confirmed by client flag)
       2. account_budget.adjusted_spending_limit_micros - amount_served_micros (remaining)
 
     Official signal: adjusted_spending_limit_micros - amount_served_micros on the
@@ -194,8 +228,8 @@ def collect_google_balance(
     if resp.status_code in (401, 403):
         return _denied(resp.text[:300], threshold_low, currency, {"http_status": resp.status_code})
     if resp.status_code != 200:
-        return _blocked(f"billing_setup HTTP {resp.status_code}: {resp.text[:200]}", threshold_low, currency,
-                        {"http_status": resp.status_code})
+        msg, raw_err = _extract_google_error(resp.text, resp.status_code)
+        return _blocked(f"billing_setup {msg}", threshold_low, currency, raw_err)
 
     billing_rows = resp.json().get("results") or []
     if not billing_rows:
@@ -210,22 +244,9 @@ def collect_google_balance(
             error="No approved billing_setup found; account may be inactive",
         )
 
-    billing_row     = billing_rows[0].get("billingSetup", {})
-    payment_setting = billing_row.get("paymentSetting", "")
-    billing_model   = _PAYMENT_SETTING_LABEL.get(payment_setting, f"unknown:{payment_setting}")
-
-    if payment_setting != "PAY_MANUALLY":
-        return BalanceSnapshot(
-            billing_model=billing_model, collection_status="PASS",
-            balance=None, balance_status="NOT_SUPPORTED",
-            avg_daily_spend=None, spend_avg_window_days=None,
-            spend_data_days=None, estimated_days_remaining=None,
-            threshold_low=threshold_low,
-            threshold_critical=threshold_low * _CRITICAL_FRACTION if threshold_low else None,
-            currency=currency,
-            raw={"payment_setting": payment_setting, "billing_setup_status": billing_row.get("status")},
-            error=f"Account billing_model={billing_model}; balance field only available for prepaid (PAY_MANUALLY)",
-        )
+    # billing_model confirmed by client flag (google_prepaid=True)
+    # payment_setting is NOT a field on billing_setup in Google Ads API v23
+    billing_model = "prepaid"
 
     # Step 2: account_budget → remaining
     try:
@@ -234,8 +255,8 @@ def collect_google_balance(
         return _blocked(f"account_budget network error: {exc}", threshold_low, currency)
 
     if resp2.status_code != 200:
-        return _blocked(f"account_budget HTTP {resp2.status_code}: {resp2.text[:200]}", threshold_low, currency,
-                        {"http_status": resp2.status_code})
+        msg, raw_err = _extract_google_error(resp2.text, resp2.status_code)
+        return _blocked(f"account_budget {msg}", threshold_low, currency, raw_err)
 
     budget_rows = resp2.json().get("results") or []
     if not budget_rows:
@@ -247,13 +268,28 @@ def collect_google_balance(
             threshold_low=threshold_low,
             threshold_critical=threshold_low * _CRITICAL_FRACTION if threshold_low else None,
             currency=currency,
-            raw={"billing_setup": billing_row, "account_budget_rows": 0},
+            raw={"account_budget_rows": 0},
             error="billing_model=prepaid confirmed; no approved account_budget row found",
         )
 
-    budget          = budget_rows[0].get("accountBudget", {})
-    adjusted_micros = int(budget.get("adjustedSpendingLimitMicros") or 0)
-    served_micros   = int(budget.get("amountServedMicros") or 0)
+    budget     = budget_rows[0].get("accountBudget", {})
+    limit_type = budget.get("adjustedSpendingLimitType", "")
+
+    if limit_type == "INFINITE":
+        return BalanceSnapshot(
+            billing_model=billing_model, collection_status="PASS",
+            balance=None, balance_status="NOT_SUPPORTED",
+            avg_daily_spend=None, spend_avg_window_days=None,
+            spend_data_days=None, estimated_days_remaining=None,
+            threshold_low=threshold_low,
+            threshold_critical=threshold_low * _CRITICAL_FRACTION if threshold_low else None,
+            currency=currency,
+            raw={"adjusted_spending_limit_type": "INFINITE", "account_budget_status": budget.get("status")},
+            error="adjustedSpendingLimitType=INFINITE; unlimited budget account, cannot compute balance",
+        )
+
+    adjusted_micros  = int(budget.get("adjustedSpendingLimitMicros") or 0)
+    served_micros    = int(budget.get("amountServedMicros") or 0)
     remaining_micros = adjusted_micros - served_micros
     balance          = round(remaining_micros / 1_000_000, 2)
 
@@ -262,15 +298,13 @@ def collect_google_balance(
 
     raw_out: dict[str, Any] = {
         "billing_model":                   billing_model,
-        "payment_setting":                 payment_setting,
-        "account_budget_id":               budget.get("id"),
+        "adjusted_spending_limit_type":    limit_type or "FINITE",
         "account_budget_status":           budget.get("status"),
         "adjusted_spending_limit_micros":  adjusted_micros,
         "approved_spending_limit_micros":  int(budget.get("approvedSpendingLimitMicros") or 0),
         "total_adjustments_micros":        int(budget.get("totalAdjustmentsMicros") or 0),
         "amount_served_micros":            served_micros,
         "remaining_micros":                remaining_micros,
-        # Signal description
         "balance_signal": (
             "account_budget.adjusted_spending_limit_micros - amount_served_micros. "
             "Official closest proxy; Google Ads API has no single 'account_balance' field."
