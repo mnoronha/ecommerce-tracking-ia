@@ -2609,7 +2609,8 @@ async def trigger_pipeline(
 
 _META_VALID_AGGREGATIONS = frozenset({"daily", "monthly"})
 _META_VALID_LEVELS       = frozenset({"account", "campaign", "adset", "ad"})
-_META_DB_FETCH_LIMIT     = 50_000   # hard safety cap on raw rows pulled from DB
+_META_DB_FETCH_LIMIT     = 50_000   # hard safety cap on total raw rows fetched
+_META_PAGE_SIZE          = 1_000    # PostgREST max_rows is typically 1000
 
 
 @router.get(
@@ -2659,27 +2660,37 @@ async def get_meta_insights(
     except Exception as exc:
         logger.warning("get_meta_insights: could not load account_id for %s: %s", client_id, exc)
 
-    # ── 4. Fetch raw rows from meta_ad_attributions ───────────────────────────
+    # ── 4. Fetch raw rows from meta_ad_attributions (paginated) ──────────────
+    # PostgREST silently caps .limit() at its server-side max_rows (typically
+    # 1000).  Use .range() in a loop so every page is an explicit window that
+    # PostgREST must honour, ensuring no rows are silently dropped.
+    raw_rows: list[dict] = []
     try:
-        raw_res = (
-            _get_db().table("meta_ad_attributions")
-            .select(
-                "date, campaign_id, campaign_name, "
-                "adset_id, adset_name, ad_id, ad_name, "
-                "spend, impressions, clicks, purchases, purchase_value"
+        db = _get_db()
+        offset = 0
+        while len(raw_rows) < _META_DB_FETCH_LIMIT:
+            page_res = (
+                db.table("meta_ad_attributions")
+                .select(
+                    "date, campaign_id, campaign_name, "
+                    "adset_id, adset_name, ad_id, ad_name, "
+                    "spend, impressions, clicks, purchases, purchase_value"
+                )
+                .eq("client_id", client_uuid)
+                .gte("date", d_from.isoformat())
+                .lte("date", d_to.isoformat())
+                .order("date", desc=False)
+                .range(offset, offset + _META_PAGE_SIZE - 1)
+                .execute()
             )
-            .eq("client_id", client_uuid)
-            .gte("date", d_from.isoformat())
-            .lte("date", d_to.isoformat())
-            .order("date", desc=False)
-            .limit(_META_DB_FETCH_LIMIT)
-            .execute()
-        )
+            batch = page_res.data or []
+            raw_rows.extend(batch)
+            if len(batch) < _META_PAGE_SIZE:
+                break   # last page — no more rows
+            offset += _META_PAGE_SIZE
     except Exception as exc:
         logger.error("get_meta_insights: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, "database unavailable")
-
-    raw_rows = raw_res.data or []
 
     # ── 5. NO_DATA short-circuit ──────────────────────────────────────────────
     request_id = str(_uuid_mod.uuid4())
