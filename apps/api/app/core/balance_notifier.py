@@ -220,25 +220,33 @@ def dispatch_balance_notifications(client_id: str) -> dict:
             skipped += 1
             continue
 
-        text = _build_message(alert)
-        ok   = telegram.send_message(text)
+        text    = _build_message(alert)
+        ok, tg  = telegram.send_message(text)
 
         if ok:
             _record_delivery(
                 sb, alert_id, "telegram", "sent",
                 alert_type=alert_type, severity=severity,
+                provider_response=tg,
             )
             _append_sent_via(sb, alert_id, "telegram")
             sent += 1
-            logger.info("balance_notifier: sent telegram for %s/%s", client_id, alert_id)
+            logger.info(
+                "balance_notifier: sent telegram for %s/%s message_id=%s",
+                client_id, alert_id, tg.get("message_id"),
+            )
         else:
             _record_delivery(
                 sb, alert_id, "telegram", "failed",
                 alert_type=alert_type, severity=severity,
-                error="telegram.send_message returned False",
+                provider_response=tg,
+                error=tg.get("reason", "unknown"),
             )
             failed += 1
-            logger.warning("balance_notifier: telegram delivery failed for %s/%s", client_id, alert_id)
+            logger.warning(
+                "balance_notifier: telegram delivery failed %s/%s reason=%s",
+                client_id, alert_id, tg.get("reason"),
+            )
 
     logger.info(
         "balance_notifier: %s — sent=%d skipped=%d failed=%d",
