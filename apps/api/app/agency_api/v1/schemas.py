@@ -632,6 +632,20 @@ class SystemHealthOut(_Base):
     checked_at: datetime
 
 
+class EnvVarStatus(_Base):
+    present: bool
+    length: int
+
+
+class NotificationsConfigOut(_Base):
+    """Runtime presence of notification env vars — never exposes values."""
+    railway_service: Optional[str] = None
+    telegram_bot_token: EnvVarStatus
+    telegram_chat_id: EnvVarStatus
+    env_names_match_code: Literal["PASS"] = "PASS"
+    checked_at: datetime
+
+
 # ── 17. Meta Ads Diagnostic Insights (READ-ONLY) ─────────────────────────────
 # Sourced from meta_ad_attributions (daily sync, no live API call at read time).
 # Credential path: Core only — token never loaded in this contract.

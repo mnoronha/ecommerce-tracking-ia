@@ -83,6 +83,7 @@ from .schemas import (
     BalanceSnapshotOut,
     BalanceTriggerOut,
     ClientBalanceOut,
+    EnvVarStatus,
     ErrorOut,
     AlertContext,
     AlertFeedbackCreate,
@@ -143,6 +144,7 @@ from .schemas import (
     ServiceStatus,
     SourceState,
     SystemHealthOut,
+    NotificationsConfigOut,
     TargetStatus,
     TextWithRefs,
     TruthOut,
@@ -1520,6 +1522,30 @@ async def system_health(
         last_successful_pipeline_run=last_successful_pipeline_run,
         last_pipeline_error=last_pipeline_error,
         checked_at=now,
+    )
+
+
+# ── GET /system/notifications-config ─────────────────────────────────────────
+
+@router.get(
+    "/system/notifications-config",
+    summary="Telegram env var presence/length — never exposes secret values",
+    response_model=NotificationsConfigOut,
+)
+async def system_notifications_config(
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> NotificationsConfigOut:
+    import os
+    from ...config import settings
+
+    bot_token = settings.TELEGRAM_BOT_TOKEN or ""
+    chat_id   = settings.TELEGRAM_CHAT_ID or ""
+
+    return NotificationsConfigOut(
+        railway_service=os.environ.get("RAILWAY_SERVICE_NAME") or os.environ.get("RAILWAY_SERVICE_ID"),
+        telegram_bot_token=EnvVarStatus(present=bool(bot_token), length=len(bot_token)),
+        telegram_chat_id=EnvVarStatus(present=bool(chat_id), length=len(chat_id)),
+        checked_at=datetime.now(timezone.utc),
     )
 
 
