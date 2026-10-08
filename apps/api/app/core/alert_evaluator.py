@@ -31,17 +31,30 @@ CORE_ALERT_TYPES = frozenset({
     "SOURCE_ERROR",
     "RECONCILIATION_FAILED",
     "PIPELINE_NOT_RUN",
+    "ACCOUNT_BALANCE_LOW",
+    "ACCOUNT_BALANCE_CRITICAL",
+    "ACCOUNT_BALANCE_EXHAUSTED",
 })
 
 _CLIENT_ALERT_TYPES = CORE_ALERT_TYPES - {"PIPELINE_NOT_RUN"}
 
 _SEVERITY: dict[str, str] = {
-    "JOB_FAILED":            "HIGH",
-    "JOB_STUCK":             "HIGH",
-    "SOURCE_ERROR":          "HIGH",
-    "RECONCILIATION_FAILED": "HIGH",
-    "SOURCE_STALE":          "MEDIUM",
-    "PIPELINE_NOT_RUN":      "HIGH",
+    "JOB_FAILED":               "HIGH",
+    "JOB_STUCK":                "HIGH",
+    "SOURCE_ERROR":             "HIGH",
+    "RECONCILIATION_FAILED":    "HIGH",
+    "SOURCE_STALE":             "MEDIUM",
+    "PIPELINE_NOT_RUN":         "HIGH",
+    "ACCOUNT_BALANCE_LOW":      "MEDIUM",
+    "ACCOUNT_BALANCE_CRITICAL": "HIGH",
+    "ACCOUNT_BALANCE_EXHAUSTED":"HIGH",
+}
+
+# Statuses that generate alerts (absent = no alert, just a snapshot)
+_BALANCE_ALERT_STATUSES = {
+    "LOW":       "ACCOUNT_BALANCE_LOW",
+    "CRITICAL":  "ACCOUNT_BALANCE_CRITICAL",
+    "EXHAUSTED": "ACCOUNT_BALANCE_EXHAUSTED",
 }
 
 _ERROR_SOURCE_STATES = frozenset({"ERROR", "ACCESS_MISSING", "PERMISSION_DENIED", "MISSING"})
@@ -390,3 +403,138 @@ def evaluate_system_alerts() -> dict:
                 logger.warning("alert_evaluator: PIPELINE_NOT_RUN resolve failed: %s", exc)
             return {"pipeline_not_run": False, "resolved": 1}
         return {"pipeline_not_run": False}
+
+
+# ── Balance alert evaluation ───────────────────────────────────────────────────
+
+def evaluate_balance_alerts(client_id: str) -> dict:
+    """
+    Read the latest balance snapshot for each prepaid platform and upsert
+    ACCOUNT_BALANCE_LOW / CRITICAL / EXHAUSTED alerts as needed.
+
+    Called by balance_monitor after each snapshot write.
+    """
+    from ..database import get_supabase
+
+    sb  = get_supabase()
+    now = datetime.now(timezone.utc)
+
+    # Resolve client UUID
+    try:
+        res = (
+            sb.table("clients")
+            .select("id")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        client_uuid: Optional[str] = res.data[0]["id"] if (res and res.data) else None
+    except Exception as exc:
+        logger.error("balance_alerts: client lookup failed %s: %s", client_id, exc)
+        return {"error": str(exc)}
+
+    if not client_uuid:
+        return {"error": "client not found"}
+
+    # Load latest snapshot per platform (include days_remaining for alert message)
+    try:
+        snaps = (
+            sb.table("core_balance_snapshots")
+            .select(
+                "platform, balance_status, balance, threshold_low, currency, "
+                "estimated_days_remaining, avg_daily_spend, spend_avg_window_days, "
+                "billing_model, snapshot_at"
+            )
+            .eq("client_id", client_id)
+            .order("snapshot_at", desc=True)
+            .limit(10)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.error("balance_alerts: snapshot load failed %s: %s", client_id, exc)
+        return {"error": str(exc)}
+
+    # Keep only the most recent per platform
+    latest: dict[str, dict] = {}
+    for s in snaps:
+        p = s.get("platform", "")
+        if p and p not in latest:
+            latest[p] = s
+
+    # Load open balance alerts for this client
+    _balance_types = list(_BALANCE_ALERT_STATUSES.values())
+    try:
+        open_res = (
+            sb.table("alerts")
+            .select("id, type, fingerprint, occurrence_count")
+            .eq("client_id", client_uuid)
+            .in_("type", _balance_types)
+            .eq("status", "OPEN")
+            .is_("resolved_at", "null")
+            .execute()
+        )
+        existing_open: dict[str, dict] = {
+            r["fingerprint"]: r
+            for r in (open_res.data or [])
+            if r.get("fingerprint")
+        }
+    except Exception as exc:
+        logger.error("balance_alerts: open alert load failed %s: %s", client_id, exc)
+        existing_open = {}
+
+    current_fingerprints: set[str] = set()
+
+    for platform, snap in latest.items():
+        status = snap.get("balance_status", "")
+        alert_type = _BALANCE_ALERT_STATUSES.get(status)
+        if not alert_type:
+            continue
+
+        balance    = snap.get("balance")
+        threshold  = snap.get("threshold_low")
+        cur        = snap.get("currency", "")
+        est_days   = snap.get("estimated_days_remaining")
+        avg_spend  = snap.get("avg_daily_spend")
+        window     = snap.get("spend_avg_window_days")
+        fp         = f"{alert_type}:{client_uuid}:{platform}"
+        current_fingerprints.add(fp)
+
+        bal_str  = f"{balance:,.2f} {cur}" if balance is not None else "unknown"
+        days_str = f"{est_days:.1f} days remaining" if est_days is not None else "unknown days remaining"
+        avg_str  = (
+            f"avg {avg_spend:,.2f} {cur}/day ({window}d window)"
+            if avg_spend is not None else "no spend reference"
+        )
+
+        _upsert_alert(
+            sb, fp, alert_type, client_uuid,
+            title=f"Balance {status.lower()}: {client_id}/{platform}",
+            message=(
+                f"{client_id} {platform.title()} Ads — {days_str}. "
+                f"Balance: {bal_str}. {avg_str.capitalize()}. Action required."
+            ),
+            evidence={
+                "client_id":               client_id,
+                "platform":                platform,
+                "balance":                 balance,
+                "threshold":               threshold,
+                "currency":                cur,
+                "balance_status":          status,
+                "estimated_days_remaining": est_days,
+                "avg_daily_spend":         avg_spend,
+                "spend_avg_window_days":   window,
+                "snapshot_at":             snap.get("snapshot_at"),
+            },
+            existing_open=existing_open,
+        )
+
+    # Auto-resolve balance alerts whose condition cleared
+    resolved = _resolve_stale_open(sb, existing_open, current_fingerprints, now)
+    created  = sum(1 for fp in current_fingerprints if fp not in existing_open)
+    updated  = sum(1 for fp in current_fingerprints if fp in existing_open)
+
+    logger.info(
+        "balance_alerts: %s created=%d updated=%d resolved=%d",
+        client_id, created, updated, resolved,
+    )
+    return {"created": created, "updated": updated, "resolved": resolved}

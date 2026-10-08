@@ -7,7 +7,7 @@ Real implementation replaces stubs incrementally from Etapa 4 onwards.
 Auth: each route declares the allowed scopes via Depends(require_scopes(...)).
 Idempotency-Key header is accepted on all write endpoints (ignored in stubs).
 
-Route inventory (32 routes):
+Route inventory (46 routes):
   GET  /clients
   GET  /clients/{client_id}/truth
   GET  /clients/{client_id}/health
@@ -47,6 +47,11 @@ Route inventory (32 routes):
   GET  /clients/{client_id}/action-events
   POST /clients/{client_id}/pipeline/trigger
   POST /clients/{client_id}/weekly-review/replay
+  GET  /clients/{client_id}/truth/targets
+  PUT  /clients/{client_id}/truth/targets  [human-only, PLATFORM_WRITE]
+  POST /clients/{client_id}/monthly-review/replay
+  GET  /clients/{client_id}/balance           [prepaid ad account balance]
+  POST /clients/{client_id}/balance/trigger   [on-demand check, PLATFORM_WRITE]
 """
 
 from __future__ import annotations
@@ -75,6 +80,9 @@ from .schemas import (
     ActionEventCreate,
     ActionEventOut,
     ActionEventType,
+    BalanceSnapshotOut,
+    BalanceTriggerOut,
+    ClientBalanceOut,
     ErrorOut,
     AlertContext,
     AlertFeedbackCreate,
@@ -2997,4 +3005,113 @@ async def replay_monthly_review(
         status=JobStatus.QUEUED,
         attempt=1,
         replay_of=replay_of,
+    )
+
+
+# ── Balance monitoring ─────────────────────────────────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/balance",
+    response_model=ClientBalanceOut,
+    summary="Latest balance snapshots for a client's prepaid ad accounts",
+)
+async def get_client_balance(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> ClientBalanceOut:
+    db = _get_db()
+
+    try:
+        client_res = (
+            db.table("clients")
+            .select("client_id, google_prepaid, meta_prepaid")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_client_balance: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, detail="database unavailable")
+
+    if not (client_res and client_res.data):
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+
+    client_row  = client_res.data[0]
+    any_prepaid = bool(client_row.get("google_prepaid") or client_row.get("meta_prepaid"))
+
+    try:
+        snaps_res = (
+            db.table("core_balance_snapshots")
+            .select(
+                "platform, billing_model, collection_status, balance, balance_status, "
+                "threshold_low, threshold_critical, currency, snapshot_at, error, "
+                "avg_daily_spend, spend_avg_window_days, spend_data_days, estimated_days_remaining"
+            )
+            .eq("client_id", client_id)
+            .order("snapshot_at", desc=True)
+            .limit(20)
+            .execute()
+        )
+        rows = snaps_res.data or []
+    except Exception as exc:
+        logger.error("get_client_balance: snapshot load failed %s: %s", client_id, exc)
+        raise HTTPException(503, detail="database unavailable")
+
+    seen: set[str] = set()
+    snapshots: list[BalanceSnapshotOut] = []
+    for row in rows:
+        p = row.get("platform", "")
+        if p in seen:
+            continue
+        seen.add(p)
+        snapshots.append(BalanceSnapshotOut(
+            platform=p,
+            billing_model=row.get("billing_model"),
+            collection_status=row.get("collection_status"),
+            balance_available=row.get("balance"),
+            balance_status=row.get("balance_status", "NO_DATA"),
+            threshold_low=row.get("threshold_low"),
+            threshold_critical=row.get("threshold_critical"),
+            currency=row.get("currency"),
+            spend_daily_reference=row.get("avg_daily_spend"),
+            spend_avg_window_days=row.get("spend_avg_window_days"),
+            spend_data_days=row.get("spend_data_days"),
+            estimated_days_remaining=row.get("estimated_days_remaining"),
+            collected_at=row.get("snapshot_at"),
+            error=row.get("error"),
+        ))
+
+    return ClientBalanceOut(
+        client_id=client_id,
+        snapshots=snapshots,
+        any_prepaid=any_prepaid,
+    )
+
+
+@router.post(
+    "/clients/{client_id}/balance/trigger",
+    response_model=BalanceTriggerOut,
+    status_code=200,
+    summary="Run an on-demand balance check for a client (synchronous)",
+)
+async def trigger_client_balance(
+    client_id: str,
+    platform: Optional[str] = Query(None, description="google | meta — omit to check all prepaid"),
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
+) -> BalanceTriggerOut:
+    if platform and platform not in ("google", "meta"):
+        raise HTTPException(422, detail=f"platform must be 'google' or 'meta', got {platform!r}")
+
+    from ...core.balance_monitor import trigger_balance_check
+
+    result = trigger_balance_check(client_id, platform=platform)
+    if "error" in result and not result.get("platforms"):
+        if "not found" in str(result.get("error", "")):
+            raise HTTPException(404, detail=result["error"])
+        raise HTTPException(503, detail=result["error"])
+
+    return BalanceTriggerOut(
+        client_id=client_id,
+        triggered_at=datetime.now(timezone.utc),
+        platforms=result.get("platforms", {}),
     )

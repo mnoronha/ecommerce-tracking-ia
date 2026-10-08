@@ -128,6 +128,69 @@ class TruthOut(_Base):
     valid_from: datetime
 
 
+# ── 2b. Target Truth write contract ──────────────────────────────────────────
+
+
+class TargetEntry(_Base):
+    """
+    One metric target. Backward-compatible with legacy {target, currency} shape.
+    period=None means UNKNOWN (pre-existing rows written before the write API existed).
+    """
+    target: float
+    unit: Optional[str] = None
+    currency: Optional[str] = None
+    period: Optional[str] = None   # "daily|weekly|monthly|quarterly|annual|none" | None=UNKNOWN
+    channel: Optional[str] = None  # "google|meta|tiktok|pinterest|all" | None=not specified
+
+
+class TargetTruthPatch(_Base):
+    """
+    Request body for PUT /clients/{client_id}/truth/targets.
+
+    Merge semantics:
+    - 'targets': keys to SET/ADD. Only the listed keys are changed; all others preserved.
+    - 'remove_keys': explicit list of keys to DELETE. Absence from 'targets' NEVER deletes.
+    - Keys in 'remove_keys' take precedence over 'targets' for the same key.
+    - 'actor' MUST be a human identifier (slug or UUID), never a service name.
+    """
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    targets: dict[str, TargetEntry] = Field(default_factory=dict)
+    remove_keys: list[str] = Field(default_factory=list)
+    actor: str = Field(description="Human identifier — not a service name")
+    reason: Optional[str] = None
+    provenance: str = Field(
+        default="manual_agency",
+        description="Origin of this write: manual_agency | notion_import | pipeline | etc.",
+    )
+
+
+class TargetTruthWriteOut(_Base):
+    """Response for a successful Target Truth version write."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    target_version: int
+    target_truth: dict[str, Any]
+    previous_version: int
+    keys_set: list[str]
+    keys_removed: list[str]
+    actor: str
+    reason: Optional[str] = None
+    provenance: str
+    valid_from: datetime
+    idempotent_replay: bool = False
+
+
+class TargetTruthReadOut(_Base):
+    """Response for GET /clients/{client_id}/truth/targets — enriched with period audit."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    target_version: int
+    target_truth: dict[str, Any]
+    period_audit: dict[str, Optional[str]]  # key → period value or None (UNKNOWN)
+    valid_from: datetime
+    write_meta: Optional[dict[str, Any]] = None
+
+
 # ── 3. Data health and pipeline health ───────────────────────────────────────
 
 class DataHealthEntry(_Base):
@@ -664,3 +727,39 @@ class ErrorOut(_Base):
     error: str = Field(description="Machine-readable error code")
     detail: Optional[str] = Field(default=None, description="Human-readable explanation")
     request_id: Optional[str] = Field(default=None, description="Echoed from X-Request-ID header")
+
+
+# ── 20. Balance monitoring ────────────────────────────────────────────────────
+
+class BalanceSnapshotOut(_Base):
+    """Latest balance snapshot for a single platform."""
+    platform: str
+    billing_model: Optional[str] = None        # "prepaid" | "postpaid" | None
+    collection_status: Optional[str] = None   # "PASS" | "BLOCKED" | "PERMISSION_DENIED" | "NOT_SUPPORTED"
+    balance_available: Optional[float] = None  # actual balance in major currency units
+    balance_status: str                        # OK | LOW | CRITICAL | EXHAUSTED | NO_DATA | MISSING | …
+    currency: Optional[str] = None
+    spend_daily_reference: Optional[float] = None  # avg daily spend used for estimation
+    spend_avg_window_days: Optional[int] = None    # window used (3 or 7 days)
+    spend_data_days: Optional[int] = None          # actual days with spend > 0 in window
+    estimated_days_remaining: Optional[float] = None
+    threshold_low: Optional[float] = None
+    threshold_critical: Optional[float] = None
+    collected_at: Optional[datetime] = None
+    error: Optional[str] = None
+
+
+class ClientBalanceOut(_Base):
+    """Balance summary for a client across all prepaid platforms."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    snapshots: list[BalanceSnapshotOut]
+    any_prepaid: bool
+
+
+class BalanceTriggerOut(_Base):
+    """Result of a manual balance check trigger."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    triggered_at: datetime
+    platforms: dict[str, Any]  # per-platform snapshot results

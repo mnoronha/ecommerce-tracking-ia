@@ -26,6 +26,7 @@ from .core.alert_evaluator import evaluate_system_alerts as _evaluate_system_ale
 from .core.scheduler_registry import register as _register_scheduler
 from .core.weekly_review import run_weekly_review_all_clients
 from .core.monthly_review import run_monthly_review_all_clients
+from .core.balance_monitor import run_balance_check_all_prepaid
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -288,6 +289,12 @@ _scheduler.add_job(
     "interval",
     minutes=30,  # detects PIPELINE_NOT_RUN if daily job missed
     id="core_alert_system_check",
+)
+_scheduler.add_job(
+    run_balance_check_all_prepaid,
+    "interval",
+    hours=1,  # hourly — prepaid accounts need fast detection before exhaustion
+    id="balance_check_prepaid",
 )
 _scheduler.add_job(
     shopify_sync.run_hourly_for_all_clients,
