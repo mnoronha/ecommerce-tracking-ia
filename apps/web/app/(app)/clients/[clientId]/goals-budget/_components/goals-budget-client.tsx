@@ -3,11 +3,11 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Pencil, Check, X, Target, DollarSign, TrendingUp, AlertTriangle,
-  CheckCircle2, Clock, HelpCircle, XCircle, Bell, RefreshCw,
+  Pencil, Check, X, Target, DollarSign, TrendingUp, Bell,
+  RefreshCw, Plus, AlertTriangle, CheckCircle2, Clock, HelpCircle,
 } from 'lucide-react'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types (exported for server component import) ──────────────────────────────
 
 export interface PlatformBudgetPacing {
   platform: string
@@ -63,7 +63,6 @@ export interface ClientBalanceOut {
   client_id: string
   snapshots: BalanceSnapshot[]
   any_prepaid: boolean
-  monitoring_enabled?: boolean
 }
 
 export interface BudgetConfigOut {
@@ -111,22 +110,28 @@ interface Props {
   targets: TargetTruthReadOut | null
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-function fmtBRL(v: number | null | undefined, unit?: string | null): string {
-  if (v == null) return '—'
-  if (unit === 'x' || unit === 'roas') return `${v.toFixed(2)}x`
-  if (unit === '%') return `${(v * 100).toFixed(1)}%`
-  if (unit === 'BRL' || !unit) {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(v)
-  }
-  return `${v.toFixed(2)} ${unit}`
+const PLATFORM_LABEL: Record<string, string> = {
+  google: 'Google Ads',
+  meta:   'Meta Ads',
 }
 
-function fmtPct(v: number | null): string {
-  if (v == null) return '—'
-  return `${(v * 100).toFixed(1)}%`
+const METRIC_LABEL: Record<string, string> = {
+  revenue_business:        'Receita',
+  mer:                     'MER',
+  roas_google:             'ROAS Google',
+  google_roas_ecommerce:   'ROAS Google Ecommerce',
+  cpa_google:              'CPA Google',
+  google_cpa_ecommerce:    'CPA Google Ecommerce',
+  google_conversions:      'Conversões Google',
+  roas_meta:               'ROAS Meta',
+  cpa_meta:                'CPA Meta',
+  meta_conversions:        'Conversões Meta',
+  leads:                   'Leads',
 }
+
+const AVAILABLE_METRICS = Object.entries(METRIC_LABEL)
 
 const BUDGET_STATUS_CLASS: Record<string, string> = {
   ON_PACE:    'text-emerald-400',
@@ -167,49 +172,54 @@ const BALANCE_STATUS_CLASS: Record<string, string> = {
   MISSING:   'text-slate-500',
 }
 
-const PLATFORM_LABEL: Record<string, string> = {
-  google: 'Google Ads',
-  meta:   'Meta Ads',
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtBRL(v: number | null | undefined, unit?: string | null): string {
+  if (v == null) return '—'
+  if (unit === 'x' || unit === 'roas') return `${v.toFixed(2)}x`
+  if (unit === '%') return `${(v * 100).toFixed(1)}%`
+  if (unit === 'BRL' || !unit) {
+    return new Intl.NumberFormat('pt-BR', {
+      style: 'currency', currency: 'BRL', maximumFractionDigits: 0,
+    }).format(v)
+  }
+  return `${v.toFixed(2)} ${unit}`
 }
 
-const METRIC_LABEL: Record<string, string> = {
-  revenue_business:   'Receita',
-  mer:                'MER',
-  roas_google:        'ROAS Google',
-  roas_meta:          'ROAS Meta',
-  cpa_google:         'CPA Google',
-  cpa_meta:           'CPA Meta',
-  google_conversions: 'Conversões Google',
-  meta_conversions:   'Conversões Meta',
-  leads:              'Leads',
+function fmtPct(v: number | null): string {
+  if (v == null) return '—'
+  return `${(v * 100).toFixed(1)}%`
 }
 
-// ── Inline editable budget cell ───────────────────────────────────────────────
+function currentMonthLabel(): string {
+  return new Date().toISOString().slice(0, 7)
+}
 
-function BudgetEditCell({
+// ── BudgetForm: create or edit a budget config ────────────────────────────────
+
+function BudgetForm({
   clientId,
   platform,
   periodLabel,
-  currentBudget,
-  currency,
-  monitoringEnabled,
+  existing,
   onSaved,
+  onCancel,
 }: {
   clientId: string
   platform: string
   periodLabel: string
-  currentBudget: number | null
-  currency: string
-  monitoringEnabled: boolean
+  existing: BudgetConfigOut | null
   onSaved: () => void
+  onCancel: () => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [value, setValue] = useState(String(currentBudget ?? ''))
+  const [budgetVal, setBudgetVal] = useState(existing ? String(existing.monthly_budget) : '')
+  const [currency, setCurrency] = useState(existing?.currency ?? 'BRL')
+  const [monitoring, setMonitoring] = useState(existing?.monitoring_enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function save() {
-    const num = parseFloat(value.replace(',', '.'))
+    const num = parseFloat(budgetVal.replace(',', '.'))
     if (isNaN(num) || num < 0) { setError('Valor inválido'); return }
     setSaving(true); setError(null)
     try {
@@ -221,7 +231,7 @@ function BudgetEditCell({
           period_label:       periodLabel,
           monthly_budget:     num,
           currency,
-          monitoring_enabled: monitoringEnabled,
+          monitoring_enabled: monitoring,
           actor:              'agency_web',
           provenance:         'manual_agency',
         }),
@@ -230,7 +240,6 @@ function BudgetEditCell({
         const body = await res.json().catch(() => ({}))
         setError((body as { detail?: string }).detail || `Erro ${res.status}`)
       } else {
-        setEditing(false)
         onSaved()
       }
     } catch {
@@ -240,66 +249,164 @@ function BudgetEditCell({
     }
   }
 
-  if (!editing) {
-    return (
-      <span className="flex items-center gap-1.5 group">
-        {currentBudget != null
-          ? fmtBRL(currentBudget, currency === 'BRL' ? undefined : currency)
-          : <span className="text-slate-600 italic text-xs">não definido</span>}
+  return (
+    <div className="bg-[#1a1f2e] border border-indigo-500/40 rounded-xl p-5">
+      <p className="text-sm font-medium text-white mb-4">
+        {existing ? 'Editar orçamento' : 'Adicionar orçamento'} — {PLATFORM_LABEL[platform] ?? platform} · {periodLabel}
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Orçamento mensal</label>
+          <input
+            type="text"
+            value={budgetVal}
+            onChange={e => setBudgetVal(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel() }}
+            placeholder="ex: 15000"
+            className="w-36 bg-[#0f1117] border border-[#2a2f3e] focus:border-indigo-500 rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+            autoFocus
+          />
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Moeda</label>
+          <select
+            value={currency}
+            onChange={e => setCurrency(e.target.value)}
+            className="bg-[#0f1117] border border-[#2a2f3e] rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+          >
+            <option value="BRL">BRL</option>
+            <option value="USD">USD</option>
+          </select>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer pb-1.5">
+          <input
+            type="checkbox"
+            checked={monitoring}
+            onChange={e => setMonitoring(e.target.checked)}
+            className="accent-indigo-500"
+          />
+          <span className="text-xs text-slate-400">Ativar alertas de monitoramento</span>
+        </label>
+      </div>
+      {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+      <div className="flex gap-2 mt-4">
         <button
-          onClick={() => { setValue(String(currentBudget ?? '')); setEditing(true) }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-white"
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors"
         >
-          <Pencil size={12} />
+          {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+          Salvar
         </button>
-      </span>
+        <button
+          onClick={onCancel}
+          className="text-slate-400 hover:text-white text-xs px-3 py-2 rounded-lg hover:bg-[#252a3a] transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── BudgetRow: inline edit for an existing config ─────────────────────────────
+
+function BudgetRow({
+  clientId,
+  config,
+  pacing,
+  periodLabel,
+  onSaved,
+}: {
+  clientId: string
+  config: BudgetConfigOut
+  pacing: PlatformBudgetPacing | null
+  periodLabel: string
+  onSaved: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+
+  if (editing) {
+    return (
+      <tr className="border-b border-[#2a2f3e]">
+        <td colSpan={6} className="px-4 py-3">
+          <BudgetForm
+            clientId={clientId}
+            platform={config.platform}
+            periodLabel={periodLabel}
+            existing={config}
+            onSaved={() => { setEditing(false); onSaved() }}
+            onCancel={() => setEditing(false)}
+          />
+        </td>
+      </tr>
     )
   }
 
   return (
-    <span className="flex items-center gap-1">
-      <input
-        type="text"
-        value={value}
-        onChange={e => setValue(e.target.value)}
-        onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
-        className="w-28 bg-[#0f1117] border border-indigo-500 rounded px-2 py-0.5 text-sm text-white focus:outline-none"
-        autoFocus
-      />
-      {saving
-        ? <RefreshCw size={13} className="animate-spin text-slate-400" />
-        : <>
-            <button onClick={save} className="text-emerald-400 hover:text-emerald-300"><Check size={13} /></button>
-            <button onClick={() => setEditing(false)} className="text-slate-500 hover:text-white"><X size={13} /></button>
-          </>
-      }
-      {error && <span className="text-xs text-red-400 ml-1">{error}</span>}
-    </span>
+    <tr className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] group transition-colors">
+      <td className="px-4 py-3 text-white font-medium">
+        {PLATFORM_LABEL[config.platform] ?? config.platform}
+      </td>
+      <td className="px-4 py-3 text-right text-slate-300">
+        <span className="flex items-center justify-end gap-1.5">
+          {fmtBRL(config.monthly_budget, config.currency === 'BRL' ? undefined : config.currency)}
+          <button
+            onClick={() => setEditing(true)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-white"
+          >
+            <Pencil size={12} />
+          </button>
+        </span>
+      </td>
+      <td className="px-4 py-3 text-right text-slate-300">
+        {pacing ? fmtBRL(pacing.spend_mtd) : <span className="text-slate-600 text-xs">—</span>}
+      </td>
+      <td className="px-4 py-3 text-right text-slate-400">
+        {pacing?.pacing_ratio != null ? fmtPct(pacing.pacing_ratio) : <span className="text-slate-600 text-xs">—</span>}
+      </td>
+      <td className="px-4 py-3">
+        {pacing && pacing.budget_status !== 'UNKNOWN'
+          ? <span className={`text-xs font-medium ${BUDGET_STATUS_CLASS[pacing.budget_status]}`}>
+              {BUDGET_STATUS_LABEL[pacing.budget_status]}
+            </span>
+          : <span className="text-xs text-slate-600">Aguardando ciclo</span>
+        }
+      </td>
+      <td className="px-4 py-3 text-right text-slate-400">
+        {pacing?.projected_month_end_spend != null ? fmtBRL(pacing.projected_month_end_spend) : '—'}
+      </td>
+    </tr>
   )
 }
 
-// ── Inline editable target cell ───────────────────────────────────────────────
+// ── TargetForm: create or edit a target ──────────────────────────────────────
 
-function TargetEditCell({
+function TargetForm({
   clientId,
-  metricKey,
-  entry,
+  existingKey,
+  existingEntry,
   onSaved,
+  onCancel,
 }: {
   clientId: string
-  metricKey: string
-  entry: TargetEntry
+  existingKey?: string
+  existingEntry?: TargetEntry
   onSaved: () => void
+  onCancel: () => void
 }) {
-  const [editing, setEditing] = useState(false)
-  const [targetVal, setTargetVal] = useState(String(entry.target))
-  const [period, setPeriod] = useState(entry.period ?? '')
-  const [channel, setChannel] = useState(entry.channel ?? '')
-  const [unit, setUnit] = useState(entry.unit ?? '')
+  const [metricKey, setMetricKey] = useState(existingKey ?? '')
+  const [targetVal, setTargetVal] = useState(existingEntry ? String(existingEntry.target) : '')
+  const [period, setPeriod] = useState(existingEntry?.period ?? 'monthly')
+  const [channel, setChannel] = useState(existingEntry?.channel ?? '')
+  const [unit, setUnit] = useState(existingEntry?.unit ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const isEdit = Boolean(existingKey)
+
   async function save() {
+    if (!metricKey) { setError('Selecione uma métrica'); return }
     const num = parseFloat(targetVal.replace(',', '.'))
     if (isNaN(num) || num < 0) { setError('Valor inválido'); return }
     setSaving(true); setError(null)
@@ -328,7 +435,6 @@ function TargetEditCell({
         const body = await res.json().catch(() => ({}))
         setError((body as { detail?: string }).detail || `Erro ${res.status}`)
       } else {
-        setEditing(false)
         onSaved()
       }
     } catch {
@@ -338,72 +444,214 @@ function TargetEditCell({
     }
   }
 
-  if (!editing) {
-    return (
-      <span className="flex items-center gap-1.5 group">
-        {fmtBRL(entry.target, entry.unit)}
+  return (
+    <div className="bg-[#1a1f2e] border border-indigo-500/40 rounded-xl p-5">
+      <p className="text-sm font-medium text-white mb-4">
+        {isEdit ? `Editar meta — ${METRIC_LABEL[existingKey!] ?? existingKey}` : 'Adicionar meta'}
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        {!isEdit && (
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Métrica</label>
+            <select
+              value={metricKey}
+              onChange={e => setMetricKey(e.target.value)}
+              className="bg-[#0f1117] border border-[#2a2f3e] focus:border-indigo-500 rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+            >
+              <option value="">Selecionar...</option>
+              {AVAILABLE_METRICS.map(([k, label]) => (
+                <option key={k} value={k}>{label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Valor da meta</label>
+          <input
+            type="text"
+            value={targetVal}
+            onChange={e => setTargetVal(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') onCancel() }}
+            placeholder="ex: 90000"
+            className="w-32 bg-[#0f1117] border border-[#2a2f3e] focus:border-indigo-500 rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+            autoFocus={isEdit}
+          />
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Periodicidade</label>
+          <select
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+            className="bg-[#0f1117] border border-[#2a2f3e] focus:border-indigo-500 rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+          >
+            <option value="">Não definida</option>
+            <option value="monthly">Mensal</option>
+            <option value="weekly">Semanal</option>
+            <option value="daily">Diário</option>
+            <option value="quarterly">Trimestral</option>
+            <option value="annual">Anual</option>
+            <option value="none">Sem período</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Canal</label>
+          <select
+            value={channel}
+            onChange={e => setChannel(e.target.value)}
+            className="bg-[#0f1117] border border-[#2a2f3e] rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+          >
+            <option value="">Todos</option>
+            <option value="google">Google</option>
+            <option value="meta">Meta</option>
+            <option value="all">all</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">Unidade</label>
+          <input
+            type="text"
+            value={unit}
+            onChange={e => setUnit(e.target.value)}
+            placeholder="BRL, x, %..."
+            className="w-20 bg-[#0f1117] border border-[#2a2f3e] rounded px-3 py-1.5 text-sm text-white focus:outline-none"
+          />
+        </div>
+      </div>
+      {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
+      <div className="flex gap-2 mt-4">
         <button
-          onClick={() => setEditing(true)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-white"
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium px-4 py-2 rounded-lg transition-colors"
         >
-          <Pencil size={12} />
+          {saving ? <RefreshCw size={12} className="animate-spin" /> : <Check size={12} />}
+          Salvar
         </button>
-      </span>
+        <button
+          onClick={onCancel}
+          className="text-slate-400 hover:text-white text-xs px-3 py-2 rounded-lg hover:bg-[#252a3a] transition-colors"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── TargetRow: one target entry ───────────────────────────────────────────────
+
+function TargetRow({
+  clientId,
+  metricKey,
+  entry,
+  pacing,
+  periodAudit,
+  onSaved,
+}: {
+  clientId: string
+  metricKey: string
+  entry: TargetEntry
+  pacing: TargetPacingEntry | null
+  periodAudit: string | null
+  onSaved: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const periodUnknown = !periodAudit
+  const isEfficiency = pacing ? pacing.expected_target_to_date == null : true
+
+  if (editing) {
+    return (
+      <tr className="border-b border-[#2a2f3e]">
+        <td colSpan={6} className="px-4 py-3">
+          <TargetForm
+            clientId={clientId}
+            existingKey={metricKey}
+            existingEntry={entry}
+            onSaved={() => { setEditing(false); onSaved() }}
+            onCancel={() => setEditing(false)}
+          />
+        </td>
+      </tr>
     )
   }
 
   return (
-    <div className="flex flex-col gap-1.5 py-1">
-      <div className="flex items-center gap-1">
-        <input
-          type="text"
-          value={targetVal}
-          onChange={e => setTargetVal(e.target.value)}
-          placeholder="Valor"
-          className="w-24 bg-[#0f1117] border border-indigo-500 rounded px-2 py-0.5 text-xs text-white focus:outline-none"
-          autoFocus
-        />
-        <input
-          type="text"
-          value={unit}
-          onChange={e => setUnit(e.target.value)}
-          placeholder="Unidade"
-          className="w-20 bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-0.5 text-xs text-white focus:outline-none"
-        />
+    <tr className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] group transition-colors">
+      <td className="px-4 py-3 text-white font-medium">
+        {METRIC_LABEL[metricKey] ?? metricKey}
+      </td>
+      <td className="px-4 py-3 text-right">
+        <span className="flex items-center justify-end gap-1.5">
+          {fmtBRL(entry.target, entry.unit)}
+          <button
+            onClick={() => setEditing(true)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-500 hover:text-white"
+          >
+            <Pencil size={12} />
+          </button>
+        </span>
+      </td>
+      <td className="px-4 py-3 text-right text-slate-300">
+        {pacing?.actual != null
+          ? fmtBRL(pacing.actual, entry.unit)
+          : <span className="text-slate-600 text-xs italic">aguardando dados</span>}
+      </td>
+      <td className="px-4 py-3 text-right text-slate-400">
+        {isEfficiency ? '—' : pacing ? fmtPct(pacing.attainment_pct) : '—'}
+      </td>
+      <td className="px-4 py-3">
+        {pacing && pacing.target_status !== 'UNKNOWN'
+          ? <span className={`text-xs font-medium ${TARGET_STATUS_CLASS[pacing.target_status]}`}>
+              {TARGET_STATUS_LABEL[pacing.target_status]}
+            </span>
+          : <span className="text-xs text-slate-600">—</span>}
+      </td>
+      <td className="px-4 py-3">
+        {periodUnknown
+          ? <button
+              onClick={() => setEditing(true)}
+              className="flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300 transition-colors"
+            >
+              <AlertTriangle size={11} />
+              Periodicidade não definida
+            </button>
+          : <span className="text-xs text-slate-400">{periodAudit}</span>}
+      </td>
+    </tr>
+  )
+}
+
+// ── Monitoring status helpers ─────────────────────────────────────────────────
+
+type MonitorState = 'ativo' | 'aguardando' | 'nao_aplicavel' | 'indisponivel' | 'parcial'
+
+const MONITOR_STATE_STYLE: Record<MonitorState, { cls: string; label: string }> = {
+  ativo:          { cls: 'bg-emerald-400/10 text-emerald-400',  label: 'ATIVO' },
+  aguardando:     { cls: 'bg-yellow-400/10 text-yellow-400',    label: 'AGUARDANDO CONFIGURAÇÃO' },
+  parcial:        { cls: 'bg-yellow-400/10 text-yellow-400',    label: 'AGUARDANDO PERIODICIDADE' },
+  nao_aplicavel:  { cls: 'bg-slate-700/40 text-slate-500',      label: 'NÃO APLICÁVEL' },
+  indisponivel:   { cls: 'bg-red-400/10 text-red-400',          label: 'INDISPONÍVEL' },
+}
+
+function MonitorRow({
+  label,
+  description,
+  state,
+}: {
+  label: string
+  description: string
+  state: MonitorState
+}) {
+  const { cls, label: stateLabel } = MONITOR_STATE_STYLE[state]
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-sm text-white font-medium">{label}</p>
+        <p className="text-xs text-slate-500 mt-0.5">{description}</p>
       </div>
-      <div className="flex items-center gap-1">
-        <select
-          value={period}
-          onChange={e => setPeriod(e.target.value)}
-          className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-0.5 text-xs text-white focus:outline-none"
-        >
-          <option value="">Período</option>
-          <option value="monthly">monthly</option>
-          <option value="daily">daily</option>
-          <option value="weekly">weekly</option>
-          <option value="none">none</option>
-        </select>
-        <select
-          value={channel}
-          onChange={e => setChannel(e.target.value)}
-          className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-0.5 text-xs text-white focus:outline-none"
-        >
-          <option value="">Canal</option>
-          <option value="all">all</option>
-          <option value="google">google</option>
-          <option value="meta">meta</option>
-        </select>
-      </div>
-      <div className="flex items-center gap-1">
-        {saving
-          ? <RefreshCw size={13} className="animate-spin text-slate-400" />
-          : <>
-              <button onClick={save} className="text-emerald-400 hover:text-emerald-300 text-xs flex items-center gap-0.5"><Check size={12} /> Salvar</button>
-              <button onClick={() => setEditing(false)} className="text-slate-500 hover:text-white text-xs flex items-center gap-0.5"><X size={12} /> Cancelar</button>
-            </>
-        }
-        {error && <span className="text-xs text-red-400">{error}</span>}
-      </div>
+      <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${cls}`}>
+        {stateLabel}
+      </span>
     </div>
   )
 }
@@ -412,14 +660,57 @@ function TargetEditCell({
 
 export function GoalsBudgetClient({ clientId, pacing, balance, budgetConfig, targets }: Props) {
   const router = useRouter()
-  const periodLabel = pacing?.period_label ?? new Date().toISOString().slice(0, 7)
+  const periodLabel = pacing?.period_label ?? currentMonthLabel()
+
+  // Add-form state
+  const [addBudgetPlatform, setAddBudgetPlatform] = useState<string | null>(null)
+  const [addingTarget, setAddingTarget] = useState(false)
 
   function refresh() { router.refresh() }
 
-  // Derive monitoring status
-  const hasAnyBudgetConfig = (budgetConfig?.configs ?? []).some(c => c.monitoring_enabled)
-  const hasAnyTargets = Object.keys(targets?.target_truth ?? {}).length > 0
+  // ── Budget section derived state ───────────────────────────────────────────
+  const currentConfigs = (budgetConfig?.configs ?? []).filter(
+    c => c.period_label === periodLabel,
+  )
+  const hasBudgetConfigs = currentConfigs.length > 0
+  // Index pacing by platform for enrichment
+  const pacingByPlatform = Object.fromEntries(
+    (pacing?.budget ?? []).map(b => [b.platform, b]),
+  )
+  // Which platforms are NOT yet configured
+  const configuredPlatforms = new Set(currentConfigs.map(c => c.platform))
+  const missingPlatforms = ['google', 'meta'].filter(p => !configuredPlatforms.has(p))
+
+  // ── Targets section derived state ─────────────────────────────────────────
+  const targetTruth = targets?.target_truth ?? {}
+  const hasTargets = Object.keys(targetTruth).length > 0
+  // Index pacing targets by metric_key for enrichment
+  const pacingByMetric = Object.fromEntries(
+    (pacing?.targets ?? []).map(t => [t.metric_key, t]),
+  )
+
+  // ── Balance derived state ──────────────────────────────────────────────────
   const anyPrepaid = balance?.any_prepaid ?? false
+  const balanceSnapshots = balance?.snapshots ?? pacing?.balance.map(b => ({
+    platform: b.platform,
+    balance_available: b.balance,
+    balance_status: b.balance_status,
+    estimated_days_remaining: b.estimated_days_remaining,
+    currency: b.currency,
+  })) ?? []
+
+  // ── Monitoring states ──────────────────────────────────────────────────────
+  const balanceMonitorState: MonitorState = anyPrepaid ? 'ativo' : 'nao_aplicavel'
+
+  const budgetMonitorState: MonitorState = !hasBudgetConfigs
+    ? 'aguardando'
+    : currentConfigs.some(c => c.monitoring_enabled) ? 'ativo' : 'indisponivel'
+
+  const allTargetPeriodsDefined = hasTargets
+    && Object.values(targets?.period_audit ?? {}).every(v => v != null)
+  const targetMonitorState: MonitorState = !hasTargets
+    ? 'aguardando'
+    : allTargetPeriodsDefined ? 'ativo' : 'parcial'
 
   return (
     <div className="p-8 max-w-5xl">
@@ -435,28 +726,66 @@ export function GoalsBudgetClient({ clientId, pacing, balance, budgetConfig, tar
         </p>
       </div>
 
-      {/* Section 1 — Orçamento por Canal */}
+      {/* ── Section 1: Orçamento por Canal ───────────────────────────────── */}
       <section className="mb-8">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <DollarSign size={14} />
-          Orçamento por Canal
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+            <DollarSign size={14} />
+            Orçamento por Canal
+          </h2>
+          {hasBudgetConfigs && missingPlatforms.length > 0 && addBudgetPlatform === null && (
+            <div className="flex gap-2">
+              {missingPlatforms.map(p => (
+                <button
+                  key={p}
+                  onClick={() => setAddBudgetPlatform(p)}
+                  className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 hover:bg-indigo-400/20 px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  <Plus size={11} />
+                  {PLATFORM_LABEL[p]}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-        {!pacing && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
-            Dados de pacing indisponíveis
+        {/* Add-form for a missing platform (shown below header) */}
+        {addBudgetPlatform && (
+          <div className="mb-4">
+            <BudgetForm
+              clientId={clientId}
+              platform={addBudgetPlatform}
+              periodLabel={periodLabel}
+              existing={null}
+              onSaved={() => { setAddBudgetPlatform(null); refresh() }}
+              onCancel={() => setAddBudgetPlatform(null)}
+            />
           </div>
         )}
 
-        {pacing && pacing.budget.length === 0 && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
-            Nenhum orçamento configurado para {periodLabel}.
-            <br />
-            <span className="text-xs text-slate-600 mt-1 block">Use o ícone de edição após configurar um orçamento abaixo.</span>
+        {/* Empty state — no configs at all */}
+        {!hasBudgetConfigs && addBudgetPlatform === null && (
+          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6">
+            <p className="text-sm text-slate-400 mb-4">
+              Você ainda não definiu orçamento para este cliente.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {['google', 'meta'].map(p => (
+                <button
+                  key={p}
+                  onClick={() => setAddBudgetPlatform(p)}
+                  className="flex items-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 text-sm px-4 py-2.5 rounded-lg transition-colors"
+                >
+                  <Plus size={14} />
+                  Adicionar orçamento {PLATFORM_LABEL[p]}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        {pacing && pacing.budget.length > 0 && (
+        {/* Budget table */}
+        {hasBudgetConfigs && (
           <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
             <table className="w-full text-sm">
               <thead>
@@ -470,90 +799,75 @@ export function GoalsBudgetClient({ clientId, pacing, balance, budgetConfig, tar
                 </tr>
               </thead>
               <tbody>
-                {pacing.budget.map(b => {
-                  const config = (budgetConfig?.configs ?? []).find(
-                    c => c.platform === b.platform && c.period_label === periodLabel,
-                  )
-                  return (
-                    <tr key={b.platform} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
-                      <td className="px-4 py-3 text-white font-medium">
-                        {PLATFORM_LABEL[b.platform] ?? b.platform}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <BudgetEditCell
-                          clientId={clientId}
-                          platform={b.platform}
-                          periodLabel={periodLabel}
-                          currentBudget={b.monthly_budget}
-                          currency={b.currency}
-                          monitoringEnabled={config?.monitoring_enabled ?? true}
-                          onSaved={refresh}
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-300">
-                        {fmtBRL(b.spend_mtd)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-300">
-                        {fmtPct(b.pacing_ratio)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs font-medium ${BUDGET_STATUS_CLASS[b.budget_status]}`}>
-                          {BUDGET_STATUS_LABEL[b.budget_status]}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-400">
-                        {fmtBRL(b.projected_month_end_spend)}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {currentConfigs.map(config => (
+                  <BudgetRow
+                    key={config.id}
+                    clientId={clientId}
+                    config={config}
+                    pacing={pacingByPlatform[config.platform] ?? null}
+                    periodLabel={periodLabel}
+                    onSaved={refresh}
+                  />
+                ))}
               </tbody>
             </table>
           </div>
         )}
 
-        {/* Show platforms without pacing data but with budget config */}
-        {pacing && pacing.budget.length === 0 && (
-          <div className="mt-3 flex gap-3">
-            {['google', 'meta'].map(p => (
-              <div key={p} className="bg-[#1a1f2e] border border-dashed border-[#2a2f3e] rounded-xl px-4 py-3 flex items-center gap-3">
-                <span className="text-sm text-slate-400">{PLATFORM_LABEL[p]}</span>
-                <BudgetEditCell
-                  clientId={clientId}
-                  platform={p}
-                  periodLabel={periodLabel}
-                  currentBudget={null}
-                  currency="BRL"
-                  monitoringEnabled={true}
-                  onSaved={refresh}
-                />
-              </div>
-            ))}
-          </div>
+        {/* Note when pacing is unavailable but budget exists */}
+        {hasBudgetConfigs && !pacing && (
+          <p className="text-xs text-slate-600 mt-2">
+            Pacing indisponível — aguardando próximo ciclo de análise (07:15 UTC).
+          </p>
         )}
       </section>
 
-      {/* Section 2 — Metas */}
+      {/* ── Section 2: Metas de Performance ──────────────────────────────── */}
       <section className="mb-8">
-        <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-          <TrendingUp size={14} />
-          Metas de Performance
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+            <TrendingUp size={14} />
+            Metas de Performance
+          </h2>
+          {!addingTarget && (
+            <button
+              onClick={() => setAddingTarget(true)}
+              className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-400/10 hover:bg-indigo-400/20 px-2.5 py-1 rounded-lg transition-colors"
+            >
+              <Plus size={11} />
+              Adicionar meta
+            </button>
+          )}
+        </div>
 
-        {!pacing && !targets && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
-            Dados de metas indisponíveis
+        {/* Add-target form */}
+        {addingTarget && (
+          <div className="mb-4">
+            <TargetForm
+              clientId={clientId}
+              onSaved={() => { setAddingTarget(false); refresh() }}
+              onCancel={() => setAddingTarget(false)}
+            />
           </div>
         )}
 
-        {pacing && pacing.targets.length === 0 && !targets && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
-            Nenhuma meta configurada.
+        {/* No targets at all */}
+        {!hasTargets && !addingTarget && (
+          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6">
+            <p className="text-sm text-slate-400 mb-4">Nenhuma meta configurada.</p>
+            <button
+              onClick={() => setAddingTarget(true)}
+              className="flex items-center gap-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-300 hover:text-indigo-200 text-sm px-4 py-2.5 rounded-lg transition-colors"
+            >
+              <Plus size={14} />
+              Adicionar primeira meta
+            </button>
           </div>
         )}
 
-        {(pacing?.targets.length ?? 0) > 0 && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden mb-4">
+        {/* Targets table — source is targets.target_truth, pacing enriches it */}
+        {hasTargets && (
+          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-[#2a2f3e] text-slate-500 text-xs uppercase">
@@ -566,125 +880,39 @@ export function GoalsBudgetClient({ clientId, pacing, balance, budgetConfig, tar
                 </tr>
               </thead>
               <tbody>
-                {pacing!.targets.map(t => {
-                  const ttEntry = targets?.target_truth?.[t.metric_key]
-                  const periodVal = targets?.period_audit?.[t.metric_key]
-                  const isEfficiency = t.expected_target_to_date == null
-                  return (
-                    <tr key={t.metric_key} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
-                      <td className="px-4 py-3 text-white font-medium">
-                        {METRIC_LABEL[t.metric_key] ?? t.metric_key}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {ttEntry
-                          ? <TargetEditCell
-                              clientId={clientId}
-                              metricKey={t.metric_key}
-                              entry={ttEntry}
-                              onSaved={refresh}
-                            />
-                          : fmtBRL(t.target, t.unit)
-                        }
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-300">
-                        {t.actual != null
-                          ? fmtBRL(t.actual, t.unit)
-                          : <span className="text-slate-600 text-xs italic">aguardando dados</span>}
-                      </td>
-                      <td className="px-4 py-3 text-right text-slate-400">
-                        {isEfficiency ? '—' : fmtPct(t.attainment_pct)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={`text-xs font-medium ${TARGET_STATUS_CLASS[t.target_status]}`}>
-                          {TARGET_STATUS_LABEL[t.target_status]}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {periodVal
-                          ? <span className="text-xs text-slate-400">{periodVal}</span>
-                          : <span className="text-xs text-yellow-400 italic">Periodicidade não definida</span>}
-                      </td>
-                    </tr>
-                  )
-                })}
+                {Object.entries(targetTruth).map(([key, entry]) => (
+                  <TargetRow
+                    key={key}
+                    clientId={clientId}
+                    metricKey={key}
+                    entry={entry}
+                    pacing={pacingByMetric[key] ?? null}
+                    periodAudit={targets?.period_audit?.[key] ?? null}
+                    onSaved={refresh}
+                  />
+                ))}
               </tbody>
             </table>
-          </div>
-        )}
-
-        {/* Raw truth/targets (for editing even when pacing has no entries) */}
-        {targets && Object.keys(targets.target_truth).length > 0 && (pacing?.targets.length ?? 0) === 0 && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden mb-4">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#2a2f3e] text-slate-500 text-xs uppercase">
-                  <th className="px-4 py-3 text-left">Métrica</th>
-                  <th className="px-4 py-3 text-right">Meta</th>
-                  <th className="px-4 py-3 text-left">Período</th>
-                  <th className="px-4 py-3 text-left">Canal</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(targets.target_truth).map(([key, entry]) => {
-                  const periodVal = targets.period_audit?.[key]
-                  return (
-                    <tr key={key} className="border-b border-[#2a2f3e] last:border-0 hover:bg-[#252a3a] transition-colors">
-                      <td className="px-4 py-3 text-white font-medium">
-                        {METRIC_LABEL[key] ?? key}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <TargetEditCell
-                          clientId={clientId}
-                          metricKey={key}
-                          entry={entry}
-                          onSaved={refresh}
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        {periodVal
-                          ? <span className="text-xs text-slate-400">{periodVal}</span>
-                          : <span className="text-xs text-yellow-400 italic">Periodicidade não definida</span>}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-400">
-                        {entry.channel ?? '—'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {targets && Object.keys(targets.target_truth).length === 0 && (pacing?.targets.length ?? 0) === 0 && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
-            Nenhuma meta configurada.
           </div>
         )}
       </section>
 
-      {/* Section 3 — Saldo Prepaid */}
+      {/* ── Section 3: Saldo Prepaid ──────────────────────────────────────── */}
       <section className="mb-8">
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
           <DollarSign size={14} />
           Saldo Prepaid
         </h2>
 
-        {!balance && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
-            Dados de saldo indisponíveis
-          </div>
-        )}
-
-        {balance && !balance.any_prepaid && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-6 text-center text-slate-500 text-sm">
+        {!anyPrepaid && balanceSnapshots.length === 0 && (
+          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5 text-sm text-slate-500">
             Nenhuma conta prepaid configurada.
           </div>
         )}
 
-        {balance && balance.any_prepaid && (
+        {(anyPrepaid || balanceSnapshots.length > 0) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {balance.snapshots.map(snap => {
+            {balanceSnapshots.map(snap => {
               const statusCls = BALANCE_STATUS_CLASS[snap.balance_status] ?? 'text-slate-500'
               return (
                 <div key={snap.platform} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
@@ -711,38 +939,9 @@ export function GoalsBudgetClient({ clientId, pacing, balance, budgetConfig, tar
             })}
           </div>
         )}
-
-        {/* Also show from pacing.balance if balance endpoint failed */}
-        {!balance && pacing && pacing.balance.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {pacing.balance.map(b => {
-              const statusCls = BALANCE_STATUS_CLASS[b.balance_status] ?? 'text-slate-500'
-              return (
-                <div key={b.platform} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-sm font-medium text-white">
-                      {PLATFORM_LABEL[b.platform] ?? b.platform}
-                    </span>
-                    <span className={`text-xs font-medium ${statusCls}`}>
-                      {b.balance_status}
-                    </span>
-                  </div>
-                  <div className="text-2xl font-bold text-white mb-1">
-                    {b.balance != null ? fmtBRL(b.balance, b.currency ?? undefined) : '—'}
-                  </div>
-                  {b.estimated_days_remaining != null && (
-                    <div className="text-xs text-slate-400">
-                      ~{Math.round(b.estimated_days_remaining)} dias restantes
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
       </section>
 
-      {/* Section 4 — Monitoramento */}
+      {/* ── Section 4: Monitoramento de Alertas ───────────────────────────── */}
       <section className="mb-8">
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
           <Bell size={14} />
@@ -750,51 +949,37 @@ export function GoalsBudgetClient({ clientId, pacing, balance, budgetConfig, tar
         </h2>
 
         <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
-          <div className="space-y-3">
+          <div className="space-y-4">
             <MonitorRow
               label="Saldo (ACCOUNT_BALANCE_*)"
-              description="Alertas quando saldo prepaid fica baixo ou zerado"
-              active={anyPrepaid}
+              description="Dispara quando saldo prepaid atinge limites críticos"
+              state={balanceMonitorState}
             />
+            <div className="border-t border-[#2a2f3e]" />
             <MonitorRow
               label="Orçamento (BUDGET_PACING_*)"
-              description="Alertas quando gasto está fora do ritmo esperado"
-              active={hasAnyBudgetConfig}
+              description={
+                !hasBudgetConfigs
+                  ? 'Configure o orçamento mensal acima para ativar'
+                  : 'Dispara quando gasto está fora do ritmo esperado'
+              }
+              state={budgetMonitorState}
             />
+            <div className="border-t border-[#2a2f3e]" />
             <MonitorRow
               label="Metas (MER / ROAS / CPA / Receita)"
-              description="Alertas quando métricas ficam abaixo das metas definidas"
-              active={hasAnyTargets}
+              description={
+                !hasTargets
+                  ? 'Adicione metas acima para ativar'
+                  : !allTargetPeriodsDefined
+                    ? 'Defina a periodicidade das metas para ativar pacing linear'
+                    : 'Dispara quando métricas ficam abaixo das metas definidas'
+              }
+              state={targetMonitorState}
             />
           </div>
         </div>
       </section>
-    </div>
-  )
-}
-
-function MonitorRow({
-  label,
-  description,
-  active,
-}: {
-  label: string
-  description: string
-  active: boolean
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <div>
-        <p className="text-sm text-white font-medium">{label}</p>
-        <p className="text-xs text-slate-500 mt-0.5">{description}</p>
-      </div>
-      <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${
-        active
-          ? 'bg-emerald-400/10 text-emerald-400'
-          : 'bg-slate-700/40 text-slate-500'
-      }`}>
-        {active ? 'ativa' : 'inativa'}
-      </span>
     </div>
   )
 }
