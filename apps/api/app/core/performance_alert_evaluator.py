@@ -48,6 +48,7 @@ PERF_ALERT_TYPES = frozenset({
     "SPEND_DROP",
     "CAMPAIGN_NOT_SPENDING",
     "SOURCE_PERFORMANCE_ANOMALY",
+    "MER_BELOW_TARGET",
 })
 
 _PERF_SEVERITY: dict[str, str] = {
@@ -59,6 +60,7 @@ _PERF_SEVERITY: dict[str, str] = {
     "SPEND_DROP":                 "MEDIUM",
     "CAMPAIGN_NOT_SPENDING":      "HIGH",
     "SOURCE_PERFORMANCE_ANOMALY": "HIGH",
+    "MER_BELOW_TARGET":           "HIGH",
 }
 
 
@@ -628,6 +630,42 @@ def evaluate_performance_alerts(client_id: str) -> dict:
                     "period_end": period_end,
                 },
             )
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Rule 9 — MER_BELOW_TARGET
+    # MER (Marketing Efficiency Ratio) = revenue_business / total_spend.
+    # Fires when MER < target × 0.85.  Requires target_truth entry for "mer".
+    # Period tag not required here (efficiency metric, point-in-time).
+    # ═══════════════════════════════════════════════════════════════════════════
+    _MER_MISS_RATIO: float = 0.85
+    tt_mer = target_truth.get("mer")
+    if isinstance(tt_mer, dict) and "target" in tt_mer:
+        target_mer = _safe_float(tt_mer["target"])
+        if target_mer and target_mer > 0:
+            actual_mer = _metric_value(cur_metrics, "mer")
+            if actual_mer is None:
+                # Fallback: compute from revenue_business / total_spend
+                rev   = _metric_value(cur_metrics, "revenue_business")
+                spend = _metric_value(cur_metrics, "total_spend")
+                if rev is not None and spend and spend > 0:
+                    actual_mer = rev / spend
+            if actual_mer is not None and actual_mer < target_mer * _MER_MISS_RATIO:
+                fp = f"MER_BELOW_TARGET:{client_uuid}:{period_end}"
+                _fire(
+                    fp, "MER_BELOW_TARGET",
+                    f"MER abaixo da meta — {client_id}",
+                    (
+                        f"MER {actual_mer:.2f}x abaixo de "
+                        f"{_MER_MISS_RATIO*100:.0f}% da meta ({target_mer:.2f}x). "
+                        f"Período: {period_end}."
+                    ),
+                    {
+                        "target_mer":  target_mer,
+                        "actual_mer":  round(actual_mer, 4),
+                        "threshold":   round(target_mer * _MER_MISS_RATIO, 4),
+                        "period_end":  period_end,
+                    },
+                )
 
     # ── Auto-resolve alerts whose condition no longer holds ───────────────────
     resolved = _resolve_stale(sb, existing_open, current_fingerprints, now)

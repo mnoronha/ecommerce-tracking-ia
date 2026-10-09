@@ -783,3 +783,88 @@ class BalanceTriggerOut(_Base):
     client_id: str
     triggered_at: datetime
     platforms: dict[str, Any]  # per-platform snapshot results
+
+
+# ── 21. Budget config ─────────────────────────────────────────────────────────
+
+class BudgetConfigIn(_Base):
+    """Request body for PUT /clients/{client_id}/budget/config."""
+    platform: Literal["google", "meta"]
+    period_label: str              # 'YYYY-MM'
+    monthly_budget: float
+    currency: str = "BRL"
+    monitoring_enabled: bool = True
+    actor: str = Field(description="Human identifier — not a service name")
+    reason: Optional[str] = None
+    provenance: str = Field(
+        default="manual_agency",
+        description="manual_agency | import | pipeline",
+    )
+
+
+class BudgetConfigOut(_Base):
+    """Single budget config row response."""
+    id: str
+    client_id: str
+    platform: str
+    period_label: str
+    monthly_budget: float
+    currency: str
+    monitoring_enabled: bool
+    write_meta: Optional[dict[str, Any]] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BudgetConfigListOut(_Base):
+    """List of budget configs for a client."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    configs: list[BudgetConfigOut]
+
+
+# ── 22. Pacing contract ───────────────────────────────────────────────────────
+
+class PlatformBudgetPacing(_Base):
+    """Budget pacing state for one platform in the current month."""
+    platform: str
+    monthly_budget: Optional[float] = None
+    currency: str = "BRL"
+    spend_mtd: float
+    expected_spend_to_date: Optional[float] = None
+    pacing_ratio: Optional[float] = None
+    remaining_budget: Optional[float] = None
+    projected_month_end_spend: Optional[float] = None
+    budget_status: Literal["ON_PACE", "UNDER_PACE", "OVER_PACE", "UNKNOWN"] = "UNKNOWN"
+
+
+class TargetPacingEntry(_Base):
+    """Pacing state for one target metric in the current month."""
+    metric_key: str
+    target: float
+    unit: Optional[str] = None
+    actual: Optional[float] = None
+    expected_target_to_date: Optional[float] = None   # None for efficiency metrics
+    attainment_pct: Optional[float] = None
+    projected_target_value: Optional[float] = None    # None for efficiency metrics
+    target_status: Literal["ON_PACE", "BELOW_PACE", "AT_RISK", "EXCEEDED", "UNKNOWN"] = "UNKNOWN"
+
+
+class PlatformBalanceSummary(_Base):
+    """Compact balance view for the Metas & Orçamento tab."""
+    platform: str
+    balance: Optional[float] = None
+    balance_status: str
+    estimated_days_remaining: Optional[float] = None
+    currency: Optional[str] = None
+
+
+class PacingContract(_Base):
+    """Full pacing contract for GET /clients/{client_id}/pacing."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    client_id: str
+    period_label: str
+    computed_at: datetime
+    budget: list[PlatformBudgetPacing]
+    targets: list[TargetPacingEntry]
+    balance: list[PlatformBalanceSummary]

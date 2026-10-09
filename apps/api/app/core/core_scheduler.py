@@ -133,6 +133,21 @@ def run_core_pipeline_all_clients() -> None:
             evaluate_performance_alerts(client_id)
         except Exception as exc:
             logger.warning("core_scheduler: perf alert eval failed for %s: %s", client_id, exc)
+        try:
+            from ..core.budget_pacing_evaluator import evaluate_budget_pacing
+            evaluate_budget_pacing(client_id)
+        except Exception as exc:
+            logger.warning("core_scheduler: budget pacing failed for %s: %s", client_id, exc)
+        try:
+            from ..core.target_pacing_evaluator import evaluate_target_pacing
+            evaluate_target_pacing(client_id)
+        except Exception as exc:
+            logger.warning("core_scheduler: target pacing failed for %s: %s", client_id, exc)
+        try:
+            from ..core.pacing_notifier import dispatch_pacing_notifications
+            dispatch_pacing_notifications(client_id)
+        except Exception as exc:
+            logger.warning("core_scheduler: pacing notify failed for %s: %s", client_id, exc)
 
 
 def run_core_pipeline_for_client(
@@ -169,3 +184,18 @@ def run_core_pipeline_for_client(
         evaluate_performance_alerts(client_id)
     except Exception as exc:
         logger.warning("core_scheduler: perf alert eval failed after replay %s: %s", job_id, exc)
+    try:
+        from ..core.budget_pacing_evaluator import evaluate_budget_pacing
+        evaluate_budget_pacing(client_id)
+    except Exception as exc:
+        logger.warning("core_scheduler: budget pacing failed after replay %s: %s", job_id, exc)
+    try:
+        from ..core.target_pacing_evaluator import evaluate_target_pacing
+        evaluate_target_pacing(client_id)
+    except Exception as exc:
+        logger.warning("core_scheduler: target pacing failed after replay %s: %s", job_id, exc)
+    try:
+        from ..core.pacing_notifier import dispatch_pacing_notifications
+        dispatch_pacing_notifications(client_id)
+    except Exception as exc:
+        logger.warning("core_scheduler: pacing notify failed after replay %s: %s", job_id, exc)

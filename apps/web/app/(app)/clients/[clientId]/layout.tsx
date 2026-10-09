@@ -5,7 +5,18 @@ import { usePathname, useParams } from 'next/navigation'
 import { useAgencyPlan } from '@/lib/use-agency-plan'
 import { PlanLockBadge } from '@/components/plan-gate'
 import { CriticalAlertsBar } from '@/components/alerts/critical-alerts-bar'
-import { LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2, TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell, Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench, History, Rocket, UserCheck, Award, HeartPulse, Lightbulb, GitCommit } from 'lucide-react'
+import {
+  LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2,
+  TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell,
+  Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench,
+  History, Rocket, UserCheck, Award, HeartPulse, Lightbulb, GitCommit,
+} from 'lucide-react'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Icon = React.ComponentType<any>
+
+interface NavItem { href: string; label: string; icon: Icon; gate: string | null }
+interface NavGroup { label: string; items: NavItem[] }
 
 export default function ClientLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
@@ -15,43 +26,79 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const { plan } = useAgencyPlan(clientId)
   const clientName = plan.clientName || clientId
 
-  const NAV = [
-    { href: `/clients/${clientId}/dashboard`,        label: 'Dashboard',       icon: LayoutDashboard, gate: null },
-    { href: `/clients/${clientId}/shopify-revenue`, label: 'Faturamento',     icon: ShoppingBag,     gate: null },
-    { href: `/clients/${clientId}/live`,            label: 'Ao vivo',         icon: Radio,           gate: null },
-    { href: `/clients/${clientId}/visitantes`,      label: 'Visitantes',      icon: Users,           gate: null },
-    { href: `/clients/${clientId}/pedidos`,         label: 'Pedidos',         icon: ShoppingBag,     gate: null },
-    { href: `/clients/${clientId}/audiencias`,  label: 'Audiências',      icon: Layers,          gate: null },
-    { href: `/clients/${clientId}/attribution`, label: 'Atribuição',      icon: TrendingUp,      gate: null },
-    { href: `/clients/${clientId}/journey`,     label: 'Jornada',         icon: GitBranch,       gate: null },
-    { href: `/clients/${clientId}/meta-ads`,      label: 'Meta Ads',        icon: TrendingUp,      gate: null },
-    { href: `/clients/${clientId}/google-ads`,   label: 'Google Ads',      icon: TrendingUp,      gate: null },
-    { href: `/clients/${clientId}/tiktok-ads`,   label: 'TikTok Ads',      icon: TrendingUp,      gate: null },
-    { href: `/clients/${clientId}/pinterest-ads`, label: 'Pinterest Ads',  icon: TrendingUp,      gate: null },
-    { href: `/clients/${clientId}/ga4`,             label: 'GA4',             icon: BarChart2,       gate: null },
-    { href: `/clients/${clientId}/search-console`,   label: 'Search Console',  icon: Search,          gate: null },
-    { href: `/clients/${clientId}/ai-visibility`,    label: 'AI Visibility',   icon: BrainCircuit,    gate: null },
-    { href: `/clients/${clientId}/merchant-center`,  label: 'Merchant Center', icon: Store,            gate: null },
-    { href: `/clients/${clientId}/content`,          label: 'Conteúdo IA',     icon: PenLine,          gate: null },
-    { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA',  icon: Sparkles,        gate: 'creative_intelligence' },
-    { href: `/clients/${clientId}/performance`,  label: 'Performance',     icon: Award,           gate: null },
-    { href: `/clients/${clientId}/agency-os`,    label: 'Agency OS',       icon: ShieldCheck,     gate: null },
-    { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',   icon: FileText,        gate: 'ai_insights' },
-    { href: `/clients/${clientId}/ai-presence/pipeline`,      label: 'Pipeline',         icon: Rocket,      gate: null },
-    { href: `/clients/${clientId}/technical/schema-audit`,    label: 'Schema Audit',     icon: ShieldCheck, gate: null },
-    { href: `/clients/${clientId}/technical/llms-txt`,        label: 'llms.txt',         icon: FileText,    gate: null },
-    { href: `/clients/${clientId}/technical/pending-optimizations`, label: 'Otimizações', icon: Wrench,     gate: null },
-    { href: `/clients/${clientId}/technical/history`,         label: 'Histórico Técnico', icon: History,    gate: null },
-    { href: `/clients/${clientId}/technical/onboarding`,      label: 'Onboarding',       icon: UserCheck,  gate: null },
-    { href: `/clients/${clientId}/metas`,       label: 'Metas',           icon: Target,          gate: null },
-    { href: `/clients/${clientId}/alertas`,         label: 'Alertas',         icon: Bell,        gate: null },
-    { href: `/clients/${clientId}/diagnostics`,     label: 'Diagnóstico',     icon: Activity,    gate: null },
-    { href: `/clients/${clientId}/data-health`,     label: 'Saúde dos Dados', icon: HeartPulse,  gate: null },
-    { href: `/clients/${clientId}/recommendations`, label: 'Recomendações',   icon: Lightbulb,   gate: null },
-    { href: `/clients/${clientId}/changes`,         label: 'Mudanças',        icon: GitCommit,   gate: null },
-    { href: `/clients/${clientId}/cogs`,        label: 'Custos & Margem', icon: DollarSign,      gate: null },
-    { href: `/clients/${clientId}/settings`,    label: 'Configurações',   icon: Settings,        gate: null },
-    { href: `/clients/${clientId}/users`,       label: 'Usuários',        icon: UserCog,         gate: null },
+  const NAV_GROUPS: NavGroup[] = [
+    {
+      label: 'VISÃO GERAL',
+      items: [
+        { href: `/clients/${clientId}/dashboard`,       label: 'Dashboard',   icon: LayoutDashboard, gate: null },
+        { href: `/clients/${clientId}/shopify-revenue`, label: 'Faturamento', icon: ShoppingBag,     gate: null },
+        { href: `/clients/${clientId}/live`,            label: 'Ao vivo',     icon: Radio,           gate: null },
+      ],
+    },
+    {
+      label: 'TRÁFEGO',
+      items: [
+        { href: `/clients/${clientId}/visitantes`,  label: 'Visitantes',  icon: Users,      gate: null },
+        { href: `/clients/${clientId}/pedidos`,     label: 'Pedidos',     icon: ShoppingBag, gate: null },
+        { href: `/clients/${clientId}/audiencias`,  label: 'Audiências',  icon: Layers,      gate: null },
+        { href: `/clients/${clientId}/attribution`, label: 'Atribuição',  icon: TrendingUp,  gate: null },
+        { href: `/clients/${clientId}/journey`,     label: 'Jornada',     icon: GitBranch,   gate: null },
+      ],
+    },
+    {
+      label: 'CANAIS',
+      items: [
+        { href: `/clients/${clientId}/meta-ads`,        label: 'Meta Ads',        icon: TrendingUp,   gate: null },
+        { href: `/clients/${clientId}/google-ads`,      label: 'Google Ads',      icon: TrendingUp,   gate: null },
+        { href: `/clients/${clientId}/tiktok-ads`,      label: 'TikTok Ads',      icon: TrendingUp,   gate: null },
+        { href: `/clients/${clientId}/pinterest-ads`,   label: 'Pinterest Ads',   icon: TrendingUp,   gate: null },
+        { href: `/clients/${clientId}/ga4`,             label: 'GA4',             icon: BarChart2,    gate: null },
+        { href: `/clients/${clientId}/search-console`,  label: 'Search Console',  icon: Search,       gate: null },
+        { href: `/clients/${clientId}/merchant-center`, label: 'Merchant Center', icon: Store,        gate: null },
+        { href: `/clients/${clientId}/ai-visibility`,   label: 'AI Visibility',   icon: BrainCircuit, gate: null },
+      ],
+    },
+    {
+      label: 'INTELLIGENCE',
+      items: [
+        { href: `/clients/${clientId}/content`,     label: 'Conteúdo IA',    icon: PenLine,     gate: null },
+        { href: `/clients/${clientId}/creatives`,   label: 'Criativos · IA', icon: Sparkles,    gate: 'creative_intelligence' },
+        { href: `/clients/${clientId}/agency-os`,   label: 'Agency OS',      icon: ShieldCheck, gate: null },
+        { href: `/clients/${clientId}/reports`,     label: 'Relatórios IA',  icon: FileText,    gate: 'ai_insights' },
+        { href: `/clients/${clientId}/performance`, label: 'Performance',    icon: Award,       gate: null },
+      ],
+    },
+    {
+      label: 'OPERAÇÕES',
+      items: [
+        { href: `/clients/${clientId}/alertas`,         label: 'Alertas',         icon: Bell,      gate: null },
+        { href: `/clients/${clientId}/diagnostics`,     label: 'Diagnóstico',     icon: Activity,  gate: null },
+        { href: `/clients/${clientId}/data-health`,     label: 'Saúde dos Dados', icon: HeartPulse, gate: null },
+        { href: `/clients/${clientId}/recommendations`, label: 'Recomendações',   icon: Lightbulb, gate: null },
+        { href: `/clients/${clientId}/changes`,         label: 'Mudanças',        icon: GitCommit, gate: null },
+      ],
+    },
+    {
+      label: 'TÉCNICO',
+      items: [
+        { href: `/clients/${clientId}/metas`,                           label: 'Metas',             icon: Target,     gate: null },
+        { href: `/clients/${clientId}/ai-presence/pipeline`,            label: 'Pipeline',          icon: Rocket,     gate: null },
+        { href: `/clients/${clientId}/technical/schema-audit`,          label: 'Schema Audit',      icon: ShieldCheck, gate: null },
+        { href: `/clients/${clientId}/technical/llms-txt`,              label: 'llms.txt',          icon: FileText,   gate: null },
+        { href: `/clients/${clientId}/technical/pending-optimizations`, label: 'Otimizações',       icon: Wrench,     gate: null },
+        { href: `/clients/${clientId}/technical/history`,               label: 'Histórico Técnico', icon: History,    gate: null },
+        { href: `/clients/${clientId}/technical/onboarding`,            label: 'Onboarding',        icon: UserCheck,  gate: null },
+      ],
+    },
+    {
+      label: 'CONFIGURAÇÃO',
+      items: [
+        { href: `/clients/${clientId}/goals-budget`, label: 'Metas & Orçamento', icon: Target,     gate: null },
+        { href: `/clients/${clientId}/cogs`,         label: 'Custos & Margem',   icon: DollarSign, gate: null },
+        { href: `/clients/${clientId}/settings`,     label: 'Configurações',     icon: Settings,   gate: null },
+        { href: `/clients/${clientId}/users`,        label: 'Usuários',          icon: UserCog,    gate: null },
+      ],
+    },
   ]
 
   return (
@@ -67,28 +114,38 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             <span className="text-sm font-bold text-white truncate" title={clientId}>{clientName}</span>
           </div>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
-          {NAV.map(item => {
-            const active  = pathname === item.href
-            const locked  = item.gate ? !(plan.gates[item.gate] ?? true) : false
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                  active
-                    ? 'bg-indigo-600/20 text-indigo-400 font-medium'
-                    : locked
-                      ? 'text-slate-600 hover:text-slate-400 hover:bg-[#1a1f2e]'
-                      : 'text-slate-400 hover:text-white hover:bg-[#1a1f2e]'
-                }`}
-              >
-                <item.icon size={15} />
-                <span className="flex-1">{item.label}</span>
-                <PlanLockBadge show={locked} />
-              </Link>
-            )
-          })}
+
+        <nav className="flex-1 overflow-y-auto p-3">
+          {NAV_GROUPS.map(group => (
+            <div key={group.label} className="mb-3">
+              <p className="px-3 mb-1 text-[10px] font-semibold text-slate-600 uppercase tracking-wider">
+                {group.label}
+              </p>
+              <div className="space-y-0.5">
+                {group.items.map(item => {
+                  const active = pathname === item.href
+                  const locked = item.gate ? !(plan.gates[item.gate] ?? true) : false
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        active
+                          ? 'bg-indigo-600/20 text-indigo-400 font-medium'
+                          : locked
+                            ? 'text-slate-600 hover:text-slate-400 hover:bg-[#1a1f2e]'
+                            : 'text-slate-400 hover:text-white hover:bg-[#1a1f2e]'
+                      }`}
+                    >
+                      <item.icon size={15} />
+                      <span className="flex-1">{item.label}</span>
+                      <PlanLockBadge show={locked} />
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         {/* Plan badge + footer */}
@@ -109,6 +166,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           </Link>
         </div>
       </aside>
+
       <main className="flex-1 overflow-auto">
         <CriticalAlertsBar clientId={clientId} />
         {children}

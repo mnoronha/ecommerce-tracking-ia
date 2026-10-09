@@ -7,7 +7,7 @@ Real implementation replaces stubs incrementally from Etapa 4 onwards.
 Auth: each route declares the allowed scopes via Depends(require_scopes(...)).
 Idempotency-Key header is accepted on all write endpoints (ignored in stubs).
 
-Route inventory (46 routes):
+Route inventory (48 routes):
   GET  /clients
   GET  /clients/{client_id}/truth
   GET  /clients/{client_id}/health
@@ -52,6 +52,9 @@ Route inventory (46 routes):
   POST /clients/{client_id}/monthly-review/replay
   GET  /clients/{client_id}/balance           [prepaid ad account balance]
   POST /clients/{client_id}/balance/trigger   [on-demand check, PLATFORM_WRITE]
+  GET  /clients/{client_id}/budget/config     [budget configs list, READ_ANY]
+  PUT  /clients/{client_id}/budget/config     [upsert budget config, PLATFORM_WRITE]
+  GET  /clients/{client_id}/pacing            [budget+target+balance contract, READ_ANY]
 """
 
 from __future__ import annotations
@@ -152,6 +155,17 @@ from .schemas import (
     ValueStatus,
     VisibilityScope,
     WorkerHealth,
+    BudgetConfigIn,
+    BudgetConfigListOut,
+    BudgetConfigOut,
+    PacingContract,
+    PlatformBudgetPacing,
+    PlatformBalanceSummary,
+    TargetPacingEntry,
+    TargetEntry,
+    TargetTruthPatch,
+    TargetTruthReadOut,
+    TargetTruthWriteOut,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -282,6 +296,190 @@ async def get_client_truth(
         target_version=r["target_version"],
         target_truth=r["target_truth"],
         valid_from=vf,
+    )
+
+
+# ── GET /clients/{client_id}/truth/targets ────────────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/truth/targets",
+    summary="Target Truth — current version enriched with period audit",
+    response_model=TargetTruthReadOut,
+)
+async def get_target_truth(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+) -> TargetTruthReadOut:
+    try:
+        row = (
+            _get_db().table("core_client_truth")
+            .select("client_id, target_version, target_truth, valid_from, write_meta")
+            .eq("client_id", client_id)
+            .order("valid_from", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_target_truth: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    if not row.data:
+        raise HTTPException(404, f"truth not found for client {client_id!r}")
+
+    r = row.data[0]
+    vf = r.get("valid_from")
+    if isinstance(vf, str):
+        vf = datetime.fromisoformat(vf.replace("Z", "+00:00"))
+
+    raw_tt: dict = r.get("target_truth") or {}
+    if not isinstance(raw_tt, dict):
+        raw_tt = {}
+
+    period_audit: dict[str, Optional[str]] = {
+        k: (v.get("period") if isinstance(v, dict) else None)
+        for k, v in raw_tt.items()
+    }
+
+    return TargetTruthReadOut(
+        client_id=r["client_id"],
+        target_version=r.get("target_version", 1),
+        target_truth=raw_tt,
+        period_audit=period_audit,
+        valid_from=vf,
+        write_meta=r.get("write_meta"),
+    )
+
+
+# ── PUT /clients/{client_id}/truth/targets ────────────────────────────────────
+
+@router.put(
+    "/clients/{client_id}/truth/targets",
+    summary="Merge-patch Target Truth (append-only versioning)",
+    response_model=TargetTruthWriteOut,
+)
+async def put_target_truth(
+    client_id: str,
+    body: TargetTruthPatch,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
+    idempotency_key: Annotated[Optional[str], Header(alias="idempotency-key")] = None,
+) -> TargetTruthWriteOut:
+    if not idempotency_key:
+        raise HTTPException(422, "Idempotency-Key header is required")
+
+    sb = _get_db()
+
+    # Load current row
+    try:
+        res = (
+            sb.table("core_client_truth")
+            .select("target_version, target_truth, write_meta, client_version, client_truth, conversion_map_version")
+            .eq("client_id", client_id)
+            .order("valid_from", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("put_target_truth: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database unavailable")
+
+    current_row = res.data[0] if res.data else None
+    prev_version: int = (current_row.get("target_version") or 0) if current_row else 0
+    existing_tt: dict = {}
+    carry_client_version: int = current_row.get("client_version", 1) if current_row else 1
+    carry_client_truth: dict = (current_row.get("client_truth") or {}) if current_row else {}
+    carry_conversion_map_version: int = current_row.get("conversion_map_version", 1) if current_row else 1
+    if current_row:
+        raw = current_row.get("target_truth") or {}
+        existing_tt = raw if isinstance(raw, dict) else {}
+
+    # Idempotency check — scan recent rows for matching idempotency_key
+    try:
+        idem_res = (
+            sb.table("core_client_truth")
+            .select("target_version, target_truth, write_meta, valid_from")
+            .eq("client_id", client_id)
+            .order("valid_from", desc=True)
+            .limit(10)
+            .execute()
+        )
+        for irow in (idem_res.data or []):
+            wm = irow.get("write_meta") or {}
+            if isinstance(wm, dict) and wm.get("idempotency_key") == idempotency_key:
+                idem_tt: dict = irow.get("target_truth") or {}
+                idem_vf = irow.get("valid_from")
+                if isinstance(idem_vf, str):
+                    idem_vf = datetime.fromisoformat(idem_vf.replace("Z", "+00:00"))
+                return TargetTruthWriteOut(
+                    client_id=client_id,
+                    target_version=irow.get("target_version", 1),
+                    target_truth=idem_tt,
+                    previous_version=prev_version,
+                    keys_set=list(body.targets.keys()),
+                    keys_removed=list(body.remove_keys),
+                    actor=body.actor,
+                    reason=body.reason,
+                    provenance=body.provenance,
+                    valid_from=idem_vf,
+                    idempotent_replay=True,
+                )
+    except Exception as exc:
+        logger.warning("put_target_truth: idempotency scan failed for %s: %s", client_id, exc)
+
+    # Merge: apply targets on top of existing, then remove
+    new_tt: dict = dict(existing_tt)
+    for k, entry in body.targets.items():
+        new_tt[k] = entry.model_dump(exclude_none=True)
+    for k in body.remove_keys:
+        new_tt.pop(k, None)
+
+    new_version = prev_version + 1
+    now = datetime.now(timezone.utc)
+    write_meta = {
+        "actor":            body.actor,
+        "provenance":       body.provenance,
+        "reason":           body.reason,
+        "written_at":       now.isoformat(),
+        "idempotency_key":  idempotency_key,
+    }
+
+    try:
+        insert_res = sb.table("core_client_truth").insert({
+            "client_id":                client_id,
+            "target_version":           new_version,
+            "target_truth":             new_tt,
+            "write_meta":               write_meta,
+            "valid_from":               now.isoformat(),
+            "client_version":           carry_client_version,
+            "client_truth":             carry_client_truth,
+            "conversion_map_version":   carry_conversion_map_version,
+        }).execute()
+    except Exception as exc:
+        logger.error("put_target_truth: insert failed for %s: %s", client_id, exc)
+        raise HTTPException(503, "database write failed")
+
+    inserted = insert_res.data[0] if insert_res.data else {}
+    inserted_vf = inserted.get("valid_from", now.isoformat())
+    if isinstance(inserted_vf, str):
+        inserted_vf = datetime.fromisoformat(inserted_vf.replace("Z", "+00:00"))
+
+    logger.info(
+        "put_target_truth: %s version %d→%d keys_set=%s keys_removed=%s actor=%s",
+        client_id, prev_version, new_version,
+        list(body.targets.keys()), list(body.remove_keys), body.actor,
+    )
+
+    return TargetTruthWriteOut(
+        client_id=client_id,
+        target_version=new_version,
+        target_truth=new_tt,
+        previous_version=prev_version,
+        keys_set=list(body.targets.keys()),
+        keys_removed=list(body.remove_keys),
+        actor=body.actor,
+        reason=body.reason,
+        provenance=body.provenance,
+        valid_from=inserted_vf,
+        idempotent_replay=False,
     )
 
 
@@ -3142,4 +3340,374 @@ async def trigger_client_balance(
         client_id=client_id,
         triggered_at=datetime.now(timezone.utc),
         platforms=result.get("platforms", {}),
+    )
+
+
+# ── GET /clients/{client_id}/budget/config ─────────────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/budget/config",
+    summary="List budget configs for a client",
+    response_model=BudgetConfigListOut,
+)
+async def get_budget_config(
+    client_id: str,
+    period_label: Optional[str] = Query(default=None, description="Filter by YYYY-MM"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> BudgetConfigListOut:
+    sb = _get_db()
+    try:
+        q = (
+            sb.table("core_budget_config")
+            .select("id, client_id, platform, period_label, monthly_budget, currency, monitoring_enabled, write_meta, created_at, updated_at")
+            .eq("client_id", client_id)
+            .order("period_label", desc=True)
+        )
+        if period_label:
+            q = q.eq("period_label", period_label)
+        res = q.execute()
+        rows = res.data or []
+    except Exception as exc:
+        raise HTTPException(503, detail=f"budget config load failed: {exc}")
+
+    configs = [
+        BudgetConfigOut(
+            id=str(r["id"]),
+            client_id=r["client_id"],
+            platform=r["platform"],
+            period_label=r["period_label"],
+            monthly_budget=float(r["monthly_budget"]),
+            currency=r.get("currency") or "BRL",
+            monitoring_enabled=bool(r.get("monitoring_enabled", True)),
+            write_meta=r.get("write_meta"),
+            created_at=r["created_at"],
+            updated_at=r["updated_at"],
+        )
+        for r in rows
+    ]
+    return BudgetConfigListOut(client_id=client_id, configs=configs)
+
+
+# ── PUT /clients/{client_id}/budget/config ─────────────────────────────────────
+
+@router.put(
+    "/clients/{client_id}/budget/config",
+    summary="Upsert budget config for a client/platform/period",
+    response_model=BudgetConfigOut,
+)
+async def put_budget_config(
+    client_id: str,
+    body: BudgetConfigIn,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> BudgetConfigOut:
+    sb = _get_db()
+
+    # Verify client exists
+    try:
+        c_res = sb.table("clients").select("id").eq("client_id", client_id).limit(1).execute()
+        if not c_res.data:
+            raise HTTPException(404, detail=f"client not found: {client_id}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail=f"client lookup failed: {exc}")
+
+    write_meta = {
+        "actor":      body.actor,
+        "provenance": body.provenance,
+        "reason":     body.reason,
+        "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if idempotency_key:
+        write_meta["idempotency_key"] = idempotency_key
+
+    payload = {
+        "client_id":          client_id,
+        "platform":           body.platform,
+        "period_label":       body.period_label,
+        "monthly_budget":     body.monthly_budget,
+        "currency":           body.currency,
+        "monitoring_enabled": body.monitoring_enabled,
+        "write_meta":         write_meta,
+        "updated_at":         datetime.now(timezone.utc).isoformat(),
+    }
+
+    try:
+        res = (
+            sb.table("core_budget_config")
+            .upsert(payload, on_conflict="client_id,platform,period_label")
+            .execute()
+        )
+        row = res.data[0] if res.data else None
+    except Exception as exc:
+        raise HTTPException(503, detail=f"budget config upsert failed: {exc}")
+
+    if not row:
+        raise HTTPException(503, detail="upsert returned no row")
+
+    return BudgetConfigOut(
+        id=str(row["id"]),
+        client_id=row["client_id"],
+        platform=row["platform"],
+        period_label=row["period_label"],
+        monthly_budget=float(row["monthly_budget"]),
+        currency=row.get("currency") or "BRL",
+        monitoring_enabled=bool(row.get("monitoring_enabled", True)),
+        write_meta=row.get("write_meta"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+# ── GET /clients/{client_id}/pacing ───────────────────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/pacing",
+    summary="Pacing contract — budget + target + balance for current month",
+    response_model=PacingContract,
+)
+async def get_pacing_contract(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> PacingContract:
+    import calendar as _cal
+
+    sb    = _get_db()
+    now   = datetime.now(timezone.utc)
+    today = now.date()
+    year, month        = today.year, today.month
+    days_in_month      = _cal.monthrange(year, month)[1]
+    days_elapsed       = today.day - 1
+    period_label       = f"{year:04d}-{month:02d}"
+    first_day          = today.replace(day=1)
+    elapsed_pct        = days_elapsed / days_in_month if days_in_month > 0 else 0.0
+
+    # Resolve client UUID
+    try:
+        c_res = sb.table("clients").select("id, business_model").eq("client_id", client_id).limit(1).execute()
+        client_row = c_res.data[0] if c_res.data else None
+    except Exception as exc:
+        raise HTTPException(503, detail=f"client lookup failed: {exc}")
+    if not client_row:
+        raise HTTPException(404, detail=f"client not found: {client_id}")
+    client_uuid: str = client_row["id"]
+
+    # ── Budget configs ────────────────────────────────────────────────────────
+    try:
+        cfg_res = (
+            sb.table("core_budget_config")
+            .select("platform, monthly_budget, currency, monitoring_enabled")
+            .eq("client_id", client_id)
+            .eq("period_label", period_label)
+            .execute()
+        )
+        cfg_rows = cfg_res.data or []
+    except Exception:
+        cfg_rows = []
+
+    # ── MTD spend per channel ─────────────────────────────────────────────────
+    try:
+        spend_res = (
+            sb.table("ad_spend")
+            .select("channel, spend, conversions, conversion_value")
+            .eq("client_id", client_uuid)
+            .gte("date", first_day.isoformat())
+            .lt("date", today.isoformat())
+            .execute()
+        )
+        spend_rows = spend_res.data or []
+    except Exception:
+        spend_rows = []
+
+    spend_by_ch: dict[str, float] = {}
+    for r in spend_rows:
+        ch = str(r.get("channel") or "")
+        spend_by_ch[ch] = spend_by_ch.get(ch, 0.0) + float(r.get("spend") or 0)
+
+    _ch_map = {"google": "google_ads", "meta": "meta_ads"}
+
+    # ── Build budget pacing entries ───────────────────────────────────────────
+    budget_list: list[PlatformBudgetPacing] = []
+    cfg_platforms = {r["platform"] for r in cfg_rows}
+
+    for platform in ("google", "meta"):
+        channel    = _ch_map[platform]
+        spend_mtd  = spend_by_ch.get(channel, 0.0)
+        cfg        = next((r for r in cfg_rows if r["platform"] == platform), None)
+        monthly_budget = float(cfg["monthly_budget"]) if cfg else None
+        currency       = (cfg.get("currency") or "BRL") if cfg else "BRL"
+
+        if monthly_budget and monthly_budget > 0 and days_elapsed >= 3:
+            expected  = monthly_budget * elapsed_pct
+            ratio     = spend_mtd / expected if expected > 0 else None
+            remaining = monthly_budget - spend_mtd
+            projected = (spend_mtd / days_elapsed * days_in_month) if days_elapsed > 0 else None
+            if ratio is None:
+                status = "UNKNOWN"
+            elif ratio < 0.90:
+                status = "UNDER_PACE"
+            elif ratio > 1.10:
+                status = "OVER_PACE"
+            else:
+                status = "ON_PACE"
+        else:
+            expected = projected = remaining = ratio = None
+            status = "UNKNOWN"
+
+        if platform in cfg_platforms or spend_mtd > 0:
+            budget_list.append(PlatformBudgetPacing(
+                platform=platform,
+                monthly_budget=monthly_budget,
+                currency=currency,
+                spend_mtd=round(spend_mtd, 2),
+                expected_spend_to_date=round(expected, 2) if expected else None,
+                pacing_ratio=round(ratio, 4) if ratio else None,
+                remaining_budget=round(remaining, 2) if remaining is not None else None,
+                projected_month_end_spend=round(projected, 2) if projected else None,
+                budget_status=status,
+            ))
+
+    # ── Target pacing entries ─────────────────────────────────────────────────
+    try:
+        tt_res = (
+            sb.table("core_client_truth")
+            .select("target_truth")
+            .eq("client_id", client_id)
+            .order("valid_from", desc=True)
+            .limit(1)
+            .execute()
+        )
+        raw_tt = (tt_res.data[0].get("target_truth") or {}) if tt_res.data else {}
+        target_truth: dict = raw_tt if isinstance(raw_tt, dict) else {}
+    except Exception:
+        target_truth = {}
+
+    # MTD revenue from orders
+    mtd_revenue: Optional[float] = None
+    try:
+        ord_res = (
+            sb.table("orders")
+            .select("total_price")
+            .eq("client_id", client_uuid)
+            .in_("financial_status", ["paid", "partially_refunded"])
+            .gte("created_at", first_day.isoformat())
+            .lt("created_at", today.isoformat())
+            .execute()
+        )
+        if ord_res.data:
+            mtd_revenue = sum(float(o.get("total_price") or 0) for o in ord_res.data)
+    except Exception:
+        pass
+
+    mtd_conv: dict[str, float] = {}
+    for r in spend_rows:
+        ch = str(r.get("channel") or "")
+        mtd_conv[ch] = mtd_conv.get(ch, 0.0) + float(r.get("conversions") or 0)
+    mtd_total_spend = sum(spend_by_ch.values())
+
+    _vol_actuals: dict[str, Optional[float]] = {
+        "revenue_business":  mtd_revenue,
+        "google_conversions": mtd_conv.get("google_ads"),
+        "meta_conversions":   mtd_conv.get("meta_ads"),
+        "leads":              mtd_conv.get("google_ads"),
+    }
+
+    targets_list: list[TargetPacingEntry] = []
+    for key, tt_entry in target_truth.items():
+        if not isinstance(tt_entry, dict) or "target" not in tt_entry:
+            continue
+        target_val = float(tt_entry["target"])
+        period_tag = (tt_entry.get("period") or "").lower()
+        unit       = tt_entry.get("unit") or tt_entry.get("currency") or ""
+
+        is_volume     = key in _vol_actuals
+        is_efficiency = key in ("mer", "roas_google", "roas_meta", "google_roas_ecommerce",
+                                "cpa_google", "cpa_meta", "google_cpa_ecommerce")
+
+        if is_volume and period_tag == "monthly" and days_elapsed >= 5:
+            actual = _vol_actuals.get(key)
+            if actual is None:
+                targets_list.append(TargetPacingEntry(
+                    metric_key=key, target=target_val, unit=unit,
+                    actual=None, target_status="UNKNOWN",
+                ))
+                continue
+            expected_td = target_val * elapsed_pct
+            attainment  = actual / expected_td if expected_td > 0 else None
+            projected   = (actual / days_elapsed * days_in_month) if days_elapsed > 0 else None
+            if attainment is None:
+                status = "UNKNOWN"
+            elif attainment >= 1.0:
+                status = "EXCEEDED"
+            elif attainment >= 0.90:
+                status = "ON_PACE"
+            elif attainment >= 0.85:
+                status = "BELOW_PACE"
+            else:
+                status = "AT_RISK"
+            targets_list.append(TargetPacingEntry(
+                metric_key=key, target=target_val, unit=unit,
+                actual=round(actual, 2),
+                expected_target_to_date=round(expected_td, 2) if expected_td else None,
+                attainment_pct=round(attainment, 4) if attainment else None,
+                projected_target_value=round(projected, 2) if projected else None,
+                target_status=status,
+            ))
+        elif is_volume:
+            targets_list.append(TargetPacingEntry(
+                metric_key=key, target=target_val, unit=unit,
+                actual=_vol_actuals.get(key),
+                target_status="UNKNOWN",
+            ))
+        elif is_efficiency and key == "mer" and mtd_total_spend > 0 and mtd_revenue is not None:
+            actual_mer = mtd_revenue / mtd_total_spend
+            status = "ON_PACE" if actual_mer >= target_val * 0.90 else "BELOW_PACE"
+            targets_list.append(TargetPacingEntry(
+                metric_key=key, target=target_val, unit=unit,
+                actual=round(actual_mer, 4),
+                target_status=status,
+            ))
+        elif is_efficiency:
+            targets_list.append(TargetPacingEntry(
+                metric_key=key, target=target_val, unit=unit,
+                actual=None, target_status="UNKNOWN",
+            ))
+
+    # ── Balance summary ───────────────────────────────────────────────────────
+    try:
+        bal_res = (
+            sb.table("core_balance_snapshots")
+            .select("platform, balance, balance_status, estimated_days_remaining, currency")
+            .eq("client_id", client_id)
+            .order("snapshot_at", desc=True)
+            .limit(10)
+            .execute()
+        )
+        bal_rows = bal_res.data or []
+    except Exception:
+        bal_rows = []
+
+    seen_platforms: set[str] = set()
+    balance_list: list[PlatformBalanceSummary] = []
+    for r in bal_rows:
+        p = r.get("platform", "")
+        if p in seen_platforms:
+            continue
+        seen_platforms.add(p)
+        balance_list.append(PlatformBalanceSummary(
+            platform=p,
+            balance=float(r["balance"]) if r.get("balance") is not None else None,
+            balance_status=r.get("balance_status") or "UNKNOWN",
+            estimated_days_remaining=float(r["estimated_days_remaining"]) if r.get("estimated_days_remaining") is not None else None,
+            currency=r.get("currency"),
+        ))
+
+    return PacingContract(
+        client_id=client_id,
+        period_label=period_label,
+        computed_at=now,
+        budget=budget_list,
+        targets=targets_list,
+        balance=balance_list,
     )
