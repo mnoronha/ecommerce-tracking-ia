@@ -223,6 +223,12 @@ def _load_client_meta(client_id: str) -> Optional[dict]:
         return None
 
 
+def _resolve_slug(pixel_id: str) -> Optional[str]:
+    """Return the client_id slug (used as FK in core_* tables) for a pixel_id URL param."""
+    meta = _load_client_meta(pixel_id)
+    return meta.get("client_id") if meta else None
+
+
 # ── GET /clients ──────────────────────────────────────────────────────────────
 
 @router.get(
@@ -311,11 +317,14 @@ async def get_target_truth(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> TargetTruthReadOut:
+    slug = _resolve_slug(client_id)
+    if not slug:
+        raise HTTPException(404, f"truth not found for client {client_id!r}")
     try:
         row = (
             _get_db().table("core_client_truth")
             .select("client_id, target_version, target_truth, valid_from, write_meta")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("valid_from", desc=True)
             .limit(1)
             .execute()
@@ -367,6 +376,11 @@ async def put_target_truth(
     if not idempotency_key:
         raise HTTPException(422, "Idempotency-Key header is required")
 
+    # Resolve pixel_id URL param to FK-safe client_id slug
+    slug = _resolve_slug(client_id)
+    if not slug:
+        raise HTTPException(404, f"client not found: {client_id}")
+
     sb = _get_db()
 
     # Load current row
@@ -374,7 +388,7 @@ async def put_target_truth(
         res = (
             sb.table("core_client_truth")
             .select("target_version, target_truth, write_meta, client_version, client_truth, conversion_map_version")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("valid_from", desc=True)
             .limit(1)
             .execute()
@@ -398,7 +412,7 @@ async def put_target_truth(
         idem_res = (
             sb.table("core_client_truth")
             .select("target_version, target_truth, write_meta, valid_from")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("valid_from", desc=True)
             .limit(10)
             .execute()
@@ -445,7 +459,7 @@ async def put_target_truth(
 
     try:
         insert_res = sb.table("core_client_truth").insert({
-            "client_id":                client_id,
+            "client_id":                slug,
             "target_version":           new_version,
             "target_truth":             new_tt,
             "write_meta":               write_meta,
@@ -3356,12 +3370,15 @@ async def get_budget_config(
     period_label: Optional[str] = Query(default=None, description="Filter by YYYY-MM"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> BudgetConfigListOut:
+    slug = _resolve_slug(client_id)
+    if not slug:
+        raise HTTPException(404, detail=f"client not found: {client_id}")
     sb = _get_db()
     try:
         q = (
             sb.table("core_budget_config")
             .select("id, client_id, platform, period_label, monthly_budget, currency, monitoring_enabled, write_meta, created_at, updated_at")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("period_label", desc=True)
         )
         if period_label:
@@ -3402,17 +3419,11 @@ async def put_budget_config(
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
 ) -> BudgetConfigOut:
+    # Resolve pixel_id URL param to FK-safe client_id slug
+    slug = _resolve_slug(client_id)
+    if not slug:
+        raise HTTPException(404, detail=f"client not found: {client_id}")
     sb = _get_db()
-
-    # Verify client exists (URL uses pixel_id, not client_id slug)
-    try:
-        c_res = sb.table("clients").select("id").eq("pixel_id", client_id).limit(1).execute()
-        if not c_res.data:
-            raise HTTPException(404, detail=f"client not found: {client_id}")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(503, detail=f"client lookup failed: {exc}")
 
     write_meta = {
         "actor":      body.actor,
@@ -3424,7 +3435,7 @@ async def put_budget_config(
         write_meta["idempotency_key"] = idempotency_key
 
     payload = {
-        "client_id":          client_id,
+        "client_id":          slug,
         "platform":           body.platform,
         "period_label":       body.period_label,
         "monthly_budget":     body.monthly_budget,
