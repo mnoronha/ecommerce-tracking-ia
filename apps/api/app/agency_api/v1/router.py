@@ -208,11 +208,12 @@ def _source_to_domain(source_system: str) -> str:
 
 
 def _load_client_meta(client_id: str) -> Optional[dict]:
+    # client_id in URL is pixel_id (e.g. "lk-sneakers", "dipua-qe5p")
     try:
         r = (
             _get_db().table("clients")
             .select("id, client_id, name, business_model, timezone, currency, country, is_active")
-            .eq("client_id", client_id)
+            .eq("pixel_id", client_id)
             .limit(1)
             .execute()
         )
@@ -2804,9 +2805,9 @@ async def trigger_pipeline(
         period_end = _date.today() - timedelta(days=1)
     period_start = period_end - timedelta(days=6)
 
-    # Verify client exists
+    # Verify client exists (URL uses pixel_id)
     try:
-        res = _get_db().table("clients").select("client_id").eq("client_id", client_id).limit(1).execute()
+        res = _get_db().table("clients").select("pixel_id").eq("pixel_id", client_id).limit(1).execute()
     except Exception as exc:
         logger.error("trigger_pipeline: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, detail="database unavailable")
@@ -3099,9 +3100,9 @@ async def replay_weekly_review(
 
     period_start = period_end - timedelta(days=6)
 
-    # Validate client exists
+    # Validate client exists (URL uses pixel_id)
     try:
-        res = _get_db().table("clients").select("client_id").eq("client_id", client_id).limit(1).execute()
+        res = _get_db().table("clients").select("pixel_id").eq("pixel_id", client_id).limit(1).execute()
     except Exception as exc:
         logger.error("replay_weekly_review: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, detail="database unavailable")
@@ -3186,9 +3187,9 @@ async def replay_monthly_review(
     else:
         year, month = _last_completed_month()
 
-    # Validate client exists
+    # Validate client exists (URL uses pixel_id)
     try:
-        res = _get_db().table("clients").select("client_id").eq("client_id", client_id).limit(1).execute()
+        res = _get_db().table("clients").select("pixel_id").eq("pixel_id", client_id).limit(1).execute()
     except Exception as exc:
         logger.error("replay_monthly_review: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, detail="database unavailable")
@@ -3248,8 +3249,8 @@ async def get_client_balance(
     try:
         client_res = (
             db.table("clients")
-            .select("client_id, google_prepaid, meta_prepaid")
-            .eq("client_id", client_id)
+            .select("pixel_id, google_prepaid, meta_prepaid")
+            .eq("pixel_id", client_id)
             .limit(1)
             .execute()
         )
@@ -3403,9 +3404,9 @@ async def put_budget_config(
 ) -> BudgetConfigOut:
     sb = _get_db()
 
-    # Verify client exists
+    # Verify client exists (URL uses pixel_id, not client_id slug)
     try:
-        c_res = sb.table("clients").select("id").eq("client_id", client_id).limit(1).execute()
+        c_res = sb.table("clients").select("id").eq("pixel_id", client_id).limit(1).execute()
         if not c_res.data:
             raise HTTPException(404, detail=f"client not found: {client_id}")
     except HTTPException:
@@ -3483,9 +3484,9 @@ async def get_pacing_contract(
     first_day          = today.replace(day=1)
     elapsed_pct        = days_elapsed / days_in_month if days_in_month > 0 else 0.0
 
-    # Resolve client UUID
+    # Resolve client UUID (URL uses pixel_id)
     try:
-        c_res = sb.table("clients").select("id, business_model").eq("client_id", client_id).limit(1).execute()
+        c_res = sb.table("clients").select("id, business_model").eq("pixel_id", client_id).limit(1).execute()
         client_row = c_res.data[0] if c_res.data else None
     except Exception as exc:
         raise HTTPException(503, detail=f"client lookup failed: {exc}")
