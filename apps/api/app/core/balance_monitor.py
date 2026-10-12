@@ -334,7 +334,7 @@ def trigger_balance_check(client_id: str, platform: Optional[str] = None) -> dic
                 "meta_balance_threshold, "
                 "currency, is_active"
             )
-            .eq("client_id", client_id)
+            .eq("pixel_id", client_id)
             .limit(1)
             .execute()
         )

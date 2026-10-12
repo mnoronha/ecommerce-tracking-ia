@@ -275,11 +275,12 @@ async def get_client_truth(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> TruthOut:
+    slug = _resolve_slug(client_id) or client_id
     try:
         row = (
             _get_db().table("core_client_truth")
             .select("client_id, client_version, client_truth, target_version, target_truth, valid_from")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("valid_from", desc=True)
             .limit(1)
             .execute()
@@ -566,7 +567,8 @@ async def get_client_health(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> DataHealthOut:
-    now = datetime.now(timezone.utc)
+    now  = datetime.now(timezone.utc)
+    slug = _resolve_slug(client_id) or client_id
     try:
         sources = (
             _get_db().table("core_data_sources")
@@ -575,7 +577,7 @@ async def get_client_health(
                 "last_attempt_at, last_data_at, last_validated_at, "
                 "last_reconciled_at, reconciliation_state, last_error"
             )
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .execute()
         )
     except Exception as exc:
@@ -624,7 +626,8 @@ async def get_pipeline_health(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> PipelineHealthOut:
-    now = datetime.now(timezone.utc)
+    now  = datetime.now(timezone.utc)
+    slug = _resolve_slug(client_id) or client_id
     try:
         sources_res = (
             _get_db().table("core_data_sources")
@@ -633,13 +636,13 @@ async def get_pipeline_health(
                 "last_attempt_at, last_data_at, last_validated_at, "
                 "last_reconciled_at, reconciliation_state, last_error"
             )
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .execute()
         )
         snap = (
             _get_db().table("core_metric_snapshots")
             .select("computed_at, view")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("computed_at", desc=True)
             .limit(1)
             .execute()
@@ -718,12 +721,13 @@ async def get_metrics(
     bm_str  = client_meta.get("business_model") or "ecommerce"
     tz_str  = client_meta.get("timezone") or "America/Sao_Paulo"
     cur_str = client_meta.get("currency") or "BRL"
+    slug    = client_meta.get("client_id") or client_id
 
     try:
         snap = (
             _get_db().table("core_metric_snapshots")
             .select("id, metrics, health, client_truth_version, target_truth_version, conversion_map_version, computed_at, view")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .eq("period_start", period_start.isoformat())
             .eq("period_end", period_end.isoformat())
             .eq("view", view_str)
@@ -945,12 +949,13 @@ async def get_changes(
     since: Optional[str] = Query(None, description="ISO-8601 datetime filter (occurred_at >=)"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ChangeOut]:
-    db = _get_db()
+    slug = _resolve_slug(client_id) or client_id
+    db   = _get_db()
     try:
         q = (
             db.table("core_change_log")
             .select("*")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("occurred_at", desc=True)
             .limit(100)
         )
@@ -1006,12 +1011,13 @@ def _parse_ts_utc(s: object) -> Optional[datetime]:
 
 def _load_truth_versions(client_id: str) -> TruthVersions:
     """Best-effort: fetch latest truth versions from core_client_truth."""
+    slug = _resolve_slug(client_id) or client_id
     try:
         row = (
             _get_db()
             .table("core_client_truth")
             .select("client_version, target_version, conversion_map_version")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("valid_from", desc=True)
             .limit(1)
             .execute()
@@ -1038,6 +1044,7 @@ async def get_report_contracts(
     report_type: Optional[str] = Query(None, pattern="^(WEEKLY|MONTHLY)$"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[CoreReportContractOut]:
+    slug = _resolve_slug(client_id) or client_id
     try:
         q = (
             _get_db()
@@ -1048,7 +1055,7 @@ async def get_report_contracts(
                 "comparison_period_start, comparison_period_end, "
                 "schema_version, source_run_id, generated_at, contract"
             )
-            .eq("client_slug", client_id)
+            .eq("client_slug", slug)
             .order("period_end", desc=True)
             .limit(20)
         )
@@ -1174,13 +1181,14 @@ async def get_reports(
     report_type: Optional[str] = Query(None, pattern="^(WEEKLY|MONTHLY)$"),
     _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> list[ReportNarrativeOut]:
-    db = _get_db()
+    slug = _resolve_slug(client_id) or client_id
+    db   = _get_db()
     try:
         # Step 1: contracts for this client
         cq = (
             db.table("agency_report_contracts")
             .select("id, client_slug, report_type, period_start, period_end")
-            .eq("client_slug", client_id)
+            .eq("client_slug", slug)
         )
         if report_type:
             cq = cq.eq("report_type", report_type.lower())
@@ -3263,7 +3271,7 @@ async def get_client_balance(
     try:
         client_res = (
             db.table("clients")
-            .select("pixel_id, google_prepaid, meta_prepaid")
+            .select("client_id, pixel_id, google_prepaid, meta_prepaid")
             .eq("pixel_id", client_id)
             .limit(1)
             .execute()
@@ -3277,6 +3285,7 @@ async def get_client_balance(
 
     client_row  = client_res.data[0]
     any_prepaid = bool(client_row.get("google_prepaid") or client_row.get("meta_prepaid"))
+    slug        = client_row.get("client_id") or client_id
 
     try:
         snaps_res = (
@@ -3286,7 +3295,7 @@ async def get_client_balance(
                 "threshold_low, threshold_critical, currency, snapshot_at, error, "
                 "avg_daily_spend, spend_avg_window_days, spend_data_days, estimated_days_remaining"
             )
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("snapshot_at", desc=True)
             .limit(20)
             .execute()
@@ -3497,20 +3506,21 @@ async def get_pacing_contract(
 
     # Resolve client UUID (URL uses pixel_id)
     try:
-        c_res = sb.table("clients").select("id, business_model").eq("pixel_id", client_id).limit(1).execute()
+        c_res = sb.table("clients").select("id, client_id, business_model").eq("pixel_id", client_id).limit(1).execute()
         client_row = c_res.data[0] if c_res.data else None
     except Exception as exc:
         raise HTTPException(503, detail=f"client lookup failed: {exc}")
     if not client_row:
         raise HTTPException(404, detail=f"client not found: {client_id}")
     client_uuid: str = client_row["id"]
+    slug        = client_row.get("client_id") or client_id
 
     # ── Budget configs ────────────────────────────────────────────────────────
     try:
         cfg_res = (
             sb.table("core_budget_config")
             .select("platform, monthly_budget, currency, monitoring_enabled")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .eq("period_label", period_label)
             .execute()
         )
@@ -3585,7 +3595,7 @@ async def get_pacing_contract(
         tt_res = (
             sb.table("core_client_truth")
             .select("target_truth")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("valid_from", desc=True)
             .limit(1)
             .execute()
@@ -3691,7 +3701,7 @@ async def get_pacing_contract(
         bal_res = (
             sb.table("core_balance_snapshots")
             .select("platform, balance, balance_status, estimated_days_remaining, currency")
-            .eq("client_id", client_id)
+            .eq("client_id", slug)
             .order("snapshot_at", desc=True)
             .limit(10)
             .execute()
