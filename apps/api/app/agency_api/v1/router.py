@@ -19,6 +19,7 @@ Route inventory (48 routes):
   GET  /clients/{client_id}/reports
   GET  /clients/{client_id}/alerts
   GET  /alerts
+  GET  /alerts/{alert_id}
   GET  /alerts/{alert_id}/context
   GET  /alerts/{alert_id}/diagnoses
   GET  /diagnoses/{diagnosis_id}
@@ -1445,7 +1446,7 @@ async def get_client_alerts(
         logger.error("agency_api: client alerts query failed %s: %s", client_id, exc)
         raise HTTPException(503, "database error")
 
-    slug_map = {str(client["id"]): client_id}
+    slug_map = {str(client["id"]): client["client_id"]}
     return [_alert_row_to_out(r, slug_map) for r in rows]
 
 
@@ -1493,6 +1494,39 @@ async def list_alerts(
 
     slug_map = _fetch_slug_map(rows)
     return [_alert_row_to_out(r, slug_map) for r in rows]
+
+
+# ── GET /alerts/{alert_id} ────────────────────────────────────────────────────
+
+@router.get(
+    "/alerts/{alert_id}",
+    summary="Single alert by ID",
+    response_model=AlertOut,
+)
+async def get_alert_by_id(
+    alert_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> AlertOut:
+    db = _get_db()
+    try:
+        res = (
+            db.table("alerts")
+            .select("*")
+            .eq("id", alert_id)
+            .in_("type", list(_CORE_ALERT_TYPES))
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("agency_api: get_alert_by_id failed %s: %s", alert_id, exc)
+        raise HTTPException(503, "database error")
+
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"alert not found: {alert_id!r}")
+
+    slug_map = _fetch_slug_map([row])
+    return _alert_row_to_out(row, slug_map)
 
 
 # ── GET /alerts/{alert_id}/context ───────────────────────────────────────────
