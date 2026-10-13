@@ -208,7 +208,8 @@ def _source_to_domain(source_system: str) -> str:
 
 
 def _load_client_meta(client_id: str) -> Optional[dict]:
-    # client_id in URL is pixel_id (e.g. "lk-sneakers", "dipua-qe5p")
+    # client_id in URL may be pixel_id ("dipua-qe5p") or canonical slug ("dipua").
+    # Try pixel_id first; fall back to slug so GET /clients list IDs work in sub-routes.
     try:
         r = (
             _get_db().table("clients")
@@ -217,7 +218,16 @@ def _load_client_meta(client_id: str) -> Optional[dict]:
             .limit(1)
             .execute()
         )
-        return r.data[0] if (r and r.data) else None
+        if r and r.data:
+            return r.data[0]
+        r2 = (
+            _get_db().table("clients")
+            .select("id, client_id, name, business_model, timezone, currency, country, is_active")
+            .eq("client_id", client_id)
+            .limit(1)
+            .execute()
+        )
+        return r2.data[0] if (r2 and r2.data) else None
     except Exception as exc:
         logger.warning("agency_api: client load failed %s: %s", client_id, exc)
         return None
@@ -1277,7 +1287,11 @@ async def get_report_narrative(
 
 # ── Alert helpers ─────────────────────────────────────────────────────────────
 
-from ...core.alert_evaluator import CORE_ALERT_TYPES as _CORE_ALERT_TYPES  # noqa: E402
+from ...core.alert_evaluator import CORE_ALERT_TYPES as _OP_ALERT_TYPES  # noqa: E402
+from ...core.budget_pacing_evaluator import BUDGET_ALERT_TYPES as _BUDGET_ALERT_TYPES  # noqa: E402
+from ...core.target_pacing_evaluator import TARGET_ALERT_TYPES as _TARGET_ALERT_TYPES  # noqa: E402
+from ...core.performance_alert_evaluator import PERF_ALERT_TYPES as _PERF_ALERT_TYPES  # noqa: E402
+_CORE_ALERT_TYPES = _OP_ALERT_TYPES | _BUDGET_ALERT_TYPES | _TARGET_ALERT_TYPES | _PERF_ALERT_TYPES
 
 
 def _alert_row_to_out(row: dict, slug_map: dict[str, str] | None = None) -> AlertOut:
@@ -1319,6 +1333,7 @@ def _alert_row_to_out(row: dict, slug_map: dict[str, str] | None = None) -> Aler
         alert_type=row.get("type", "UNKNOWN"),
         severity=row.get("severity", "HIGH"),
         status=status,
+        platform=data.get("platform"),
         title=row.get("title", ""),
         message=row.get("message", ""),
         dedup_key=row.get("fingerprint", ""),

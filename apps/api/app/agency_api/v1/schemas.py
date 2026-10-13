@@ -334,9 +334,10 @@ class AlertOut(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
     id: str
     client_id: Optional[str] = None       # slug — None for system-wide alerts
-    alert_type: str                         # JOB_FAILED | JOB_STUCK | SOURCE_STALE | SOURCE_ERROR | RECONCILIATION_FAILED | PIPELINE_NOT_RUN
+    alert_type: str
     severity: str                           # HIGH | MEDIUM | LOW
     status: AlertStatus = AlertStatus.OPEN
+    platform: Optional[str] = None         # google | meta | None for pipeline/source alerts
     title: str
     message: str
     dedup_key: str                          # fingerprint used for upsert dedup
