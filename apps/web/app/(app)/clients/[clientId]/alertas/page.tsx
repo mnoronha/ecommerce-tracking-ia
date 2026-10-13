@@ -2,39 +2,42 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import {
   Bell, AlertTriangle, AlertCircle, Info, CheckCircle,
-  RefreshCw, Loader2, Settings2, ChevronDown, ChevronUp, X, Clock,
+  RefreshCw, Loader2, ChevronDown, ChevronUp, Clock, ExternalLink,
 } from 'lucide-react'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type Severity = 'critical' | 'warning' | 'info'
 
-type Alert = {
+type CoreAlert = {
   id: string
-  type?: string
-  severity: Severity
-  fingerprint?: string
+  alert_type: string
+  severity: string  // CRITICAL | HIGH | MEDIUM | LOW
+  status: string    // OPEN | ACKNOWLEDGED | RESOLVED
+  platform?: string | null
   title: string
   message: string
-  data: Record<string, unknown>
-  created_at: string
-  resolved_at: string | null
-  alert_rule_id: string | null
+  dedup_key: string
+  evidence: Record<string, unknown>
+  occurrence_count: number
+  detected_at: string
+  resolved_at?: string | null
 }
 
-type Rule = {
-  rule_key: string
-  name: string
-  severity: Severity
-  enabled: boolean
-  global_enabled: boolean
-  overridden: boolean
-  throttle_minutes: number
-  config: Record<string, unknown>
+type Diagnosis = {
+  id: string
+  alert_id: string
+  status: string
+  summary: string
+  root_cause_hypotheses: Array<{ hypothesis: string; confidence?: string | number }>
+  evidence: Record<string, unknown>
+  confidence?: string | null  // Level: "LOW" | "MEDIUM" | "HIGH"
+  limitations?: string | null
+  created_at: string
+  created_by: string
 }
 
 // ── Visual constants ──────────────────────────────────────────────────────────
@@ -69,48 +72,14 @@ const SEV_COUNT_STYLE: Record<Severity, string> = {
   info:     'border-indigo-500/20 bg-indigo-500/5',
 }
 
-const RULE_LABEL: Record<string, string> = {
-  // alert_engine rules
-  meta_token_expiring:    'Token Meta expirando',
-  integration_unhealthy:  'Integração com falha',
-  roas_below_goal:        'ROAS abaixo da meta',
-  budget_overspent:       'Orçamento estourado',
-  tracking_stopped:       'Tracking parado',
-  cpa_over_target:        'CPA acima da meta',
-  revenue_drop:           'Queda de receita',
-  // health_monitor checks
-  snippet_volume:         'Volume do snippet',
-  fbp_coverage:           'Cobertura fbp',
-  meta_dispatch:          'Dispatch Meta CAPI',
-  google_dispatch:        'Dispatch Google Ads',
-  pos_filter:             'Filtro POS offline',
-}
-
-// O que dispara cada alerta + a proteção contra falso positivo.
-const RULE_DESC: Record<string, string> = {
-  meta_token_expiring:    'Token da Meta perto de expirar (precisa renovar).',
-  integration_unhealthy:  'Integração Meta/Google/Shopify com falha de conexão.',
-  roas_below_goal:        'ROAS do mês abaixo da meta definida (com tolerância).',
-  budget_overspent:       'Gasto do mês ultrapassou o orçamento definido.',
-  tracking_stopped:       'Nenhum evento de tracking recebido há horas (snippet/CAPI).',
-  cpa_over_target:        'CPA do mês acima da meta (com tolerância e mínimo de pedidos).',
-  revenue_drop:           'Faturamento 24h muito abaixo da mediana 7d. Só alerta canal que vende quase todo dia (evita falso por canal esparso).',
-  views_drop:             'Pageviews das últimas 2h despencaram vs o mesmo horário dos 7 dias (ignora tráfego baixo).',
-  zero_sales:             'Nenhuma venda online em horário comercial por X horas seguidas.',
-  checkout_drop:          'Checkouts iniciados nas últimas 2h despencaram vs baseline (ignora volume baixo).',
-  low_balance_meta:         'Saldo pré-pago da Meta abaixo do limite.',
-  low_balance_google:       'Saldo/dias restantes do Google estimados baixos pelo ritmo de gasto.',
-  ACCOUNT_BALANCE_LOW:      'Dias restantes ≤ 3 dias pelo ritmo atual de gasto. Planejar recarga.',
-  ACCOUNT_BALANCE_CRITICAL: 'Dias restantes ≤ 1 dia. Recarga urgente para evitar pausa nas campanhas.',
-  ACCOUNT_BALANCE_EXHAUSTED:'Saldo zerado. Campanhas podem ter parado. Recarga imediata necessária.',
-  google_conversion_drop: 'Conversões enviadas ao Google 24h abaixo da mediana 7d. Só canal consistente (evita falso).',
-  high_ticket_anomaly:    'Pedido muito acima do ticket médio — apenas informativo.',
-  roas_drop_channel:      'ROAS 24h do canal caiu vs 7d mesmo com investimento ativo (mínimo de spend).',
-  spend_below_expected:   'Investimento do canal abaixo do esperado — possível campanha pausada.',
-  utm_null_ratio:         'Muitos pedidos sem UTM nas últimas 24h (snippet não está passando a origem).',
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function mapSeverity(s: string): Severity {
+  const u = (s ?? '').toUpperCase()
+  if (u === 'CRITICAL' || u === 'HIGH') return 'critical'
+  if (u === 'MEDIUM') return 'warning'
+  return 'info'
+}
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleString('pt-BR', {
@@ -193,13 +162,10 @@ function AlertDataView({ data }: { data: Record<string, unknown> }) {
   const keys = Object.keys(data).filter(k => k !== 'check')
   if (keys.length === 0) return null
 
-  // Balance alerts: show structured view
   if (typeof data.balance_status === 'string') return <BalanceAlertView data={data} />
 
-  // Show key findings if present
   const finding = data.finding as Record<string, unknown> | undefined
   const message = finding?.message as string | undefined
-
   if (message) {
     return (
       <div className="mt-2 bg-[#0f1117] rounded-lg px-3 py-2 border border-[#2a2f3e] text-xs text-slate-400">
@@ -208,7 +174,6 @@ function AlertDataView({ data }: { data: Record<string, unknown> }) {
     )
   }
 
-  // Fallback: show compact key/value pairs (skip deep objects)
   const simple = keys.filter(k => typeof data[k] !== 'object' || data[k] === null)
   if (simple.length === 0) return null
   return (
@@ -223,108 +188,148 @@ function AlertDataView({ data }: { data: Record<string, unknown> }) {
   )
 }
 
-// ── AlertCard ─────────────────────────────────────────────────────────────────
+// ── DiagnosisPanel ────────────────────────────────────────────────────────────
 
-function AlertCard({ alert: a, onResolve }: { alert: Alert; onResolve?: () => void }) {
-  const [resolving, setResolving] = useState(false)
-  const Icon = SEV_ICON[a.severity] || Info
+function DiagnosisPanel({ alertId, clientId }: { alertId: string; clientId: string }) {
+  const [diags,   setDiags]   = useState<Diagnosis[] | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  async function handleResolve() {
-    if (!onResolve) return
-    setResolving(true)
-    await onResolve()
-    setResolving(false)
+  useEffect(() => {
+    fetch(`/api/v1/alerts/${alertId}/diagnoses`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setDiags(Array.isArray(data) ? data : []))
+      .catch(() => setDiags([]))
+      .finally(() => setLoading(false))
+  }, [alertId])
+
+  if (loading) {
+    return (
+      <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-600">
+        <Loader2 size={11} className="animate-spin" /> Carregando diagnósticos…
+      </div>
+    )
+  }
+
+  if (!diags || diags.length === 0) {
+    return (
+      <p className="mt-2 text-xs text-slate-600 italic">Nenhum diagnóstico registrado para este alerta.</p>
+    )
   }
 
   return (
-    <div className={`rounded-xl border p-4 ${SEV_STYLE[a.severity] || SEV_STYLE.info}`}>
+    <div className="mt-3 space-y-2">
+      {diags.map(d => (
+        <div key={d.id} className="bg-[#0f1117] rounded-lg border border-[#2a2f3e] px-3 py-2.5">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-xs font-semibold text-slate-200 leading-snug">{d.summary}</p>
+            {d.confidence != null && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 shrink-0">
+                {d.confidence}
+              </span>
+            )}
+          </div>
+
+          {d.root_cause_hypotheses?.length > 0 && (
+            <div className="mt-1.5 space-y-0.5">
+              {d.root_cause_hypotheses.slice(0, 2).map((h, i) => (
+                <p key={i} className="text-xs text-slate-500 leading-snug">• {h.hypothesis}</p>
+              ))}
+            </div>
+          )}
+
+          {d.limitations && (
+            <p className="mt-1 text-xs text-slate-600 italic">{d.limitations}</p>
+          )}
+
+          <div className="flex items-center gap-3 mt-2 pt-2 border-t border-[#2a2f3e]">
+            <Link
+              href={`/clients/${clientId}/recommendations`}
+              className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              Ver recomendações <ExternalLink size={10} />
+            </Link>
+            <span className="text-xs text-slate-700">por {d.created_by} · {fmtRelative(d.created_at)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ── AlertCard ─────────────────────────────────────────────────────────────────
+
+function AlertCard({ alert: a, clientId }: { alert: CoreAlert; clientId: string }) {
+  const [showDiags, setShowDiags] = useState(false)
+  const sev  = mapSeverity(a.severity)
+  const Icon = SEV_ICON[sev]
+
+  const isResolved = a.status === 'RESOLVED'
+
+  return (
+    <div className={`rounded-xl border p-4 ${SEV_STYLE[sev]}`}>
       <div className="flex items-start gap-3">
-        <Icon size={15} className={
-          a.severity === 'critical' ? 'text-red-400 mt-0.5 shrink-0' :
-          a.severity === 'warning'  ? 'text-yellow-400 mt-0.5 shrink-0' :
-                                      'text-indigo-400 mt-0.5 shrink-0'
-        } />
+        <Icon size={15} className={`mt-0.5 shrink-0 ${
+          sev === 'critical' ? 'text-red-400' :
+          sev === 'warning'  ? 'text-yellow-400' :
+                               'text-indigo-400'
+        }`} />
         <div className="flex-1 min-w-0">
+
           {/* Title row */}
           <div className="flex items-start justify-between gap-2 flex-wrap">
             <p className="text-sm font-semibold text-white leading-tight">{a.title}</p>
             <div className="flex items-center gap-2 shrink-0">
-              <span className={`text-xs px-2 py-0.5 rounded font-medium ${SEV_BADGE[a.severity] || SEV_BADGE.info}`}>
-                {SEV_LABEL[a.severity] || a.severity}
+              <span className={`text-xs px-2 py-0.5 rounded font-medium ${SEV_BADGE[sev]}`}>
+                {SEV_LABEL[sev]}
               </span>
-              {a.resolved_at ? (
+              {isResolved ? (
                 <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">Resolvido</span>
-              ) : onResolve && (
-                <button
-                  onClick={handleResolve}
-                  disabled={resolving}
-                  className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-slate-500/15 text-slate-400 hover:bg-emerald-500/15 hover:text-emerald-400 transition-colors disabled:opacity-50"
-                  title="Marcar como resolvido"
-                >
-                  {resolving ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
-                  Resolver
-                </button>
-              )}
+              ) : a.status === 'ACKNOWLEDGED' ? (
+                <span className="text-xs px-2 py-0.5 rounded bg-slate-500/15 text-slate-400">Reconhecido</span>
+              ) : null}
             </div>
           </div>
 
           {/* Message */}
           <p className="text-xs text-slate-400 mt-1 leading-relaxed">{a.message}</p>
 
-          {/* Pretty data (only when useful) */}
-          {a.data && Object.keys(a.data).length > 0 && (
-            <AlertDataView data={a.data} />
+          {/* Evidence */}
+          {a.evidence && Object.keys(a.evidence).length > 0 && (
+            <AlertDataView data={a.evidence} />
           )}
 
-          {/* Footer timestamps */}
-          <div className="flex items-center gap-3 mt-2.5">
+          {/* Footer */}
+          <div className="flex items-center flex-wrap gap-3 mt-2.5">
             <span className="flex items-center gap-1 text-xs text-slate-600">
               <Clock size={10} />
-              {fmtRelative(a.created_at)}
-              <span className="text-slate-700 ml-1">{fmtDate(a.created_at)}</span>
+              {fmtRelative(a.detected_at)}
+              <span className="text-slate-700 ml-1">{fmtDate(a.detected_at)}</span>
             </span>
-            {a.resolved_at && (
+            {a.platform && (
+              <span className="text-xs text-slate-600">{_PLATFORM_LABEL[a.platform] ?? a.platform}</span>
+            )}
+            {a.occurrence_count > 1 && (
+              <span className="text-xs text-slate-600">{a.occurrence_count}× ocorrências</span>
+            )}
+            {isResolved && a.resolved_at && (
               <span className="text-xs text-slate-600">→ resolvido {fmtRelative(a.resolved_at)}</span>
             )}
           </div>
+
+          {/* Diagnoses toggle */}
+          <button
+            onClick={() => setShowDiags(v => !v)}
+            className="mt-2.5 flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {showDiags
+              ? <><ChevronUp size={11} /> Ocultar diagnósticos</>
+              : <><ChevronDown size={11} /> Ver diagnósticos</>
+            }
+          </button>
+
+          {showDiags && <DiagnosisPanel alertId={a.id} clientId={clientId} />}
         </div>
       </div>
-    </div>
-  )
-}
-
-// ── RuleRow ───────────────────────────────────────────────────────────────────
-
-function RuleRow({ rule, onToggle }: { rule: Rule; onToggle: (v: boolean) => void }) {
-  return (
-    <div className="flex items-start justify-between px-5 py-3 gap-4">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className={`text-sm ${rule.enabled ? 'text-slate-200' : 'text-slate-500'}`}>{rule.name || RULE_LABEL[rule.rule_key] || rule.rule_key}</p>
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${SEV_BADGE[rule.severity] || SEV_BADGE.info}`}>
-            {SEV_LABEL[rule.severity] || rule.severity}
-          </span>
-          {rule.overridden && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/25" title="Diferente do padrão da agência — específico deste cliente">
-              personalizado
-            </span>
-          )}
-        </div>
-        {RULE_DESC[rule.rule_key] && (
-          <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">{RULE_DESC[rule.rule_key]}</p>
-        )}
-      </div>
-      <button
-        onClick={() => onToggle(!rule.enabled)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
-          rule.enabled ? 'bg-indigo-600' : 'bg-slate-700'
-        }`}
-        aria-label={rule.enabled ? 'Desativar alerta' : 'Ativar alerta'}
-      >
-        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-          rule.enabled ? 'translate-x-4' : 'translate-x-1'
-        }`} />
-      </button>
     </div>
   )
 }
@@ -351,20 +356,16 @@ function SummaryCard({ severity, count }: { severity: Severity; count: number })
 
 type Filter = 'all' | Severity
 
-const AUTO_REFRESH_MS = 5 * 60 * 1000  // 5 min
+const AUTO_REFRESH_MS = 5 * 60 * 1000
 
 export default function AlertasPage() {
-  const params  = useParams()
-  const pixelId = params.clientId as string
+  const params   = useParams()
+  const clientId = params.clientId as string
 
-  const [alerts,          setAlerts]          = useState<Alert[]>([])
-  const [rules,           setRules]           = useState<Rule[]>([])
+  const [alerts,          setAlerts]          = useState<CoreAlert[]>([])
   const [loading,         setLoading]         = useState(true)
   const [includeResolved, setIncludeResolved] = useState(false)
-  const [running,         setRunning]         = useState(false)
-  const [runResult,       setRunResult]       = useState<{ rules: number; new: number; resolved: number } | null>(null)
   const [error,           setError]           = useState<string | null>(null)
-  const [showRules,       setShowRules]       = useState(true)
   const [filter,          setFilter]          = useState<Filter>('all')
   const [lastRefresh,     setLastRefresh]     = useState<Date>(new Date())
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -373,84 +374,41 @@ export default function AlertasPage() {
     if (!silent) setLoading(true)
     setError(null)
     try {
-      const url = `${API_URL}/alerts/${pixelId}?include_resolved=${includeResolved}&limit=200`
-      const res = await fetch(url)
+      const status = includeResolved ? 'all' : 'OPEN'
+      const res = await fetch(`/api/v1/clients/${clientId}/alerts?status=${status}&limit=200`)
       if (!res.ok) {
         setError(`Erro ${res.status}: ${(await res.text()).slice(0, 120)}`)
         setAlerts([])
       } else {
-        setAlerts((await res.json()).alerts || [])
+        setAlerts((await res.json()) as CoreAlert[])
         setLastRefresh(new Date())
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Erro ao carregar alertas')
     }
     if (!silent) setLoading(false)
-  }, [pixelId, includeResolved])
+  }, [clientId, includeResolved])
 
-  const loadRules = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/alerts/rules/${pixelId}`)
-      if (res.ok) setRules((await res.json()).rules || [])
-    } catch (_) {}
-  }, [pixelId])
-
-  // Initial load + auto-refresh
-  useEffect(() => {
-    load()
-    loadRules()
-  }, [load, loadRules])
+  useEffect(() => { load() }, [load])
 
   useEffect(() => {
     timerRef.current = setTimeout(() => load(true), AUTO_REFRESH_MS)
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [lastRefresh, load])
 
-  async function runEngine() {
-    setRunning(true)
-    setRunResult(null)
-    try {
-      const res = await fetch(`${API_URL}/alerts/run`, { method: 'POST' })
-      if (res.ok) setRunResult(await res.json())
-    } catch (_) {}
-    setRunning(false)
-    load()
-  }
-
-  async function resolveAlert(alertId: string) {
-    try {
-      await fetch(`${API_URL}/alerts/${alertId}/resolve`, { method: 'POST' })
-      load(true)
-    } catch (_) {}
-  }
-
-  async function toggleRule(rule: Rule, enabled: boolean) {
-    // Otimista: atualiza o estado efetivo + flag de personalizado.
-    setRules(prev => prev.map(r =>
-      (r.rule_key === rule.rule_key && r.name === rule.name)
-        ? { ...r, enabled, overridden: enabled !== r.global_enabled }
-        : r
-    ))
-    try {
-      await fetch(`${API_URL}/alerts/rules/${pixelId}/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rule_key: rule.rule_key, name: rule.name, enabled }),
-      })
-    } catch (_) {
-      loadRules()  // reverte pro estado real em caso de falha
-    }
-  }
-
   // Derived state
-  const open     = alerts.filter(a => !a.resolved_at)
-  const resolved = alerts.filter(a =>  a.resolved_at)
-  const counts   = {
-    critical: open.filter(a => a.severity === 'critical').length,
-    warning:  open.filter(a => a.severity === 'warning').length,
-    info:     open.filter(a => a.severity === 'info').length,
+  const open     = alerts.filter(a => a.status !== 'RESOLVED')
+  const resolved = alerts.filter(a => a.status === 'RESOLVED')
+
+  const counts = {
+    critical: open.filter(a => mapSeverity(a.severity) === 'critical').length,
+    warning:  open.filter(a => mapSeverity(a.severity) === 'warning').length,
+    info:     open.filter(a => mapSeverity(a.severity) === 'info').length,
   }
-  const filtered = filter === 'all' ? open : open.filter(a => a.severity === filter)
+
+  const filtered = filter === 'all'
+    ? open
+    : open.filter(a => mapSeverity(a.severity) === filter)
 
   const FILTER_TABS: { key: Filter; label: string; count?: number }[] = [
     { key: 'all',      label: 'Todos',   count: open.length },
@@ -474,7 +432,7 @@ export default function AlertasPage() {
             )}
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Engine a cada 30 min · Monitor diário 09:30 BRT
+            Alertas do sistema Core · verificação automática
             <span className="ml-2 text-slate-700">· atualizado {fmtRelative(lastRefresh.toISOString())}</span>
           </p>
         </div>
@@ -496,14 +454,13 @@ export default function AlertasPage() {
             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
             Atualizar
           </button>
-          <button
-            onClick={runEngine}
-            disabled={running}
-            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+          <Link
+            href={`/clients/${clientId}/recommendations`}
+            className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
           >
-            {running ? <Loader2 size={12} className="animate-spin" /> : <Bell size={12} />}
-            Rodar engine
-          </button>
+            <Bell size={12} />
+            Recomendações
+          </Link>
         </div>
       </div>
 
@@ -513,14 +470,6 @@ export default function AlertasPage() {
           <SummaryCard severity="critical" count={counts.critical} />
           <SummaryCard severity="warning"  count={counts.warning} />
           <SummaryCard severity="info"     count={counts.info} />
-        </div>
-      )}
-
-      {/* Run result flash */}
-      {runResult && (
-        <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-lg px-4 py-2.5">
-          <CheckCircle size={13} />
-          Engine executada — {runResult.rules} regras · {runResult.new} novo{runResult.new !== 1 ? 's' : ''} · {runResult.resolved} resolvido{runResult.resolved !== 1 ? 's' : ''}
         </div>
       )}
 
@@ -580,7 +529,7 @@ export default function AlertasPage() {
           ) : (
             <div className="space-y-3">
               {filtered.map(a => (
-                <AlertCard key={a.id} alert={a} onResolve={() => resolveAlert(a.id)} />
+                <AlertCard key={a.id} alert={a} clientId={clientId} />
               ))}
             </div>
           )}
@@ -592,46 +541,8 @@ export default function AlertasPage() {
                 Resolvidos ({resolved.length})
               </h2>
               <div className="space-y-2 opacity-60">
-                {resolved.map(a => <AlertCard key={a.id} alert={a} />)}
+                {resolved.map(a => <AlertCard key={a.id} alert={a} clientId={clientId} />)}
               </div>
-            </div>
-          )}
-
-          {/* Rules panel */}
-          {rules.length > 0 && (
-            <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
-              <button
-                onClick={() => setShowRules(v => !v)}
-                className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-white/[0.02] transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <Settings2 size={14} className="text-slate-400" />
-                  <span className="text-sm font-medium text-slate-300">Alertas configurados</span>
-                  <span className="text-xs text-slate-600">
-                    ({rules.filter(r => r.enabled).length}/{rules.length} ativos neste cliente)
-                  </span>
-                </div>
-                {showRules
-                  ? <ChevronUp  size={14} className="text-slate-500" />
-                  : <ChevronDown size={14} className="text-slate-500" />
-                }
-              </button>
-              {showRules && (
-                <>
-                  <p className="px-5 pt-3 pb-1 text-xs text-slate-600 border-t border-[#2a2f3e]">
-                    Ligue/desligue cada alerta só para este cliente. Mudar aqui não afeta os outros clientes da agência.
-                  </p>
-                  <div className="divide-y divide-[#2a2f3e]">
-                    {rules.map(rule => (
-                      <RuleRow
-                        key={`${rule.rule_key}:${rule.name}`}
-                        rule={rule}
-                        onToggle={enabled => toggleRule(rule, enabled)}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
             </div>
           )}
         </>

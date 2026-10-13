@@ -6,6 +6,7 @@ import Link                                  from 'next/link'
 import {
   ArrowLeft, Lightbulb, ChevronDown, ChevronUp,
   Loader2, RefreshCw, CheckCircle2, XCircle, Clock,
+  Zap, BarChart2, BookOpen,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -25,6 +26,37 @@ interface Recommendation {
   status:                  string
   created_at:              string
   created_by:              string
+}
+
+interface Action {
+  id:                      string
+  recommendation_id:       string
+  action_type:             string
+  platform?:               string | null
+  entity_type?:            string | null
+  entity_id?:              string | null
+  status:                  string
+  executed_by?:            string | null
+  executed_at?:            string | null
+  evaluation_window_days:  number
+  before_state:            Record<string, unknown>
+  after_state:             Record<string, unknown>
+  reason?:                 string | null
+  requires_external_write: boolean
+  change_log_id?:          string | null
+  created_at:              string
+}
+
+interface Outcome {
+  id:                     string
+  action_id?:             string | null
+  status:                 string
+  confidence?:            string | null
+  evaluation_window_days?: number | null
+  delta?:                 Record<string, unknown> | null
+  data_health:            Record<string, unknown>
+  measured_at?:           string | null
+  created_at:             string
 }
 
 type DecisionType = 'ACCEPTED' | 'REJECTED' | 'DEFERRED'
@@ -53,6 +85,16 @@ const STATUS_BADGE: Record<string, string> = {
   EXECUTED:  'bg-sky-500/15 text-sky-400',
 }
 
+const OUTCOME_BADGE: Record<string, string> = {
+  POSITIVE:             'bg-emerald-500/15 text-emerald-400',
+  NEGATIVE:             'bg-red-500/15 text-red-400',
+  NEUTRAL:              'bg-slate-500/15 text-slate-400',
+  INCONCLUSIVE:         'bg-amber-500/15 text-amber-400',
+  BLOCKED_DATA_QUALITY: 'bg-orange-500/15 text-orange-400',
+  PENDING:              'bg-slate-500/10 text-slate-500',
+  CONFIRMED:            'bg-emerald-500/15 text-emerald-400',
+}
+
 const DECISION_LABELS: Record<DecisionType, string> = {
   ACCEPTED: 'Aprovar',
   DEFERRED: 'Adiar',
@@ -61,7 +103,8 @@ const DECISION_LABELS: Record<DecisionType, string> = {
 
 const DECIDABLE_STATES = new Set(['PROPOSED', 'DEFERRED'])
 
-function fmtDate(iso: string) {
+function fmtDate(iso: string | null | undefined) {
+  if (!iso) return '—'
   return new Date(iso).toLocaleString('pt-BR', {
     day: '2-digit', month: '2-digit', year: '2-digit',
     hour: '2-digit', minute: '2-digit',
@@ -146,7 +189,7 @@ function DecisionBanner({ status }: { status: string }) {
       <div className="flex items-start gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 mt-4">
         <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-400" />
         <p className="text-xs text-emerald-300 leading-relaxed">
-          Aprovada para possível execução posterior. Nenhuma alteração externa foi executada.
+          Aprovada para possível execução. Registre uma ação abaixo para fechar o loop.
         </p>
       </div>
     )
@@ -170,6 +213,215 @@ function DecisionBanner({ status }: { status: string }) {
     )
   }
   return null
+}
+
+// ── Outcome badge ─────────────────────────────────────────────────────────────
+
+function OutcomeChip({ status, confidence }: { status: string; confidence?: string | null }) {
+  const cls = OUTCOME_BADGE[status] || 'bg-slate-500/10 text-slate-500'
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded font-medium ${cls}`}>
+      {status}{confidence ? ` · ${confidence}` : ''}
+    </span>
+  )
+}
+
+// ── Action panel ──────────────────────────────────────────────────────────────
+
+function ActionPanel({ recommendationId }: { recommendationId: string }) {
+  const [actions,  setActions]  = useState<Action[]>([])
+  const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({})
+  const [loading,  setLoading]  = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [formErr,  setFormErr]  = useState<string | null>(null)
+
+  const [form, setForm] = useState({
+    action_type:             'MANUAL_EXTERNAL_ACTION',
+    platform:                '',
+    entity_type:             '',
+    reason:                  '',
+    evaluation_window_days:  '7',
+    requires_external_write: false,
+  })
+
+  const loadActions = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/v1/recommendations/${recommendationId}/actions`)
+      if (res.ok) {
+        const data: Action[] = await res.json()
+        setActions(data)
+        // Load outcomes for EXECUTED actions
+        const executed = data.filter(a => a.status === 'EXECUTED')
+        for (const a of executed) {
+          if (!outcomes[a.id]) {
+            const or = await fetch(`/api/v1/actions/${a.id}/outcome`)
+            if (or.ok) {
+              const o: Outcome | null = await or.json()
+              if (o) setOutcomes(prev => ({ ...prev, [a.id]: o }))
+            }
+          }
+        }
+      }
+    } finally {
+      setLoading(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recommendationId])
+
+  useEffect(() => { loadActions() }, [loadActions])
+
+  async function submitCreate() {
+    setCreating(true)
+    setFormErr(null)
+    try {
+      const res = await fetch(`/api/v1/recommendations/${recommendationId}/actions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action_type:             form.action_type,
+          platform:                form.platform || null,
+          entity_type:             form.entity_type || null,
+          reason:                  form.reason || null,
+          evaluation_window_days:  parseInt(form.evaluation_window_days, 10) || 7,
+          requires_external_write: form.requires_external_write,
+          idempotency_key:         crypto.randomUUID(),
+        }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const msg = (data as { detail?: string; error?: string })?.detail ||
+          (data as { detail?: string; error?: string })?.error ||
+          `Erro ${res.status}`
+        setFormErr(msg)
+        return
+      }
+      await loadActions()
+      setForm({ action_type: 'MANUAL_EXTERNAL_ACTION', platform: '', entity_type: '', reason: '', evaluation_window_days: '7', requires_external_write: false })
+    } catch {
+      setFormErr('Falha de comunicação. Tente novamente.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-slate-500 text-xs py-3">
+        <Loader2 size={11} className="animate-spin" /> Carregando ações…
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Zap size={12} className="text-sky-400" />
+        <p className="text-xs font-semibold text-slate-300">Ações registradas</p>
+      </div>
+
+      {actions.length === 0 ? (
+        <p className="text-xs text-slate-500 pl-4">Nenhuma ação registrada ainda.</p>
+      ) : (
+        <div className="space-y-2 pl-4">
+          {actions.map(a => {
+            const outcome = outcomes[a.id]
+            return (
+              <div key={a.id} className="rounded-lg bg-[#252b3b] border border-[#3a3f4e] px-4 py-3 space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-slate-300 font-medium">{a.action_type}</span>
+                  <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                    a.status === 'EXECUTED'  ? 'bg-sky-500/15 text-sky-400' :
+                    a.status === 'PLANNED'   ? 'bg-slate-500/15 text-slate-400' :
+                    a.status === 'FAILED'    ? 'bg-red-500/15 text-red-400' :
+                    a.status === 'CANCELLED' ? 'bg-slate-500/15 text-slate-500' :
+                    'bg-slate-500/15 text-slate-400'
+                  }`}>{a.status}</span>
+                  {a.platform && <span className="text-xs text-slate-500">{a.platform}</span>}
+                </div>
+                {a.status === 'EXECUTED' && (
+                  <p className="text-xs text-slate-500">
+                    Executado por {a.executed_by || '—'} em {fmtDate(a.executed_at)}
+                  </p>
+                )}
+                {a.reason && <p className="text-xs text-slate-400 italic">{a.reason}</p>}
+                {outcome && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <BarChart2 size={10} className="text-slate-500" />
+                    <span className="text-xs text-slate-500">Outcome:</span>
+                    <OutcomeChip status={outcome.status} confidence={outcome.confidence} />
+                    {outcome.measured_at && (
+                      <span className="text-xs text-slate-600">{fmtDate(outcome.measured_at)}</span>
+                    )}
+                  </div>
+                )}
+                {a.status === 'EXECUTED' && !outcome && (
+                  <p className="text-xs text-slate-600 italic">Avaliação de outcome pendente (janela: {a.evaluation_window_days}d)</p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Create action form — only if no EXECUTED action exists yet */}
+      {!actions.some(a => a.status === 'EXECUTED') && (
+        <div className="pl-4 pt-2">
+          <p className="text-xs text-slate-500 mb-2">Registrar ação executada externamente:</p>
+          <div className="space-y-2">
+            <select
+              value={form.action_type}
+              onChange={e => setForm(prev => ({ ...prev, action_type: e.target.value }))}
+              className="w-full rounded-md bg-[#252b3b] border border-[#3a3f4e] text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-slate-500"
+            >
+              <option value="MANUAL_EXTERNAL_ACTION">Ação externa manual</option>
+              <option value="INTERNAL_ACTION">Ação interna</option>
+              <option value="NO_ACTION_REQUIRED">Nenhuma ação necessária</option>
+            </select>
+            <div className="flex gap-2">
+              <input
+                value={form.platform}
+                onChange={e => setForm(prev => ({ ...prev, platform: e.target.value }))}
+                placeholder="Plataforma (ex: google, meta)"
+                className="flex-1 rounded-md bg-[#252b3b] border border-[#3a3f4e] text-xs text-slate-300 placeholder-slate-600 px-3 py-1.5 focus:outline-none focus:border-slate-500"
+              />
+              <input
+                value={form.entity_type}
+                onChange={e => setForm(prev => ({ ...prev, entity_type: e.target.value }))}
+                placeholder="Tipo entidade (ex: CAMPAIGN)"
+                className="flex-1 rounded-md bg-[#252b3b] border border-[#3a3f4e] text-xs text-slate-300 placeholder-slate-600 px-3 py-1.5 focus:outline-none focus:border-slate-500"
+              />
+            </div>
+            <input
+              value={form.reason}
+              onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))}
+              placeholder="Descrição / motivo (opcional)"
+              className="w-full rounded-md bg-[#252b3b] border border-[#3a3f4e] text-xs text-slate-300 placeholder-slate-600 px-3 py-1.5 focus:outline-none focus:border-slate-500"
+            />
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="1"
+                max="90"
+                value={form.evaluation_window_days}
+                onChange={e => setForm(prev => ({ ...prev, evaluation_window_days: e.target.value }))}
+                className="w-24 rounded-md bg-[#252b3b] border border-[#3a3f4e] text-xs text-slate-300 px-3 py-1.5 focus:outline-none focus:border-slate-500"
+              />
+              <span className="text-xs text-slate-500">dias de avaliação</span>
+            </div>
+            {formErr && <p className="text-xs text-red-400">{formErr}</p>}
+            <button
+              onClick={submitCreate}
+              disabled={creating}
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-600/40 transition-colors disabled:opacity-50"
+            >
+              {creating ? <><Loader2 size={11} className="animate-spin" /> Registrando…</> : 'Registrar ação'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // ── Page ──────────────────────────────────────────────────────────────────────
@@ -206,7 +458,6 @@ export default function RecommendationsPage() {
       next.has(id) ? next.delete(id) : next.add(id)
       return next
     })
-    // Clear active decision form when collapsing or switching card
     setActive(prev => (prev?.recId === id ? null : prev))
   }
 
@@ -245,7 +496,6 @@ export default function RecommendationsPage() {
         return
       }
 
-      // Update item in list with returned recommendation
       if (data && typeof data === 'object' && 'id' in data) {
         setItems(prev => prev.map(r => r.id === active.recId ? { ...r, ...(data as Partial<Recommendation>) } : r))
       }
@@ -260,8 +510,8 @@ export default function RecommendationsPage() {
       {/* Header */}
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
-          <Link href={`/clients/${clientId}/diagnostics`} className="inline-flex items-center gap-1.5 text-slate-500 hover:text-white text-xs mb-3 transition-colors">
-            <ArrowLeft size={12} /> Voltar
+          <Link href={`/clients/${clientId}/alertas`} className="inline-flex items-center gap-1.5 text-slate-500 hover:text-white text-xs mb-3 transition-colors">
+            <ArrowLeft size={12} /> Alertas
           </Link>
           <div className="flex items-center gap-2">
             <Lightbulb size={16} className="text-indigo-400" />
@@ -305,6 +555,7 @@ export default function RecommendationsPage() {
             const isOpen       = expanded.has(rec.id)
             const isDecidable  = DECIDABLE_STATES.has(rec.status) && rec.requires_human_approval
             const isActiveForm = active?.recId === rec.id
+            const showActions  = rec.status === 'APPROVED' || rec.status === 'EXECUTED'
 
             return (
               <div key={rec.id} className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
@@ -323,6 +574,11 @@ export default function RecommendationsPage() {
                       </span>
                       {rec.requires_human_approval && (
                         <span className="text-xs text-slate-500">· aprovação humana</span>
+                      )}
+                      {showActions && (
+                        <span className="inline-flex items-center gap-1 text-xs text-sky-500">
+                          <Zap size={9} /> ação
+                        </span>
                       )}
                     </div>
                     <p className="text-sm font-semibold text-white">{rec.title}</p>
@@ -394,13 +650,39 @@ export default function RecommendationsPage() {
                       />
                     )}
 
+                    {/* Action → Outcome → Learning panel (shown after APPROVED) */}
+                    {showActions && (
+                      <div className="pt-3 border-t border-[#2a2f3e]">
+                        <ActionPanel recommendationId={rec.id} />
+                      </div>
+                    )}
+
+                    {/* Learning candidates link */}
+                    {showActions && (
+                      <div className="flex items-center gap-2 pt-1">
+                        <BookOpen size={10} className="text-slate-500" />
+                        <Link
+                          href={`/clients/${clientId}/learning-candidates`}
+                          className="text-xs text-slate-500 hover:text-slate-400"
+                        >
+                          Ver candidatos de aprendizado →
+                        </Link>
+                      </div>
+                    )}
+
                     <div className="flex items-center gap-4 pt-2 border-t border-[#2a2f3e]">
                       <Link
-                        href={`/api/v1/diagnoses/${rec.diagnosis_id}/recommendations`}
+                        href={`/clients/${clientId}/alertas`}
                         className="text-xs text-indigo-400 hover:text-indigo-300"
+                      >
+                        ← Ver alerta
+                      </Link>
+                      <Link
+                        href={`/api/v1/alerts/${rec.alert_id}/diagnoses`}
+                        className="text-xs text-slate-500 hover:text-slate-400"
                         target="_blank"
                       >
-                        Ver diagnóstico →
+                        diagnóstico ↗
                       </Link>
                       <span className="text-xs text-slate-600">por {rec.created_by}</span>
                     </div>

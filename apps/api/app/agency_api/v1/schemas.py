@@ -36,6 +36,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .enums import (
     ActionEventType,
+    ActionStatus,
+    ActionType,
     AlertRuleSuggestionStatus,
     AlertStatus,
     BusinessModel,
@@ -483,6 +485,54 @@ class ActionEventOut(ActionEventCreate):
     created_at: datetime
 
 
+# ── 10b. Actions (M20) ───────────────────────────────────────────────────────
+
+class ActionCreate(_Base):
+    """Request body for POST /recommendations/{id}/actions."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    action_type: ActionType
+    platform: Optional[str] = None
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    evaluation_window_days: int = Field(default=7, ge=1, le=90)
+    before_state: dict[str, Any] = Field(default_factory=dict)
+    reason: Optional[str] = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    requires_external_write: bool = False
+
+
+class ActionOut(_Base):
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    id: str
+    client_id: str
+    recommendation_id: str
+    diagnosis_id: Optional[str] = None
+    alert_id: Optional[str] = None
+    action_type: str
+    platform: Optional[str] = None
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    status: str = "PLANNED"
+    executed_by: Optional[str] = None
+    executed_at: Optional[datetime] = None
+    evaluation_window_days: int = 7
+    before_state: dict[str, Any] = Field(default_factory=dict)
+    after_state: dict[str, Any] = Field(default_factory=dict)
+    reason: Optional[str] = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    requires_external_write: bool = False
+    change_log_id: Optional[str] = None
+    created_at: datetime
+
+
+class ActionUpdate(_Base):
+    """Request body for PUT /actions/{id} — status transition."""
+    status: ActionStatus
+    executed_by: Optional[str] = None
+    after_state: dict[str, Any] = Field(default_factory=dict)
+    reason: Optional[str] = None
+
+
 # ── 11. Alert feedback ────────────────────────────────────────────────────────
 
 class AlertFeedbackCreate(_Base):
@@ -576,7 +626,19 @@ class LearningCandidateCreate(_Base):
 class LearningCandidateOut(LearningCandidateCreate):
     id: str
     status: LearningCandidateStatus = LearningCandidateStatus.PENDING
+    source_action_id: Optional[str] = None
+    source_recommendation_id: Optional[str] = None
+    pattern: Optional[str] = None
+    observed_outcome: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+class LearningCandidateDecision(_Base):
+    """Human approval / rejection of a learning candidate."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    decision: Literal["APPROVED", "REJECTED", "SUPERSEDED"]
+    actor: str
+    note: Optional[str] = None
 
 
 # ── 15. Jobs ──────────────────────────────────────────────────────────────────
@@ -717,7 +779,7 @@ class EntityPerformanceOut(_Base):
 
 class OutcomeCreate(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
-    action_event_id: str
+    action_event_id: Optional[str] = None
     measurement_period: dict[str, Any] = Field(default_factory=dict)
     metric_refs: list[str] = Field(default_factory=list)
     before_state: Optional[dict[str, Any]] = None
@@ -729,8 +791,12 @@ class OutcomeCreate(_Base):
 
 class OutcomeOut(OutcomeCreate):
     id: str
+    action_id: Optional[str] = None
     recommendation_id: Optional[str] = None
     client_id: Optional[str] = None
+    evaluation_window_days: Optional[int] = None
+    confidence: Optional[str] = None
+    data_health: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
     created_by: str = "human"
 

@@ -190,22 +190,43 @@ class AlertRuleSuggestionStatus(str, Enum):
 
 
 class LearningScope(str, Enum):
-    CLIENT         = "CLIENT"
-    BUSINESS_MODEL = "BUSINESS_MODEL"
-    AGENCY         = "AGENCY"
+    CLIENT_ONLY          = "CLIENT_ONLY"
+    CLIENT               = "CLIENT"         # legacy alias
+    BUSINESS_MODEL       = "BUSINESS_MODEL"
+    PLATFORM             = "PLATFORM"
+    AGENCY_WIDE_CANDIDATE = "AGENCY_WIDE_CANDIDATE"
+    AGENCY               = "AGENCY"         # legacy alias
 
 
 class LearningCandidateStatus(str, Enum):
-    PENDING  = "PENDING"
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
+    PENDING    = "PENDING"
+    APPROVED   = "APPROVED"
+    REJECTED   = "REJECTED"
+    SUPERSEDED = "SUPERSEDED"
+
+
+class ActionType(str, Enum):
+    MANUAL_EXTERNAL_ACTION = "MANUAL_EXTERNAL_ACTION"
+    INTERNAL_ACTION        = "INTERNAL_ACTION"
+    NO_ACTION_REQUIRED     = "NO_ACTION_REQUIRED"
+
+
+class ActionStatus(str, Enum):
+    PLANNED   = "PLANNED"
+    EXECUTED  = "EXECUTED"
+    FAILED    = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class OutcomeStatus(str, Enum):
-    PENDING       = "PENDING"
-    MEASURING     = "MEASURING"
-    CONFIRMED     = "CONFIRMED"
-    INCONCLUSIVE  = "INCONCLUSIVE"
+    PENDING               = "PENDING"
+    MEASURING             = "MEASURING"
+    CONFIRMED             = "CONFIRMED"
+    INCONCLUSIVE          = "INCONCLUSIVE"
+    POSITIVE              = "POSITIVE"
+    NEGATIVE              = "NEGATIVE"
+    NEUTRAL               = "NEUTRAL"
+    BLOCKED_DATA_QUALITY  = "BLOCKED_DATA_QUALITY"
 
 
 class MetricDomain(str, Enum):

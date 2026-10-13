@@ -167,6 +167,10 @@ from .schemas import (
     TargetTruthPatch,
     TargetTruthReadOut,
     TargetTruthWriteOut,
+    ActionCreate,
+    ActionOut,
+    ActionUpdate,
+    LearningCandidateDecision,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -980,7 +984,6 @@ async def get_changes(
 
 
 # ── GET /clients/{client_id}/recommendations ─────────────────────────────────
-# CCR-014: core_recommendations has 0 rows → honest empty list.
 
 @router.get(
     "/clients/{client_id}/recommendations",
@@ -989,10 +992,29 @@ async def get_changes(
 )
 async def get_recommendations(
     client_id: str,
-    status: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="PROPOSED | ACCEPTED | REJECTED | DEFERRED | EXECUTED"),
+    limit: int = Query(50, ge=1, le=200),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[RecommendationOut]:
-    return []
+    client = _load_client_meta(client_id)
+    if not client:
+        raise HTTPException(404, f"client not found: {client_id!r}")
+    db = _get_db()
+    try:
+        q = (
+            db.table("core_recommendations")
+            .select("*")
+            .eq("client_id", client["id"])
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if status:
+            q = q.eq("status", status.upper())
+        rows = q.execute().data or []
+    except Exception as exc:
+        logger.error("get_recommendations: DB error %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+    return [_recommendation_row_to_out(r) for r in rows]
 
 
 # ── GET /clients/{client_id}/report-contracts ─────────────────────────────────
@@ -2672,7 +2694,7 @@ def _outcome_row_to_out(row: dict) -> OutcomeOut:
     except ValueError:
         status = _OutcomeStatus.PENDING
     return OutcomeOut(
-        action_event_id=str(row["action_event_id"]),
+        action_event_id=str(row["action_event_id"]) if row.get("action_event_id") else None,
         measurement_period=row.get("measurement_period") or {},
         metric_refs=row.get("metric_refs") or [],
         before_state=row.get("before_state"),
@@ -2681,8 +2703,12 @@ def _outcome_row_to_out(row: dict) -> OutcomeOut:
         status=status,
         measured_at=_parse_ts_utc(row.get("measured_at")),
         id=str(row["id"]),
+        action_id=str(row["action_id"]) if row.get("action_id") else None,
         recommendation_id=str(row["recommendation_id"]) if row.get("recommendation_id") else None,
         client_id=str(row["client_id"]) if row.get("client_id") else None,
+        evaluation_window_days=row.get("evaluation_window_days"),
+        confidence=row.get("confidence"),
+        data_health=row.get("data_health") or {},
         created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
         created_by=row.get("created_by", "human"),
     )
@@ -2758,6 +2784,409 @@ async def decide_alert_rule_suggestion(
     )
 
 
+# ── Action helpers ────────────────────────────────────────────────────────────
+
+def _action_row_to_out(row: dict) -> ActionOut:
+    return ActionOut(
+        id=str(row["id"]),
+        client_id=str(row.get("client_id", "")),
+        recommendation_id=str(row.get("recommendation_id", "")),
+        diagnosis_id=str(row["diagnosis_id"]) if row.get("diagnosis_id") else None,
+        alert_id=row.get("alert_id"),
+        action_type=row.get("action_type", "MANUAL_EXTERNAL_ACTION"),
+        platform=row.get("platform"),
+        entity_type=row.get("entity_type"),
+        entity_id=row.get("entity_id"),
+        status=row.get("status", "PLANNED"),
+        executed_by=row.get("executed_by"),
+        executed_at=_parse_ts_utc(row.get("executed_at")),
+        evaluation_window_days=int(row.get("evaluation_window_days") or 7),
+        before_state=row.get("before_state") or {},
+        after_state=row.get("after_state") or {},
+        reason=row.get("reason"),
+        provenance=row.get("provenance") or {},
+        requires_external_write=bool(row.get("requires_external_write", False)),
+        change_log_id=str(row["change_log_id"]) if row.get("change_log_id") else None,
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+    )
+
+
+# ── POST /recommendations/{recommendation_id}/actions ─────────────────────────
+
+@router.post(
+    "/recommendations/{recommendation_id}/actions",
+    summary="Register a structured action for an accepted recommendation",
+    response_model=ActionOut,
+    status_code=201,
+)
+async def create_recommendation_action(
+    recommendation_id: str,
+    body: ActionCreate,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> ActionOut:
+    if not _is_valid_uuid(recommendation_id):
+        raise HTTPException(422, f"invalid recommendation_id: {recommendation_id!r}")
+    db = _get_db()
+
+    # Load recommendation to get client + diagnosis + alert context
+    try:
+        rec_res = (
+            db.table("core_recommendations")
+            .select("id, client_id, diagnosis_id, alert_id, status")
+            .eq("id", recommendation_id)
+            .limit(1)
+            .execute()
+        )
+        rec = rec_res.data[0] if (rec_res and rec_res.data) else None
+    except Exception as exc:
+        raise HTTPException(503, f"recommendation lookup failed: {exc}")
+    if not rec:
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+    if rec.get("status") not in ("APPROVED", "PROPOSED", "ACCEPTED"):
+        pass  # allow action registration for any status — human knows their intent
+
+    # Idempotency: check existing action with same recommendation + type
+    if idempotency_key:
+        try:
+            dup = (
+                db.table("core_actions")
+                .select("*")
+                .eq("recommendation_id", recommendation_id)
+                .eq("action_type", body.action_type)
+                .limit(1)
+                .execute()
+            )
+            if dup and dup.data:
+                return _action_row_to_out(dup.data[0])
+        except Exception:
+            pass
+
+    row = {
+        "client_id": str(rec["client_id"]),
+        "recommendation_id": recommendation_id,
+        "diagnosis_id": str(rec["diagnosis_id"]) if rec.get("diagnosis_id") else None,
+        "alert_id": str(rec.get("alert_id", "") or ""),
+        "action_type": str(body.action_type),
+        "platform": body.platform,
+        "entity_type": body.entity_type,
+        "entity_id": body.entity_id,
+        "status": "PLANNED",
+        "evaluation_window_days": body.evaluation_window_days,
+        "before_state": body.before_state,
+        "reason": body.reason,
+        "provenance": body.provenance,
+        "requires_external_write": body.requires_external_write,
+    }
+    try:
+        ins = db.table("core_actions").insert(row).execute()
+        action_row = ins.data[0] if (ins and ins.data) else None
+    except Exception as exc:
+        logger.error("create_recommendation_action: insert failed %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    if not action_row:
+        raise HTTPException(503, "insert returned no data")
+    return _action_row_to_out(action_row)
+
+
+# ── GET /recommendations/{recommendation_id}/actions ──────────────────────────
+
+@router.get(
+    "/recommendations/{recommendation_id}/actions",
+    summary="List actions registered for a recommendation",
+    response_model=list[ActionOut],
+)
+async def get_recommendation_actions(
+    recommendation_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[ActionOut]:
+    if not _is_valid_uuid(recommendation_id):
+        return []
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_actions")
+            .select("*")
+            .eq("recommendation_id", recommendation_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_recommendation_actions: DB error %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    return [_action_row_to_out(r) for r in (res.data or [])]
+
+
+# ── GET /actions/{action_id} ──────────────────────────────────────────────────
+
+@router.get(
+    "/actions/{action_id}",
+    summary="Single action by ID",
+    response_model=ActionOut,
+)
+async def get_action(
+    action_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> ActionOut:
+    if not _is_valid_uuid(action_id):
+        raise HTTPException(404, f"action not found: {action_id!r}")
+    db = _get_db()
+    try:
+        res = db.table("core_actions").select("*").eq("id", action_id).limit(1).execute()
+    except Exception as exc:
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"action not found: {action_id!r}")
+    return _action_row_to_out(row)
+
+
+# ── PUT /actions/{action_id} ──────────────────────────────────────────────────
+
+@router.put(
+    "/actions/{action_id}",
+    summary="Update action status (PLANNED→EXECUTED|FAILED|CANCELLED)",
+    response_model=ActionOut,
+)
+async def update_action(
+    action_id: str,
+    body: ActionUpdate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> ActionOut:
+    if not _is_valid_uuid(action_id):
+        raise HTTPException(404, f"action not found: {action_id!r}")
+    db = _get_db()
+
+    try:
+        existing_res = db.table("core_actions").select("*").eq("id", action_id).limit(1).execute()
+        existing = existing_res.data[0] if (existing_res and existing_res.data) else None
+    except Exception as exc:
+        raise HTTPException(503, "database error")
+    if not existing:
+        raise HTTPException(404, f"action not found: {action_id!r}")
+
+    current_status = existing.get("status", "PLANNED")
+    new_status = str(body.status)
+
+    # State machine: PLANNED → EXECUTED|FAILED|CANCELLED; FAILED → CANCELLED
+    valid_transitions = {
+        "PLANNED": {"EXECUTED", "FAILED", "CANCELLED"},
+        "FAILED": {"CANCELLED"},
+    }
+    if current_status not in valid_transitions or new_status not in valid_transitions.get(current_status, set()):
+        raise HTTPException(422, f"invalid transition: {current_status} → {new_status}")
+
+    patch: dict = {
+        "status": new_status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if body.reason:
+        patch["reason"] = body.reason
+    if body.after_state:
+        patch["after_state"] = body.after_state
+    if new_status == "EXECUTED":
+        patch["executed_at"] = datetime.now(timezone.utc).isoformat()
+        patch["executed_by"] = body.executed_by or (getattr(_auth, "scope", None) or "platform_web")
+
+    try:
+        upd = db.table("core_actions").update(patch).eq("id", action_id).execute()
+        updated_row = upd.data[0] if (upd and upd.data) else None
+    except Exception as exc:
+        logger.error("update_action: DB error %s: %s", action_id, exc)
+        raise HTTPException(503, "database error")
+
+    if not updated_row:
+        raise HTTPException(503, "update returned no data")
+
+    # Write change_log when action is EXECUTED
+    if new_status == "EXECUTED":
+        _write_action_change_log(db, updated_row)
+
+    return _action_row_to_out(updated_row)
+
+
+def _write_action_change_log(db, action: dict) -> None:
+    """Create a core_change_log entry for an EXECUTED action (best-effort)."""
+    try:
+        # Resolve canonical slug from client_id UUID
+        client_res = (
+            db.table("clients")
+            .select("client_id")
+            .eq("id", str(action["client_id"]))
+            .limit(1)
+            .execute()
+        )
+        slug = client_res.data[0]["client_id"] if (client_res and client_res.data) else None
+        if not slug:
+            logger.warning("_write_action_change_log: client slug not found for UUID %s", action["client_id"])
+            return
+
+        change_type_map = {
+            "GOOGLE_BALANCE_RECHARGE": "OTHER",
+            "META_BALANCE_RECHARGE": "OTHER",
+            "BUDGET": "BUDGET",
+            "TARGET_ROAS": "TARGET_ROAS",
+            "TARGET_CPA": "TARGET_CPA",
+            "BID_STRATEGY": "BID_STRATEGY",
+        }
+        entity_type = (action.get("entity_type") or "").upper()
+        change_type = change_type_map.get(entity_type, "OTHER")
+
+        cl_row = {
+            "client_id": slug,
+            "occurred_at": action.get("executed_at") or datetime.now(timezone.utc).isoformat(),
+            "channel": action.get("platform") or "manual",
+            "platform_account_id": action.get("entity_id") or "manual",
+            "entity_type": entity_type or "OTHER",
+            "entity_name_at_time": action.get("entity_id") or action.get("action_type") or "manual",
+            "change_type": change_type,
+            "confidence": "CONFIRMED",
+            "source": "HUMAN",
+            "before_state": action.get("before_state"),
+            "after_state": action.get("after_state"),
+            "reason": action.get("reason"),
+            "reported_by": action.get("executed_by"),
+            "linked_action_id": str(action["id"]),
+        }
+        cl_res = db.table("core_change_log").insert(cl_row).execute()
+        if cl_res and cl_res.data:
+            change_log_id = str(cl_res.data[0]["id"])
+            db.table("core_actions").update({"change_log_id": change_log_id}).eq("id", str(action["id"])).execute()
+    except Exception as exc:
+        logger.error("_write_action_change_log: failed for action %s: %s", action.get("id"), exc)
+
+
+# ── GET /actions/{action_id}/outcome ──────────────────────────────────────────
+
+@router.get(
+    "/actions/{action_id}/outcome",
+    summary="Outcome evaluation for an action",
+    response_model=Optional[OutcomeOut],
+)
+async def get_action_outcome(
+    action_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> Optional[OutcomeOut]:
+    if not _is_valid_uuid(action_id):
+        return None
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_outcomes")
+            .select("*")
+            .eq("action_id", action_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        return None
+    return _outcome_row_to_out(row)
+
+
+# ── GET /clients/{client_id}/learning-candidates ──────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/learning-candidates",
+    summary="Learning candidates for a client",
+    response_model=list[LearningCandidateOut],
+)
+async def get_client_learning_candidates(
+    client_id: str,
+    status: Optional[str] = Query(None, description="PENDING | APPROVED | REJECTED | SUPERSEDED"),
+    limit: int = Query(50, ge=1, le=200),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[LearningCandidateOut]:
+    client = _load_client_meta(client_id)
+    if not client:
+        raise HTTPException(404, f"client not found: {client_id!r}")
+    db = _get_db()
+    try:
+        q = (
+            db.table("core_learning_candidates")
+            .select("*")
+            .eq("client_id", client["id"])
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if status:
+            q = q.eq("status", status.upper())
+        rows = q.execute().data or []
+    except Exception as exc:
+        logger.error("get_client_learning_candidates: DB error %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+    return [_learning_candidate_row_to_out(r) for r in rows]
+
+
+def _learning_candidate_row_to_out(row: dict) -> LearningCandidateOut:
+    return LearningCandidateOut(
+        id=str(row["id"]),
+        statement=row.get("statement", ""),
+        scope=row.get("scope", "CLIENT_ONLY"),
+        evidence_level=row.get("evidence_level", "OBSERVATION"),
+        evidence_refs=row.get("evidence_refs") or [],
+        context=row.get("context") or {},
+        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        visibility_scope=row.get("visibility_scope", "AGENCY_ONLY"),
+        status=row.get("status", "PENDING"),
+        source_action_id=str(row["source_action_id"]) if row.get("source_action_id") else None,
+        source_recommendation_id=str(row["source_recommendation_id"]) if row.get("source_recommendation_id") else None,
+        pattern=row.get("pattern"),
+        observed_outcome=row.get("observed_outcome") or {},
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+    )
+
+
+# ── POST /learning-candidates/{id}/decision ───────────────────────────────────
+
+@router.post(
+    "/learning-candidates/{learning_candidate_id}/decision",
+    summary="Approve / reject / supersede a learning candidate (human-only)",
+    response_model=LearningCandidateOut,
+)
+async def decide_learning_candidate(
+    learning_candidate_id: str,
+    body: LearningCandidateDecision,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> LearningCandidateOut:
+    if not _is_valid_uuid(learning_candidate_id):
+        raise HTTPException(404, f"learning candidate not found: {learning_candidate_id!r}")
+    db = _get_db()
+    try:
+        res = db.table("core_learning_candidates").select("*").eq("id", learning_candidate_id).limit(1).execute()
+        row = res.data[0] if (res and res.data) else None
+    except Exception as exc:
+        raise HTTPException(503, "database error")
+    if not row:
+        raise HTTPException(404, f"learning candidate not found: {learning_candidate_id!r}")
+
+    current_status = row.get("status", "PENDING")
+    new_status = body.decision
+
+    # Only PENDING candidates can be decided (APPROVED keeps APPROVED)
+    if current_status not in ("PENDING",) and new_status != "SUPERSEDED":
+        raise HTTPException(422, f"learning candidate already decided: {current_status}")
+
+    try:
+        upd = (
+            db.table("core_learning_candidates")
+            .update({"status": new_status})
+            .eq("id", learning_candidate_id)
+            .execute()
+        )
+        updated = upd.data[0] if (upd and upd.data) else None
+    except Exception as exc:
+        logger.error("decide_learning_candidate: DB error %s: %s", learning_candidate_id, exc)
+        raise HTTPException(503, "database error")
+    if not updated:
+        raise HTTPException(503, "update returned no data")
+    return _learning_candidate_row_to_out(updated)
+
+
 # ── POST /learning-candidates ─────────────────────────────────────────────────
 
 @router.post(
@@ -2771,7 +3200,26 @@ async def create_learning_candidate(
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
 ) -> LearningCandidateOut:
-    return LearningCandidateOut(**body.model_dump(), id="lrn_stub_01", created_at=_STUB_NOW)
+    db = _get_db()
+    row = {
+        "statement": body.statement,
+        "scope": str(body.scope),
+        "evidence_level": str(body.evidence_level),
+        "evidence_refs": body.evidence_refs,
+        "context": body.context,
+        "client_id": body.client_id,
+        "visibility_scope": str(body.visibility_scope),
+        "status": "PENDING",
+    }
+    try:
+        ins = db.table("core_learning_candidates").insert(row).execute()
+        inserted = ins.data[0] if (ins and ins.data) else None
+    except Exception as exc:
+        logger.error("create_learning_candidate: DB error: %s", exc)
+        raise HTTPException(503, "database error")
+    if not inserted:
+        raise HTTPException(503, "insert returned no data")
+    return _learning_candidate_row_to_out(inserted)
 
 
 # ── POST /jobs/{job_id}/replay ────────────────────────────────────────────────

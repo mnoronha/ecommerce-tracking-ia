@@ -27,6 +27,7 @@ from .core.scheduler_registry import register as _register_scheduler
 from .core.weekly_review import run_weekly_review_all_clients
 from .core.monthly_review import run_monthly_review_all_clients
 from .core.balance_monitor import run_balance_check_all_prepaid
+from .core.outcome_evaluator import evaluate_pending_outcomes as _evaluate_pending_outcomes
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -345,6 +346,15 @@ _scheduler.add_job(
     hour=0,   # 00 UTC 1º do mês — zera budget_used_this_month
     minute=0,
     id="ai_visibility_budget_reset",
+)
+_scheduler.add_job(
+    _evaluate_pending_outcomes,
+    "cron",
+    hour=10,
+    minute=30,  # 10:30 UTC = 07:30 BRT — após core_pipeline (07:15) fechar dados do dia anterior
+    id="outcome_evaluation",
+    max_instances=1,
+    misfire_grace_time=3600,
 )
 
 
