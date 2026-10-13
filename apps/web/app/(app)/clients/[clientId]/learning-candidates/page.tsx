@@ -6,7 +6,7 @@ import Link                                  from 'next/link'
 import {
   BookOpen, ArrowLeft, ChevronDown, ChevronUp,
   Loader2, RefreshCw, CheckCircle2, XCircle,
-  AlertTriangle, ExternalLink, Info,
+  AlertTriangle, ExternalLink, Info, Upload, Sparkles,
 } from 'lucide-react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -28,11 +28,30 @@ interface LearningCandidate {
   created_at:               string
 }
 
+interface PromotionResult {
+  id:                   string
+  knowledge_id?:        string | null
+  status:               string
+  document_path?:       string | null
+  document_version?:    number
+  obsidian_status?:     string
+  obsidian_url?:        string | null
+  promoted_at?:         string | null
+  error?:               string | null
+}
+
 type Decision = 'APPROVED' | 'REJECTED'
 
 interface ActiveDecision {
   candidateId: string
   decision:    Decision
+  reason:      string
+  submitting:  boolean
+  error:       string | null
+}
+
+interface ActivePromotion {
+  candidateId: string
   reason:      string
   submitting:  boolean
   error:       string | null
@@ -165,6 +184,122 @@ function DecisionForm({
   )
 }
 
+// ── Promotion form ────────────────────────────────────────────────────────────
+
+function PromotionForm({
+  active,
+  onReasonChange,
+  onConfirm,
+  onCancel,
+}: {
+  active:         ActivePromotion
+  onReasonChange: (v: string) => void
+  onConfirm:      () => void
+  onCancel:       () => void
+}) {
+  return (
+    <div className="mt-4 rounded-lg border border-indigo-500/30 bg-[#1a1f2e]/80 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Sparkles size={12} className="text-indigo-400" />
+        <p className="text-xs font-semibold text-indigo-300">
+          Confirmar: Promover para Agency Knowledge?
+        </p>
+      </div>
+      <div className="text-xs text-slate-500 space-y-1 pl-5">
+        <p>• Este aprendizado será publicado permanentemente no Knowledge Base.</p>
+        <p>• Hermes poderá lê-lo como inteligência aprovada pela agência.</p>
+        <p>• Ação irreversível — cria um documento versionado.</p>
+      </div>
+      <textarea
+        value={active.reason}
+        onChange={e => onReasonChange(e.target.value)}
+        disabled={active.submitting}
+        placeholder="Motivo da promoção (opcional, mas recomendado)"
+        rows={2}
+        className="w-full rounded-md bg-[#252b3b] border border-[#3a3f4e] text-sm text-slate-300 placeholder-slate-600 px-3 py-2 resize-none focus:outline-none focus:border-slate-500 disabled:opacity-50"
+      />
+      {active.error && <p className="text-xs text-red-400">{active.error}</p>}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onConfirm}
+          disabled={active.submitting}
+          className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md transition-colors disabled:opacity-50 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-600/40"
+        >
+          {active.submitting
+            ? <><Loader2 size={11} className="animate-spin" /> Promovendo…</>
+            : <><Upload size={11} /> Promover para Knowledge</>}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={active.submitting}
+          className="text-xs text-slate-500 hover:text-slate-300 transition-colors disabled:opacity-50"
+        >
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Promotion result badge ────────────────────────────────────────────────────
+
+function PromotedBadge({ result }: { result: PromotionResult }) {
+  const isNew     = result.status === 'COMPLETED' || result.status === 'NEW_VERSION'
+  const isExist   = result.status === 'EXISTING_KNOWLEDGE'
+  const isFailed  = result.status === 'FAILED'
+
+  if (isFailed) {
+    return (
+      <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/25 px-4 py-3">
+        <XCircle size={13} className="shrink-0 mt-0.5 text-red-400" />
+        <div className="text-xs text-red-300 space-y-0.5">
+          <p className="font-semibold">Falha na promoção</p>
+          {result.error && <p className="text-red-400/80">{result.error}</p>}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-indigo-500/10 border border-indigo-500/25 px-4 py-3">
+      <Sparkles size={13} className="shrink-0 mt-0.5 text-indigo-400" />
+      <div className="text-xs text-indigo-300 space-y-1">
+        <p className="font-semibold">
+          {isExist ? 'Padrão já existe no Knowledge Base' : 'Promovido para Agency Knowledge'}
+          {result.status === 'NEW_VERSION' && ' (nova versão)'}
+        </p>
+        {result.knowledge_id && (
+          <p className="text-indigo-400/80 font-mono text-xs">{shortId(result.knowledge_id)}</p>
+        )}
+        {result.document_path && (
+          <p className="text-indigo-400/70 font-mono text-xs break-all">{result.document_path}</p>
+        )}
+        {result.document_version && result.document_version > 1 && (
+          <p className="text-indigo-400/70">versão {result.document_version}</p>
+        )}
+        {result.obsidian_url && (
+          <a
+            href={result.obsidian_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
+          >
+            Ver no GitHub <ExternalLink size={9} />
+          </a>
+        )}
+        {result.promoted_at && (
+          <p className="text-indigo-500">{fmtDate(result.promoted_at)}</p>
+        )}
+        {(isNew || isExist) && (
+          <p className="text-xs text-amber-400/70 mt-1">
+            Hermes pode ler este conhecimento como inteligência aprovada.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Traceability row ──────────────────────────────────────────────────────────
 
 function TraceRow({
@@ -196,23 +331,43 @@ function TraceRow({
 function CandidateCard({
   candidate,
   clientId,
-  active,
+  activeDecision,
+  activePromotion,
+  promotionResults,
   onStartDecision,
-  onReasonChange,
-  onConfirm,
-  onCancel,
+  onDecisionReasonChange,
+  onDecisionConfirm,
+  onDecisionCancel,
+  onStartPromotion,
+  onPromotionReasonChange,
+  onPromotionConfirm,
+  onPromotionCancel,
 }: {
-  candidate:      LearningCandidate
-  clientId:       string
-  active:         ActiveDecision | null
-  onStartDecision:(id: string, d: Decision) => void
-  onReasonChange: (v: string) => void
-  onConfirm:      () => void
-  onCancel:       () => void
+  candidate:              LearningCandidate
+  clientId:               string
+  activeDecision:         ActiveDecision | null
+  activePromotion:        ActivePromotion | null
+  promotionResults:       Record<string, PromotionResult>
+  onStartDecision:        (id: string, d: Decision) => void
+  onDecisionReasonChange: (v: string) => void
+  onDecisionConfirm:      () => void
+  onDecisionCancel:       () => void
+  onStartPromotion:       (id: string) => void
+  onPromotionReasonChange:(v: string) => void
+  onPromotionConfirm:     () => void
+  onPromotionCancel:      () => void
 }) {
   const [open, setOpen] = useState(false)
-  const isPending    = candidate.status === 'PENDING'
-  const isActiveForm = active?.candidateId === candidate.id
+  const isPending        = candidate.status === 'PENDING'
+  const isApproved       = candidate.status === 'APPROVED'
+  const isDecisionForm   = activeDecision?.candidateId === candidate.id
+  const isPromotionForm  = activePromotion?.candidateId === candidate.id
+  const promotionResult  = promotionResults[candidate.id]
+  const isPromoted       = !!promotionResult && (
+    promotionResult.status === 'COMPLETED' ||
+    promotionResult.status === 'NEW_VERSION' ||
+    promotionResult.status === 'EXISTING_KNOWLEDGE'
+  )
 
   const outcomeStatus  = candidate.observed_outcome?.outcome_status as string | undefined
   const deltaPct       = candidate.observed_outcome?.delta_pct as number | null | undefined
@@ -229,6 +384,11 @@ function CandidateCard({
             <span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_CLS[candidate.status] || STATUS_CLS.PENDING}`}>
               {candidate.status}
             </span>
+            {isPromoted && (
+              <span className="text-xs px-2 py-0.5 rounded font-medium bg-indigo-500/15 text-indigo-400 border border-indigo-500/30 inline-flex items-center gap-1">
+                <Sparkles size={9} /> PROMOTED
+              </span>
+            )}
             <span className="text-xs px-2 py-0.5 rounded bg-slate-500/10 text-slate-500">
               {SCOPE_LABEL[candidate.scope] || candidate.scope}
             </span>
@@ -324,17 +484,41 @@ function CandidateCard({
             )}
           </div>
 
-          {/* APPROVED governance notice */}
-          {candidate.status === 'APPROVED' && (
-            <div className="flex items-start gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 px-4 py-3">
-              <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-400" />
-              <div className="text-xs text-emerald-300 space-y-0.5">
-                <p className="font-semibold">Validado por humano</p>
-                <p className="text-emerald-400/80">
-                  Ainda não publicado no Knowledge Base. Promoção requer etapa manual separada.
-                </p>
+          {/* Promotion result (if already promoted) */}
+          {promotionResult && (
+            <PromotedBadge result={promotionResult} />
+          )}
+
+          {/* APPROVED governance notice + promote button */}
+          {isApproved && !isPromoted && !isPromotionForm && (
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 px-4 py-3">
+                <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-400" />
+                <div className="text-xs text-emerald-300 space-y-0.5">
+                  <p className="font-semibold">Validado por humano</p>
+                  <p className="text-emerald-400/80">
+                    Ainda não publicado no Knowledge Base. A promoção abaixo é uma etapa manual e permanente.
+                  </p>
+                </div>
+              </div>
+              <div className="pt-1">
+                <button
+                  onClick={() => onStartPromotion(candidate.id)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md transition-colors bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-600/40"
+                >
+                  <Upload size={11} /> Promover para Agency Knowledge
+                </button>
               </div>
             </div>
+          )}
+
+          {isApproved && !isPromoted && isPromotionForm && activePromotion && (
+            <PromotionForm
+              active={activePromotion}
+              onReasonChange={onPromotionReasonChange}
+              onConfirm={onPromotionConfirm}
+              onCancel={onPromotionCancel}
+            />
           )}
 
           {candidate.status === 'REJECTED' && (
@@ -345,7 +529,7 @@ function CandidateCard({
           )}
 
           {/* Decision buttons */}
-          {isPending && !isActiveForm && (
+          {isPending && !isDecisionForm && (
             <div className="pt-3 border-t border-[#2a2f3e]">
               <p className="text-xs text-slate-500 mb-2">Decisão humana</p>
               <div className="flex items-center gap-2">
@@ -365,12 +549,12 @@ function CandidateCard({
             </div>
           )}
 
-          {isActiveForm && active && (
+          {isDecisionForm && activeDecision && (
             <DecisionForm
-              active={active}
-              onReasonChange={onReasonChange}
-              onConfirm={onConfirm}
-              onCancel={onCancel}
+              active={activeDecision}
+              onReasonChange={onDecisionReasonChange}
+              onConfirm={onDecisionConfirm}
+              onCancel={onDecisionCancel}
             />
           )}
         </div>
@@ -388,11 +572,13 @@ export default function LearningCandidatesPage() {
   const params   = useParams()
   const clientId = params.clientId as string
 
-  const [items,       setItems]       = useState<LearningCandidate[]>([])
-  const [loading,     setLoading]     = useState(true)
-  const [error,       setError]       = useState<string | null>(null)
-  const [filter,      setFilter]      = useState<StatusFilter>('ALL')
-  const [active,      setActive]      = useState<ActiveDecision | null>(null)
+  const [items,            setItems]            = useState<LearningCandidate[]>([])
+  const [loading,          setLoading]          = useState(true)
+  const [error,            setError]            = useState<string | null>(null)
+  const [filter,           setFilter]           = useState<StatusFilter>('ALL')
+  const [activeDecision,   setActiveDecision]   = useState<ActiveDecision | null>(null)
+  const [activePromotion,  setActivePromotion]  = useState<ActivePromotion | null>(null)
+  const [promotionResults, setPromotionResults] = useState<Record<string, PromotionResult>>({})
 
   const load = useCallback(async (statusFilter: StatusFilter = filter) => {
     setLoading(true)
@@ -416,24 +602,27 @@ export default function LearningCandidatesPage() {
     load(f)
   }
 
+  // ── Decision handlers ─────────────────────────────────────────────────────
+
   function startDecision(candidateId: string, decision: Decision) {
-    setActive({ candidateId, decision, reason: '', submitting: false, error: null })
+    setActivePromotion(null)
+    setActiveDecision({ candidateId, decision, reason: '', submitting: false, error: null })
   }
 
   async function submitDecision() {
-    if (!active) return
+    if (!activeDecision) return
     const idempotencyKey = crypto.randomUUID()
-    setActive(prev => prev ? { ...prev, submitting: true, error: null } : prev)
+    setActiveDecision(prev => prev ? { ...prev, submitting: true, error: null } : prev)
 
     try {
       const res = await fetch(
-        `/api/v1/learning-candidates/${active.candidateId}/decision`,
+        `/api/v1/learning-candidates/${activeDecision.candidateId}/decision`,
         {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({
-            decision:        active.decision,
-            note:            active.reason.trim() || undefined,
+            decision:        activeDecision.decision,
+            note:            activeDecision.reason.trim() || undefined,
             idempotency_key: idempotencyKey,
           }),
         },
@@ -445,22 +634,69 @@ export default function LearningCandidatesPage() {
           (data as { detail?: string; error?: string })?.detail ||
           (data as { detail?: string; error?: string })?.error ||
           `Erro ${res.status}`
-        setActive(prev => prev ? { ...prev, submitting: false, error: msg } : prev)
+        setActiveDecision(prev => prev ? { ...prev, submitting: false, error: msg } : prev)
         return
       }
 
       if (data && typeof data === 'object' && 'id' in data) {
         setItems(prev =>
-          prev.map(c => c.id === active.candidateId ? { ...c, ...(data as Partial<LearningCandidate>) } : c),
+          prev.map(c => c.id === activeDecision.candidateId ? { ...c, ...(data as Partial<LearningCandidate>) } : c),
         )
       }
-      setActive(null)
+      setActiveDecision(null)
     } catch {
-      setActive(prev => prev ? { ...prev, submitting: false, error: 'Falha de comunicação. Tente novamente.' } : prev)
+      setActiveDecision(prev => prev ? { ...prev, submitting: false, error: 'Falha de comunicação. Tente novamente.' } : prev)
     }
   }
 
-  const pendingCount = items.filter(c => c.status === 'PENDING').length
+  // ── Promotion handlers ────────────────────────────────────────────────────
+
+  function startPromotion(candidateId: string) {
+    setActiveDecision(null)
+    setActivePromotion({ candidateId, reason: '', submitting: false, error: null })
+  }
+
+  async function submitPromotion() {
+    if (!activePromotion) return
+    const idempotencyKey = crypto.randomUUID()
+    setActivePromotion(prev => prev ? { ...prev, submitting: true, error: null } : prev)
+
+    try {
+      const res = await fetch(
+        `/api/v1/learning-candidates/${activePromotion.candidateId}/promote`,
+        {
+          method:  'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify({
+            reason: activePromotion.reason.trim() || null,
+          }),
+        },
+      )
+      const data = await res.json().catch(() => null) as PromotionResult | null
+
+      if (!res.ok) {
+        const msg =
+          (data as { detail?: string; error?: string } | null)?.detail ||
+          (data as { detail?: string; error?: string } | null)?.error ||
+          `Erro ${res.status}`
+        setActivePromotion(prev => prev ? { ...prev, submitting: false, error: msg } : prev)
+        return
+      }
+
+      if (data) {
+        setPromotionResults(prev => ({ ...prev, [activePromotion.candidateId]: data }))
+      }
+      setActivePromotion(null)
+    } catch {
+      setActivePromotion(prev => prev ? { ...prev, submitting: false, error: 'Falha de comunicação. Tente novamente.' } : prev)
+    }
+  }
+
+  const pendingCount  = items.filter(c => c.status === 'PENDING').length
+  const approvedCount = items.filter(c => c.status === 'APPROVED').length
 
   return (
     <div className="p-8 max-w-4xl">
@@ -479,6 +715,11 @@ export default function LearningCandidatesPage() {
             {pendingCount > 0 && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-medium">
                 {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
+              </span>
+            )}
+            {approvedCount > 0 && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20 font-medium">
+                {approvedCount} aprovado{approvedCount > 1 ? 's' : ''}
               </span>
             )}
           </div>
@@ -521,8 +762,8 @@ export default function LearningCandidatesPage() {
         <Info size={12} className="shrink-0 mt-0.5 text-slate-500" />
         <p className="text-xs text-slate-500 leading-relaxed">
           Decisões são registradas com <strong className="text-slate-400">actor</strong> (email do usuário autenticado),
-          decisão, motivo e timestamp. Apenas humanos autenticados podem aprovar ou rejeitar.
-          O Hermes não tem permissão para decidir.
+          decisão, motivo e timestamp. Apenas humanos autenticados podem aprovar, rejeitar ou promover.
+          O Hermes não tem permissão para promover.
         </p>
       </div>
 
@@ -557,6 +798,8 @@ export default function LearningCandidatesPage() {
             <span className="text-slate-400 font-medium">Outcome</span>
             <span className="text-slate-700">→</span>
             <span className="text-indigo-400 font-medium">Aprendizado</span>
+            <span className="text-slate-700">→</span>
+            <span className="text-indigo-300 font-medium">Knowledge</span>
           </div>
         </div>
       ) : (
@@ -566,11 +809,17 @@ export default function LearningCandidatesPage() {
               key={c.id}
               candidate={c}
               clientId={clientId}
-              active={active?.candidateId === c.id ? active : null}
+              activeDecision={activeDecision?.candidateId === c.id ? activeDecision : null}
+              activePromotion={activePromotion?.candidateId === c.id ? activePromotion : null}
+              promotionResults={promotionResults}
               onStartDecision={startDecision}
-              onReasonChange={v => setActive(prev => prev ? { ...prev, reason: v } : prev)}
-              onConfirm={submitDecision}
-              onCancel={() => setActive(null)}
+              onDecisionReasonChange={v => setActiveDecision(prev => prev ? { ...prev, reason: v } : prev)}
+              onDecisionConfirm={submitDecision}
+              onDecisionCancel={() => setActiveDecision(null)}
+              onStartPromotion={startPromotion}
+              onPromotionReasonChange={v => setActivePromotion(prev => prev ? { ...prev, reason: v } : prev)}
+              onPromotionConfirm={submitPromotion}
+              onPromotionCancel={() => setActivePromotion(null)}
             />
           ))}
         </div>

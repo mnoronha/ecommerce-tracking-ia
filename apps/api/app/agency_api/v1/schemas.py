@@ -55,7 +55,9 @@ from .enums import (
     MatchStatus,
     MetricDomain,
     NarrativeStatus,
+    ObsidianStatus,
     OutcomeStatus,
+    PromotionStatus,
     RecommendationStatus,
     ReportType,
     ServiceStatus,
@@ -639,6 +641,70 @@ class LearningCandidateDecision(_Base):
     decision: Literal["APPROVED", "REJECTED", "SUPERSEDED"]
     actor: str
     note: Optional[str] = None
+
+
+# ── 14b. Knowledge Promotion (M21) ────────────────────────────────────────────
+
+class KnowledgePromotionCreate(_Base):
+    """Request body for POST /learning-candidates/{id}/promote."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    reason: Optional[str] = None
+    force_new_version: bool = False
+
+
+class KnowledgePromotionOut(_Base):
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    id: str                                         # promotion_id
+    learning_candidate_id: str
+    knowledge_id: Optional[str] = None
+    actor: str
+    reason: Optional[str] = None
+    status: PromotionStatus
+    destination: str = "agency_knowledge"
+    document_path: Optional[str] = None
+    document_version: int = 1
+    obsidian_status: ObsidianStatus = ObsidianStatus.PENDING
+    obsidian_url: Optional[str] = None
+    existing_knowledge_id: Optional[str] = None
+    error: Optional[str] = None
+    promoted_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class AgencyKnowledgeOut(_Base):
+    """A single promoted knowledge document, readable by Hermes."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    id: str
+    learning_candidate_id: Optional[str] = None
+    title: str
+    statement: str
+    pattern: Optional[str] = None
+    context: dict[str, Any] = Field(default_factory=dict)
+    observed_outcome: dict[str, Any] = Field(default_factory=dict)
+    evidence_refs: list[str] = Field(default_factory=list)
+    evidence_level: str = "OBSERVATION"
+    confidence: Optional[str] = None
+    scope: str
+    client_id: Optional[str] = None
+    business_model: Optional[str] = None
+    platform: Optional[str] = None
+    when_to_apply: Optional[str] = None
+    when_not_to_apply: Optional[str] = None
+    limitations: Optional[str] = None
+    source_alert_id: Optional[str] = None
+    source_diagnosis_id: Optional[str] = None
+    source_recommendation_id: Optional[str] = None
+    source_action_id: Optional[str] = None
+    source_outcome_id: Optional[str] = None
+    approved_by: str
+    approved_at: str
+    promoted_by: str
+    document_path: Optional[str] = None
+    document_version: int = 1
+    obsidian_status: str = "PENDING"
+    obsidian_url: Optional[str] = None
+    promoted_at: datetime
+    created_at: datetime
 
 
 # ── 15. Jobs ──────────────────────────────────────────────────────────────────

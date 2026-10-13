@@ -127,6 +127,14 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID:   str = ""
 
+    # ── Obsidian / Agency Knowledge (GitHub-backed vault) ─────────────────────
+    # Optional: if set, promote_to_knowledge() writes the markdown to GitHub.
+    # The GitHub repo acts as the Obsidian vault (synced via Obsidian Git plugin).
+    # If not set, the knowledge is stored only in core_agency_knowledge (Supabase).
+    OBSIDIAN_GITHUB_TOKEN: str = ""   # PAT with repo:write scope
+    OBSIDIAN_VAULT_REPO:   str = ""   # e.g. "mnoronha/agency-knowledge-vault"
+    OBSIDIAN_VAULT_BRANCH: str = "main"
+
 
 @lru_cache()
 def get_settings() -> Settings:

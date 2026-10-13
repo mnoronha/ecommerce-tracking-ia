@@ -171,6 +171,9 @@ from .schemas import (
     ActionOut,
     ActionUpdate,
     LearningCandidateDecision,
+    KnowledgePromotionCreate,
+    KnowledgePromotionOut,
+    AgencyKnowledgeOut,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -3220,6 +3223,232 @@ async def create_learning_candidate(
     if not inserted:
         raise HTTPException(503, "insert returned no data")
     return _learning_candidate_row_to_out(inserted)
+
+
+# ── POST /learning-candidates/{id}/promote ────────────────────────────────────
+
+@router.post(
+    "/learning-candidates/{learning_candidate_id}/promote",
+    summary="Promote an APPROVED learning candidate to Agency Knowledge (human-only)",
+    response_model=KnowledgePromotionOut,
+    status_code=201,
+)
+async def promote_learning_candidate(
+    learning_candidate_id: str,
+    body: KnowledgePromotionCreate,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> KnowledgePromotionOut:
+    if not _is_valid_uuid(learning_candidate_id):
+        raise HTTPException(404, f"learning candidate not found: {learning_candidate_id!r}")
+
+    # Derive actor from auth context — never accept actor from request body
+    actor = getattr(_auth, "subject", None) or getattr(_auth, "scope", None) or "platform_web"
+
+    # Reject if Hermes is calling (hermes_service must not promote)
+    if getattr(_auth, "scope", "") == "hermes_service":
+        raise HTTPException(403, "hermes_service cannot promote learning candidates")
+
+    from ...core.obsidian_writer import promote_to_knowledge
+
+    result = promote_to_knowledge(
+        learning_candidate_id=learning_candidate_id,
+        actor=actor,
+        reason=body.reason,
+        idempotency_key=idempotency_key,
+        force_new_version=body.force_new_version,
+    )
+
+    if result["status"] == "FAILED":
+        error_msg = result.get("error", "promotion failed")
+        # APPROVED guard violation → 422; other failures → 503
+        if "not APPROVED" in error_msg or "not found" in error_msg:
+            status_code = 422
+        else:
+            status_code = 503
+        raise HTTPException(status_code, error_msg)
+
+    return _promotion_result_to_out(result, learning_candidate_id, actor, body.reason)
+
+
+def _promotion_result_to_out(result: dict, candidate_id: str, actor: str, reason: Optional[str]) -> KnowledgePromotionOut:
+    from .enums import PromotionStatus as _PS, ObsidianStatus as _OS
+    try:
+        promo_status = _PS(result["status"])
+    except ValueError:
+        promo_status = _PS.FAILED
+    try:
+        obs_status = _OS(result.get("obsidian_status", "PENDING"))
+    except ValueError:
+        obs_status = _OS.PENDING
+
+    return KnowledgePromotionOut(
+        id=str(result.get("promotion_id") or ""),
+        learning_candidate_id=candidate_id,
+        knowledge_id=result.get("knowledge_id"),
+        actor=actor,
+        reason=reason,
+        status=promo_status,
+        destination="agency_knowledge",
+        document_path=result.get("document_path"),
+        document_version=result.get("document_version", 1),
+        obsidian_status=obs_status,
+        obsidian_url=result.get("obsidian_url"),
+        existing_knowledge_id=None,
+        error=result.get("error"),
+        promoted_at=datetime.now(timezone.utc) if promo_status in (_PS.COMPLETED, _PS.NEW_VERSION) else None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+# ── GET /learning-candidates/{id}/promotion ───────────────────────────────────
+
+@router.get(
+    "/learning-candidates/{learning_candidate_id}/promotion",
+    summary="Get promotion status for a learning candidate",
+    response_model=Optional[KnowledgePromotionOut],
+)
+async def get_learning_candidate_promotion(
+    learning_candidate_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> Optional[KnowledgePromotionOut]:
+    if not _is_valid_uuid(learning_candidate_id):
+        return None
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_knowledge_promotions")
+            .select("*")
+            .eq("learning_candidate_id", learning_candidate_id)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        return None
+    return _promotion_row_to_out(row)
+
+
+def _promotion_row_to_out(row: dict) -> KnowledgePromotionOut:
+    from .enums import PromotionStatus as _PS, ObsidianStatus as _OS
+    try:
+        promo_status = _PS(row.get("status", "PENDING"))
+    except ValueError:
+        promo_status = _PS.FAILED
+    return KnowledgePromotionOut(
+        id=str(row["id"]),
+        learning_candidate_id=str(row["learning_candidate_id"]),
+        knowledge_id=str(row["knowledge_id"]) if row.get("knowledge_id") else None,
+        actor=row.get("actor", ""),
+        reason=row.get("reason"),
+        status=promo_status,
+        destination=row.get("destination", "agency_knowledge"),
+        document_path=row.get("document_path"),
+        document_version=row.get("document_version", 1),
+        obsidian_status=_OS.SKIPPED,
+        obsidian_url=None,
+        existing_knowledge_id=str(row["existing_knowledge_id"]) if row.get("existing_knowledge_id") else None,
+        error=row.get("error"),
+        promoted_at=_parse_ts_utc(row.get("promoted_at")),
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+    )
+
+
+# ── GET /agency-knowledge ─────────────────────────────────────────────────────
+# Hermes reads this as trusted intelligence (SCOPE_READ_ANY).
+# Only COMPLETED + NEW_VERSION promotions surface here.
+
+@router.get(
+    "/agency-knowledge",
+    summary="List Agency Knowledge (Hermes intelligence, human-approved)",
+    response_model=list[AgencyKnowledgeOut],
+)
+async def list_agency_knowledge(
+    scope: Optional[str] = Query(None, description="CLIENT_ONLY | BUSINESS_MODEL | PLATFORM | AGENCY_WIDE_CANDIDATE"),
+    platform: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[AgencyKnowledgeOut]:
+    db = _get_db()
+    try:
+        q = (
+            db.table("core_agency_knowledge")
+            .select("*")
+            .order("promoted_at", desc=True)
+            .limit(limit)
+        )
+        if scope:
+            q = q.eq("scope", scope.upper())
+        if platform:
+            q = q.eq("platform", platform.lower())
+        rows = q.execute().data or []
+    except Exception as exc:
+        logger.error("list_agency_knowledge: DB error: %s", exc)
+        raise HTTPException(503, "database error")
+    return [_knowledge_row_to_out(r) for r in rows]
+
+
+# ── GET /agency-knowledge/{id} ────────────────────────────────────────────────
+
+@router.get(
+    "/agency-knowledge/{knowledge_id}",
+    summary="Single Agency Knowledge document",
+    response_model=AgencyKnowledgeOut,
+)
+async def get_agency_knowledge(
+    knowledge_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> AgencyKnowledgeOut:
+    if not _is_valid_uuid(knowledge_id):
+        raise HTTPException(404, f"knowledge not found: {knowledge_id!r}")
+    db = _get_db()
+    try:
+        res = db.table("core_agency_knowledge").select("*").eq("id", knowledge_id).limit(1).execute()
+    except Exception:
+        raise HTTPException(503, "database error")
+    row = res.data[0] if (res and res.data) else None
+    if not row:
+        raise HTTPException(404, f"knowledge not found: {knowledge_id!r}")
+    return _knowledge_row_to_out(row)
+
+
+def _knowledge_row_to_out(row: dict) -> AgencyKnowledgeOut:
+    return AgencyKnowledgeOut(
+        id=str(row["id"]),
+        learning_candidate_id=str(row["learning_candidate_id"]) if row.get("learning_candidate_id") else None,
+        title=row.get("title", ""),
+        statement=row.get("statement", ""),
+        pattern=row.get("pattern"),
+        context=row.get("context") or {},
+        observed_outcome=row.get("observed_outcome") or {},
+        evidence_refs=row.get("evidence_refs") or [],
+        evidence_level=row.get("evidence_level", "OBSERVATION"),
+        confidence=row.get("confidence"),
+        scope=row.get("scope", "CLIENT_ONLY"),
+        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        business_model=row.get("business_model"),
+        platform=row.get("platform"),
+        when_to_apply=row.get("when_to_apply"),
+        when_not_to_apply=row.get("when_not_to_apply"),
+        limitations=row.get("limitations"),
+        source_alert_id=row.get("source_alert_id"),
+        source_diagnosis_id=row.get("source_diagnosis_id"),
+        source_recommendation_id=row.get("source_recommendation_id"),
+        source_action_id=row.get("source_action_id"),
+        source_outcome_id=row.get("source_outcome_id"),
+        approved_by=row.get("approved_by", ""),
+        approved_at=str(row.get("approved_at", "")),
+        promoted_by=row.get("promoted_by", ""),
+        document_path=row.get("document_path"),
+        document_version=row.get("document_version", 1),
+        obsidian_status=row.get("obsidian_status", "PENDING"),
+        obsidian_url=row.get("obsidian_url"),
+        promoted_at=_parse_ts_utc(row.get("promoted_at")) or datetime.now(timezone.utc),
+        created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+    )
 
 
 # ── POST /jobs/{job_id}/replay ────────────────────────────────────────────────

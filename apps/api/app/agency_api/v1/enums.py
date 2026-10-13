@@ -245,3 +245,18 @@ class MetricDomain(str, Enum):
     ADS        = "ADS"        # Paid channel: spend, ROAS, CPA, CTR, frequency
     JOURNEY    = "JOURNEY"    # Web journey: sessions, funnel, bounce rate, engagement
     CONVERSION = "CONVERSION" # Tracked conversions, attribution quality, match rate
+
+
+class PromotionStatus(str, Enum):
+    PENDING             = "PENDING"
+    COMPLETED           = "COMPLETED"
+    FAILED              = "FAILED"
+    EXISTING_KNOWLEDGE  = "EXISTING_KNOWLEDGE"
+    NEW_VERSION         = "NEW_VERSION"
+
+
+class ObsidianStatus(str, Enum):
+    PENDING  = "PENDING"
+    WRITTEN  = "WRITTEN"
+    SKIPPED  = "SKIPPED"
+    FAILED   = "FAILED"
