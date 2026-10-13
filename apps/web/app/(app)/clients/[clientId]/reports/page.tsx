@@ -28,7 +28,7 @@ interface CoreNarrative {
   report_type?:       string
   period_start?:      string
   period_end?:        string
-  blocks:             unknown[]
+  blocks:             Array<{ section: string; statement: string }>
 }
 
 const NARRATIVE_STATUS_BADGE: Record<string, string> = {
@@ -39,21 +39,60 @@ const NARRATIVE_STATUS_BADGE: Record<string, string> = {
   SUPERSEDED:       'bg-slate-600/15 text-slate-600',
 }
 
-function CoreNarrativesSection({ clientId }: { clientId: string }) {
-  const [items,   setItems]   = useState<CoreNarrative[]>([])
-  const [loading, setLoading] = useState(true)
-  const [open,    setOpen]    = useState(false)
+const NEXT_STATUS: Record<string, { target: string; label: string; cls: string }> = {
+  DRAFT:            { target: 'READY_FOR_REVIEW', label: 'Marcar pronto',    cls: 'bg-yellow-600/20 hover:bg-yellow-600/30 text-yellow-300 border-yellow-600/40' },
+  READY_FOR_REVIEW: { target: 'APPROVED',          label: 'Aprovar',         cls: 'bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border-emerald-600/40' },
+  APPROVED:         { target: 'PUBLISHED',          label: 'Publicar + enviar email', cls: 'bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border-indigo-600/40' },
+}
 
-  useEffect(() => {
+function CoreNarrativesSection({ clientId }: { clientId: string }) {
+  const [items,      setItems]      = useState<CoreNarrative[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [open,       setOpen]       = useState(false)
+  const [expanded,   setExpanded]   = useState<string | null>(null)
+  const [transitioning, setTransitioning] = useState<string | null>(null)
+  const [transError, setTransError] = useState<Record<string, string>>({})
+  const [transOk,    setTransOk]    = useState<Record<string, string>>({})
+
+  const reload = () => {
+    setLoading(true)
     fetch(`/api/v1/clients/${clientId}/reports`)
       .then(r => r.ok ? r.json() : [])
       .then(setItems)
       .catch(() => setItems([]))
       .finally(() => setLoading(false))
-  }, [clientId])
+  }
+
+  useEffect(() => { reload() }, [clientId]) // eslint-disable-line
+
+  async function transition(n: CoreNarrative, target: string) {
+    setTransitioning(n.id)
+    setTransError(prev => ({ ...prev, [n.id]: '' }))
+    setTransOk(prev => ({ ...prev, [n.id]: '' }))
+    try {
+      const res = await fetch(`/api/v1/report-narratives/${n.id}/transitions`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ target_status: target }),
+      })
+      const data = await res.json().catch(() => null) as { status?: string; detail?: string } | null
+      if (!res.ok) {
+        setTransError(prev => ({ ...prev, [n.id]: data?.detail || `Erro ${res.status}` }))
+      } else {
+        setTransOk(prev => ({ ...prev, [n.id]: `→ ${data?.status || target}` }))
+        reload()
+      }
+    } catch {
+      setTransError(prev => ({ ...prev, [n.id]: 'Falha de comunicação' }))
+    } finally {
+      setTransitioning(null)
+    }
+  }
 
   if (loading) return null
   if (items.length === 0) return null
+
+  const pendingCount = items.filter(n => ['DRAFT','READY_FOR_REVIEW','APPROVED'].includes(n.status)).length
 
   return (
     <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
@@ -65,39 +104,72 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
           <FileText size={14} className="text-indigo-400" />
           <span className="text-sm font-semibold text-white">Relatórios Core ({items.length})</span>
           <span className="text-xs text-slate-500">· Agency API</span>
+          {pendingCount > 0 && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 font-medium">
+              {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
+            </span>
+          )}
         </div>
         <span className="text-slate-600 text-xs">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="border-t border-[#2a2f3e] overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#2a2f3e]">
-                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Tipo</th>
-                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Período</th>
-                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Status</th>
-                <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Publicado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map(n => (
-                <tr key={n.id} className="border-b border-[#2a2f3e] last:border-0">
-                  <td className="px-4 py-2.5 text-xs text-slate-400">{n.report_type || '—'}</td>
-                  <td className="px-4 py-2.5 text-xs text-slate-400">
-                    {n.period_start && n.period_end ? `${n.period_start} → ${n.period_end}` : '—'}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${NARRATIVE_STATUS_BADGE[n.status] || 'bg-slate-500/15 text-slate-400'}`}>
+        <div className="border-t border-[#2a2f3e] space-y-0">
+          {items.map(n => {
+            const next = NEXT_STATUS[n.status]
+            const isExpanded = expanded === n.id
+            const hasBlocks = n.blocks?.length > 0
+            return (
+              <div key={n.id} className="border-b border-[#2a2f3e] last:border-0">
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0 grid grid-cols-4 gap-2 items-center">
+                    <span className="text-xs text-slate-400">{n.report_type || '—'}</span>
+                    <span className="text-xs text-slate-400 col-span-1">
+                      {n.period_start && n.period_end ? `${n.period_start} → ${n.period_end}` : '—'}
+                    </span>
+                    <span className={`text-xs px-2 py-0.5 rounded font-medium w-fit ${NARRATIVE_STATUS_BADGE[n.status] || 'bg-slate-500/15 text-slate-400'}`}>
                       {n.status}
                     </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-slate-500">
-                    {n.published_at ? new Date(n.published_at).toLocaleDateString('pt-BR') : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <span className="text-xs text-slate-500">
+                      {n.published_at ? new Date(n.published_at).toLocaleDateString('pt-BR') : n.approved_by ? `aprov: ${n.approved_by.split('@')[0]}` : '—'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {hasBlocks && (
+                      <button
+                        onClick={() => setExpanded(expanded === n.id ? null : n.id)}
+                        className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                      >
+                        {isExpanded ? '▲' : '▼'}
+                      </button>
+                    )}
+                    {next && (
+                      <button
+                        onClick={() => transition(n, next.target)}
+                        disabled={transitioning === n.id}
+                        className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded border transition-colors disabled:opacity-50 ${next.cls}`}
+                      >
+                        {transitioning === n.id
+                          ? <><Loader2 size={10} className="animate-spin" /> …</>
+                          : next.label}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {transError[n.id] && (
+                  <p className="px-4 pb-2 text-xs text-red-400">{transError[n.id]}</p>
+                )}
+                {transOk[n.id] && (
+                  <p className="px-4 pb-2 text-xs text-emerald-400">{transOk[n.id]}</p>
+                )}
+                {isExpanded && n.blocks?.map((b, i) => (
+                  <div key={i} className="px-4 pb-3 pt-1 border-t border-[#2a2f3e] bg-[#0f1117]/40">
+                    <p className="text-xs text-slate-500 font-semibold mb-1">{b.section}</p>
+                    <p className="text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">{b.statement}</p>
+                  </div>
+                ))}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -463,8 +535,15 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {/* Core narratives (Agency API) */}
+        {/* Core narratives (Agency API) — canonical source */}
         <CoreNarrativesSection clientId={clientId} />
+
+        {/* ── Seção legada ────────────────────────────────────────────── */}
+        <div className="flex items-center gap-3">
+          <div className="h-px flex-1 bg-[#2a2f3e]" />
+          <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Relatórios e Insights IA · Legado</span>
+          <div className="h-px flex-1 bg-[#2a2f3e]" />
+        </div>
 
         {/* Relatórios automáticos — ativar/desativar por cliente */}
         <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5 space-y-4">

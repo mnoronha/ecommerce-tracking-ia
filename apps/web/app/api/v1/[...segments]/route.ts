@@ -48,6 +48,52 @@ export async function GET(
   }
 }
 
+// POST — used for lifecycle transitions (report-narratives, recommendations, etc.)
+// actor is injected server-side from the authenticated user session; never from the browser.
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ segments: string[] }> },
+) {
+  const supabase = await createSupabaseServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const { segments } = await params
+  const path = segments.join('/')
+  const key  = process.env.AGENCY_API_PLATFORM_KEY || ''
+
+  const upstream = new URL(`/agency/v1/${path}`, _BASE)
+  req.nextUrl.searchParams.forEach((v, k) => upstream.searchParams.set(k, v))
+
+  const idempotencyKey = req.headers.get('idempotency-key') || crypto.randomUUID()
+  const clientBody = await req.json().catch(() => ({}))
+
+  // Inject actor from session — prevents impersonation from browser
+  const actor = user.email || user.id
+  const mergedBody = typeof clientBody === 'object' && clientBody !== null
+    ? { ...clientBody, actor }
+    : clientBody
+
+  try {
+    const res = await fetch(upstream.toString(), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(mergedBody),
+      cache: 'no-store',
+    })
+    const data = await res.json().catch(() => null)
+    return NextResponse.json(data, { status: res.status })
+  } catch {
+    return NextResponse.json({ error: 'upstream_unavailable' }, { status: 503 })
+  }
+}
+
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ segments: string[] }> },
