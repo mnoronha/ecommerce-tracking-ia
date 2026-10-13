@@ -322,24 +322,38 @@ def trigger_balance_check(client_id: str, platform: Optional[str] = None) -> dic
     """
     sb = get_supabase()
 
+    _sel = (
+        "id, client_id, google_prepaid, meta_prepaid, "
+        "google_ads_customer_id, google_ads_refresh_token, "
+        "google_ads_login_customer_id, google_ads_token_health, "
+        "google_balance_threshold, "
+        "meta_ad_account_id, meta_access_token, meta_token_health, "
+        "meta_balance_threshold, "
+        "currency, is_active"
+    )
     try:
         res = (
             sb.table("clients")
-            .select(
-                "id, client_id, google_prepaid, meta_prepaid, "
-                "google_ads_customer_id, google_ads_refresh_token, "
-                "google_ads_login_customer_id, google_ads_token_health, "
-                "google_balance_threshold, "
-                "meta_ad_account_id, meta_access_token, meta_token_health, "
-                "meta_balance_threshold, "
-                "currency, is_active"
-            )
+            .select(_sel)
             .eq("pixel_id", client_id)
             .limit(1)
             .execute()
         )
     except Exception as exc:
         return {"error": f"DB error: {exc}"}
+
+    if not (res and res.data):
+        # client_id URL param may be the canonical slug, not pixel_id
+        try:
+            res = (
+                sb.table("clients")
+                .select(_sel)
+                .eq("client_id", client_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            return {"error": f"DB error: {exc}"}
 
     if not (res and res.data):
         return {"error": f"client not found: {client_id}"}

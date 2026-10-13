@@ -4027,32 +4027,26 @@ async def get_client_balance(
 ) -> ClientBalanceOut:
     db = _get_db()
 
+    # Resolve client (URL may be pixel_id or canonical slug)
+    client_meta = _load_client_meta(client_id)
+    if not client_meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = client_meta["client_id"]
+
     try:
         client_res = (
             db.table("clients")
-            .select("client_id, pixel_id, google_prepaid, meta_prepaid")
-            .eq("pixel_id", client_id)
+            .select("google_prepaid, meta_prepaid")
+            .eq("client_id", slug)
             .limit(1)
             .execute()
         )
-        if not (client_res and client_res.data):
-            client_res = (
-                db.table("clients")
-                .select("client_id, pixel_id, google_prepaid, meta_prepaid")
-                .eq("client_id", client_id)
-                .limit(1)
-                .execute()
-            )
     except Exception as exc:
         logger.error("get_client_balance: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, detail="database unavailable")
 
-    if not (client_res and client_res.data):
-        raise HTTPException(404, detail=f"client not found: {client_id!r}")
-
-    client_row  = client_res.data[0]
+    client_row  = client_res.data[0] if (client_res and client_res.data) else {}
     any_prepaid = bool(client_row.get("google_prepaid") or client_row.get("meta_prepaid"))
-    slug        = client_row.get("client_id") or client_id
 
     try:
         snaps_res = (
