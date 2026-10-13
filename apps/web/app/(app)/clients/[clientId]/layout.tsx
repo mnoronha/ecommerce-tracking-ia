@@ -9,7 +9,7 @@ import {
   LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2,
   TrendingUp, Radio, DollarSign, GitBranch, Sparkles, FileText, UserCog, Bell,
   Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench,
-  History, Rocket, UserCheck, Award, HeartPulse, Lightbulb, GitCommit,
+  History, Rocket, UserCheck, Award, HeartPulse, Lightbulb, GitCommit, BookOpen,
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -71,11 +71,12 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     {
       label: 'OPERAÇÕES',
       items: [
-        { href: `/clients/${clientId}/alertas`,         label: 'Alertas',         icon: Bell,      gate: null },
-        { href: `/clients/${clientId}/diagnostics`,     label: 'Diagnóstico',     icon: Activity,  gate: null },
-        { href: `/clients/${clientId}/data-health`,     label: 'Saúde dos Dados', icon: HeartPulse, gate: null },
-        { href: `/clients/${clientId}/recommendations`, label: 'Recomendações',   icon: Lightbulb, gate: null },
-        { href: `/clients/${clientId}/changes`,         label: 'Mudanças',        icon: GitCommit, gate: null },
+        { href: `/clients/${clientId}/alertas`,               label: 'Alertas',         icon: Bell,      gate: null },
+        { href: `/clients/${clientId}/diagnostics`,           label: 'Diagnóstico',     icon: Activity,  gate: null },
+        { href: `/clients/${clientId}/data-health`,           label: 'Saúde dos Dados', icon: HeartPulse, gate: null },
+        { href: `/clients/${clientId}/recommendations`,       label: 'Recomendações',   icon: Lightbulb, gate: null },
+        { href: `/clients/${clientId}/learning-candidates`,   label: 'Aprendizados',    icon: BookOpen,  gate: null },
+        { href: `/clients/${clientId}/changes`,               label: 'Mudanças',        icon: GitCommit, gate: null },
       ],
     },
     {
