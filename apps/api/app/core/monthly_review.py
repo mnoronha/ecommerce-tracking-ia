@@ -347,23 +347,23 @@ def _insert_running_job(sb, client_id: str, period_end: date) -> Optional[str]:
         return None
 
 
-def _insert_queued_replay(sb, client_id: str, period_end: date, replay_of: str) -> str:
-    run_key = f"{_JOB_TYPE}:{client_id}:{period_end.isoformat()}:replay:{replay_of[:8]}"
+def _insert_queued_replay(sb, client_id: str, period_end: date, replay_of: Optional[str]) -> str:
     job_id  = str(uuid.uuid4())
-    try:
-        res = sb.table("core_job_runs").insert({
-            "id":         job_id,
-            "job_type":   _JOB_TYPE,
-            "run_key":    run_key,
-            "status":     "QUEUED",
-            "attempt":    1,
-            "replay_of":  replay_of,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-        }).execute()
-        return res.data[0]["id"] if res.data else job_id
-    except Exception as exc:
-        logger.warning("monthly_review: replay insert failed %s: %s", client_id, exc)
-        return job_id
+    run_key = f"{_JOB_TYPE}:{client_id}:{period_end.isoformat()}:replay:{job_id[:8]}"
+    payload: dict = {
+        "id":         job_id,
+        "job_type":   _JOB_TYPE,
+        "run_key":    run_key,
+        "status":     "QUEUED",
+        "attempt":    1,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if replay_of is not None:
+        payload["replay_of"] = replay_of
+    res = sb.table("core_job_runs").insert(payload).execute()
+    persisted_id = res.data[0]["id"] if (res and res.data) else job_id
+    logger.info("monthly_review: queued replay job %s for %s (replay_of=%s)", persisted_id, client_id, replay_of)
+    return persisted_id
 
 
 def _finish_job(sb, job_id: str, status: str, error: Optional[str] = None) -> None:
@@ -440,7 +440,11 @@ def run_monthly_review_for_client(
 
     if job_id:
         try:
-            sb.table("core_job_runs").update({"status": "RUNNING"}).eq("id", job_id).execute()
+            upd = sb.table("core_job_runs").update({"status": "RUNNING"}).eq("id", job_id).execute()
+            if not (upd and upd.data):
+                # QUEUED record was never persisted (prior insert failed); fall back to fresh job
+                logger.warning("monthly_review: QUEUED row %s not found — inserting fresh RUNNING job", job_id)
+                job_id = _insert_running_job(sb, client_id, period_end) or job_id
         except Exception as exc:
             logger.warning("monthly_review: replay → RUNNING failed %s: %s", job_id, exc)
     else:
@@ -493,7 +497,7 @@ def queue_monthly_review_replay(
     client_id: str,
     year: int,
     month: int,
-    replay_of: str,
+    replay_of: Optional[str],
 ) -> str:
     _, period_end = _month_bounds(year, month)
     return _insert_queued_replay(sb, client_id, period_end, replay_of)

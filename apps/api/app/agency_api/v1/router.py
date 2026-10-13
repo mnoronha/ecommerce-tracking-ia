@@ -3872,8 +3872,9 @@ async def replay_weekly_review(
         raise HTTPException(404, detail=f"client not found: {client_id!r}")
     slug = _meta["client_id"]
 
-    # Find most recent weekly_review job for this period to use as replay_of
-    replay_of = str(_uuid_mod.uuid4())  # sentinel when no prior job exists
+    # Look for the most recent prior job for this client+period to link as replay_of.
+    # If none exists (first-ever run), replay_of stays None — the FK is nullable.
+    replay_of: Optional[str] = None
     try:
         prior = (
             _get_db().table("core_job_runs")
@@ -3886,18 +3887,24 @@ async def replay_weekly_review(
         )
         if prior and prior.data:
             replay_of = prior.data[0]["id"]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("replay_weekly_review: prior-job lookup failed for %s: %s", slug, exc)
 
     # Queue and execute in background
     db = _get_db()
-    new_job_id = queue_weekly_review_replay(db, slug, period_end, replay_of)
+    try:
+        new_job_id = queue_weekly_review_replay(db, slug, period_end, replay_of)
+    except Exception as exc:
+        logger.error("replay_weekly_review: job insert failed for %s: %s", slug, exc)
+        raise HTTPException(503, detail=f"failed to queue weekly review job: {exc}")
+
     background_tasks.add_task(execute_weekly_review_replay, new_job_id, slug, period_end)
 
-    run_key = f"weekly_review:{slug}:{period_end.isoformat()}"
+    # run_key mirrors _insert_queued_replay format (uses new job_id[:8] suffix)
+    run_key = f"weekly_review:{slug}:{period_end.isoformat()}:replay:{new_job_id[:8]}"
     logger.info(
-        "replay_weekly_review: queued %s for %s (%s→%s)",
-        new_job_id, slug, period_start, period_end,
+        "replay_weekly_review: queued %s for %s (%s→%s, replay_of=%s)",
+        new_job_id, slug, period_start, period_end, replay_of,
     )
     return JobOut(
         id=new_job_id,
@@ -3958,7 +3965,9 @@ async def replay_monthly_review(
 
     _, period_end = _month_bounds(year, month)
 
-    replay_of = str(_uuid_mod.uuid4())
+    # Look for the most recent prior job for this client+period to link as replay_of.
+    # If none exists (first-ever run), replay_of stays None — the FK is nullable.
+    replay_of: Optional[str] = None
     try:
         prior = (
             _get_db().table("core_job_runs")
@@ -3971,17 +3980,23 @@ async def replay_monthly_review(
         )
         if prior and prior.data:
             replay_of = prior.data[0]["id"]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("replay_monthly_review: prior-job lookup failed for %s: %s", slug, exc)
 
     db = _get_db()
-    new_job_id = queue_monthly_review_replay(db, slug, year, month, replay_of)
+    try:
+        new_job_id = queue_monthly_review_replay(db, slug, year, month, replay_of)
+    except Exception as exc:
+        logger.error("replay_monthly_review: job insert failed for %s: %s", slug, exc)
+        raise HTTPException(503, detail=f"failed to queue monthly review job: {exc}")
+
     background_tasks.add_task(execute_monthly_review_replay, new_job_id, slug, year, month)
 
-    run_key = f"monthly_review:{slug}:{period_end.isoformat()}"
+    # run_key mirrors _insert_queued_replay format (uses new job_id[:8] suffix)
+    run_key = f"monthly_review:{slug}:{period_end.isoformat()}:replay:{new_job_id[:8]}"
     logger.info(
-        "replay_monthly_review: queued %s for %s (%d-%02d)",
-        new_job_id, slug, year, month,
+        "replay_monthly_review: queued %s for %s (%d-%02d, replay_of=%s)",
+        new_job_id, slug, year, month, replay_of,
     )
     return JobOut(
         id=new_job_id,
