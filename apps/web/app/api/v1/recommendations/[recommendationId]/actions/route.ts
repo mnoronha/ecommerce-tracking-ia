@@ -25,6 +25,30 @@ const VALID_ACTION_TYPES = new Set([
   'NO_ACTION_REQUIRED',
 ])
 
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ recommendationId: string }> },
+) {
+  const supabase = await createSupabaseServerClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const { recommendationId } = await params
+  const platformKey = process.env.AGENCY_API_PLATFORM_KEY || ''
+  const upstream    = `${_BASE}/agency/v1/recommendations/${recommendationId}/actions`
+  try {
+    const res  = await fetch(upstream, {
+      headers: { Authorization: `Bearer ${platformKey}` },
+      cache: 'no-store',
+    })
+    const data = await res.json().catch(() => null)
+    return NextResponse.json(data, { status: res.status })
+  } catch {
+    return NextResponse.json({ error: 'upstream_unavailable' }, { status: 503 })
+  }
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ recommendationId: string }> },
