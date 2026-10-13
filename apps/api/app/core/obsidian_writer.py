@@ -604,6 +604,112 @@ def _promotion_failed(sb, candidate_id: str, actor: str, reason: Optional[str], 
     }
 
 
+def check_obsidian_readiness() -> dict:
+    """
+    Read-only runtime check of the Obsidian/GitHub configuration.
+
+    Does NOT write any file. Does NOT expose token values.
+    Performs: GET /repos/{owner/repo} + GET /repos/{owner/repo}/branches/{branch}
+    to verify auth, repo existence, branch existence, and write permission.
+
+    Returns:
+      token_present:            bool
+      repo_present:             bool
+      branch_present:           bool
+      repo_name:                str | None   (not a secret)
+      branch_name:              str
+      github_api_reachable:     bool
+      github_repo_accessible:   bool
+      github_branch_accessible: bool
+      github_write_permission:  bool
+      ready:                    bool         (all checks pass)
+      error:                    str | None
+    """
+    token: str = getattr(settings, "OBSIDIAN_GITHUB_TOKEN", "") or ""
+    repo:  str = getattr(settings, "OBSIDIAN_VAULT_REPO", "") or ""
+    branch: str = getattr(settings, "OBSIDIAN_VAULT_BRANCH", "") or "main"
+
+    result: dict = {
+        "token_present":            len(token) > 0,
+        "repo_present":             len(repo) > 0,
+        "branch_present":           len(branch) > 0,
+        "repo_name":                repo if repo else None,
+        "branch_name":              branch,
+        "github_api_reachable":     False,
+        "github_repo_accessible":   False,
+        "github_branch_accessible": False,
+        "github_write_permission":  False,
+        "ready":                    False,
+        "error":                    None,
+    }
+
+    if not token or not repo:
+        result["error"] = "OBSIDIAN_GITHUB_TOKEN or OBSIDIAN_VAULT_REPO not set"
+        return result
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    # ── Check 1: GitHub API reachable + repo exists + auth valid ──────────────
+    try:
+        r = httpx.get(
+            f"https://api.github.com/repos/{repo}",
+            headers=headers,
+            timeout=10.0,
+        )
+        result["github_api_reachable"] = True
+        if r.status_code == 200:
+            result["github_repo_accessible"] = True
+            perms = r.json().get("permissions", {})
+            result["github_write_permission"] = bool(perms.get("push") or perms.get("admin"))
+        elif r.status_code == 401:
+            result["error"] = "GitHub auth rejected (token invalid or expired)"
+            return result
+        elif r.status_code == 403:
+            result["error"] = "GitHub token lacks repo read permission"
+            return result
+        elif r.status_code == 404:
+            result["error"] = f"GitHub repo not found: {repo!r}"
+            return result
+        else:
+            result["error"] = f"GitHub repo check returned HTTP {r.status_code}"
+            return result
+    except httpx.ConnectError:
+        result["error"] = "GitHub API unreachable (network/DNS)"
+        return result
+    except Exception as exc:
+        result["error"] = f"GitHub repo check error: {exc}"
+        return result
+
+    # ── Check 2: Branch exists ────────────────────────────────────────────────
+    try:
+        r2 = httpx.get(
+            f"https://api.github.com/repos/{repo}/branches/{branch}",
+            headers=headers,
+            timeout=10.0,
+        )
+        if r2.status_code == 200:
+            result["github_branch_accessible"] = True
+        elif r2.status_code == 404:
+            result["error"] = f"Branch {branch!r} not found in repo {repo!r}"
+        else:
+            result["error"] = f"Branch check returned HTTP {r2.status_code}"
+    except Exception as exc:
+        result["error"] = f"Branch check error: {exc}"
+
+    result["ready"] = (
+        result["token_present"]
+        and result["repo_present"]
+        and result["github_repo_accessible"]
+        and result["github_branch_accessible"]
+        and result["github_write_permission"]
+    )
+    return result
+
+
 def _create_promotion_record(
     sb,
     *,

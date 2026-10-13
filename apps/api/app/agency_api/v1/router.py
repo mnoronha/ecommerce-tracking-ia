@@ -3451,6 +3451,21 @@ def _knowledge_row_to_out(row: dict) -> AgencyKnowledgeOut:
     )
 
 
+# ── GET /obsidian/readiness ───────────────────────────────────────────────────
+# Read-only runtime check: token present, repo exists, branch accessible,
+# write permission. Never exposes the token value.
+
+@router.get(
+    "/obsidian/readiness",
+    summary="Read-only GitHub/Obsidian config check (no file written)",
+)
+async def obsidian_readiness(
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> dict:
+    from ...core.obsidian_writer import check_obsidian_readiness
+    return check_obsidian_readiness()
+
+
 # ── POST /jobs/{job_id}/replay ────────────────────────────────────────────────
 #
 # CCR-001: platform_web ADDED — platform operators may trigger replay from the
