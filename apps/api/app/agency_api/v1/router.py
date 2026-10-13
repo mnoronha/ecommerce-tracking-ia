@@ -2842,17 +2842,14 @@ async def trigger_pipeline(
         period_end = _date.today() - timedelta(days=1)
     period_start = period_end - timedelta(days=6)
 
-    # Verify client exists (URL uses pixel_id)
-    try:
-        res = _get_db().table("clients").select("pixel_id").eq("pixel_id", client_id).limit(1).execute()
-    except Exception as exc:
-        logger.error("trigger_pipeline: DB error for %s: %s", client_id, exc)
-        raise HTTPException(503, detail="database unavailable")
-    if not (res and res.data):
+    # Resolve canonical slug (URL may be pixel_id or slug)
+    _meta = _load_client_meta(client_id)
+    if not _meta:
         raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = _meta["client_id"]
 
     # Insert QUEUED job (no replay_of — first run)
-    run_key = f"core_pipeline:{client_id}:{period_end.isoformat()}"
+    run_key = f"core_pipeline:{slug}:{period_end.isoformat()}"
     job_id  = str(_uuid_mod.uuid4())
     try:
         ins = _get_db().table("core_job_runs").insert({
@@ -2866,7 +2863,7 @@ async def trigger_pipeline(
         job_id = ins.data[0]["id"] if ins.data else job_id
     except Exception as exc:
         # Unique constraint = same period already queued/ran; return existing
-        logger.warning("trigger_pipeline: job insert failed for %s (%s): %s", client_id, run_key, exc)
+        logger.warning("trigger_pipeline: job insert failed for %s (%s): %s", slug, run_key, exc)
         try:
             ex = _get_db().table("core_job_runs").select("*").eq("run_key", run_key).limit(1).execute()
             if ex.data:
@@ -2879,8 +2876,8 @@ async def trigger_pipeline(
             pass
         raise HTTPException(409, detail=f"job already exists for period {period_end.isoformat()}")
 
-    background_tasks.add_task(run_core_pipeline_for_client, job_id, client_id, period_start, period_end)
-    logger.info("trigger_pipeline: queued %s for %s (%s→%s)", job_id, client_id, period_start, period_end)
+    background_tasks.add_task(run_core_pipeline_for_client, job_id, slug, period_start, period_end)
+    logger.info("trigger_pipeline: queued %s for %s (%s→%s)", job_id, slug, period_start, period_end)
 
     return JobOut(
         id=job_id,
@@ -3137,14 +3134,11 @@ async def replay_weekly_review(
 
     period_start = period_end - timedelta(days=6)
 
-    # Validate client exists (URL uses pixel_id)
-    try:
-        res = _get_db().table("clients").select("pixel_id").eq("pixel_id", client_id).limit(1).execute()
-    except Exception as exc:
-        logger.error("replay_weekly_review: DB error for %s: %s", client_id, exc)
-        raise HTTPException(503, detail="database unavailable")
-    if not (res and res.data):
+    # Resolve canonical slug (URL may be pixel_id or slug)
+    _meta = _load_client_meta(client_id)
+    if not _meta:
         raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = _meta["client_id"]
 
     # Find most recent weekly_review job for this period to use as replay_of
     replay_of = str(_uuid_mod.uuid4())  # sentinel when no prior job exists
@@ -3153,7 +3147,7 @@ async def replay_weekly_review(
             _get_db().table("core_job_runs")
             .select("id")
             .eq("job_type", "weekly_review")
-            .like("run_key", f"weekly_review:{client_id}:{period_end.isoformat()}%")
+            .like("run_key", f"weekly_review:{slug}:{period_end.isoformat()}%")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
@@ -3165,13 +3159,13 @@ async def replay_weekly_review(
 
     # Queue and execute in background
     db = _get_db()
-    new_job_id = queue_weekly_review_replay(db, client_id, period_end, replay_of)
-    background_tasks.add_task(execute_weekly_review_replay, new_job_id, client_id, period_end)
+    new_job_id = queue_weekly_review_replay(db, slug, period_end, replay_of)
+    background_tasks.add_task(execute_weekly_review_replay, new_job_id, slug, period_end)
 
-    run_key = f"weekly_review:{client_id}:{period_end.isoformat()}"
+    run_key = f"weekly_review:{slug}:{period_end.isoformat()}"
     logger.info(
         "replay_weekly_review: queued %s for %s (%s→%s)",
-        new_job_id, client_id, period_start, period_end,
+        new_job_id, slug, period_start, period_end,
     )
     return JobOut(
         id=new_job_id,
@@ -3224,14 +3218,11 @@ async def replay_monthly_review(
     else:
         year, month = _last_completed_month()
 
-    # Validate client exists (URL uses pixel_id)
-    try:
-        res = _get_db().table("clients").select("pixel_id").eq("pixel_id", client_id).limit(1).execute()
-    except Exception as exc:
-        logger.error("replay_monthly_review: DB error for %s: %s", client_id, exc)
-        raise HTTPException(503, detail="database unavailable")
-    if not (res and res.data):
+    # Resolve canonical slug (URL may be pixel_id or slug)
+    _meta = _load_client_meta(client_id)
+    if not _meta:
         raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = _meta["client_id"]
 
     _, period_end = _month_bounds(year, month)
 
@@ -3241,7 +3232,7 @@ async def replay_monthly_review(
             _get_db().table("core_job_runs")
             .select("id")
             .eq("job_type", "monthly_review")
-            .like("run_key", f"monthly_review:{client_id}:{period_end.isoformat()}%")
+            .like("run_key", f"monthly_review:{slug}:{period_end.isoformat()}%")
             .order("created_at", desc=True)
             .limit(1)
             .execute()
@@ -3252,13 +3243,13 @@ async def replay_monthly_review(
         pass
 
     db = _get_db()
-    new_job_id = queue_monthly_review_replay(db, client_id, year, month, replay_of)
-    background_tasks.add_task(execute_monthly_review_replay, new_job_id, client_id, year, month)
+    new_job_id = queue_monthly_review_replay(db, slug, year, month, replay_of)
+    background_tasks.add_task(execute_monthly_review_replay, new_job_id, slug, year, month)
 
-    run_key = f"monthly_review:{client_id}:{period_end.isoformat()}"
+    run_key = f"monthly_review:{slug}:{period_end.isoformat()}"
     logger.info(
         "replay_monthly_review: queued %s for %s (%d-%02d)",
-        new_job_id, client_id, year, month,
+        new_job_id, slug, year, month,
     )
     return JobOut(
         id=new_job_id,
@@ -3291,6 +3282,14 @@ async def get_client_balance(
             .limit(1)
             .execute()
         )
+        if not (client_res and client_res.data):
+            client_res = (
+                db.table("clients")
+                .select("client_id, pixel_id, google_prepaid, meta_prepaid")
+                .eq("client_id", client_id)
+                .limit(1)
+                .execute()
+            )
     except Exception as exc:
         logger.error("get_client_balance: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, detail="database unavailable")
@@ -3519,12 +3518,8 @@ async def get_pacing_contract(
     first_day          = today.replace(day=1)
     elapsed_pct        = days_elapsed / days_in_month if days_in_month > 0 else 0.0
 
-    # Resolve client UUID (URL uses pixel_id)
-    try:
-        c_res = sb.table("clients").select("id, client_id, business_model").eq("pixel_id", client_id).limit(1).execute()
-        client_row = c_res.data[0] if c_res.data else None
-    except Exception as exc:
-        raise HTTPException(503, detail=f"client lookup failed: {exc}")
+    # Resolve client (URL may be pixel_id or canonical slug)
+    client_row = _load_client_meta(client_id)
     if not client_row:
         raise HTTPException(404, detail=f"client not found: {client_id}")
     client_uuid: str = client_row["id"]
