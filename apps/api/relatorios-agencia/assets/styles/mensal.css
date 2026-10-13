@@ -304,6 +304,33 @@ h1, h2, h3 { font-family: 'Sora', sans-serif; }
 }
 .acao-txt { font-size: 13px; color: var(--ink-soft); }
 
+/* ── Executed actions (mensal) ── */
+.acao-list-mensal { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.acao-mensal-row {
+  border-left: 3px solid var(--color-accent);
+  padding: 10px 12px;
+  background: var(--page);
+  border-radius: 0 8px 8px 0;
+}
+.acao-mensal-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.acao-mensal-data { font-size: 11px; color: var(--ink-dim); }
+.acao-mensal-plat { font-size: 11px; font-weight: 700; color: var(--color-accent); background: var(--line); border-radius: 4px; padding: 1px 5px; }
+.acao-mensal-tipo { font-size: 11px; color: var(--ink-dim); background: var(--line); border-radius: 4px; padding: 1px 5px; }
+.acao-mensal-desc { font-size: 13px; font-weight: 500; color: var(--ink-soft); }
+.acao-mensal-outcome { display: flex; gap: 8px; margin-top: 5px; flex-wrap: wrap; align-items: center; }
+.acao-delta { font-size: 12px; font-weight: 600; color: #15803d; }
+.acao-status { font-size: 11px; border-radius: 4px; padding: 1px 6px; }
+.acao-status-ok      { background: #dcfce7; color: #166534; }
+.acao-status-pending { background: #fef9c3; color: #92400e; }
+.acao-status-blocked { background: #fee2e2; color: #991b1b; }
+
+/* ── Proximas ações (mensal) ── */
+.proxacoes-list { display: flex; flex-direction: column; gap: 8px; padding-left: 0; list-style: none; margin-bottom: 16px; }
+.proxacoes-list li { display: flex; flex-wrap: wrap; gap: 4px; font-size: 13px; line-height: 1.5; }
+.proxacao-titulo { font-weight: 600; color: var(--ink-soft); }
+.proxacao-rat { color: var(--ink-dim); }
+.proxacao-impact { font-size: 12px; font-weight: 600; color: #15803d; }
+
 /* ── Capa logo cliente ── */
 .capa-client-logo { max-height: 48px; max-width: 200px; object-fit: contain; margin-bottom: 6px; }
 

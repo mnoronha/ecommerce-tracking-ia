@@ -21,6 +21,12 @@ from typing import Optional
 
 from ..config import settings
 from ..database import get_supabase
+from ..core.actions_loader import (
+    load_executed_actions as _load_executed_actions,
+    load_open_recommendations as _load_open_recommendations,
+    format_executed_actions as _fmt_actions,
+    format_open_recommendations as _fmt_recs,
+)
 from . import resend as email_service
 from . import notify as _notify
 from . import report_builder, report_renderer, ga4_reporting, crypto
@@ -697,6 +703,8 @@ def _build_weekly_uau_context(
     m: dict,
     uau: dict,
     client_logo: Optional[str] = None,
+    executed_actions: Optional[list] = None,
+    open_recommendations: Optional[list] = None,
 ) -> dict:
     """Builds the Handlebars context dict for semanal_uau.html from raw weekly data + UAU AI content."""
     now        = m["now"]
@@ -767,6 +775,8 @@ def _build_weekly_uau_context(
         "funil":      funil_steps,
         "funil_diagnosis": (uau.get("funnel") or {}).get("diagnosis", ""),
         "insights":   uau.get("hidden_insights", []),
+        "otimizacoes":   _fmt_actions(executed_actions or []) or None,
+        "proximas_acoes": _fmt_recs(open_recommendations or []) or None,
         "recomendacoes": uau.get("recommendations", []),
         "projecao":   proj_raw or None,
         "recado":     recado,
@@ -793,10 +803,26 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
     except Exception as exc:
         logger.warning("weekly UAU content generation failed for %s: %s", pixel_id, exc)
 
+    # ── Carregar ações executadas e recomendações abertas ────────────────────────
+    week_start_date = m["week_start"].date() if hasattr(m.get("week_start"), "date") else None
+    now_date        = now.date()
+    _executed_actions: list = []
+    _open_recommendations: list = []
+    if week_start_date:
+        try:
+            _executed_actions     = _load_executed_actions(sb, client_id, week_start_date, now_date)
+            _open_recommendations = _load_open_recommendations(sb, client_id)
+        except Exception as exc:
+            logger.warning("_send_weekly: actions load failed for %s: %s", pixel_id, exc)
+
     # ── Renderizar ───────────────────────────────────────────────────────────────
     if uau.get("subject_line"):
         try:
-            ctx  = _build_weekly_uau_context(pixel_id, client_name, m, uau, client_logo=logo)
+            ctx  = _build_weekly_uau_context(
+                pixel_id, client_name, m, uau, client_logo=logo,
+                executed_actions=_executed_actions,
+                open_recommendations=_open_recommendations,
+            )
             html = report_renderer.render_weekly_html(ctx)
         except Exception as exc:
             logger.warning("UAU template render failed for %s, falling back: %s", pixel_id, exc)

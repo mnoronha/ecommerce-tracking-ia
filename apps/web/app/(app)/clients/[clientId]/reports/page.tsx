@@ -16,19 +16,48 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-i
 
 // ── Core Narratives (Agency API) ──────────────────────────────────────────────
 
+interface ActionOutcome {
+  status:       string
+  status_label: string
+  status_css:   string
+  delta_label?: string
+  confidence?:  string
+}
+
+interface ExecutedAction {
+  id:          string
+  executed_at?: string
+  platform?:   string
+  action_type?: string
+  description: string
+  executed_by?: string
+  outcome?:    ActionOutcome | null
+}
+
+interface OpenRecommendation {
+  id:               string
+  title?:           string
+  action?:          string
+  rationale?:       string
+  priority?:        string
+  expected_impact?: string
+}
+
 interface CoreNarrative {
-  id:                 string
-  report_contract_id: string
-  status:             string
-  visibility_scope:   string
-  approved_by?:       string
-  published_at?:      string
-  created_at:         string
-  client_id?:         string
-  report_type?:       string
-  period_start?:      string
-  period_end?:        string
-  blocks:             Array<{ section: string; statement: string }>
+  id:                   string
+  report_contract_id:   string
+  status:               string
+  visibility_scope:     string
+  approved_by?:         string
+  published_at?:        string
+  created_at:           string
+  client_id?:           string
+  report_type?:         string
+  period_start?:        string
+  period_end?:          string
+  blocks:               Array<{ section: string; statement: string }>
+  executed_actions:     ExecutedAction[]
+  open_recommendations: OpenRecommendation[]
 }
 
 const NARRATIVE_STATUS_BADGE: Record<string, string> = {
@@ -120,7 +149,7 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
           {items.map(n => {
             const next = NEXT_STATUS[n.status]
             const isExpanded = expanded === n.id
-            const hasBlocks = n.blocks?.length > 0
+            const hasBlocks = (n.blocks?.length > 0) || (n.executed_actions?.length > 0) || (n.open_recommendations?.length > 0)
             return (
               <div key={n.id} className="border-b border-[#2a2f3e] last:border-0">
                 <div className="flex items-center gap-3 px-4 py-3">
@@ -173,12 +202,83 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
                 {transOk[n.id] && (
                   <p className="px-4 pb-2 text-xs text-emerald-400">{transOk[n.id]}</p>
                 )}
-                {isExpanded && n.blocks?.map((b, i) => (
-                  <div key={i} className="px-4 pb-3 pt-1 border-t border-[#2a2f3e] bg-[#0f1117]/40">
-                    <p className="text-xs text-slate-500 font-semibold mb-1">{b.section}</p>
-                    <p className="text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">{b.statement}</p>
+                {isExpanded && (
+                  <div className="border-t border-[#2a2f3e] bg-[#0f1117]/40">
+                    {/* Narrative blocks */}
+                    {n.blocks?.map((b, i) => (
+                      <div key={i} className="px-4 pb-3 pt-3 border-b border-[#2a2f3e]/50 last:border-0">
+                        <p className="text-xs text-slate-500 font-semibold mb-1">{b.section}</p>
+                        <p className="text-xs text-slate-400 leading-relaxed whitespace-pre-wrap">{b.statement}</p>
+                      </div>
+                    ))}
+
+                    {/* Executed actions */}
+                    {n.executed_actions?.length > 0 && (
+                      <div className="px-4 py-3 border-t border-[#2a2f3e]/50">
+                        <p className="text-xs text-slate-500 font-semibold mb-2">OTIMIZAÇÕES REALIZADAS NO PERÍODO</p>
+                        <div className="space-y-2">
+                          {n.executed_actions.map(a => (
+                            <div key={a.id} className="border-l-2 border-indigo-500/60 pl-3">
+                              <div className="flex flex-wrap gap-1.5 mb-1">
+                                {a.executed_at && (
+                                  <span className="text-xs text-slate-500">
+                                    {new Date(a.executed_at).toLocaleDateString('pt-BR')}
+                                  </span>
+                                )}
+                                {a.platform && (
+                                  <span className="text-xs font-semibold text-indigo-400 bg-indigo-500/10 rounded px-1.5 py-0.5">
+                                    {a.platform}
+                                  </span>
+                                )}
+                                {a.action_type && (
+                                  <span className="text-xs text-slate-500 bg-slate-700/40 rounded px-1.5 py-0.5">
+                                    {a.action_type}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-300 font-medium leading-snug">{a.description}</p>
+                              {a.outcome && (
+                                <div className="flex flex-wrap gap-2 mt-1">
+                                  {a.outcome.delta_label && (
+                                    <span className="text-xs font-semibold text-emerald-400">{a.outcome.delta_label}</span>
+                                  )}
+                                  <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                    a.outcome.status_css === 'ok'      ? 'bg-emerald-500/15 text-emerald-400' :
+                                    a.outcome.status_css === 'blocked' ? 'bg-red-500/15 text-red-400' :
+                                    'bg-yellow-500/15 text-yellow-400'
+                                  }`}>{a.outcome.status_label}</span>
+                                  {a.outcome.confidence && (
+                                    <span className="text-xs text-slate-500">confiança: {a.outcome.confidence}</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Open recommendations */}
+                    {n.open_recommendations?.length > 0 && (
+                      <div className="px-4 py-3 border-t border-[#2a2f3e]/50">
+                        <p className="text-xs text-slate-500 font-semibold mb-2">PRÓXIMAS AÇÕES RECOMENDADAS</p>
+                        <div className="space-y-1.5">
+                          {n.open_recommendations.map(r => (
+                            <div key={r.id} className="flex items-start gap-2">
+                              <span className="text-xs font-bold text-indigo-400 mt-0.5">→</span>
+                              <div>
+                                <p className="text-xs text-slate-300 font-medium">{r.title || r.action}</p>
+                                {r.expected_impact && (
+                                  <p className="text-xs text-emerald-400/80 mt-0.5">{r.expected_impact}</p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
+                )}
               </div>
             )
           })}

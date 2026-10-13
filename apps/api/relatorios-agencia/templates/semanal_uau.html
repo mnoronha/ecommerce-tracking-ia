@@ -141,7 +141,50 @@
   </div>
   {{/if}}
 
-  <!-- ── RECOMENDAÇÕES ──────────────────────────────────────── -->
+  <!-- ── OTIMIZAÇÕES REALIZADAS ───────────────────────────────── -->
+  {{#if otimizacoes}}
+  <div class="section">
+    <div class="section-label">OTIMIZAÇÕES REALIZADAS NO PERÍODO</div>
+    {{#each otimizacoes}}
+    <div class="acao-row">
+      <div class="acao-meta">
+        {{#if data}}<span class="acao-data">{{data}}</span>{{/if}}
+        {{#if platform}}<span class="acao-plat">{{platform}}</span>{{/if}}
+        {{#if action_type}}<span class="acao-tipo">{{action_type}}</span>{{/if}}
+      </div>
+      <div class="acao-desc">{{description}}</div>
+      {{#if outcome}}
+      <div class="acao-outcome">
+        {{#if outcome.delta}}<span class="outcome-delta">{{outcome.delta_label}}</span>{{/if}}
+        <span class="outcome-status outcome-{{outcome.status_css}}">{{outcome.status_label}}</span>
+        {{#if outcome.confidence}}<span class="outcome-conf">confiança: {{outcome.confidence}}</span>{{/if}}
+      </div>
+      {{/if}}
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <!-- ── PRÓXIMAS AÇÕES ─────────────────────────────────────── -->
+  {{#if proximas_acoes}}
+  <div class="section">
+    <div class="section-label">PRÓXIMAS AÇÕES RECOMENDADAS</div>
+    {{#each proximas_acoes}}
+    <div class="rec-row">
+      <div class="rec-num">{{priority_label}}</div>
+      <div class="rec-body">
+        <div class="rec-action">{{title}}</div>
+        {{#if rationale}}<div class="rec-why">{{rationale}}</div>{{/if}}
+        <div class="rec-footer">
+          {{#if expected_impact}}<span class="rec-impact">{{expected_impact}}</span>{{/if}}
+        </div>
+      </div>
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <!-- ── RECOMENDAÇÕES (IA) ─────────────────────────────────── -->
   {{#if recomendacoes}}
   <div class="section">
     <div class="section-label">RECOMENDAÇÕES</div>

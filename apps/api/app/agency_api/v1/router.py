@@ -1188,6 +1188,10 @@ def _narrative_row_to_out(
         except ValueError:
             pass
 
+    contract_jsonb: dict = {}
+    if contract and isinstance(contract.get("contract"), dict):
+        contract_jsonb = contract["contract"]
+
     return ReportNarrativeOut(
         id=str(row["id"]),
         report_contract_id=str(row["report_contract_id"]),
@@ -1203,6 +1207,8 @@ def _narrative_row_to_out(
         period_start=period_start,
         period_end=period_end,
         truth_versions=truth_versions,
+        executed_actions=contract_jsonb.get("executed_actions") or [],
+        open_recommendations=contract_jsonb.get("open_recommendations") or [],
     )
 
 
@@ -1220,10 +1226,10 @@ async def get_reports(
     slug = _resolve_slug(client_id) or client_id
     db   = _get_db()
     try:
-        # Step 1: contracts for this client
+        # Step 1: contracts for this client (include contract JSONB for actions/recommendations)
         cq = (
             db.table("agency_report_contracts")
-            .select("id, client_slug, report_type, period_start, period_end")
+            .select("id, client_slug, report_type, period_start, period_end, contract")
             .eq("client_slug", slug)
         )
         if report_type:

@@ -572,6 +572,9 @@ class ReportNarrativeOut(ReportNarrativeCreate):
     period_start: Optional[date] = None
     period_end: Optional[date] = None
     truth_versions: Optional[TruthVersions] = None
+    # Actions from the contract JSONB — empty when contract not yet built
+    executed_actions: list[dict] = Field(default_factory=list)
+    open_recommendations: list[dict] = Field(default_factory=list)
 
 
 class NarrativeTransition(_Base):

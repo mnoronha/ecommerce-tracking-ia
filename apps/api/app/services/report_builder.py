@@ -1339,6 +1339,23 @@ def build_monthly_context(
         plano, plano_meta_fat_fmt, plano_budget_fmt = None, "—", "—"
     logger.info("build_monthly_context: all data ready — building return dict")
 
+    # ── Executed actions + open recommendations ─────────────────────────────────
+    from ..core.actions_loader import (
+        load_executed_actions, load_open_recommendations,
+        format_executed_actions, format_open_recommendations,
+    )
+    try:
+        _period_start = date_type(year, month, 1)
+        import calendar as _calendar
+        _period_end   = date_type(year, month, _calendar.monthrange(year, month)[1])
+        _raw_actions  = load_executed_actions(sb, client_id, _period_start, _period_end)
+        _raw_recs     = load_open_recommendations(sb, client_id)
+        _otimizacoes  = format_executed_actions(_raw_actions) or None
+        _proximas_acoes = format_open_recommendations(_raw_recs) or None
+    except Exception as exc:
+        logger.warning("build_monthly_context: actions load failed: %s", exc)
+        _otimizacoes, _proximas_acoes = None, None
+
     return {
         # Identity
         "agencia": agencia,
@@ -1430,4 +1447,8 @@ def build_monthly_context(
         "plano": plano,
         "plano_meta_faturamento_fmt": plano_meta_fat_fmt,
         "plano_budget_fmt": plano_budget_fmt,
+
+        # Executed actions + open recommendations (from Core tables)
+        "otimizacoes":    _otimizacoes,
+        "proximas_acoes": _proximas_acoes,
     }

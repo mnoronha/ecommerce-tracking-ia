@@ -255,10 +255,14 @@ def build_monthly_review_contract(
     prior_year, prior_month  = _prior_month(year, month)
     prior_start, prior_end   = _month_bounds(prior_year, prior_month)
 
+    from .actions_loader import load_executed_actions, load_open_recommendations
+
     snapshot       = _load_snapshot(sb, client_id, period_end)
     prior_snapshot = _load_snapshot(sb, client_id, prior_end)
     target_truth   = _load_target_truth(sb, client_id)
     active_alerts  = _load_active_alerts(sb, client_uuid)
+    executed_actions     = load_executed_actions(sb, client_uuid, period_start, period_end)
+    open_recommendations = load_open_recommendations(sb, client_uuid)
 
     snapshot_found = snapshot is not None
     prior_found    = prior_snapshot is not None
@@ -321,7 +325,9 @@ def build_monthly_review_contract(
         "metrics_prior":   {k: _slim_prior(v)   for k, v in prior_metrics.items()},
         "mom_changes":     mom_changes,
         "target_truth":    tt_slim,
-        "active_alerts":   active_alerts,
+        "active_alerts":        active_alerts,
+        "executed_actions":     executed_actions,
+        "open_recommendations": open_recommendations,
         "source_snapshot_id":       str(snapshot["id"])       if snapshot       else None,
         "source_prior_snapshot_id": str(prior_snapshot["id"]) if prior_snapshot else None,
     }

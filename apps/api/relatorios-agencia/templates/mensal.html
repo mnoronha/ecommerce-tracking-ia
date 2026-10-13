@@ -448,6 +448,43 @@
   {{/each}}
   {{/if}}
 
+  <!-- Otimizações realizadas no período -->
+  {{#if otimizacoes}}
+  <h3 class="block-title">Otimizações realizadas no período</h3>
+  <div class="acao-list-mensal">
+    {{#each otimizacoes}}
+    <div class="acao-mensal-row">
+      <div class="acao-mensal-meta">
+        {{#if data}}<span class="acao-mensal-data">{{data}}</span>{{/if}}
+        {{#if platform}}<span class="acao-mensal-plat">{{platform}}</span>{{/if}}
+        {{#if action_type}}<span class="acao-mensal-tipo">{{action_type}}</span>{{/if}}
+      </div>
+      <div class="acao-mensal-desc">{{description}}</div>
+      {{#if outcome}}
+      <div class="acao-mensal-outcome">
+        {{#if outcome.delta_label}}<span class="acao-delta">{{outcome.delta_label}}</span>{{/if}}
+        <span class="acao-status acao-status-{{outcome.status_css}}">{{outcome.status_label}}</span>
+      </div>
+      {{/if}}
+    </div>
+    {{/each}}
+  </div>
+  {{/if}}
+
+  <!-- Próximas ações recomendadas -->
+  {{#if proximas_acoes}}
+  <h3 class="block-title">Próximas ações recomendadas</h3>
+  <ol class="proxacoes-list">
+    {{#each proximas_acoes}}
+    <li>
+      <span class="proxacao-titulo">{{title}}</span>
+      {{#if rationale}}<span class="proxacao-rat"> — {{rationale}}</span>{{/if}}
+      {{#if expected_impact}}<span class="proxacao-impact"> · {{expected_impact}}</span>{{/if}}
+    </li>
+    {{/each}}
+  </ol>
+  {{/if}}
+
   <!-- Plano próximo mês -->
   {{#if plano}}
   <h3 class="block-title">Plano para {{plano.mes}}</h3>
