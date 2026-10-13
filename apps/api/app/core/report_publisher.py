@@ -21,6 +21,8 @@ def publish_narrative_report(
     narrative_id: str,
     contract_id: str,
     approved_by: str,
+    *,
+    recipient_override: str | None = None,
 ) -> None:
     """
     Fire delivery for a narrative that just transitioned to PUBLISHED.
@@ -73,16 +75,17 @@ def publish_narrative_report(
 
     logger.info(
         "report_publisher: delivering %s report for %s "
-        "(narrative=%s, period=%s→%s, approved_by=%s)",
+        "(narrative=%s, period=%s→%s, approved_by=%s, recipient_override=%s)",
         report_type, pixel_id, narrative_id,
-        contract_row.get("period_start"), contract_row.get("period_end"), approved_by,
+        contract_row.get("period_start"), contract_row.get("period_end"),
+        approved_by, recipient_override or "none",
     )
 
     try:
         reports_svc.send_report_now(
             client_id=client_id,
             pixel_id=pixel_id,
-            to_email="",
+            to_email=recipient_override or "",
             report_type=report_type,
             generate_ai=False,
             force=True,

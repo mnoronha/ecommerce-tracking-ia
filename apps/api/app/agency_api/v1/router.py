@@ -2531,11 +2531,16 @@ async def create_report_narrative(
 # ── POST /report-narratives/{narrative_id}/transitions ───────────────────────
 
 
-def _trigger_report_delivery(narrative_id: str, contract_id: str, approved_by: str) -> None:
+def _trigger_report_delivery(
+    narrative_id: str,
+    contract_id: str,
+    approved_by: str,
+    recipient_override: Optional[str] = None,
+) -> None:
     """Background delivery task fired when a narrative transitions to PUBLISHED."""
     try:
         from ...core.report_publisher import publish_narrative_report
-        publish_narrative_report(narrative_id, contract_id, approved_by)
+        publish_narrative_report(narrative_id, contract_id, approved_by, recipient_override=recipient_override)
     except Exception as exc:
         logger.error(
             "_trigger_report_delivery: failed narrative=%s contract=%s: %s",
@@ -2641,6 +2646,7 @@ async def transition_narrative(
             narrative_id=narrative_id,
             contract_id=str(row["report_contract_id"]),
             approved_by=body.actor,
+            recipient_override=body.recipient_override or None,
         )
 
     contract: dict | None = None

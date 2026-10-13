@@ -53,6 +53,8 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
   const [transitioning, setTransitioning] = useState<string | null>(null)
   const [transError, setTransError] = useState<Record<string, string>>({})
   const [transOk,    setTransOk]    = useState<Record<string, string>>({})
+  // Per-narrative recipient override (empty = use full client list)
+  const [recipientOverride, setRecipientOverride] = useState<Record<string, string>>({})
 
   const reload = () => {
     setLoading(true)
@@ -69,11 +71,12 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
     setTransitioning(n.id)
     setTransError(prev => ({ ...prev, [n.id]: '' }))
     setTransOk(prev => ({ ...prev, [n.id]: '' }))
+    const override = recipientOverride[n.id]?.trim() || undefined
     try {
       const res = await fetch(`/api/v1/report-narratives/${n.id}/transitions`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ target_status: target }),
+        body:    JSON.stringify({ target_status: target, ...(override ? { recipient_override: override } : {}) }),
       })
       const data = await res.json().catch(() => null) as { status?: string; detail?: string } | null
       if (!res.ok) {
@@ -141,6 +144,15 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
                       >
                         {isExpanded ? '▲' : '▼'}
                       </button>
+                    )}
+                    {next?.target === 'PUBLISHED' && (
+                      <input
+                        type="email"
+                        placeholder="override email (opcional)"
+                        value={recipientOverride[n.id] || ''}
+                        onChange={e => setRecipientOverride(prev => ({ ...prev, [n.id]: e.target.value }))}
+                        className="text-xs px-2 py-1 rounded border border-[#3a3f50] bg-[#0f1117] text-slate-300 placeholder-slate-600 w-44 focus:outline-none focus:border-indigo-500/50"
+                      />
                     )}
                     {next && (
                       <button

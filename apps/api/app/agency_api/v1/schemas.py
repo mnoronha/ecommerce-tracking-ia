@@ -579,6 +579,9 @@ class NarrativeTransition(_Base):
     target_status: NarrativeStatus
     actor: str
     note: Optional[str] = None
+    # Optional internal-only delivery override: if set, report is sent only to this
+    # address instead of the full client list. Does not modify stored client recipients.
+    recipient_override: Optional[str] = None
 
 
 # ── 13. Alert rule suggestions ────────────────────────────────────────────────
