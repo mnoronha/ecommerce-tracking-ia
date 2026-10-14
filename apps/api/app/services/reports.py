@@ -790,7 +790,10 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
                  week_start_override: Optional[datetime] = None,
                  now_override: Optional[datetime] = None) -> None:
     from . import ai_analyst
-    sb        = get_supabase()
+    from supabase import create_client as _create_sb
+    # Fresh client per send — avoids HTTP/2 stale-connection errors when this
+    # function runs in a thread-pool executor alongside the lru_cache singleton.
+    sb        = _create_sb(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
     now       = now_override or datetime.now(timezone.utc)
     m         = _build_weekly(sb, client_id, now, week_start_override=week_start_override)
     logo      = (client or {}).get("logo_url") or _client_logo(sb, client_id)
