@@ -174,6 +174,24 @@ from .schemas import (
     KnowledgePromotionCreate,
     KnowledgePromotionOut,
     AgencyKnowledgeOut,
+    # Phase 2 — Tasks
+    TaskCreate,
+    TaskUpdate,
+    TaskOut,
+    TaskStatus,
+    TaskPriority,
+    TaskSourceType,
+    NotionSyncState,
+    # Phase 5 — Meetings
+    MeetingCreate,
+    MeetingOut,
+    MeetingParticipant,
+    MeetingSummaryOut,
+    MeetingProcessCreate,
+    TranscriptIngestCreate,
+    MeetingProvider,
+    TranscriptStatus,
+    MeetingProcessingStatus,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -4490,3 +4508,451 @@ async def get_pacing_contract(
         targets=targets_list,
         balance=balance_list,
     )
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Tasks
+#
+# Canonical task entity. Core is the source of truth.
+# Notion is a sync adapter (Phase 3) — see sync_state / external_task_id.
+#
+# Scopes:
+#   GET  — SCOPE_CLIENT_VIEWER (agencies + clients can read their tasks)
+#   POST — SCOPE_PLATFORM_WRITE (human-authored)
+#   PUT  — SCOPE_PLATFORM_WRITE
+#
+# Client-visibility: tasks with visibility_scope=AGENCY_ONLY are filtered out
+# when the caller is a client_viewer.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _task_row_to_out(row: dict) -> TaskOut:
+    return TaskOut(
+        id=str(row["id"]),
+        client_id=row["client_id"],
+        title=row["title"],
+        description=row.get("description"),
+        status=TaskStatus(row.get("status", "OPEN")),
+        priority=TaskPriority(row.get("priority", "MEDIUM")),
+        owner=row.get("owner"),
+        due_date=row.get("due_date"),
+        source_type=row.get("source_type"),
+        source_id=str(row["source_id"]) if row.get("source_id") else None,
+        visibility_scope=VisibilityScope(row.get("visibility_scope", "AGENCY_ONLY")),
+        external_task_id=row.get("external_task_id"),
+        external_system=row.get("external_system"),
+        sync_state=NotionSyncState(row.get("sync_state", "none")),
+        last_synced_at=row.get("last_synced_at"),
+        sync_error=row.get("sync_error"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+        completed_at=row.get("completed_at"),
+    )
+
+
+@router.get(
+    "/clients/{client_id}/tasks",
+    response_model=list[TaskOut],
+    summary="List tasks for a client",
+)
+async def list_tasks(
+    client_id: str,
+    status: Optional[str] = Query(None, description="Filter by status (OPEN|IN_PROGRESS|DONE|ARCHIVED|BLOCKED)"),
+    source_type: Optional[str] = Query(None, description="Filter by source_type"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_CLIENT_VIEWER)] = None,
+) -> list[TaskOut]:
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = meta["client_id"]
+
+    is_client_viewer = (_auth and _auth.scope == "client_viewer")
+    if is_client_viewer:
+        allowed = _auth.client_ids or []
+        if client_id not in allowed and slug not in allowed and meta.get("pixel_id") not in allowed:
+            raise HTTPException(403, detail="not authorised for this client")
+
+    db = _get_db()
+    q = db.table("core_tasks").select("*").eq("client_id", slug)
+    if is_client_viewer:
+        q = q.eq("visibility_scope", "CLIENT_VISIBLE")
+    if status:
+        q = q.eq("status", status.upper())
+    if source_type:
+        q = q.eq("source_type", source_type.lower())
+    rows = (q.order("created_at", desc=True).limit(200).execute().data or [])
+    return [_task_row_to_out(r) for r in rows]
+
+
+@router.post(
+    "/clients/{client_id}/tasks",
+    response_model=TaskOut,
+    status_code=201,
+    summary="Create a task for a client",
+)
+async def create_task(
+    client_id: str,
+    body: TaskCreate,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> TaskOut:
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = meta["client_id"]
+
+    now = datetime.now(timezone.utc).isoformat()
+    row = {
+        "client_id":        slug,
+        "title":            body.title,
+        "description":      body.description,
+        "status":           "OPEN",
+        "priority":         body.priority.value if hasattr(body.priority, "value") else str(body.priority),
+        "owner":            body.owner,
+        "due_date":         body.due_date.isoformat() if body.due_date else None,
+        "source_type":      body.source_type.value if body.source_type else None,
+        "source_id":        str(body.source_id) if body.source_id else None,
+        "visibility_scope": body.visibility_scope.value if hasattr(body.visibility_scope, "value") else str(body.visibility_scope),
+        "sync_state":       "none",
+        "created_at":       now,
+        "updated_at":       now,
+    }
+    try:
+        res = _get_db().table("core_tasks").insert(row).execute()
+        created = res.data[0]
+    except Exception as exc:
+        logger.error("create_task: insert failed for %s: %s", slug, exc)
+        raise HTTPException(503, detail="task creation failed")
+    return _task_row_to_out(created)
+
+
+@router.get(
+    "/tasks/{task_id}",
+    response_model=TaskOut,
+    summary="Get task detail",
+)
+async def get_task(
+    task_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_CLIENT_VIEWER)] = None,
+) -> TaskOut:
+    db = _get_db()
+    try:
+        res = db.table("core_tasks").select("*").eq("id", task_id).limit(1).execute()
+        rows = res.data or []
+    except Exception as exc:
+        raise HTTPException(503, detail=f"db error: {exc}")
+    if not rows:
+        raise HTTPException(404, detail=f"task not found: {task_id!r}")
+    row = rows[0]
+    if _auth and _auth.scope == "client_viewer":
+        allowed = _auth.client_ids or []
+        meta = _load_client_meta(row["client_id"])
+        if (row["client_id"] not in allowed and
+                (not meta or meta.get("pixel_id") not in allowed)):
+            raise HTTPException(403, detail="not authorised for this task")
+        if row.get("visibility_scope") != "CLIENT_VISIBLE":
+            raise HTTPException(403, detail="task is agency-only")
+    return _task_row_to_out(row)
+
+
+@router.put(
+    "/tasks/{task_id}",
+    response_model=TaskOut,
+    summary="Update a task",
+)
+async def update_task(
+    task_id: str,
+    body: TaskUpdate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> TaskOut:
+    db = _get_db()
+    res = db.table("core_tasks").select("id, status").eq("id", task_id).limit(1).execute()
+    if not (res and res.data):
+        raise HTTPException(404, detail=f"task not found: {task_id!r}")
+
+    patch: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    for field_name in ("title", "description", "owner", "sync_error", "external_task_id", "external_system"):
+        val = getattr(body, field_name, None)
+        if val is not None:
+            patch[field_name] = val
+    if body.status is not None:
+        patch["status"] = body.status.value if hasattr(body.status, "value") else str(body.status)
+        if body.status in (TaskStatus.DONE, TaskStatus.ARCHIVED):
+            patch["completed_at"] = patch["updated_at"]
+    if body.priority is not None:
+        patch["priority"] = body.priority.value if hasattr(body.priority, "value") else str(body.priority)
+    if body.visibility_scope is not None:
+        patch["visibility_scope"] = body.visibility_scope.value if hasattr(body.visibility_scope, "value") else str(body.visibility_scope)
+    if body.due_date is not None:
+        patch["due_date"] = body.due_date.isoformat()
+    if body.sync_state is not None:
+        patch["sync_state"] = body.sync_state.value if hasattr(body.sync_state, "value") else str(body.sync_state)
+        if body.sync_state == NotionSyncState.SYNCED:
+            patch["last_synced_at"] = patch["updated_at"]
+            patch["sync_error"] = None
+
+    try:
+        updated = db.table("core_tasks").update(patch).eq("id", task_id).execute()
+        return _task_row_to_out(updated.data[0])
+    except Exception as exc:
+        logger.error("update_task: patch failed for %s: %s", task_id, exc)
+        raise HTTPException(503, detail="task update failed")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 5 — Meetings
+#
+# Provider-agnostic meeting pipeline.
+# Entities: core_meetings → core_meeting_transcripts → core_meeting_summaries
+# Tasks created from meetings use the canonical Task entity (Phase 2).
+#
+# Scopes:
+#   GET  — SCOPE_READ_ANY  (agency-only for now)
+#   POST — SCOPE_PLATFORM_WRITE
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _meeting_row_to_out(row: dict, summary: Optional[dict] = None) -> MeetingOut:
+    import json as _json
+    parts = row.get("participants") or []
+    if isinstance(parts, str):
+        try:
+            parts = _json.loads(parts)
+        except Exception:
+            parts = []
+    return MeetingOut(
+        id=str(row["id"]),
+        client_id=row["client_id"],
+        provider=MeetingProvider(row.get("provider", "manual")),
+        external_id=row.get("external_id"),
+        title=row["title"],
+        started_at=row.get("started_at"),
+        ended_at=row.get("ended_at"),
+        participants=[MeetingParticipant(**p) if isinstance(p, dict) else p for p in parts],
+        recording_url=row.get("recording_url"),
+        transcript_status=TranscriptStatus(row.get("transcript_status", "none")),
+        processing_status=MeetingProcessingStatus(row.get("processing_status", "pending")),
+        summary=_summary_row_to_out(summary) if summary else None,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _summary_row_to_out(row: dict) -> MeetingSummaryOut:
+    return MeetingSummaryOut(
+        id=str(row["id"]),
+        meeting_id=str(row["meeting_id"]),
+        summary=row.get("summary"),
+        decisions=row.get("decisions") or [],
+        open_questions=row.get("open_questions") or [],
+        commitments=row.get("commitments") or [],
+        follow_ups=row.get("follow_ups") or [],
+        tasks_created=row.get("tasks_created") or [],
+        processor=row.get("processor", "manual"),
+        created_at=row["created_at"],
+    )
+
+
+@router.get(
+    "/clients/{client_id}/meetings",
+    response_model=list[MeetingOut],
+    summary="List meetings for a client",
+)
+async def list_meetings(
+    client_id: str,
+    limit: int = Query(50, le=200),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[MeetingOut]:
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = meta["client_id"]
+    rows = (
+        _get_db().table("core_meetings").select("*")
+        .eq("client_id", slug)
+        .order("started_at", desc=True)
+        .limit(limit)
+        .execute().data or []
+    )
+    return [_meeting_row_to_out(r) for r in rows]
+
+
+@router.post(
+    "/clients/{client_id}/meetings",
+    response_model=MeetingOut,
+    status_code=201,
+    summary="Create a meeting record",
+)
+async def create_meeting(
+    client_id: str,
+    body: MeetingCreate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> MeetingOut:
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    slug = meta["client_id"]
+    import json as _json
+    now = datetime.now(timezone.utc).isoformat()
+    row = {
+        "client_id":         slug,
+        "provider":          body.provider.value if hasattr(body.provider, "value") else str(body.provider),
+        "external_id":       body.external_id,
+        "title":             body.title,
+        "started_at":        body.started_at.isoformat() if body.started_at else None,
+        "ended_at":          body.ended_at.isoformat() if body.ended_at else None,
+        "participants":      _json.dumps([p.model_dump(exclude_none=True) for p in (body.participants or [])]),
+        "recording_url":     body.recording_url,
+        "transcript_status": "none",
+        "processing_status": "pending",
+        "created_at":        now,
+        "updated_at":        now,
+    }
+    try:
+        res = _get_db().table("core_meetings").insert(row).execute()
+        created = res.data[0]
+    except Exception as exc:
+        logger.error("create_meeting: insert failed for %s: %s", slug, exc)
+        raise HTTPException(503, detail="meeting creation failed")
+    return _meeting_row_to_out(created)
+
+
+@router.get(
+    "/meetings/{meeting_id}",
+    response_model=MeetingOut,
+    summary="Get meeting detail with latest summary",
+)
+async def get_meeting(
+    meeting_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> MeetingOut:
+    db = _get_db()
+    res = db.table("core_meetings").select("*").eq("id", meeting_id).limit(1).execute()
+    rows = res.data or []
+    if not rows:
+        raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
+    row = rows[0]
+    sum_res = (
+        db.table("core_meeting_summaries").select("*")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    summary = (sum_res.data or [None])[0]
+    return _meeting_row_to_out(row, summary)
+
+
+@router.post(
+    "/meetings/{meeting_id}/transcripts",
+    status_code=201,
+    summary="Ingest raw transcript for a meeting",
+)
+async def ingest_transcript(
+    meeting_id: str,
+    body: TranscriptIngestCreate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> dict:
+    db = _get_db()
+    res = db.table("core_meetings").select("id").eq("id", meeting_id).limit(1).execute()
+    if not (res and res.data):
+        raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
+
+    word_count = len(body.raw_text.split())
+    now = datetime.now(timezone.utc).isoformat()
+    tr_row = {
+        "meeting_id": meeting_id,
+        "raw_text":   body.raw_text,
+        "language":   body.language,
+        "word_count": word_count,
+        "created_at": now,
+    }
+    try:
+        tr_res = db.table("core_meeting_transcripts").insert(tr_row).execute()
+        transcript_id = tr_res.data[0]["id"]
+    except Exception as exc:
+        logger.error("ingest_transcript: insert failed for meeting %s: %s", meeting_id, exc)
+        raise HTTPException(503, detail="transcript ingest failed")
+
+    db.table("core_meetings").update({
+        "transcript_status": "pending",
+        "updated_at":        now,
+    }).eq("id", meeting_id).execute()
+
+    return {
+        "transcript_id": str(transcript_id),
+        "meeting_id":    meeting_id,
+        "word_count":    word_count,
+        "status":        "pending",
+    }
+
+
+@router.post(
+    "/meetings/{meeting_id}/process",
+    response_model=MeetingSummaryOut,
+    status_code=201,
+    summary="Submit structured summary and decisions for a meeting",
+)
+async def process_meeting(
+    meeting_id: str,
+    body: MeetingProcessCreate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> MeetingSummaryOut:
+    """Accept structured processor output (summary, decisions, commitments).
+    If create_tasks=True, creates canonical Task entries from commitments."""
+    db = _get_db()
+    import json as _json
+
+    meet_res = db.table("core_meetings").select("id, client_id").eq("id", meeting_id).limit(1).execute()
+    if not (meet_res and meet_res.data):
+        raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
+    client_slug = meet_res.data[0]["client_id"]
+    now = datetime.now(timezone.utc).isoformat()
+
+    tasks_created_entries: list[dict] = []
+    if body.create_tasks and body.commitments:
+        for c in body.commitments:
+            commitment = c if isinstance(c, dict) else c.model_dump(exclude_none=True)
+            task_title = (commitment.get("what") or "Compromisso de reuniao")[:200]
+            task_row = {
+                "client_id":        client_slug,
+                "title":            task_title,
+                "owner":            commitment.get("who"),
+                "due_date":         commitment.get("due_date"),
+                "source_type":      "meeting",
+                "source_id":        meeting_id,
+                "status":           "OPEN",
+                "priority":         "MEDIUM",
+                "visibility_scope": "AGENCY_ONLY",
+                "sync_state":       "none",
+                "created_at":       now,
+                "updated_at":       now,
+            }
+            try:
+                t_res = db.table("core_tasks").insert(task_row).execute()
+                tid = t_res.data[0]["id"]
+                tasks_created_entries.append({"task_id": str(tid), "title": task_title})
+            except Exception as exc:
+                logger.warning("process_meeting: task creation failed: %s", exc)
+
+    sum_row = {
+        "meeting_id":     meeting_id,
+        "summary":        body.summary,
+        "decisions":      _json.dumps([d if isinstance(d, dict) else d.model_dump(exclude_none=True) for d in (body.decisions or [])]),
+        "open_questions": _json.dumps(body.open_questions or []),
+        "commitments":    _json.dumps([c if isinstance(c, dict) else c.model_dump(exclude_none=True) for c in (body.commitments or [])]),
+        "follow_ups":     _json.dumps([f if isinstance(f, dict) else f.model_dump(exclude_none=True) for f in (body.follow_ups or [])]),
+        "tasks_created":  _json.dumps(tasks_created_entries),
+        "processor":      body.processor or "manual",
+        "created_at":     now,
+    }
+    try:
+        sum_res = db.table("core_meeting_summaries").insert(sum_row).execute()
+        created_sum = sum_res.data[0]
+    except Exception as exc:
+        logger.error("process_meeting: summary insert failed for %s: %s", meeting_id, exc)
+        raise HTTPException(503, detail="meeting process failed")
+
+    db.table("core_meetings").update({
+        "processing_status": "done",
+        "updated_at":        now,
+    }).eq("id", meeting_id).execute()
+
+    return _summary_row_to_out(created_sum)

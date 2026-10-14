@@ -260,3 +260,61 @@ class ObsidianStatus(str, Enum):
     WRITTEN  = "WRITTEN"
     SKIPPED  = "SKIPPED"
     FAILED   = "FAILED"
+
+
+# ── Tasks (Phase 2) ───────────────────────────────────────────────────────────
+
+class TaskStatus(str, Enum):
+    OPEN        = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    DONE        = "DONE"
+    ARCHIVED    = "ARCHIVED"
+    BLOCKED     = "BLOCKED"
+
+
+class TaskPriority(str, Enum):
+    LOW    = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH   = "HIGH"
+    URGENT = "URGENT"
+
+
+class TaskSourceType(str, Enum):
+    RECOMMENDATION = "recommendation"
+    ACTION         = "action"
+    ALERT          = "alert"
+    MEETING        = "meeting"
+    MANUAL         = "manual"
+
+
+class NotionSyncState(str, Enum):
+    """Phase 3 prep — Notion adapter sync state. Core is canonical."""
+    NONE    = "none"
+    PENDING = "pending"
+    SYNCED  = "synced"
+    ERROR   = "error"
+
+
+# ── Meetings (Phase 5) ────────────────────────────────────────────────────────
+
+class MeetingProvider(str, Enum):
+    ZOOM         = "zoom"
+    GOOGLE_MEET  = "google_meet"
+    TEAMS        = "teams"
+    MANUAL       = "manual"
+    OTHER        = "other"
+
+
+class TranscriptStatus(str, Enum):
+    NONE        = "none"
+    PENDING     = "pending"
+    PROCESSING  = "processing"
+    READY       = "ready"
+    FAILED      = "failed"
+
+
+class MeetingProcessingStatus(str, Enum):
+    PENDING    = "pending"
+    PROCESSING = "processing"
+    DONE       = "done"
+    FAILED     = "failed"

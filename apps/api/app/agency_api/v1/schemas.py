@@ -53,8 +53,11 @@ from .enums import (
     LearningScope,
     Level,
     MatchStatus,
+    MeetingProcessingStatus,
+    MeetingProvider,
     MetricDomain,
     NarrativeStatus,
+    NotionSyncState,
     ObsidianStatus,
     OutcomeStatus,
     PromotionStatus,
@@ -63,6 +66,10 @@ from .enums import (
     ServiceStatus,
     SourceState,
     TargetStatus,
+    TaskPriority,
+    TaskSourceType,
+    TaskStatus,
+    TranscriptStatus,
     ValueStatus,
     VisibilityScope,
 )
@@ -1007,3 +1014,140 @@ class PacingContract(_Base):
     budget: list[PlatformBudgetPacing]
     targets: list[TargetPacingEntry]
     balance: list[PlatformBalanceSummary]
+
+
+# ── 17. Tasks (Phase 2 + Phase 3 Notion sync prep) ────────────────────────────
+
+class TaskCreate(_Base):
+    title:            str
+    description:      Optional[str]    = None
+    priority:         TaskPriority     = TaskPriority.MEDIUM
+    owner:            Optional[str]    = None
+    due_date:         Optional[date]   = None
+    source_type:      Optional[TaskSourceType] = None
+    source_id:        Optional[str]    = None
+    visibility_scope: VisibilityScope  = VisibilityScope.AGENCY_ONLY
+
+
+class TaskUpdate(_Base):
+    title:            Optional[str]          = None
+    description:      Optional[str]          = None
+    status:           Optional[TaskStatus]   = None
+    priority:         Optional[TaskPriority] = None
+    owner:            Optional[str]          = None
+    due_date:         Optional[date]         = None
+    visibility_scope: Optional[VisibilityScope] = None
+    # Notion sync fields (Phase 3 — set by sync adapter, not by humans)
+    external_task_id: Optional[str]          = None
+    external_system:  Optional[str]          = None
+    sync_state:       Optional[NotionSyncState] = None
+    sync_error:       Optional[str]          = None
+
+
+class TaskOut(_Base):
+    schema_version:   Literal["1.1"] = SCHEMA_VERSION
+    id:               str
+    client_id:        str
+    title:            str
+    description:      Optional[str]       = None
+    status:           TaskStatus
+    priority:         TaskPriority
+    owner:            Optional[str]       = None
+    due_date:         Optional[date]      = None
+    source_type:      Optional[str]       = None
+    source_id:        Optional[str]       = None
+    visibility_scope: VisibilityScope
+    # Notion sync
+    external_task_id: Optional[str]       = None
+    external_system:  Optional[str]       = None
+    sync_state:       NotionSyncState     = NotionSyncState.NONE
+    last_synced_at:   Optional[datetime]  = None
+    sync_error:       Optional[str]       = None
+    # Timestamps
+    created_at:       datetime
+    updated_at:       datetime
+    completed_at:     Optional[datetime]  = None
+
+
+# ── 18. Meetings (Phase 5) ────────────────────────────────────────────────────
+
+class MeetingParticipant(_Base):
+    name:  Optional[str] = None
+    email: Optional[str] = None
+    role:  Optional[str] = None   # 'host' | 'attendee' | 'notetaker'
+
+
+class MeetingCreate(_Base):
+    title:          str
+    provider:       MeetingProvider = MeetingProvider.MANUAL
+    external_id:    Optional[str]   = None
+    started_at:     Optional[datetime] = None
+    ended_at:       Optional[datetime] = None
+    participants:   list[MeetingParticipant] = Field(default_factory=list)
+    recording_url:  Optional[str]   = None
+
+
+class TranscriptIngestCreate(_Base):
+    """Raw transcript ingest. Processor output created separately via /meetings/{id}/process."""
+    raw_text:  str
+    language:  str = "pt"
+
+
+class MeetingDecision(_Base):
+    decision:   str
+    rationale:  Optional[str] = None
+    owner:      Optional[str] = None
+
+
+class MeetingCommitment(_Base):
+    who:       str
+    what:      str
+    due_date:  Optional[date] = None
+
+
+class MeetingFollowUp(_Base):
+    action:    str
+    owner:     Optional[str] = None
+    due_date:  Optional[date] = None
+
+
+class MeetingProcessCreate(_Base):
+    """Human or AI-produced structured summary. Processor is caller's identity."""
+    summary:         Optional[str]                    = None
+    decisions:       list[MeetingDecision]            = Field(default_factory=list)
+    open_questions:  list[str]                        = Field(default_factory=list)
+    commitments:     list[MeetingCommitment]          = Field(default_factory=list)
+    follow_ups:      list[MeetingFollowUp]            = Field(default_factory=list)
+    create_tasks:    bool                             = False  # if True: auto-create Tasks from commitments
+    processor:       str                              = "manual"
+
+
+class MeetingSummaryOut(_Base):
+    id:              str
+    meeting_id:      str
+    summary:         Optional[str]          = None
+    decisions:       list[dict]             = Field(default_factory=list)
+    open_questions:  list[str]              = Field(default_factory=list)
+    commitments:     list[dict]             = Field(default_factory=list)
+    follow_ups:      list[dict]             = Field(default_factory=list)
+    tasks_created:   list[dict]             = Field(default_factory=list)
+    processor:       str
+    created_at:      datetime
+
+
+class MeetingOut(_Base):
+    schema_version:     Literal["1.1"] = SCHEMA_VERSION
+    id:                 str
+    client_id:          str
+    provider:           MeetingProvider
+    external_id:        Optional[str]            = None
+    title:              str
+    started_at:         Optional[datetime]        = None
+    ended_at:           Optional[datetime]        = None
+    participants:       list[MeetingParticipant]  = Field(default_factory=list)
+    recording_url:      Optional[str]             = None
+    transcript_status:  TranscriptStatus
+    processing_status:  MeetingProcessingStatus
+    summary:            Optional[MeetingSummaryOut] = None
+    created_at:         datetime
+    updated_at:         datetime
