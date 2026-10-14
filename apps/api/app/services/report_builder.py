@@ -888,11 +888,22 @@ def _build_ai_analysis(client_id, store_name, cur, prev, mom_delta, goal_rev, go
         "top_produtos": [{"nome": p.get("name"), "receita": p.get("revenue_fmt")}
                          for p in (top_products or [])[:5]],
     }
-    try:
-        return ai_analyst.generate_monthly_analysis(client_id, report_metrics, store_name=store_name) or {}
-    except Exception as exc:
-        logger.warning("_build_ai_analysis failed: %s", exc)
-        return {}
+    import threading
+    result: dict = {}
+
+    def _call():
+        nonlocal result
+        try:
+            result = ai_analyst.generate_monthly_analysis(client_id, report_metrics, store_name=store_name) or {}
+        except Exception as exc:
+            logger.warning("_build_ai_analysis thread: %s", exc)
+
+    t = threading.Thread(target=_call, daemon=True)
+    t.start()
+    t.join(timeout=90)
+    if t.is_alive():
+        logger.warning("_build_ai_analysis: Anthropic call timed out after 90s — using deterministic fallback")
+    return result
 
 
 def _build_destaques(ai: dict, cur, prev, top_products, prev_month) -> list[dict]:
