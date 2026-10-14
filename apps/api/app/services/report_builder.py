@@ -1060,8 +1060,8 @@ def _build_plano(ai: dict, next_month_label, cur,
 
     plano = {
         "mes": next_month_label,
-        "meta_roas": _fmt_roas_plain(meta_roas) if meta_roas else "não configurado",
-        "meta_cpa":  _brl(meta_cpa) if meta_cpa else "—",
+        "meta_mer": _fmt_roas_plain(meta_roas) if meta_roas else "não configurado",
+        "meta_cpa": _brl(meta_cpa) if meta_cpa else "—",
         "acoes": acoes[:5],
     }
     fat_fmt    = _brl(meta_fat) if meta_fat else "não configurado"

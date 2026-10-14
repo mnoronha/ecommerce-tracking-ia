@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- v2 terminology: MER=global, ROAS=per-channel -->
+<!-- v3 plan-section: meta_mer key (was meta_roas), MER=global, ROAS=per-channel -->
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
@@ -492,7 +492,7 @@
   <div class="plano-metas">
     {{#if ecommerce}}
       <div class="plano-meta"><span class="pm-label">Meta faturamento</span><span class="pm-valor">{{plano_meta_faturamento_fmt}}</span></div>
-      <div class="plano-meta"><span class="pm-label">Meta MER</span><span class="pm-valor">{{plano.meta_roas}}x</span></div>
+      <div class="plano-meta"><span class="pm-label">Meta MER</span><span class="pm-valor">{{plano.meta_mer}}x</span></div>
       <div class="plano-meta"><span class="pm-label">Meta CPA</span><span class="pm-valor">{{plano.meta_cpa}}</span></div>
     {{/if}}
     <div class="plano-meta"><span class="pm-label">Budget total</span><span class="pm-valor">{{plano_budget_fmt}}</span></div>

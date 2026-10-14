@@ -362,17 +362,9 @@ async def trigger_monthly_report(
                 online_only=online_only,
             )
             html = report_renderer.render_monthly_email_html(ctx)
-            # Injetar seção TikTok + Pinterest antes do footer
-            html = html.replace(
-                "<!-- Footer -->",
-                _TIKTOK_PINTEREST_HTML + "\n      <!-- Footer -->",
-            )
             periodo = f"{_MONTH_PT[month]}/{year}"
             canal_tag = " · Somente E-commerce" if online_only else ""
-            subject = (
-                f"📈 Relatório {periodo} (1–{datetime.now(timezone.utc).day:02d}/{month:02d})"
-                f"{canal_tag} · {c.get('name') or pixel_id}"
-            )
+            subject = f"📈 Relatório Mensal · {periodo}{canal_tag} · {c.get('name') or pixel_id}"
             email_service.send_email(to=to, subject=subject, html_body=html)
             return {"sent_to": to, "held": False, "period": f"{year}-{month:02d}", "online_only": online_only}
 
