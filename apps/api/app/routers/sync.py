@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from ..config import settings
 from ..database import get_supabase
 from ..services import crypto, metrics_cache, reports, report_builder, report_renderer
+from ..services import notify as _notify
 from ..services import resend as email_service
 from ..services import shopify_sync, spend_sync, meta_attribution_sync
 
@@ -156,7 +157,6 @@ async def trigger_weekly_report(
     """Dispara o relatório semanal para um cliente imediatamente.
     Se `to` não for informado, usa os destinatários configurados no cadastro do cliente.
     week_start + period_end permitem fixar o período (útil para validação/replay)."""
-    from . import notify as _notify
     from datetime import date as _date, datetime as _dt, timezone as _tz
     sb = get_supabase()
     rows = (
