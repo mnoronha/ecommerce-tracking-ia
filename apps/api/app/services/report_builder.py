@@ -350,7 +350,8 @@ def _build_efficiency(cur: dict, retention: dict, ltv_stats: dict) -> dict:
 # ── Scorecard de saúde + Metas vs Realizado ───────────────────────────────────
 
 def _build_scorecard(cur: dict, mom_delta: Optional[float],
-                     goal_rev: float, goal_roas: float) -> tuple[dict, list[dict]]:
+                     goal_rev: float, goal_roas: float,
+                     canonical_budget: float = 0.0) -> tuple[dict, list[dict]]:
     rev   = cur["revenue"]
     roas  = cur["roas"]
     spend = cur["spend"]
@@ -374,12 +375,11 @@ def _build_scorecard(cur: dict, mom_delta: Optional[float],
     _meta("Faturamento", _brl(rev), _brl(goal_rev), pct_rev)
 
     pct_roas = round(roas / goal_roas * 100, 1) if (goal_roas > 0 and roas) else None
-    _meta("ROAS (MER)", _roas(roas), _roas(goal_roas), pct_roas)
+    _meta("MER", _roas(roas), _roas(goal_roas), pct_roas)
 
-    if goal_rev > 0 and goal_roas > 0:
-        budget = goal_rev / goal_roas
-        pct_spend = round(spend / budget * 100, 1) if budget > 0 else None
-        _meta("Investimento", _brl(spend), _brl(budget), pct_spend, lower_better=True)
+    if canonical_budget > 0:
+        pct_spend = round(spend / canonical_budget * 100, 1)
+        _meta("Investimento", _brl(spend), _brl(canonical_budget), pct_spend, lower_better=True)
 
     # Veredito do mês
     bad = warn = 0
@@ -636,7 +636,7 @@ def _build_kpis(cur: dict, prev: dict, yoy: dict) -> list[dict]:
 
     return [
         mk("var(--c-faturamento)", "Faturamento",  cur["revenue"],  prev["revenue"],  yoy["revenue"],  _brl),
-        mk("var(--c-roas)",        "ROAS Geral",   cur["roas"],     prev["roas"],     yoy["roas"],     _roas),
+        mk("var(--c-roas)",        "MER",           cur["roas"],     prev["roas"],     yoy["roas"],     _roas),
         mk("var(--c-pedidos)",     "Pedidos",       cur["orders"],   prev["orders"],   yoy["orders"],   _num),
         mk("var(--c-cpa)",         "CPA",           cur["cpa"],      prev["cpa"],      yoy["cpa"],      _brl, True),
         mk("var(--c-ctr)",         "Investimento",  cur["spend"],    prev["spend"],    yoy["spend"],    _brl),
@@ -651,7 +651,7 @@ def _build_yoy(cur: dict, yoy: dict) -> list[dict]:
         return {"label": label, "atual": fmt(c), "ant": fmt(y), "delta": d, "classe": cls}
     return [
         row("Faturamento", cur["revenue"], yoy["revenue"], _brl),
-        row("ROAS",        cur["roas"],    yoy["roas"],    _roas),
+        row("MER",         cur["roas"],    yoy["roas"],    _roas),
         row("Pedidos",     cur["orders"],  yoy["orders"],  _num),
         row("CPA",         cur["cpa"],     yoy["cpa"],     _brl, True),
     ]
@@ -1056,23 +1056,34 @@ def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
 
 
 def _load_core_metrics_monthly(sb, client_slug: str, period_start_iso: str, period_end_iso: str) -> dict:
-    """Read latest live snapshot for arbitrary period → {metric_key: value}. Empty on miss."""
+    """
+    Read best live snapshot for period → {metric_key: value}.
+    Prefers snapshots that contain platform spend data (meta_spend not null).
+    Falls back to most recent snapshot if none have platform data. Empty on miss.
+    """
     try:
         res = (
             sb.table("core_metric_snapshots")
-            .select("metrics")
+            .select("metrics, computed_at")
             .eq("client_id", client_slug)
             .eq("period_start", period_start_iso)
             .eq("period_end", period_end_iso)
             .eq("view", "live")
             .order("computed_at", desc=True)
-            .limit(1)
+            .limit(20)
             .execute()
         )
         if not (res and res.data):
             return {}
-        raw = res.data[0].get("metrics") or []
-        return {entry["metric_key"]: entry.get("value") for entry in raw if entry.get("metric_key") is not None}
+        fallback: dict = {}
+        for row in res.data:
+            raw = row.get("metrics") or []
+            d = {e["metric_key"]: e.get("value") for e in raw if e.get("metric_key") is not None}
+            if not fallback:
+                fallback = d  # most recent, used if nothing has platform data
+            if d.get("meta_spend") is not None:
+                return d  # prefer first snapshot with platform data
+        return fallback
     except Exception as exc:
         logger.warning("_load_core_metrics_monthly: failed for %s %s→%s: %s", client_slug, period_start_iso, period_end_iso, exc)
         return {}
@@ -1216,13 +1227,16 @@ def build_monthly_context(
         top_products = []
     logger.info("build_monthly_context: top_products count=%d", len(top_products))
 
-    # Channels (with deltas vs previous month)
+    # UTM-based channel rows (internal attribution section only; NEVER used for platform display)
     try:
-        channels = _build_channel_rows(spend_cur, rev_by_source, spend_prev, rev_by_source_prev)
+        _utm_channels = _build_channel_rows(spend_cur, rev_by_source, spend_prev, rev_by_source_prev)
     except Exception as exc:
         logger.warning("build_monthly_context: _build_channel_rows failed: %s", exc)
-        channels = []
-    logger.info("build_monthly_context: channels=%d", len(channels))
+        _utm_channels = []
+    logger.info("build_monthly_context: utm_channels=%d", len(_utm_channels))
+
+    # Platform channels — populated exclusively from canonical snapshot (never UTM)
+    channels: list[dict] = []
 
     # ── Canonical platform metrics from core snapshot (same as dashboard + weekly) ──
     _slug_m = client.get("client_id") or _full.get("client_id") or ""
@@ -1319,6 +1333,24 @@ def build_monthly_context(
         except Exception as exc:
             logger.warning("build_monthly_context: snapshot override failed for %s: %s", _slug_m, exc)
 
+    # If canonical snapshot yielded no platform data → DATA_UNAVAILABLE (NEVER fall back to UTM)
+    if not channels:
+        def _unavail_ch(ch_key: str) -> dict:
+            return {
+                **_CHANNEL_INFO[ch_key],
+                "status":           "DATA_UNAVAILABLE",
+                "investimento":     None, "investimento_fmt": "—",
+                "receita":          None, "receita_fmt":      "—",
+                "pedidos":          None,
+                "roas":             None, "roas_fmt":         "—",
+                "destaque":         "Dados de plataforma indisponíveis",
+                "cpa":              None, "cpa_fmt":          "—",
+                "cpm_fmt":          "—",
+                "metricas": [{"label": "Status", "valor": "Dados indisponíveis para este período", "delta": None, "classe": ""}],
+            }
+        channels = [_unavail_ch("meta_ads"), _unavail_ch("google_ads")]
+        logger.info("build_monthly_context: platform data unavailable — showing DATA_UNAVAILABLE rows for %s", _slug_m)
+
     # Top campaigns per channel (Meta + Google, live from APIs)
     try:
         campanhas, campanhas_por_canal = _build_campaigns(
@@ -1386,6 +1418,23 @@ def build_monthly_context(
     goal_pct  = round(cur["revenue"] / goal_rev * 100, 1) if goal_rev > 0 else None
     ltv_stats = _goal0.get("ltv_stats") or {}
 
+    # Canonical monthly budget from core_budget_config (sum across platforms for period)
+    _period_label = f"{year}-{month:02d}"
+    _slug_for_budget = client.get("client_id") or _full.get("client_id") or ""
+    canonical_budget = 0.0
+    if _slug_for_budget:
+        try:
+            _bget = (
+                sb.table("core_budget_config")
+                .select("monthly_budget")
+                .eq("client_id", _slug_for_budget)
+                .eq("period_label", _period_label)
+                .execute()
+            )
+            canonical_budget = sum(float(r["monthly_budget"] or 0) for r in (_bget.data or []))
+        except Exception as exc:
+            logger.warning("build_monthly_context: core_budget_config fetch failed: %s", exc)
+
     # Funil de conversão (RPC server-side)
     funil = _fetch_funnel(sb, client_id, start, end, cur["orders"])
     logger.info("build_monthly_context: funil stages=%d", len(funil))
@@ -1403,7 +1452,7 @@ def build_monthly_context(
         if prev["revenue"] > 0 else None
     )
     try:
-        scorecard, metas = _build_scorecard(cur, mom_delta_val, goal_rev, goal_roas)
+        scorecard, metas = _build_scorecard(cur, mom_delta_val, goal_rev, goal_roas, canonical_budget)
     except Exception as exc:
         logger.warning("build_monthly_context: _build_scorecard failed: %s", exc)
         scorecard, metas = {"status": "verde", "emoji": "📊", "label": "Resultado do Mês", "verdict": ""}, []

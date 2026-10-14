@@ -647,7 +647,7 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
         ef_block = (
             f'<table width="100%" cellpadding="0" cellspacing="0">'
             f'<tr>'
-            f'{_ef_card("MER (ROAS geral)", mer, "receita/invest total")}'
+            f'{_ef_card("MER", mer, "receita/invest total")}'
             f'{_ef_card("CAC", cac, "custo por novo cliente")}'
             f'{_ef_card("LTV estimado", ltv)}'
             f'{_ef_card("LTV:CAC", ratio, "meta: ≥ 3:1", ltv_col)}'
@@ -855,7 +855,7 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
       <!-- 7. Canais (atribuição server-side) -->
       {_section("Desempenho por Canal",
           canal_block,
-          note="Receita e ROAS por atribuição server-side (nossa tracking)."
+          note="Dados reportados diretamente pelas plataformas."
       ) if canal_block else ""}
 
       <!-- 8. Análise AI dos canais -->
@@ -874,7 +874,7 @@ def render_monthly_email_html(context: dict) -> str:  # noqa: C901
           f'<table width="100%" cellpadding="0" cellspacing="0">{atr_rows}</table>'
           + (f'<p style="margin:10px 0 0;font-size:12px;color:#475569">'
              f'Cobertura paga: {coverage_pct:.0f}% da receita atribuída a canais pagos (utm_source). '
-             f'ROAS Geral ({_h(context.get("roas_fmt"),"—")}) = MER total; ROAS por canal = '
+             f'MER ({_h(context.get("roas_fmt"),"—")}) = receita total ÷ investimento total; ROAS por canal = '
              f'receita atribuída ÷ investimento do canal.</p>' if atr_rows else "")
       ) if atr_rows else ""}
 
