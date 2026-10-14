@@ -1513,15 +1513,34 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
     # ── Build dark HTML email via new template system ────────────────────
     email_html: Optional[str] = None
     try:
+        import threading as _threading
         now_dt   = datetime.now(timezone.utc)
         rb_year  = now_dt.year if now_dt.month > 1 else now_dt.year - 1
         rb_month = now_dt.month - 1 if now_dt.month > 1 else 12
-        ctx = report_builder.build_monthly_context(
-            client_id=client_id,
-            client=client or {},
-            year=rb_year,
-            month=rb_month,
-        )
+        _ctx_holder: list = [None, None]  # [result, exc]
+
+        def _build_ctx_thread():
+            try:
+                _ctx_holder[0] = report_builder.build_monthly_context(
+                    client_id=client_id,
+                    client=client or {},
+                    year=rb_year,
+                    month=rb_month,
+                )
+            except Exception as _e:
+                _ctx_holder[1] = _e
+
+        _ct = _threading.Thread(target=_build_ctx_thread, daemon=True)
+        _ct.start()
+        _ct.join(timeout=180)
+        if _ct.is_alive():
+            logger.warning(
+                "monthly report: build_monthly_context timed out (180s) — falling back to legacy template"
+            )
+            raise TimeoutError("build_monthly_context exceeded 180s")
+        if _ctx_holder[1]:
+            raise _ctx_holder[1]
+        ctx = _ctx_holder[0]
         email_html = report_renderer.render_monthly_email_html(ctx)
         logger.info("monthly report: HTML email rendered (%d chars)", len(email_html))
     except Exception as exc:
