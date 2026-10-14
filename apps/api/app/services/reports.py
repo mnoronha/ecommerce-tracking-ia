@@ -1432,11 +1432,28 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
     False, hold the client send and notify the agency instead.
     Returns {"sent_to", "held", "reasons"}.
     """
-    from supabase import create_client as _create_sb
-    # Fresh client — same stale-connection guard as _send_weekly
-    sb  = _create_sb(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+    # Use shared singleton — health-check proves it's live; fresh client can
+    # hang on first-connection setup in Railway's threading environment.
+    sb  = get_supabase()
     now = datetime.now(timezone.utc)
-    m   = _build_monthly(sb, client_id, now)
+    try:
+        m = _build_monthly(sb, client_id, now)
+    except Exception as _be:
+        logger.warning("_send_monthly: _build_monthly failed (%s) — minimal fallback", _be)
+        _mfb_start, _, _ = _prev_month_window(now)
+        m = {
+            "month_label": f"{_MONTH_PT[_mfb_start.month]} {_mfb_start.year}",
+            "month_start": _mfb_start, "month_end": _mfb_start + timedelta(days=30),
+            "revenue": 0.0, "orders": 0, "aov": 0.0, "daily": [],
+            "prev_revenue": 0.0, "mom_delta": None,
+            "goal": 0.0, "pct_of_goal": None, "roas_goal": None, "roas": None,
+            "mer": None, "total_spend": 0.0, "channels": [], "conv": None,
+            "top_products": [],
+            "retention": {"returning": 0, "repeat_rate_pct": 0},
+            "alerts": [], "ai": None,
+            "highlights": [f"Relatório gerado com dados parciais."],
+        }
+        m["health"] = {"negative": False, "reasons": []}
 
     # ── Canonical platform metrics from core snapshot (same source as dashboard) ──
     _slug = (client or {}).get("client_id") or pixel_id
