@@ -397,40 +397,41 @@ async def trigger_pipeline_any_period(
     """Run core pipeline (Meta + Google + Business) for any period and write a snapshot."""
     import asyncio
     from datetime import date as _date
-    from ..core.pipeline import run_pipeline
+    try:
+        from ..core.pipeline import run_pipeline
+    except Exception as exc:
+        raise HTTPException(500, detail=f"pipeline import failed: {exc!r}")
 
-    sb = get_supabase()
-    rows = (
-        sb.table("clients")
-        .select("client_id")
-        .eq("pixel_id", pixel_id)
-        .eq("is_active", True)
-        .limit(1)
-        .execute()
-    ).data or []
-    if not rows:
-        # fallback: pixel_id may already be the canonical slug
+    try:
+        sb = get_supabase()
         rows = (
-            sb.table("clients")
-            .select("client_id")
-            .eq("client_id", pixel_id)
-            .eq("is_active", True)
-            .limit(1)
-            .execute()
+            sb.table("clients").select("client_id")
+            .eq("pixel_id", pixel_id).eq("is_active", True).limit(1).execute()
         ).data or []
-    if not rows:
-        raise HTTPException(404, detail=f"client not found: {pixel_id!r}")
-    slug = rows[0]["client_id"]
+        if not rows:
+            rows = (
+                sb.table("clients").select("client_id")
+                .eq("client_id", pixel_id).eq("is_active", True).limit(1).execute()
+            ).data or []
+        if not rows:
+            raise HTTPException(404, detail=f"client not found: {pixel_id!r}")
+        slug = rows[0]["client_id"]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail=f"client lookup failed: {exc!r}")
+
     try:
         ps = _date.fromisoformat(period_start)
         pe = _date.fromisoformat(period_end)
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc))
+
     try:
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, lambda: run_pipeline(slug, ps, pe))
     except Exception as exc:
-        raise HTTPException(500, detail=f"pipeline failed: {exc!r}")
+        raise HTTPException(500, detail=f"pipeline execution failed: {exc!r}")
     return result.summary() if hasattr(result, "summary") else {"error": "unexpected result type"}
 
 
