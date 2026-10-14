@@ -257,7 +257,7 @@ Regras:
 
 def _call_claude(metrics: dict, store_name: str = "loja") -> list[dict]:
     """Chama Claude com as métricas e retorna lista de insights parseados."""
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
 
     prompt = f"""Dados da loja {store_name}:
 
@@ -380,7 +380,7 @@ def generate_daily_insights(client_uuid: str) -> dict:
     store_name = _get_client_name(client_uuid)
     metrics = _collect_metrics(client_uuid)
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
     prompt = f"""Dados diários da loja {store_name}:
 
 {json.dumps(metrics, ensure_ascii=False, indent=2)}
@@ -517,7 +517,7 @@ def generate_monthly_analysis(
     store_name = store_name or _get_client_name(client_uuid)
     metrics = report_metrics if report_metrics is not None else _collect_metrics(client_uuid)
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
     prompt = (
         f"Números reais do mês para a loja {store_name}:\n\n"
         f"{json.dumps(metrics, ensure_ascii=False, indent=2)}\n\n"
@@ -829,7 +829,7 @@ Escreva a análise semanal seguindo EXATAMENTE o formato JSON do sistema.
 Use os dados acima literalmente. Cite campanhas e canais pelo nome."""
 
     try:
-        ai_client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        ai_client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
         message = ai_client.messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=4096,
