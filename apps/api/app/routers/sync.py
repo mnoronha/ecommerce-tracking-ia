@@ -428,7 +428,7 @@ async def trigger_pipeline_any_period(
         raise HTTPException(422, detail=str(exc))
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, lambda: run_pipeline(slug, ps, pe))
-    return result.to_dict() if hasattr(result, "to_dict") else result
+    return result.summary() if hasattr(result, "summary") else {"error": "unexpected result type"}
 
 
 @router.get("/shopify/{pixel_id}/note-attributes", summary="Inspect raw note_attributes from Shopify (GTM tag validation)")
