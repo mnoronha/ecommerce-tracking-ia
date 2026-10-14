@@ -892,7 +892,10 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
     # ── Canonical platform metrics from core snapshot (same source as dashboard) ──
     _core: dict = {}
     try:
-        _core = _load_core_metrics(sb, _slug, m["week_start"].date(), now.date())
+        # Pipeline runs at 07:15 UTC and creates snapshots with period_end = yesterday.
+        # Using now.date() as period_end never matches; use yesterday instead.
+        _snap_end = (now - timedelta(days=1)).date()
+        _core = _load_core_metrics(sb, _slug, m["week_start"].date(), _snap_end)
         if _core:
             # Business truth — overrides UTM-based orders-table calculation
             _biz_rev_core = float(_core["revenue_business"]) if _core.get("revenue_business") is not None else None
@@ -946,7 +949,12 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
             _total_attr_ord = int(round(_meta_ord + _goog_ord))
 
             m["spend"]       = _total_spend
-            m["channels"]    = _new_channels if _new_channels else m["channels"]
+            if _new_channels:
+                m["channels"] = _new_channels
+            else:
+                # Snapshot exists but has zero platform spend/revenue.
+                # Block UTM-based channels — never use UTM for main platform block.
+                m["channels"] = []
             m["roas"]        = round(_total_attr_rev / _total_spend, 2) if _total_spend > 0 else None
             m["cpa"]         = round(_total_spend / _total_attr_ord, 2) if _total_attr_ord > 0 else None
             m["paid_orders"] = _total_attr_ord

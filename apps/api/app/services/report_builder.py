@@ -1005,21 +1005,22 @@ def _build_deterministic_insights(
     return cards
 
 
-def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
+def _build_plano(ai: dict, next_month_label, cur,
+                 next_goal_rev, next_goal_roas, next_canonical_budget,
                  channels, top_products, retention, campanhas=None) -> tuple[Optional[dict], str, str]:
-    """Next-month plan from the AI, with a deterministic fallback built from data."""
+    """Next-month plan using canonical Target Truth + Budget Config only.
+    Never derives meta_fat / budget from current performance metrics."""
     ai_plano = ai.get("plano") or {}
 
     def _fmt_roas_plain(v):
         try: return f"{float(v):.1f}".replace(".", ",")
         except (TypeError, ValueError): return "—"
 
-    meta_fat   = ai_plano.get("meta_faturamento") or goal_rev or (round(cur["revenue"] * 1.1, 2) if cur["revenue"] else 0)
-    meta_roas  = ai_plano.get("meta_mer") or ai_plano.get("meta_roas") or goal_roas or cur["roas"] or 0
+    # Canonical next-month targets — NO fallback to cur["revenue"] * 1.1 or cur["roas"]
+    meta_fat   = next_goal_rev
+    meta_roas  = next_goal_roas
     meta_cpa   = ai_plano.get("meta_cpa") or cur["cpa"] or 0
-    budget     = ai_plano.get("budget_total")
-    if not budget:
-        budget = round(float(meta_fat) / float(meta_roas), 2) if (meta_fat and meta_roas) else cur["spend"]
+    budget     = next_canonical_budget
 
     acoes = list(ai_plano.get("acoes") or [])
     if not acoes:
@@ -1059,11 +1060,13 @@ def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
 
     plano = {
         "mes": next_month_label,
-        "meta_roas": _fmt_roas_plain(meta_roas),
+        "meta_roas": _fmt_roas_plain(meta_roas) if meta_roas else "não configurado",
         "meta_cpa":  _brl(meta_cpa) if meta_cpa else "—",
         "acoes": acoes[:5],
     }
-    return plano, _brl(meta_fat), _brl(budget)
+    fat_fmt    = _brl(meta_fat) if meta_fat else "não configurado"
+    budget_fmt = _brl(budget)   if budget   else "não configurado"
+    return plano, fat_fmt, budget_fmt
 
 
 def _load_core_metrics_monthly(sb, client_slug: str, period_start_iso: str, period_end_iso: str) -> dict:
@@ -1548,10 +1551,56 @@ def build_monthly_context(
     except Exception as exc:
         logger.warning("build_monthly_context: _build_deterministic_insights failed: %s", exc)
 
-    # Plano do próximo mês: AI plan, with deterministic fallback
+    # ── Next-month canonical truth for plan section ──────────────────────────────
+    # Uses core_client_truth (valid_from < first day of month-after-next) and
+    # core_budget_config for next_period_label. NEVER derives from cur performance.
+    _nm_next_year  = next_month_year + (1 if next_month == 12 else 0)
+    _nm_next_month = 1 if next_month == 12 else next_month + 1
+    _nm_end_iso    = f"{_nm_next_year}-{_nm_next_month:02d}-01"
+    _next_period_label = f"{next_month_year}-{next_month:02d}"
+    next_goal_rev  = None
+    next_goal_roas = None
+    next_canonical_budget = None
+    if _slug_for_targets:
+        try:
+            _next_ctt = (
+                sb.table("core_client_truth")
+                .select("target_truth")
+                .eq("client_id", _slug_for_targets)
+                .lt("valid_from", _nm_end_iso)
+                .order("valid_from", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if _next_ctt.data:
+                _next_tt    = (_next_ctt.data[0].get("target_truth") or {})
+                _next_rev_t = (_next_tt.get("revenue_business") or {}).get("target")
+                _next_mer_t = (_next_tt.get("mer") or {}).get("target")
+                if _next_rev_t is not None:
+                    next_goal_rev  = float(_next_rev_t)
+                    next_goal_roas = float(_next_mer_t) if _next_mer_t is not None else None
+        except Exception as exc:
+            logger.warning("build_monthly_context: next-month core_client_truth fetch failed: %s", exc)
+    if _slug_for_budget:
+        try:
+            _next_bget = (
+                sb.table("core_budget_config")
+                .select("monthly_budget")
+                .eq("client_id", _slug_for_budget)
+                .eq("period_label", _next_period_label)
+                .execute()
+            )
+            _next_bgt = sum(float(r["monthly_budget"] or 0) for r in (_next_bget.data or []))
+            if _next_bgt > 0:
+                next_canonical_budget = _next_bgt
+        except Exception as exc:
+            logger.warning("build_monthly_context: next-month core_budget_config fetch failed: %s", exc)
+
+    # Plano do próximo mês: AI actions + canonical next-month targets
     try:
         plano, plano_meta_fat_fmt, plano_budget_fmt = _build_plano(
-            ai, next_month_label, cur, goal_rev, goal_roas, channels, top_products, retention,
+            ai, next_month_label, cur, next_goal_rev, next_goal_roas, next_canonical_budget,
+            channels, top_products, retention,
             campanhas=campanhas,
         )
     except Exception as exc:
