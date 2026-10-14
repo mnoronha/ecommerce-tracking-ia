@@ -426,8 +426,11 @@ async def trigger_pipeline_any_period(
         pe = _date.fromisoformat(period_end)
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc))
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, lambda: run_pipeline(slug, ps, pe))
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, lambda: run_pipeline(slug, ps, pe))
+    except Exception as exc:
+        raise HTTPException(500, detail=f"pipeline failed: {exc!r}")
     return result.summary() if hasattr(result, "summary") else {"error": "unexpected result type"}
 
 
