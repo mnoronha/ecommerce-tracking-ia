@@ -1473,12 +1473,18 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
             if _gs > 0 or _gv > 0:
                 _new_chs.append({"channel": "google_ads",  "label": "Google Ads",  "spend": _gs, "revenue": _gv, "orders": int(round(_go)), "roas": _rg, "cpa": _cpg, "revenue_source": "google_ads_api"})
 
-            m["total_spend"] = _ts
-            m["channels"]    = _new_chs if _new_chs else m["channels"]
-            m["roas"]        = (float(_core_m["mer"]) if _core_m.get("mer") is not None
-                                else (round(_brev / _ts, 2) if (_brev and _ts > 0) else None))
-            m["mer"]         = m["roas"]  # MER = business rev / total spend
-            logger.info("_send_monthly: snapshot loaded for %s (%d metrics)", _slug, len(_core_m))
+            # Only override spend/channels when platform data present
+            _has_platform_m = _ts > 0 or _ms > 0 or _gs > 0 or _mv > 0 or _gv > 0
+            if _has_platform_m:
+                m["total_spend"] = _ts
+                m["channels"]    = _new_chs if _new_chs else m["channels"]
+                m["roas"]        = (float(_core_m["mer"]) if _core_m.get("mer") is not None
+                                    else (round(_brev / _ts, 2) if (_brev and _ts > 0) else None))
+                m["mer"]         = m["roas"]
+            logger.info(
+                "_send_monthly: snapshot loaded for %s (%d metrics, platform=%s)",
+                _slug, len(_core_m), _has_platform_m,
+            )
     except Exception as exc:
         logger.warning("_send_monthly: snapshot override failed for %s: %s", pixel_id, exc)
 

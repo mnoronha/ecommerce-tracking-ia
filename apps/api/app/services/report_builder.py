@@ -1303,13 +1303,19 @@ def build_monthly_context(
                             _smtr("CTR",               "—"),
                         ],
                     })
-                if _snap_chs:
-                    channels = _snap_chs
-                cur["spend"] = _ts
-                cur["roas"]  = (float(_core_m["mer"]) if _core_m.get("mer") is not None
-                                else (round(_brev / _ts, 2) if (_brev and _ts > 0) else None))
-                cur["cpa"]   = (round(_ts / cur["orders"], 2) if cur.get("orders") else None)
-                logger.info("build_monthly_context: canonical snapshot loaded for %s (%d metrics)", _slug_m, len(_core_m))
+                # Only override spend/channels/ROAS when platform data is present
+                _has_platform = _ts > 0 or _ms > 0 or _gs > 0 or _mv > 0 or _gv > 0
+                if _has_platform:
+                    if _snap_chs:
+                        channels = _snap_chs
+                    cur["spend"] = _ts
+                    cur["roas"]  = (float(_core_m["mer"]) if _core_m.get("mer") is not None
+                                    else (round(_brev / _ts, 2) if (_brev and _ts > 0) else None))
+                    cur["cpa"]   = (round(_ts / cur["orders"], 2) if cur.get("orders") else None)
+                logger.info(
+                    "build_monthly_context: canonical snapshot loaded for %s (%d metrics, platform=%s)",
+                    _slug_m, len(_core_m), _has_platform,
+                )
         except Exception as exc:
             logger.warning("build_monthly_context: snapshot override failed for %s: %s", _slug_m, exc)
 
