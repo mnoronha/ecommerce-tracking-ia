@@ -574,9 +574,10 @@ def _budget_for_month(sb, client_id: str, month_start: date,
     return 0.0, False
 
 
-def _build_weekly(sb, client_id: str, now: datetime) -> dict:
-    week_start      = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
-    prev_week_start = (now - timedelta(days=14)).replace(hour=0, minute=0, second=0, microsecond=0)
+def _build_weekly(sb, client_id: str, now: datetime,
+                  week_start_override: Optional[datetime] = None) -> dict:
+    week_start      = week_start_override if week_start_override is not None else (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    prev_week_start = (week_start - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
     month_start     = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     week = _money(sb, client_id, week_start.isoformat(), now.isoformat())
@@ -785,12 +786,61 @@ def _build_weekly_uau_context(
 
 
 def _send_weekly(client_id: str, pixel_id: str, client_name: str,
-                 recipients: list[str] | str, client: Optional[dict] = None) -> None:
+                 recipients: list[str] | str, client: Optional[dict] = None,
+                 week_start_override: Optional[datetime] = None,
+                 now_override: Optional[datetime] = None) -> None:
     from . import ai_analyst
     sb        = get_supabase()
-    now       = datetime.now(timezone.utc)
-    m         = _build_weekly(sb, client_id, now)
+    now       = now_override or datetime.now(timezone.utc)
+    m         = _build_weekly(sb, client_id, now, week_start_override=week_start_override)
     logo      = (client or {}).get("logo_url") or _client_logo(sb, client_id)
+
+    # ── Override targets with Core canonical truth ────────────────────────────────
+    _slug = (client or {}).get("client_id") or pixel_id
+    try:
+        _ct = (
+            sb.table("core_client_truth")
+            .select("target_truth")
+            .eq("client_id", _slug)
+            .order("valid_from", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if _ct.data:
+            _tt   = (_ct.data[0].get("target_truth") or {})
+            _rev  = (_tt.get("revenue_business") or {}).get("target")
+            _mert = (_tt.get("mer") or {}).get("target")
+            if _rev:
+                m["goal"]       = float(_rev)
+                m["mer_target"] = float(_mert) if _mert else None
+                m["roas_goal"]  = None  # MER replaces ROAS goal; no ROAS target
+                m["pct_of_goal"] = round(m["mtd"]["revenue"] / m["goal"] * 100, 1) if m["goal"] > 0 else None
+    except Exception as exc:
+        logger.warning("_send_weekly: core_client_truth load failed %s: %s", pixel_id, exc)
+
+    # ── Override budget with Core budget config ───────────────────────────────────
+    try:
+        _period_label = now.strftime("%Y-%m")
+        _bcfg = (
+            sb.table("core_budget_config")
+            .select("platform, monthly_budget")
+            .eq("client_id", _slug)
+            .eq("period_label", _period_label)
+            .execute()
+        )
+        if _bcfg and _bcfg.data:
+            _core_bgt = sum(float(r.get("monthly_budget") or 0) for r in _bcfg.data)
+            if _core_bgt > 0:
+                m["budget"]         = _core_bgt
+                m["budget_implied"] = False
+                m["pct_of_budget"]  = round(m["mtd_spend"] / _core_bgt * 100, 1) if _core_bgt > 0 else None
+    except Exception as exc:
+        logger.warning("_send_weekly: core_budget_config load failed %s: %s", pixel_id, exc)
+
+    # ── MER = business revenue / total paid spend ────────────────────────────────
+    _biz_rev = (m.get("week") or {}).get("revenue") or 0
+    _spend   = m.get("spend") or 0
+    m["mer"] = round(_biz_rev / _spend, 2) if _spend > 0 else None
 
     # ── Gerar conteúdo UAU via Claude ───────────────────────────────────────────
     uau: dict = {}

@@ -150,14 +150,18 @@ async def trigger_metrics_cache_client(pixel_id: str):
 async def trigger_weekly_report(
     pixel_id: str,
     to: Optional[str] = Query(None, description="Override recipient email. Omit to use client's configured list."),
+    week_start: Optional[str] = Query(None, description="ISO date for week start (YYYY-MM-DD). Defaults to now-7d."),
+    period_end: Optional[str] = Query(None, description="ISO date for period end (YYYY-MM-DD). Defaults to now."),
 ):
     """Dispara o relatório semanal para um cliente imediatamente.
-    Se `to` não for informado, usa os destinatários configurados no cadastro do cliente."""
+    Se `to` não for informado, usa os destinatários configurados no cadastro do cliente.
+    week_start + period_end permitem fixar o período (útil para validação/replay)."""
     from . import notify as _notify
+    from datetime import date as _date, datetime as _dt, timezone as _tz
     sb = get_supabase()
     rows = (
         sb.table("clients")
-        .select("id, pixel_id, name, logo_url, alert_email, alert_emails, whatsapp_group_jid, client_type")
+        .select("id, client_id, pixel_id, name, logo_url, alert_email, alert_emails, whatsapp_group_jid, client_type")
         .eq("pixel_id", pixel_id)
         .eq("is_active", True)
         .limit(1)
@@ -171,13 +175,38 @@ async def trigger_weekly_report(
     if not recipients:
         raise HTTPException(status_code=400, detail="Nenhum email configurado para este cliente")
 
+    # Optional period override for replay/validation
+    _week_start_dt = None
+    _now_dt = None
+    if week_start:
+        try:
+            d = _date.fromisoformat(week_start)
+            _week_start_dt = _dt(d.year, d.month, d.day, 0, 0, 0, tzinfo=_tz.utc)
+        except ValueError:
+            raise HTTPException(422, detail=f"invalid week_start: {week_start!r}")
+    if period_end:
+        try:
+            d = _date.fromisoformat(period_end)
+            _now_dt = _dt(d.year, d.month, d.day, 23, 59, 59, tzinfo=_tz.utc)
+        except ValueError:
+            raise HTTPException(422, detail=f"invalid period_end: {period_end!r}")
+
     import asyncio
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: reports._send_weekly(c["id"], c["pixel_id"], c.get("name") or pixel_id, recipients, c),
+        lambda: reports._send_weekly(
+            c["id"], c["pixel_id"], c.get("name") or pixel_id, recipients, c,
+            week_start_override=_week_start_dt,
+            now_override=_now_dt,
+        ),
     )
-    return {"sent_to": recipients, "client": c.get("name"), "type": "weekly"}
+    return {
+        "sent_to": recipients,
+        "client": c.get("name"),
+        "type": "weekly",
+        "period": f"{week_start or 'auto'} → {period_end or 'now'}",
+    }
 
 
 _TIKTOK_PINTEREST_HTML = """
