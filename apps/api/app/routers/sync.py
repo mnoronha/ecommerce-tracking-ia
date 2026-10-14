@@ -8,6 +8,7 @@ POST /sync/spend/{pixel_id}/backfill             — backfill histórico Meta+Go
 POST /sync/spend/{pixel_id}/daily-backfill       — backfill diário ad_spend (por dia, qualquer período)
 POST /sync/spend/{pixel_id}/debug               — testa TikTok+Pinterest e retorna resposta bruta
 POST /sync/meta-attributions/{pixel_id}/backfill — re-sincroniza meta_ad_attributions desde uma data
+POST /sync/pipeline/{pixel_id}                   — roda pipeline core para período arbitrário (snapshot)
 """
 
 from datetime import datetime, timezone
@@ -209,6 +210,38 @@ async def trigger_weekly_report(
     }
 
 
+@router.post("/pipeline/{pixel_id}", summary="Trigger core pipeline for arbitrary period")
+async def trigger_pipeline_any_period(
+    pixel_id: str,
+    period_start: str = Query(..., description="ISO date YYYY-MM-DD"),
+    period_end:   str = Query(..., description="ISO date YYYY-MM-DD"),
+):
+    """Run core pipeline (Meta + Google + Business) for any period and write a snapshot."""
+    from datetime import date as _date
+    from ..core.pipeline import run_pipeline
+    import asyncio
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select("client_id")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        raise HTTPException(404, detail="Client not found")
+    slug = rows[0]["client_id"]
+    try:
+        ps = _date.fromisoformat(period_start)
+        pe = _date.fromisoformat(period_end)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc))
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, lambda: run_pipeline(slug, ps, pe))
+    return result.to_dict()
+
+
 _TIKTOK_PINTEREST_HTML = """
   <!-- Recomendação TikTok + Pinterest -->
   <tr>
@@ -353,6 +386,49 @@ async def trigger_monthly_report(
         ),
     )
     return {"client": c.get("name"), "type": "monthly", **result}
+
+
+@router.post("/pipeline/{pixel_id}", summary="Trigger core pipeline for arbitrary period")
+async def trigger_pipeline_any_period(
+    pixel_id: str,
+    period_start: str = Query(..., description="ISO date YYYY-MM-DD"),
+    period_end:   str = Query(..., description="ISO date YYYY-MM-DD"),
+):
+    """Run core pipeline (Meta + Google + Business) for any period and write a snapshot."""
+    import asyncio
+    from datetime import date as _date
+    from ..core.pipeline import run_pipeline
+
+    sb = get_supabase()
+    rows = (
+        sb.table("clients")
+        .select("client_id")
+        .eq("pixel_id", pixel_id)
+        .eq("is_active", True)
+        .limit(1)
+        .execute()
+    ).data or []
+    if not rows:
+        # fallback: pixel_id may already be the canonical slug
+        rows = (
+            sb.table("clients")
+            .select("client_id")
+            .eq("client_id", pixel_id)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        ).data or []
+    if not rows:
+        raise HTTPException(404, detail=f"client not found: {pixel_id!r}")
+    slug = rows[0]["client_id"]
+    try:
+        ps = _date.fromisoformat(period_start)
+        pe = _date.fromisoformat(period_end)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc))
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, lambda: run_pipeline(slug, ps, pe))
+    return result.to_dict() if hasattr(result, "to_dict") else result
 
 
 @router.get("/shopify/{pixel_id}/note-attributes", summary="Inspect raw note_attributes from Shopify (GTM tag validation)")

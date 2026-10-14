@@ -1432,9 +1432,58 @@ def _send_monthly(client_id: str, pixel_id: str, client_name: str,
     False, hold the client send and notify the agency instead.
     Returns {"sent_to", "held", "reasons"}.
     """
-    sb  = get_supabase()
+    from supabase import create_client as _create_sb
+    # Fresh client — same stale-connection guard as _send_weekly
+    sb  = _create_sb(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
     now = datetime.now(timezone.utc)
     m   = _build_monthly(sb, client_id, now)
+
+    # ── Canonical platform metrics from core snapshot (same source as dashboard) ──
+    _slug = (client or {}).get("client_id") or pixel_id
+    _mstart, _mend_excl, _ = _prev_month_window(now)
+    _mend_incl = (_mend_excl - timedelta(days=1)).date()
+    _core_m: dict = {}
+    try:
+        _core_m = _load_core_metrics(sb, _slug, _mstart.date(), _mend_incl)
+        if _core_m:
+            # Business truth
+            _brev = float(_core_m["revenue_business"]) if _core_m.get("revenue_business") is not None else None
+            _bord = int(_core_m["orders_count"])        if _core_m.get("orders_count")     is not None else None
+            if _brev is not None:
+                m["revenue"] = _brev
+                m["orders"]  = _bord if _bord is not None else m["orders"]
+                m["aov"]     = round(_brev / _bord, 2) if _bord else m["aov"]
+
+            # Platform spend/attribution
+            _ms  = float(_core_m.get("meta_spend") or 0)
+            _mv  = float(_core_m.get("meta_conversion_value") or 0)
+            _mo  = float(_core_m.get("meta_conversions") or 0)
+            _gs  = float(_core_m.get("google_spend") or 0)
+            _gv  = float(_core_m.get("google_purchase_conversion_value") or _core_m.get("google_conversion_value") or 0)
+            _go  = float(_core_m.get("google_purchase_conversions") or _core_m.get("google_conversions") or 0)
+            _ts  = float(_core_m.get("total_spend") or (_ms + _gs))
+            _rm  = float(_core_m["roas_meta"])          if _core_m.get("roas_meta")          is not None else (round(_mv / _ms, 2)   if _ms > 0 else None)
+            _rg  = float(_core_m["google_roas_ecommerce"]) if _core_m.get("google_roas_ecommerce") is not None else (round(_gv / _gs, 2)  if _gs > 0 else None)
+            _cpm = float(_core_m["cpa_meta"])           if _core_m.get("cpa_meta")           is not None else (round(_ms / _mo, 2)   if _mo > 0 else None)
+            _cpg = float(_core_m["google_cpa_ecommerce"])  if _core_m.get("google_cpa_ecommerce")  is not None else (round(_gs / _go, 2)  if _go > 0 else None)
+
+            _new_chs = []
+            if _ms > 0 or _mv > 0:
+                _new_chs.append({"channel": "meta_ads",    "label": "Meta Ads",    "spend": _ms, "revenue": _mv, "orders": int(round(_mo)), "roas": _rm, "cpa": _cpm, "revenue_source": "meta_attributions"})
+            if _gs > 0 or _gv > 0:
+                _new_chs.append({"channel": "google_ads",  "label": "Google Ads",  "spend": _gs, "revenue": _gv, "orders": int(round(_go)), "roas": _rg, "cpa": _cpg, "revenue_source": "google_ads_api"})
+
+            m["total_spend"] = _ts
+            m["channels"]    = _new_chs if _new_chs else m["channels"]
+            m["roas"]        = (float(_core_m["mer"]) if _core_m.get("mer") is not None
+                                else (round(_brev / _ts, 2) if (_brev and _ts > 0) else None))
+            m["mer"]         = m["roas"]  # MER = business rev / total spend
+            logger.info("_send_monthly: snapshot loaded for %s (%d metrics)", _slug, len(_core_m))
+    except Exception as exc:
+        logger.warning("_send_monthly: snapshot override failed for %s: %s", pixel_id, exc)
+
+    # Refresh health check with canonical numbers
+    m["health"] = _monthly_health(m)
     _mstart, _mend, _ = _prev_month_window(now)
     _pstart, _pend = _mstart.date(), (_mend - timedelta(days=1)).date()
     to_list = [recipients] if isinstance(recipients, str) else recipients

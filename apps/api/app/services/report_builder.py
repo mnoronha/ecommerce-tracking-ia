@@ -1055,6 +1055,29 @@ def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
     return plano, _brl(meta_fat), _brl(budget)
 
 
+def _load_core_metrics_monthly(sb, client_slug: str, period_start_iso: str, period_end_iso: str) -> dict:
+    """Read latest live snapshot for arbitrary period → {metric_key: value}. Empty on miss."""
+    try:
+        res = (
+            sb.table("core_metric_snapshots")
+            .select("metrics")
+            .eq("client_id", client_slug)
+            .eq("period_start", period_start_iso)
+            .eq("period_end", period_end_iso)
+            .eq("view", "live")
+            .order("computed_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not (res and res.data):
+            return {}
+        raw = res.data[0].get("metrics") or []
+        return {entry["metric_key"]: entry.get("value") for entry in raw if entry.get("metric_key") is not None}
+    except Exception as exc:
+        logger.warning("_load_core_metrics_monthly: failed for %s %s→%s: %s", client_slug, period_start_iso, period_end_iso, exc)
+        return {}
+
+
 # ── Main builder ──────────────────────────────────────────────────────────────
 
 def build_monthly_context(
@@ -1200,6 +1223,95 @@ def build_monthly_context(
         logger.warning("build_monthly_context: _build_channel_rows failed: %s", exc)
         channels = []
     logger.info("build_monthly_context: channels=%d", len(channels))
+
+    # ── Canonical platform metrics from core snapshot (same as dashboard + weekly) ──
+    _slug_m = client.get("client_id") or _full.get("client_id") or ""
+    _core_m: dict = {}
+    if _slug_m:
+        try:
+            _core_m = _load_core_metrics_monthly(sb, _slug_m, start_date, end_date_iso)
+            if _core_m:
+                _brev = float(_core_m["revenue_business"]) if _core_m.get("revenue_business") is not None else None
+                _bord = int(_core_m["orders_count"])        if _core_m.get("orders_count")     is not None else None
+                if _brev is not None:
+                    cur["revenue"] = _brev
+                    cur["orders"]  = _bord if _bord is not None else cur["orders"]
+                    cur["aov"]     = round(_brev / _bord, 2) if _bord else cur["aov"]
+                _ms = float(_core_m.get("meta_spend") or 0)
+                _mv = float(_core_m.get("meta_conversion_value") or 0)
+                _mo = float(_core_m.get("meta_conversions") or 0)
+                _gs = float(_core_m.get("google_spend") or 0)
+                _gv = float(_core_m.get("google_purchase_conversion_value") or _core_m.get("google_conversion_value") or 0)
+                _go = float(_core_m.get("google_purchase_conversions") or _core_m.get("google_conversions") or 0)
+                _ts = float(_core_m.get("total_spend") or (_ms + _gs))
+                _rm  = (float(_core_m["roas_meta"]) if _core_m.get("roas_meta") is not None
+                        else (round(_mv / _ms, 2) if _ms > 0 else None))
+                _rg  = (float(_core_m["google_roas_ecommerce"]) if _core_m.get("google_roas_ecommerce") is not None
+                        else (round(_gv / _gs, 2) if _gs > 0 else None))
+                _cpm = (float(_core_m["cpa_meta"]) if _core_m.get("cpa_meta") is not None
+                        else (round(_ms / _mo, 2) if _mo > 0 else None))
+                _cpg = (float(_core_m["google_cpa_ecommerce"]) if _core_m.get("google_cpa_ecommerce") is not None
+                        else (round(_gs / _go, 2) if _go > 0 else None))
+
+                def _smtr(label, valor):
+                    return {"label": label, "valor": valor, "delta": None, "classe": ""}
+
+                _snap_chs = []
+                if _ms > 0 or _mv > 0:
+                    _snap_chs.append({
+                        **_CHANNEL_INFO["meta_ads"],
+                        "investimento":     _ms,
+                        "investimento_fmt": _brl(_ms),
+                        "receita":          _mv,
+                        "receita_fmt":      _brl(_mv),
+                        "pedidos":          int(round(_mo)),
+                        "roas":             _rm,
+                        "roas_fmt":         _roas(_rm),
+                        "destaque":         f"ROAS {_roas(_rm)}" if _rm else _brl(_ms),
+                        "cpa":              _cpm,
+                        "cpa_fmt":          _brl(_cpm),
+                        "cpm_fmt":          "—",
+                        "metricas": [
+                            _smtr("Investimento",      _brl(_ms)),
+                            _smtr("Receita Atribuída", _brl(_mv)),
+                            _smtr("ROAS",              _roas(_rm)),
+                            _smtr("Pedidos",           _num(int(round(_mo)))),
+                            _smtr("CPA",               _brl(_cpm)),
+                            _smtr("CTR",               "—"),
+                        ],
+                    })
+                if _gs > 0 or _gv > 0:
+                    _snap_chs.append({
+                        **_CHANNEL_INFO["google_ads"],
+                        "investimento":     _gs,
+                        "investimento_fmt": _brl(_gs),
+                        "receita":          _gv,
+                        "receita_fmt":      _brl(_gv),
+                        "pedidos":          int(round(_go)),
+                        "roas":             _rg,
+                        "roas_fmt":         _roas(_rg),
+                        "destaque":         f"ROAS {_roas(_rg)}" if _rg else _brl(_gs),
+                        "cpa":              _cpg,
+                        "cpa_fmt":          _brl(_cpg),
+                        "cpm_fmt":          "—",
+                        "metricas": [
+                            _smtr("Investimento",      _brl(_gs)),
+                            _smtr("Receita Atribuída", _brl(_gv)),
+                            _smtr("ROAS",              _roas(_rg)),
+                            _smtr("Pedidos",           _num(int(round(_go)))),
+                            _smtr("CPA",               _brl(_cpg)),
+                            _smtr("CTR",               "—"),
+                        ],
+                    })
+                if _snap_chs:
+                    channels = _snap_chs
+                cur["spend"] = _ts
+                cur["roas"]  = (float(_core_m["mer"]) if _core_m.get("mer") is not None
+                                else (round(_brev / _ts, 2) if (_brev and _ts > 0) else None))
+                cur["cpa"]   = (round(_ts / cur["orders"], 2) if cur.get("orders") else None)
+                logger.info("build_monthly_context: canonical snapshot loaded for %s (%d metrics)", _slug_m, len(_core_m))
+        except Exception as exc:
+            logger.warning("build_monthly_context: snapshot override failed for %s: %s", _slug_m, exc)
 
     # Top campaigns per channel (Meta + Google, live from APIs)
     try:
