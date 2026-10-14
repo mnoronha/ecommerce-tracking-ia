@@ -192,19 +192,15 @@ async def trigger_weekly_report(
             raise HTTPException(422, detail=f"invalid period_end: {period_end!r}")
 
     import asyncio
-    import traceback as _tb
     loop = asyncio.get_event_loop()
-    try:
-        await loop.run_in_executor(
-            None,
-            lambda: reports._send_weekly(
-                c["id"], c["pixel_id"], c.get("name") or pixel_id, recipients, c,
-                week_start_override=_week_start_dt,
-                now_override=_now_dt,
-            ),
-        )
-    except Exception as _exc:
-        raise HTTPException(500, detail=f"_send_weekly failed: {_exc!r}\n{_tb.format_exc()}")
+    await loop.run_in_executor(
+        None,
+        lambda: reports._send_weekly(
+            c["id"], c["pixel_id"], c.get("name") or pixel_id, recipients, c,
+            week_start_override=_week_start_dt,
+            now_override=_now_dt,
+        ),
+    )
     return {
         "sent_to": recipients,
         "client": c.get("name"),
