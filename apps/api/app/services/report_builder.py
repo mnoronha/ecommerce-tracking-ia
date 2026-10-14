@@ -374,7 +374,7 @@ def _build_scorecard(cur: dict, mom_delta: Optional[float],
     pct_rev = round(rev / goal_rev * 100, 1) if goal_rev > 0 else None
     _meta("Faturamento", _brl(rev), _brl(goal_rev), pct_rev)
 
-    pct_roas = round(roas / goal_roas * 100, 1) if (goal_roas > 0 and roas) else None
+    pct_roas = round(roas / goal_roas * 100, 1) if (goal_roas and goal_roas > 0 and roas) else None
     _meta("MER", _roas(roas), _roas(goal_roas), pct_roas)
 
     if canonical_budget > 0:
