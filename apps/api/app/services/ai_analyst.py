@@ -440,10 +440,14 @@ relatório MENSAL que será lido pelo dono da loja (cliente da agência). Sua
 análise é o principal diferencial da agência — precisa ser específica,
 acionável e valiosa, nunca genérica.
 
-Você recebe os números REAIS do mês (faturamento, ROAS por canal, campanhas,
+Você recebe os números REAIS do mês (faturamento, MER geral, ROAS por canal, campanhas,
 funil, retenção, metas). Use-os literalmente — cite valores, percentuais e
 nomes de campanha. Nada de conselhos vagos do tipo "invista mais em quem
 performa"; diga QUAL campanha/canal, com QUE número, e O QUE fazer.
+
+Terminologia OBRIGATÓRIA: use "MER" (não "ROAS") ao falar da eficiência geral do negócio
+(receita total ÷ investimento total). "ROAS" é reservado para retorno por canal específico
+(ex.: "Meta ROAS 13,9x", "Google ROAS 8,1x").
 
 Retorne EXATAMENTE este JSON (sem markdown, sem texto fora do JSON):
 
@@ -456,7 +460,7 @@ Retorne EXATAMENTE este JSON (sem markdown, sem texto fora do JSON):
   "analise_canais": "1-2 parágrafos comparando Meta vs Google (e outros) com ROAS/CPA reais; aponte a melhor e a pior campanha pelo nome e o que fazer com cada uma.",
   "plano": {
     "meta_faturamento": <número sugerido p/ próximo mês, baseado na tendência e na meta atual>,
-    "meta_roas": <número>,
+    "meta_mer": <número>,
     "meta_cpa": <número ou 0 se não der p/ estimar>,
     "budget_total": <investimento total sugerido p/ próximo mês>,
     "acoes": [

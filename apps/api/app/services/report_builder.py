@@ -408,7 +408,7 @@ def _build_scorecard(cur: dict, mom_delta: Optional[float],
     if pct_rev is not None:
         parts.append(f"{_pct(pct_rev)} da meta")
     if roas:
-        parts.append(f"ROAS {_roas(roas)}")
+        parts.append(f"MER {_roas(roas)}")
     verdict = " · ".join(parts) + "."
 
     return {"status": status, "emoji": emoji, "label": label, "verdict": verdict}, metas
@@ -858,10 +858,10 @@ def _build_ai_analysis(client_id, store_name, cur, prev, mom_delta, goal_rev, go
     report_metrics = {
         "mes": mes_label,
         "faturamento": cur["revenue"], "pedidos": cur["orders"], "ticket_medio": cur["aov"],
-        "investimento_total": cur["spend"], "roas": cur["roas"], "cpa": cur["cpa"],
+        "investimento_total": cur["spend"], "mer": cur["roas"], "cpa": cur["cpa"],
         "mom_delta_pct": mom_delta,
         "faturamento_mes_anterior": prev["revenue"],
-        "meta_faturamento": goal_rev or None, "meta_roas": goal_roas or None,
+        "meta_faturamento": goal_rev or None, "meta_mer": goal_roas or None,
         "canais": [
             {"nome": c.get("nome"), "investimento": c.get("investimento"),
              "receita_atribuida": c.get("receita"), "roas": c.get("roas"),
@@ -919,8 +919,8 @@ def _build_destaques(ai: dict, cur, prev, top_products, prev_month) -> list[dict
     if cur["roas"] and (prev["roas"] or 0) > 0:
         d, cls = _delta(cur["roas"], prev["roas"])
         out.append({"tipo": "positivo" if cls == "good" else "atencao",
-                    "titulo": "Desempenho do ROAS",
-                    "texto": f"ROAS de {_roas(cur['roas'])} no mês ({d} vs {_MESES_PT[prev_month]})."})
+                    "titulo": "Desempenho do MER",
+                    "texto": f"MER de {_roas(cur['roas'])} no mês ({d} vs {_MESES_PT[prev_month]})."})
     if top_products:
         tp = top_products[0]
         out.append({"tipo": "positivo", "titulo": "Produto destaque",
@@ -1015,7 +1015,7 @@ def _build_plano(ai: dict, next_month_label, cur, goal_rev, goal_roas,
         except (TypeError, ValueError): return "—"
 
     meta_fat   = ai_plano.get("meta_faturamento") or goal_rev or (round(cur["revenue"] * 1.1, 2) if cur["revenue"] else 0)
-    meta_roas  = ai_plano.get("meta_roas") or goal_roas or cur["roas"] or 0
+    meta_roas  = ai_plano.get("meta_mer") or ai_plano.get("meta_roas") or goal_roas or cur["roas"] or 0
     meta_cpa   = ai_plano.get("meta_cpa") or cur["cpa"] or 0
     budget     = ai_plano.get("budget_total")
     if not budget:
@@ -1421,13 +1421,40 @@ def build_monthly_context(
     except Exception:
         pass
 
-    # Client goal + LTV stats
-    goal_row = sb.table("clients").select("monthly_revenue_goal, target_roas, ltv_stats").eq("id", client_id).limit(1).execute()
-    _goal0    = (goal_row.data or [{}])[0]
-    goal_rev  = float(_goal0.get("monthly_revenue_goal") or 0)
-    goal_roas = float(_goal0.get("target_roas") or 0)
-    goal_pct  = round(cur["revenue"] / goal_rev * 100, 1) if goal_rev > 0 else None
-    ltv_stats = _goal0.get("ltv_stats") or {}
+    # Target Truth — canonical source: core_client_truth (valid_from < start of next month)
+    # NEVER fall back to clients.monthly_revenue_goal / clients.target_roas (legacy stale values)
+    _slug_for_targets = client.get("client_id") or _full.get("client_id") or ""
+    goal_rev = 0.0
+    goal_roas = None
+    _targets_unavailable = True
+    if _slug_for_targets:
+        try:
+            _ctt = (
+                sb.table("core_client_truth")
+                .select("target_truth")
+                .eq("client_id", _slug_for_targets)
+                .lt("valid_from", end)
+                .order("valid_from", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if _ctt.data:
+                _tt = (_ctt.data[0].get("target_truth") or {})
+                _rev_t = (_tt.get("revenue_business") or {}).get("target")
+                _mer_t = (_tt.get("mer") or {}).get("target")
+                if _rev_t is not None:
+                    goal_rev = float(_rev_t)
+                    goal_roas = float(_mer_t) if _mer_t is not None else None
+                    _targets_unavailable = False
+        except Exception as exc:
+            logger.warning("build_monthly_context: core_client_truth fetch failed: %s", exc)
+    goal_pct = round(cur["revenue"] / goal_rev * 100, 1) if goal_rev > 0 else None
+    # LTV stats from clients table (not target-related)
+    try:
+        _ltv_row = sb.table("clients").select("ltv_stats").eq("id", client_id).limit(1).execute()
+        ltv_stats = ((_ltv_row.data or [{}])[0]).get("ltv_stats") or {}
+    except Exception:
+        ltv_stats = {}
 
     # Canonical monthly budget from core_budget_config (sum across platforms for period)
     _period_label = f"{year}-{month:02d}"
@@ -1445,6 +1472,7 @@ def build_monthly_context(
             canonical_budget = sum(float(r["monthly_budget"] or 0) for r in (_bget.data or []))
         except Exception as exc:
             logger.warning("build_monthly_context: core_budget_config fetch failed: %s", exc)
+    _budget_unavailable = canonical_budget == 0.0
 
     # Funil de conversão (RPC server-side)
     funil = _fetch_funnel(sb, client_id, start, end, cur["orders"])
@@ -1467,6 +1495,20 @@ def build_monthly_context(
     except Exception as exc:
         logger.warning("build_monthly_context: _build_scorecard failed: %s", exc)
         scorecard, metas = {"status": "verde", "emoji": "📊", "label": "Resultado do Mês", "verdict": ""}, []
+    # Inject "not configured" rows when canonical truth is absent for the period
+    if _targets_unavailable:
+        metas.insert(0, {
+            "label": "Metas do período",
+            "realizado": "—", "meta": "não configuradas para este período",
+            "pct": None, "pct_fmt": "—", "bar_pct": 0, "status": "warn",
+        })
+    if _budget_unavailable:
+        metas.append({
+            "label": "Investimento",
+            "realizado": _brl(cur["spend"]),
+            "meta": "orçamento não configurado para este período",
+            "pct": None, "pct_fmt": "—", "bar_pct": 0, "status": "warn",
+        })
 
     # Atribuição multi-toque (comparação de modelos)
     atribuicao_modelos = _fetch_attribution_models(client_id, start_date, end_date_iso)
