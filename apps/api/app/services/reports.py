@@ -805,6 +805,35 @@ def _build_weekly_uau_context(
     }
 
 
+def _load_core_metrics(sb, client_slug: str, period_start, period_end) -> dict:
+    """
+    Read the latest live snapshot from core_metric_snapshots for the given period.
+    Returns {metric_key: value} dict; empty dict on miss or error.
+    Uses the same query as GET /api/v1/clients/{id}/metrics (the dashboard endpoint).
+    """
+    try:
+        ps = period_start.isoformat() if hasattr(period_start, "isoformat") else str(period_start)
+        pe = period_end.isoformat()   if hasattr(period_end, "isoformat")   else str(period_end)
+        res = (
+            sb.table("core_metric_snapshots")
+            .select("metrics")
+            .eq("client_id", client_slug)
+            .eq("period_start", ps)
+            .eq("period_end", pe)
+            .eq("view", "live")
+            .order("computed_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not (res and res.data):
+            return {}
+        raw = res.data[0].get("metrics") or []
+        return {entry["metric_key"]: entry.get("value") for entry in raw if entry.get("metric_key") is not None}
+    except Exception as exc:
+        logger.warning("_load_core_metrics: failed for %s %s→%s: %s", client_slug, period_start, period_end, exc)
+        return {}
+
+
 def _send_weekly(client_id: str, pixel_id: str, client_name: str,
                  recipients: list[str] | str, client: Optional[dict] = None,
                  week_start_override: Optional[datetime] = None,
@@ -860,10 +889,85 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
     except Exception as exc:
         logger.warning("_send_weekly: core_budget_config load failed %s: %s", pixel_id, exc)
 
-    # ── MER = business revenue / total paid spend ────────────────────────────────
+    # ── Canonical platform metrics from core snapshot (same source as dashboard) ──
+    _core: dict = {}
+    try:
+        _core = _load_core_metrics(sb, _slug, m["week_start"].date(), now.date())
+        if _core:
+            # Business truth — overrides UTM-based orders-table calculation
+            _biz_rev_core = float(_core["revenue_business"]) if _core.get("revenue_business") is not None else None
+            _biz_ord_core = int(_core["orders_count"])        if _core.get("orders_count")     is not None else None
+            if _biz_rev_core is not None:
+                m["week"] = {**m["week"],
+                             "revenue": _biz_rev_core,
+                             "orders":  _biz_ord_core if _biz_ord_core is not None else m["week"]["orders"],
+                             "aov":     round(_biz_rev_core / _biz_ord_core, 2) if _biz_ord_core else m["week"]["aov"]}
+
+            # Platform spend and attributed conversions (from platform APIs, not UTM)
+            _meta_spend  = float(_core.get("meta_spend") or 0)
+            _meta_rev    = float(_core.get("meta_conversion_value") or 0)
+            _meta_ord    = float(_core.get("meta_conversions") or 0)
+            _goog_spend  = float(_core.get("google_spend") or 0)
+            _goog_rev    = float(_core.get("google_conversion_value") or 0)
+            _goog_ord    = float(_core.get("google_conversions") or 0)
+            _total_spend = float(_core.get("total_spend") or (_meta_spend + _goog_spend))
+
+            # Per-channel derived metrics (prefer pre-computed from snapshot)
+            _roas_meta = (float(_core["roas_meta"])   if _core.get("roas_meta")   is not None
+                          else (round(_meta_rev / _meta_spend, 2)   if _meta_spend > 0 else None))
+            _cpa_meta  = (float(_core["cpa_meta"])    if _core.get("cpa_meta")    is not None
+                          else (round(_meta_spend / _meta_ord, 2)   if _meta_ord > 0   else None))
+            _roas_goog = (float(_core["roas_google"]) if _core.get("roas_google") is not None
+                          else (round(_goog_rev / _goog_spend, 2)   if _goog_spend > 0 else None))
+            _cpa_goog  = (float(_core["cpa_google"])  if _core.get("cpa_google")  is not None
+                          else (round(_goog_spend / _goog_ord, 2)   if _goog_ord > 0   else None))
+
+            # Rebuild channels from canonical platform data
+            _new_channels = []
+            if _meta_spend > 0 or _meta_rev > 0:
+                _new_channels.append({
+                    "channel": "meta_ads", "label": "Meta Ads",
+                    "spend": _meta_spend, "revenue": _meta_rev,
+                    "orders": int(round(_meta_ord)), "conversions": _meta_ord,
+                    "roas": _roas_meta, "cpa": _cpa_meta, "roas_prev": None,
+                    "revenue_source": "meta_attributions",
+                })
+            if _goog_spend > 0 or _goog_rev > 0:
+                _new_channels.append({
+                    "channel": "google_ads", "label": "Google Ads",
+                    "spend": _goog_spend, "revenue": _goog_rev,
+                    "orders": int(round(_goog_ord)), "conversions": _goog_ord,
+                    "roas": _roas_goog, "cpa": _cpa_goog, "roas_prev": None,
+                    "revenue_source": "google_ads_api",
+                })
+
+            _total_attr_rev = _meta_rev + _goog_rev
+            _total_attr_ord = int(round(_meta_ord + _goog_ord))
+
+            m["spend"]       = _total_spend
+            m["channels"]    = _new_channels if _new_channels else m["channels"]
+            m["roas"]        = round(_total_attr_rev / _total_spend, 2) if _total_spend > 0 else None
+            m["cpa"]         = round(_total_spend / _total_attr_ord, 2) if _total_attr_ord > 0 else None
+            m["paid_orders"] = _total_attr_ord
+
+            # GA4 = journey domain only; never mixed with platform attribution
+            m["ga4"] = {
+                "sessions":  _core.get("ga4_sessions"),
+                "purchases": _core.get("ga4_purchases"),
+                "revenue":   _core.get("ga4_revenue"),
+            }
+
+            logger.info("_send_weekly: snapshot loaded for %s (%d metrics)", _slug, len(_core))
+    except Exception as exc:
+        logger.warning("_send_weekly: snapshot override failed for %s: %s", pixel_id, exc)
+
+    # ── MER + business_cpa (canonical when snapshot available, else fallback) ────
     _biz_rev = (m.get("week") or {}).get("revenue") or 0
+    _biz_ord = (m.get("week") or {}).get("orders") or 0
     _spend   = m.get("spend") or 0
-    m["mer"] = round(_biz_rev / _spend, 2) if _spend > 0 else None
+    m["mer"]          = (float(_core["mer"]) if _core.get("mer") is not None
+                         else (round(_biz_rev / _spend, 2) if _spend > 0 else None))
+    m["business_cpa"] = round(_spend / _biz_ord, 2) if (_spend > 0 and _biz_ord) else None
 
     # ── Gerar conteúdo UAU via Claude ───────────────────────────────────────────
     uau: dict = {}
