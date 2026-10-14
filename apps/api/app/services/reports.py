@@ -908,18 +908,19 @@ def _send_weekly(client_id: str, pixel_id: str, client_name: str,
             _meta_rev    = float(_core.get("meta_conversion_value") or 0)
             _meta_ord    = float(_core.get("meta_conversions") or 0)
             _goog_spend  = float(_core.get("google_spend") or 0)
-            _goog_rev    = float(_core.get("google_conversion_value") or 0)
-            _goog_ord    = float(_core.get("google_conversions") or 0)
+            # Prefer ecommerce-specific purchase metrics (orders); fall back to all-conversions
+            _goog_rev  = float(_core.get("google_purchase_conversion_value") or _core.get("google_conversion_value") or 0)
+            _goog_ord  = float(_core.get("google_purchase_conversions")       or _core.get("google_conversions")       or 0)
             _total_spend = float(_core.get("total_spend") or (_meta_spend + _goog_spend))
 
             # Per-channel derived metrics (prefer pre-computed from snapshot)
-            _roas_meta = (float(_core["roas_meta"])   if _core.get("roas_meta")   is not None
+            _roas_meta = (float(_core["roas_meta"])          if _core.get("roas_meta")          is not None
                           else (round(_meta_rev / _meta_spend, 2)   if _meta_spend > 0 else None))
-            _cpa_meta  = (float(_core["cpa_meta"])    if _core.get("cpa_meta")    is not None
+            _cpa_meta  = (float(_core["cpa_meta"])           if _core.get("cpa_meta")           is not None
                           else (round(_meta_spend / _meta_ord, 2)   if _meta_ord > 0   else None))
-            _roas_goog = (float(_core["roas_google"]) if _core.get("roas_google") is not None
+            _roas_goog = (float(_core["google_roas_ecommerce"]) if _core.get("google_roas_ecommerce") is not None
                           else (round(_goog_rev / _goog_spend, 2)   if _goog_spend > 0 else None))
-            _cpa_goog  = (float(_core["cpa_google"])  if _core.get("cpa_google")  is not None
+            _cpa_goog  = (float(_core["google_cpa_ecommerce"])  if _core.get("google_cpa_ecommerce")  is not None
                           else (round(_goog_spend / _goog_ord, 2)   if _goog_ord > 0   else None))
 
             # Rebuild channels from canonical platform data
