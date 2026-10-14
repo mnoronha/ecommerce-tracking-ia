@@ -275,6 +275,7 @@ Analise os dados acima e gere insights estratégicos incluindo:
         max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
         system=_SYSTEM_PROMPT,
+        timeout=120.0,
     )
 
     raw = message.content[0].text.strip()
@@ -394,6 +395,7 @@ Analise os dados e gere insights diários focando em:
         max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
         system=_DAILY_SYSTEM_PROMPT,
+        timeout=120.0,
     )
 
     raw = message.content[0].text.strip()
@@ -529,6 +531,7 @@ def generate_monthly_analysis(
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
             system=_MONTHLY_SYSTEM_PROMPT,
+            timeout=120.0,
         )
         raw = message.content[0].text.strip()
         for fence in ("```json", "```"):
@@ -833,6 +836,7 @@ Use os dados acima literalmente. Cite campanhas e canais pelo nome."""
             temperature=0.4,
             messages=[{"role": "user", "content": prompt}],
             system=_WEEKLY_UAU_SYSTEM_PROMPT,
+            timeout=120.0,
         )
         raw = message.content[0].text.strip()
         for fence in ("```json", "```"):
