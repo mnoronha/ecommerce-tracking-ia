@@ -675,6 +675,10 @@ def _build_weekly(sb, client_id: str, now: datetime,
         "week": week, "prev": prev, "week_delta": week_delta,
         "spend": total_spend, "spend_delta": spend_delta,
         "roas": roas, "roas_goal": roas_goal, "cpa": cpa, "conv": conv,
+        # paid_orders = media-attributed orders (utm-matched); used for media CPA denominator
+        "paid_orders": paid_orders,
+        # business_cpa = spend / business orders (orders table, all paid) — true cost per sale
+        "business_cpa": round(total_spend / week["orders"], 2) if (total_spend > 0 and week["orders"]) else None,
         "channels": channels,
         "mtd": mtd, "goal": goal, "pct_of_goal": pct_of_goal,
         "on_pace_pct": on_pace_pct, "proj_revenue": proj_revenue,
@@ -1061,10 +1065,17 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
         col = "#16a34a" if (tgt == 0 or m["roas"] >= tgt) else "#f59e0b"
         roas_cell = f'<span style="color:{col};font-weight:600">{m["roas"]:.2f}x</span>' + (
             f' <span style="color:#9ca3af;font-weight:400">/ meta {tgt:.1f}x</span>' if tgt else '')
-    conv_cell = f'{m["conv"]:.2f}%' if m["conv"] is not None else "—"
-    cpa_cell  = fmt_brl(m["cpa"]) if m["cpa"] is not None else "—"
-    roas_big  = f'{m["roas"]:.2f}x' if m["roas"] is not None else "—"
-    roas_col  = "#16a34a" if (m["roas"] is not None and (not m["roas_goal"] or m["roas"] >= float(m["roas_goal"]))) else "#f59e0b"
+    mer_cell = "—"
+    if m.get("mer") is not None:
+        mer_tgt = m.get("mer_target")
+        mer_col = "#16a34a" if (mer_tgt is None or m["mer"] >= float(mer_tgt)) else "#f59e0b"
+        mer_cell = f'<span style="color:{mer_col};font-weight:600">{m["mer"]:.2f}x</span>' + (
+            f' <span style="color:#9ca3af;font-weight:400">/ meta {float(mer_tgt):.1f}x</span>' if mer_tgt else '')
+    conv_cell  = f'{m["conv"]:.2f}%' if m["conv"] is not None else "—"
+    cpa_cell   = fmt_brl(m["cpa"]) if m["cpa"] is not None else "—"
+    bcpa_cell  = fmt_brl(m.get("business_cpa")) if m.get("business_cpa") is not None else "—"
+    roas_big   = f'{m["roas"]:.2f}x' if m["roas"] is not None else "—"
+    roas_col   = "#16a34a" if (m["roas"] is not None and (not m["roas_goal"] or m["roas"] >= float(m["roas_goal"]))) else "#f59e0b"
 
     alerts_html = ""  # alertas vão apenas para a agência, nunca para o cliente
 
@@ -1106,24 +1117,32 @@ def _render_weekly_html(pixel_id: str, client_name: str, m: dict,
         <p style="margin:3px 0 0;font-size:11px">vs ant. {delta_badge(m['spend_delta'])}</p>
       </div>
       <div style="flex:1;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;text-align:center">
-        <p style="margin:0 0 2px;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:0.4px">ROAS geral</p>
+        <p style="margin:0 0 2px;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:0.4px">ROAS atribuído de mídia</p>
         <p style="margin:0;font-size:18px;font-weight:700;color:{roas_col}">{roas_big}</p>
-        <p style="margin:3px 0 0;font-size:11px;color:#9ca3af">{('meta ' + format(float(m['roas_goal']), '.1f') + 'x') if m['roas_goal'] else 'receita ÷ invest.'}</p>
+        <p style="margin:3px 0 0;font-size:11px;color:#9ca3af">rec. atrib. Meta+Google ÷ invest.</p>
       </div>
     </div>
 
     <!-- Essential KPIs -->
     <table style="width:100%;border-collapse:collapse;margin-top:16px">
       <tr style="border-bottom:1px solid #f3f4f6">
-        <td style="padding:9px 0;color:#6b7280;font-size:13px">Pedidos</td>
+        <td style="padding:9px 0;color:#6b7280;font-size:13px">Pedidos (business)</td>
         <td style="padding:9px 0;text-align:right;font-size:13px;font-weight:600">{m['week']['orders']}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:9px 0;color:#6b7280;font-size:13px">MER (eficiência de negócio)</td>
+        <td style="padding:9px 0;text-align:right;font-size:13px">{mer_cell}</td>
       </tr>
       <tr style="border-bottom:1px solid #f3f4f6">
         <td style="padding:9px 0;color:#6b7280;font-size:13px">Ticket médio</td>
         <td style="padding:9px 0;text-align:right;font-size:13px">{fmt_brl(m['week']['aov'])}</td>
       </tr>
       <tr style="border-bottom:1px solid #f3f4f6">
-        <td style="padding:9px 0;color:#6b7280;font-size:13px">CPA (custo por pedido)</td>
+        <td style="padding:9px 0;color:#6b7280;font-size:13px">Custo de mídia / pedido real</td>
+        <td style="padding:9px 0;text-align:right;font-size:13px">{bcpa_cell}</td>
+      </tr>
+      <tr style="border-bottom:1px solid #f3f4f6">
+        <td style="padding:9px 0;color:#6b7280;font-size:13px">CPA de mídia (ped. atribuídos)</td>
         <td style="padding:9px 0;text-align:right;font-size:13px">{cpa_cell}</td>
       </tr>
       <tr>

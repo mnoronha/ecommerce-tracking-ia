@@ -760,21 +760,36 @@ def generate_weekly_uau_content(
     if hasattr(now_str, "strftime"):
         now_str = now_str.strftime("%d/%m/%Y")
 
+    _mer      = weekly_data.get('mer')
+    _mer_tgt  = weekly_data.get('mer_target')
+    _paid_ord = weekly_data.get('paid_orders', '?')
+    _biz_ord  = week.get('orders', 0)
     prompt = f"""Cliente: {store_name}
 
 PERFIL
-- Meta ROAS: {profile.get('roas_goal', '—')}
+- Meta MER: {f'{float(_mer_tgt):.1f}x' if _mer_tgt else (str(profile.get('roas_goal', '—')) + 'x (ROAS legado)')}
 - Meta receita mensal: {_fmt_brl(profile.get('revenue_goal'))}
 - Meta CPA: {_fmt_brl(profile.get('cpa_goal'))}
 
 DADOS DA SEMANA ({week_start_str} a {now_str})
-- Receita: {_fmt_brl(week.get('revenue'))}
-- Pedidos: {week.get('orders', 0)}
+IMPORTANTE — distinção semântica obrigatória:
+  • "Receita business" = total pedidos pagos na loja (fonte verdade)
+  • "Receita atribuída de mídia" = pedidos com utm_source rastreado por canal
+  • "MER" = receita business ÷ investimento (eficiência real do negócio)
+  • "ROAS atribuído de mídia" = receita atribuída Meta+Google ÷ investimento
+  • "Pedidos business" = todos os pedidos pagos
+  • "Pedidos atribuídos de mídia" = apenas pedidos com utm rastreado
+
+- Receita business (todos pedidos pagos): {_fmt_brl(week.get('revenue'))}
+- Pedidos business: {_biz_ord}
 - Ticket médio: {_fmt_brl(week.get('aov'))}
 - Variação receita vs semana anterior: {weekly_data.get('week_delta', '—')}%
-- Investimento: {_fmt_brl(weekly_data.get('spend'))}
-- ROAS geral: {weekly_data.get('roas', '—')}x
-- CPA geral: {_fmt_brl(weekly_data.get('cpa'))}
+- Investimento total de mídia: {_fmt_brl(weekly_data.get('spend'))}
+- MER (receita business ÷ investimento): {f'{float(_mer):.2f}x' if _mer else '—'}{f' (meta: {float(_mer_tgt):.1f}x)' if _mer_tgt else ''}
+- ROAS atribuído de mídia (rec. atrib. Meta+Google ÷ investimento): {weekly_data.get('roas', '—')}x
+- Pedidos atribuídos de mídia: {_paid_ord}
+- CPA de mídia (investimento ÷ pedidos atribuídos): {_fmt_brl(weekly_data.get('cpa'))}
+- Custo de mídia por pedido real (investimento ÷ pedidos business): {_fmt_brl(weekly_data.get('business_cpa'))}
 - Taxa de conversão site: {weekly_data.get('conv', '—')}%
 
 POR CANAL
