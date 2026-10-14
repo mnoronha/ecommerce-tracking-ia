@@ -643,12 +643,28 @@ def _build_weekly(sb, client_id: str, now: datetime,
     budget, budget_implied = _budget_for_month(sb, client_id, month_start.date(), goal, roas_goal)
     pct_of_budget = round(mtd_spend / budget * 100, 1) if budget > 0 else None
 
-    conv = _visitors_conv(sb, client_id, week_start.isoformat(), week["orders"])
+    try:
+        conv = _visitors_conv(sb, client_id, week_start.isoformat(), week["orders"])
+    except Exception as _exc:
+        logger.warning("_visitors_conv failed for %s: %s", client_id, _exc)
+        conv = None
 
     # Extra data for UAU content generation
-    funnel        = _weekly_funnel(sb, client_id, week_start.isoformat(), now.isoformat())
-    top_campaigns = _top_campaigns_weekly(sb, client_id, week_start.isoformat(), now.isoformat())
-    client_profile = _client_profile_for_report(sb, client_id, month_start.date(), goal, roas_goal)
+    try:
+        funnel = _weekly_funnel(sb, client_id, week_start.isoformat(), now.isoformat())
+    except Exception as _exc:
+        logger.warning("_weekly_funnel failed for %s: %s", client_id, _exc)
+        funnel = None
+    try:
+        top_campaigns = _top_campaigns_weekly(sb, client_id, week_start.isoformat(), now.isoformat())
+    except Exception as _exc:
+        logger.warning("_top_campaigns_weekly failed for %s: %s", client_id, _exc)
+        top_campaigns = []
+    try:
+        client_profile = _client_profile_for_report(sb, client_id, month_start.date(), goal, roas_goal)
+    except Exception as _exc:
+        logger.warning("_client_profile_for_report failed for %s: %s", client_id, _exc)
+        client_profile = None
 
     # Add purchases count to funnel
     if funnel:
