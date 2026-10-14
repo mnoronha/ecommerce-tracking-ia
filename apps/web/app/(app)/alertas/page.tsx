@@ -143,7 +143,7 @@ export default async function AlertasAgenciaPage() {
                         )}
                         {a.client_id && (
                           <Link
-                            href={`/clients/${a.client_id}/alertas`}
+                            href={`/clients/${a.client_id}/data-health`}
                             className="text-xs text-indigo-400 hover:text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded transition-colors"
                           >
                             {a.client_id}
@@ -152,7 +152,25 @@ export default async function AlertasAgenciaPage() {
                       </div>
                     </div>
                     <p className="text-sm text-slate-400 mt-2 leading-relaxed">{a.message}</p>
-                    <p className="text-xs text-slate-600 mt-2">{fmtDate(a.detected_at)}</p>
+                    <div className="flex items-center gap-3 mt-2">
+                      <p className="text-xs text-slate-600">{fmtDate(a.detected_at)}</p>
+                      {a.client_id && (
+                        <Link
+                          href={`/clients/${a.client_id}/diagnostics`}
+                          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                          Diagnósticos →
+                        </Link>
+                      )}
+                      {a.client_id && (
+                        <Link
+                          href={`/clients/${a.client_id}/recommendations`}
+                          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                        >
+                          Recomendações →
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

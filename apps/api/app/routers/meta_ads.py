@@ -596,6 +596,7 @@ async def get_overview(
             .select("event_type")
             .eq("client_id", client_id)
             .in_("event_type", ["pageview", "view_product", "add_to_cart", "begin_checkout"])
+            .neq("device_type", "bot")
             .gte("created_at", start_ts)
             .lte("created_at", end_ts)
             .limit(100000)

@@ -86,11 +86,13 @@ export default function ChangesPage() {
     setLoading(true)
     setError(null)
     try {
-      const [chRes] = await Promise.all([
+      const [chRes, evRes] = await Promise.all([
         fetch(`/api/v1/clients/${clientId}/changes`),
+        fetch(`/api/v1/clients/${clientId}/action-events`),
       ])
       if (!chRes.ok) throw new Error(`HTTP ${chRes.status}`)
       setChanges(await chRes.json())
+      if (evRes.ok) setEvents(await evRes.json())
     } catch {
       setError('Não foi possível carregar os dados.')
     } finally {

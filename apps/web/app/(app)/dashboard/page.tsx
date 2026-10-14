@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { agencyApiFetch } from '@/lib/agency-api-client'
 import {
   TrendingUp, ShoppingBag, DollarSign, Bell,
   AlertTriangle, CheckCircle, AlertCircle, BarChart2, Settings,
@@ -25,13 +26,14 @@ interface ClientRow {
   health_score: number
 }
 
-interface Alert {
-  id: string
-  client_id: string
-  severity: 'critical' | 'warning' | 'info'
-  message: string
-  created_at: string
-  clients: { name: string; pixel_id: string } | null
+interface AgencyAlert {
+  id:               string
+  client_id?:       string
+  alert_type:       string
+  severity:         string   // HIGH | MEDIUM | LOW
+  title:            string
+  message:          string
+  detected_at:      string
 }
 
 async function getAgencyId(userId: string): Promise<string | null> {
@@ -45,30 +47,6 @@ async function getAgencyId(userId: string): Promise<string | null> {
   return data?.agency_id ?? null
 }
 
-async function getDashboardData(agencyId: string): Promise<ClientRow[]> {
-  const supabase = await createSupabaseServerClient()
-  const { data, error } = await supabase.rpc('get_agency_dashboard', {
-    p_agency_id: agencyId,
-    p_days: 30,
-  })
-  if (error) {
-    console.error('[getDashboardData]', error)
-    return []
-  }
-  return (data ?? []) as ClientRow[]
-}
-
-async function getRecentAlerts(agencyId: string): Promise<Alert[]> {
-  const supabase = await createSupabaseServerClient()
-  const { data } = await supabase
-    .from('alerts')
-    .select('id, client_id, severity, message, created_at, clients!inner(name, pixel_id, agency_id)')
-    .eq('clients.agency_id', agencyId)
-    .is('resolved_at', null)
-    .order('created_at', { ascending: false })
-    .limit(8)
-  return ((data ?? []) as unknown as Alert[])
-}
 
 function fmt(n: number, style: 'currency' | 'decimal' = 'decimal', decimals = 0): string {
   if (style === 'currency') {
@@ -111,16 +89,23 @@ export default async function AgencyDashboardPage() {
   const agencyId = await getAgencyId(user.id)
   if (!agencyId) redirect('/clients')
 
-  const [rows, alerts] = await Promise.all([
-    getDashboardData(agencyId),
-    getRecentAlerts(agencyId),
-  ])
+  let rows: ClientRow[] = []
+  let alerts: AgencyAlert[] = []
+
+  try {
+    ;[rows, alerts] = await Promise.all([
+      agencyApiFetch<ClientRow[]>('dashboard', { agency_id: agencyId, days: '30' }),
+      agencyApiFetch<AgencyAlert[]>('alerts', { status: 'OPEN', limit: '8' }),
+    ])
+  } catch (err) {
+    console.error('[AgencyDashboardPage]', err)
+  }
 
   const totalRevenue  = rows.reduce((s, r) => s + Number(r.revenue), 0)
   const totalSpend    = rows.reduce((s, r) => s + Number(r.spend), 0)
   const weightedRoas  = totalSpend > 0 ? totalRevenue / totalSpend : 0
   const activeAlerts  = alerts.length
-  const criticalCount = alerts.filter(a => a.severity === 'critical').length
+  const criticalCount = alerts.filter(a => a.severity === 'HIGH').length
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -302,7 +287,7 @@ function ClientTableRow({ row }: { row: ClientRow }) {
       <td className="px-4 py-3.5 text-center">
         {totalAlerts > 0 ? (
           <Link
-            href={`/clients/${row.pixel_id}/alertas`}
+            href={`/clients/${row.pixel_id}/data-health`}
             className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${
               row.alert_critical > 0
                 ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25'
@@ -339,31 +324,31 @@ function ClientTableRow({ row }: { row: ClientRow }) {
   )
 }
 
-function AlertRow({ alert }: { alert: Alert }) {
+function AlertRow({ alert }: { alert: AgencyAlert }) {
   const ago = (() => {
-    const diffH = (Date.now() - new Date(alert.created_at).getTime()) / 3_600_000
+    const diffH = (Date.now() - new Date(alert.detected_at).getTime()) / 3_600_000
     if (diffH < 1)  return `${Math.round(diffH * 60)}min atrás`
     if (diffH < 24) return `${Math.floor(diffH)}h atrás`
     return `${Math.floor(diffH / 24)}d atrás`
   })()
 
   const icon =
-    alert.severity === 'critical' ? <AlertTriangle size={13} className="text-red-400 shrink-0 mt-0.5" />
-    : alert.severity === 'warning' ? <AlertCircle   size={13} className="text-yellow-400 shrink-0 mt-0.5" />
+    alert.severity === 'HIGH'   ? <AlertTriangle size={13} className="text-red-400 shrink-0 mt-0.5" />
+    : alert.severity === 'MEDIUM' ? <AlertCircle   size={13} className="text-yellow-400 shrink-0 mt-0.5" />
     : <Bell size={13} className="text-blue-400 shrink-0 mt-0.5" />
 
   return (
     <div className="flex items-start gap-3 px-5 py-3 hover:bg-white/[0.02] transition-colors">
       {icon}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-slate-300 truncate">{alert.message}</p>
+        <p className="text-sm text-slate-300 truncate">{alert.title || alert.message}</p>
         <p className="text-xs text-slate-600 mt-0.5">
-          {alert.clients && (
-            <Link href={`/clients/${alert.clients.pixel_id}/alertas`} className="hover:text-slate-400 transition-colors">
-              {alert.clients.name}
+          {alert.client_id && (
+            <Link href={`/clients/${alert.client_id}/data-health`} className="hover:text-slate-400 transition-colors">
+              {alert.client_id}
             </Link>
           )}
-          {alert.clients && ' · '}{ago}
+          {alert.client_id && ' · '}{ago}
         </p>
       </div>
     </div>

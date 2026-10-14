@@ -51,6 +51,7 @@ def _aggregate_client_day(sb, client_id: str, start: str, end: str) -> int:
         .gte("created_at", start)
         .lt("created_at", end)
         .not_.is_("session_id", "null")
+        .neq("device_type", "bot")
         .order("created_at")
         .limit(50000)
         .execute()

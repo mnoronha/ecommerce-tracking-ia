@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import {
   TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock, Plus,
   RefreshCw, X, ChevronDown, Bell, FileText, CreditCard, Building2,
@@ -112,20 +114,40 @@ function KPI({ label, value, sub, color }: { label: string; value: string; sub?:
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function FinanceiroPage() {
-  const [tab, setTab]                     = useState<Tab>('resumo')
-  const [summary, setSummary]             = useState<Summary | null>(null)
-  const [contracts, setContracts]         = useState<Contract[]>([])
-  const [receivables, setReceivables]     = useState<Receivable[]>([])
-  const [payables, setPayables]           = useState<Payable[]>([])
-  const [notifications, setNotifications] = useState<FinNotification[]>([])
-  const [loading, setLoading]             = useState(false)
-  const [filterMonth, setFilterMonth]     = useState(thisMonth())
+  const router = useRouter()
+  const [authorized, setAuthorized]           = useState<boolean | null>(null)
+  const [tab, setTab]                         = useState<Tab>('resumo')
+  const [summary, setSummary]                 = useState<Summary | null>(null)
+  const [contracts, setContracts]             = useState<Contract[]>([])
+  const [receivables, setReceivables]         = useState<Receivable[]>([])
+  const [payables, setPayables]               = useState<Payable[]>([])
+  const [notifications, setNotifications]     = useState<FinNotification[]>([])
+  const [loading, setLoading]                 = useState(false)
+  const [filterMonth, setFilterMonth]         = useState(thisMonth())
 
   // Modals
   const [showContractModal, setShowContractModal]   = useState(false)
   const [showRecvModal, setShowRecvModal]           = useState(false)
   const [showPayModal, setShowPayModal]             = useState(false)
   const [editContract, setEditContract]             = useState<Contract | null>(null)
+
+  // Auth check — only agency owner can access
+  useEffect(() => {
+    const checkOwner = async () => {
+      const supabase = createSupabaseBrowserClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.replace('/login'); return }
+      const { data } = await supabase
+        .from('agency_members')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('role', 'owner')
+        .maybeSingle()
+      if (!data) { router.replace('/dashboard'); return }
+      setAuthorized(true)
+    }
+    checkOwner()
+  }, [router])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -194,6 +216,10 @@ export default function FinanceiroPage() {
     { key: 'pagar',        label: 'A Pagar',        icon: <TrendingDown size={14} /> },
     { key: 'notificacoes', label: `Alertas${summary?.unread_notifications ? ` (${summary.unread_notifications})` : ''}`, icon: <Bell size={14} /> },
   ]
+
+  if (!authorized) {
+    return <div className="min-h-screen bg-[#0f1117] flex items-center justify-center text-slate-500 text-sm">Verificando acesso…</div>
+  }
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-white p-6">

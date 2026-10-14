@@ -73,6 +73,15 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
+function sourceOverallStatus(s: DataHealthEntry): string {
+  if ([s.source_state, s.collection_status, s.freshness_status, s.reconciliation_status].includes('ERROR')) return 'ERROR'
+  if (['STALE', 'DEGRADED'].some(v => [s.source_state, s.freshness_status, s.reconciliation_status].includes(v))) return 'STALE'
+  if (s.source_state === 'NO_DATA' || s.collection_status === 'NO_DATA') return 'NO_DATA'
+  if (s.source_state === 'NOT_CONTRACTED' || s.source_state === 'NOT_APPLICABLE') return 'NOT_APPLICABLE'
+  if (s.collection_status === 'OK' && (s.freshness_status === 'FRESH' || s.freshness_status === 'OK')) return 'OK'
+  return 'UNKNOWN'
+}
+
 function fmtRelative(iso?: string | null): string {
   if (!iso) return '—'
   const d   = new Date(iso)
@@ -186,34 +195,40 @@ export default async function DataHealthPage({
                     <thead>
                       <tr className="border-b border-[#2a2f3e]">
                         <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Fonte</th>
-                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Estado</th>
-                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Coleta</th>
-                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Frescor</th>
-                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Reconciliação</th>
+                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Saúde</th>
                         <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Último dado</th>
+                        <th className="text-left px-4 py-2.5 text-xs text-slate-500 font-medium">Detalhes</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {domainSources.map(s => (
-                        <tr key={s.source_key || s.source_system} className="border-b border-[#2a2f3e] last:border-0">
-                          <td className="px-4 py-3">
-                            <p className="text-xs font-medium text-slate-300">{s.source_system}</p>
-                            {s.semantic_domain && (
-                              <p className="text-[10px] text-slate-600">{s.semantic_domain}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <StatusPill status={s.source_state} />
-                            {s.reason && (
-                              <p className="text-[10px] text-slate-600 mt-1 max-w-[160px] truncate" title={s.reason}>{s.reason}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3"><StatusPill status={s.collection_status} /></td>
-                          <td className="px-4 py-3"><StatusPill status={s.freshness_status} /></td>
-                          <td className="px-4 py-3"><StatusPill status={s.reconciliation_status} /></td>
-                          <td className="px-4 py-3 text-xs text-slate-500">{fmtRelative(s.last_data_at)}</td>
-                        </tr>
-                      ))}
+                      {domainSources.map(s => {
+                        const overall = sourceOverallStatus(s)
+                        const hasIssue = overall === 'ERROR' || overall === 'STALE'
+                        return (
+                          <tr key={s.source_key || s.source_system} className="border-b border-[#2a2f3e] last:border-0">
+                            <td className="px-4 py-3">
+                              <p className="text-xs font-medium text-slate-300">{s.source_system}</p>
+                              {s.semantic_domain && (
+                                <p className="text-[10px] text-slate-600">{s.semantic_domain}</p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <StatusPill status={overall} />
+                            </td>
+                            <td className="px-4 py-3 text-xs text-slate-500">{fmtRelative(s.last_data_at)}</td>
+                            <td className="px-4 py-3">
+                              {hasIssue && s.reason && (
+                                <p className="text-[10px] text-red-400 max-w-[200px] truncate" title={s.reason}>{s.reason}</p>
+                              )}
+                              {!hasIssue && (
+                                <span className="text-[10px] text-slate-600">
+                                  {s.collection_status} · {s.freshness_status}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>
