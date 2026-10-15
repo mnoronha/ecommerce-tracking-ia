@@ -60,15 +60,61 @@ class TestH4FixtureRpc:
         assert t["lc.source_recommendation_id"] == result["recommendation_id"]
         assert t["lc.outcome_id"]             == result["outcome_id"]
 
-    def test_fixture_rows_during_all_one(self, supabase_service):
+    def test_fixture_rows_before_all_zero(self, supabase_service):
+        res = supabase_service.rpc("h4_fixture_execute", {}).execute()
+        result = res.data[0] if isinstance(res.data, list) else res.data
+        if isinstance(result, dict) and "h4_fixture_execute" in result:
+            result = result["h4_fixture_execute"]
+
+        before = result["rows_before"]
+        for table, count in before.items():
+            assert count == 0, f"Expected 0 rows before in {table}, got {count}"
+
+    def test_fixture_rows_during_expected_counts(self, supabase_service):
         res = supabase_service.rpc("h4_fixture_execute", {}).execute()
         result = res.data[0] if isinstance(res.data, list) else res.data
         if isinstance(result, dict) and "h4_fixture_execute" in result:
             result = result["h4_fixture_execute"]
 
         during = result["rows_during"]
-        for table, count in during.items():
-            assert count == 1, f"Expected 1 row during in {table}, got {count}"
+        # Single-row tables
+        for table in ("recommendations", "action_events", "actions", "tasks"):
+            assert during[table] == 1, f"Expected 1 row during in {table}, got {during[table]}"
+        # Two rows: O1 + O2, LC1 + LC2
+        assert during["outcomes"] == 2, f"Expected 2 outcomes during, got {during['outcomes']}"
+        assert during["learning_candidates"] == 2, (
+            f"Expected 2 learning_candidates during, got {during['learning_candidates']}"
+        )
+
+    def test_fixture_outcome_idempotency(self, supabase_service):
+        res = supabase_service.rpc("h4_fixture_execute", {}).execute()
+        result = res.data[0] if isinstance(res.data, list) else res.data
+        if isinstance(result, dict) and "h4_fixture_execute" in result:
+            result = result["h4_fixture_execute"]
+
+        oi = result["outcome_idempotency"]
+        assert oi["same_id_on_replay"] is True, (
+            "Outcome replay returned different ID: "
+            f"o1={oi['outcome_1_id']} replay={oi['outcome_replay_id']}"
+        )
+        assert oi["distinct_id_on_new_evidence"] is True, (
+            "Distinct evaluation window should produce distinct outcome ID"
+        )
+
+    def test_fixture_learning_idempotency(self, supabase_service):
+        res = supabase_service.rpc("h4_fixture_execute", {}).execute()
+        result = res.data[0] if isinstance(res.data, list) else res.data
+        if isinstance(result, dict) and "h4_fixture_execute" in result:
+            result = result["h4_fixture_execute"]
+
+        li = result["learning_idempotency"]
+        assert li["same_id_on_replay"] is True, (
+            "LC replay returned different ID: "
+            f"lc1={li['lc_1_id']} replay={li['lc_replay_id']}"
+        )
+        assert li["distinct_id_on_new_evidence"] is True, (
+            "Different outcome_id must yield a distinct learning candidate"
+        )
 
     def test_outcome_idempotency_constraint_via_rpc(self, supabase_service):
         res = supabase_service.rpc("h4_idempotency_test", {}).execute()

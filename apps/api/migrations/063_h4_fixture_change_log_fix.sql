@@ -1,0 +1,14 @@
+-- Migration 063 — H4 fixture: fix core_change_log constraint values
+--
+-- Intermediate corrective step between 062 and 064.
+-- Fixed CHECK constraint violations in the h4_fixture_execute() change_log INSERT:
+--   change_type: 'PAUSE' → 'CAMPAIGN_PAUSE'   (valid per change_log_change_type_check)
+--   source:      'HERMES' → 'HUMAN'            (valid per change_log_source_check)
+--
+-- This version still included core_change_log in the INSERT chain.
+-- Migration 064 supersedes this by removing core_change_log entirely
+-- (core_change_log.client_id has a FK to clients.client_id which cannot be
+-- satisfied with a synthetic fixture client).
+--
+-- The DB has the 064 version; this file exists for migration history completeness.
+-- DO NOT re-apply: 064 already applied CREATE OR REPLACE on h4_fixture_execute().
