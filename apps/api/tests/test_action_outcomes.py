@@ -415,6 +415,118 @@ class TestCreateLearningCandidate:
         assert out.outcome_id is None
         assert out.reused is False
 
+    def test_same_action_different_outcome_distinct_candidate(self):
+        # Different outcome_id with same action+scope → SELECT miss → INSERT → reused=False
+        other_outcome = "ffffffff-ffff-ffff-ffff-000000000099"
+        body = {**self._BODY, "outcome_id": other_outcome}
+        with patch("app.agency_api.v1.router._get_db", return_value=_fresh_insert_db(_LC_ROW)):
+            with TestClient(_app()) as c:
+                resp = c.post("/agency/v1/learning-candidates", json=body)
+        assert resp.status_code == 201
+        assert resp.json()["reused"] is False
+
+    def test_idempotent_replay_no_outcome_id(self):
+        # Pre-measurement candidate: no outcome_id; SELECT hits existing → reused=True
+        body_no_out = {k: v for k, v in self._BODY.items() if k != "outcome_id"}
+        lc_no_out = {**_LC_ROW, "outcome_id": None}
+        with patch("app.agency_api.v1.router._get_db", return_value=_single_db(lc_no_out)):
+            with TestClient(_app()) as c:
+                resp = c.post("/agency/v1/learning-candidates", json=body_no_out)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["reused"] is True
+        assert data["outcome_id"] is None
+
+    def test_pre_measurement_and_post_measurement_stay_distinct(self):
+        # Pre-measurement (no outcome_id): SELECT miss → INSERT → reused=False
+        body_no_out = {k: v for k, v in self._BODY.items() if k != "outcome_id"}
+        with patch("app.agency_api.v1.router._get_db", return_value=_fresh_insert_db(_LC_ROW)):
+            with TestClient(_app()) as c:
+                resp = c.post("/agency/v1/learning-candidates", json=body_no_out)
+        assert resp.status_code == 201
+        assert resp.json()["reused"] is False
+
+        # Post-measurement (with outcome_id): also SELECT miss → INSERT → reused=False
+        with patch("app.agency_api.v1.router._get_db", return_value=_fresh_insert_db(_LC_ROW)):
+            with TestClient(_app()) as c:
+                resp2 = c.post("/agency/v1/learning-candidates", json=self._BODY)
+        assert resp2.status_code == 201
+        assert resp2.json()["reused"] is False
+
+
+# ── Admin H4 fixture ──────────────────────────────────────────────────────────
+
+class TestAdminH4Fixture:
+    def _admin_app(self):
+        from app.agency_api.v1.auth import SCOPE_ADMIN_ONLY
+        app = FastAPI()
+        app.include_router(agency_router)
+        app.dependency_overrides[SCOPE_ADMIN_ONLY] = lambda: _AUTH_ADMIN
+        return app
+
+    def test_fixture_disabled_without_env_flag(self):
+        import os
+        os.environ.pop("H4_FIXTURE_ENABLED", None)
+        with patch("app.agency_api.v1.router._get_db", return_value=_empty_db()):
+            with TestClient(self._admin_app()) as c:
+                resp = c.post("/agency/v1/admin/h4-fixture")
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"].lower()
+
+    def test_fixture_enabled_returns_rpc_result(self):
+        import os
+        os.environ["H4_FIXTURE_ENABLED"] = "true"
+        fixture_result = {
+            "rollback_verified": True,
+            "recommendation_id": _REC_UUID,
+            "action_id":         _ACTION_UUID,
+            "outcome_id":        _OUTCOME_UUID,
+            "rows_during":       {"recommendations": 1, "actions": 1},
+            "rows_after_rollback": {"recommendations": 0, "actions": 0},
+        }
+        m = MagicMock()
+        rpc_chain = MagicMock()
+        rpc_chain.execute.return_value = MagicMock(data=[fixture_result])
+        m.rpc.return_value = rpc_chain
+        with patch("app.agency_api.v1.router._get_db", return_value=m):
+            with TestClient(self._admin_app()) as c:
+                resp = c.post("/agency/v1/admin/h4-fixture")
+        os.environ.pop("H4_FIXTURE_ENABLED", None)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rollback_verified"] is True
+
+    def test_idempotency_test_disabled_without_env_flag(self):
+        import os
+        os.environ.pop("H4_FIXTURE_ENABLED", None)
+        with patch("app.agency_api.v1.router._get_db", return_value=_empty_db()):
+            with TestClient(self._admin_app()) as c:
+                resp = c.post("/agency/v1/admin/h4-idempotency-test")
+        assert resp.status_code == 403
+
+    def test_idempotency_test_enabled_returns_result(self):
+        import os
+        os.environ["H4_FIXTURE_ENABLED"] = "true"
+        idem_result = {
+            "outcome_idempotency": {
+                "dup_blocked_by_constraint": True,
+                "distinct_window_allowed":   True,
+            },
+            "rollback_verified": True,
+        }
+        m = MagicMock()
+        rpc_chain = MagicMock()
+        rpc_chain.execute.return_value = MagicMock(data=[idem_result])
+        m.rpc.return_value = rpc_chain
+        with patch("app.agency_api.v1.router._get_db", return_value=m):
+            with TestClient(self._admin_app()) as c:
+                resp = c.post("/agency/v1/admin/h4-idempotency-test")
+        os.environ.pop("H4_FIXTURE_ENABLED", None)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rollback_verified"] is True
+        assert data["outcome_idempotency"]["dup_blocked_by_constraint"] is True
+
 
 # ── Action traceability ────────────────────────────────────────────────────────
 

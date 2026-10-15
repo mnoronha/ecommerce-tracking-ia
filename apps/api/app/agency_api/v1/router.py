@@ -3282,37 +3282,47 @@ async def create_learning_candidate(
     db = _get_db()
     scope_str = str(body.scope)
 
-    # Idempotency: source_action_id + scope (preferred key)
-    if body.source_action_id:
+    def _lc_lookup(sa_id, sr_id, out_id):
+        """SELECT-before-INSERT using the canonical 060 index key."""
         try:
-            existing = (
-                db.table("core_learning_candidates")
-                .select("*")
-                .eq("source_action_id", body.source_action_id)
-                .eq("scope", scope_str)
-                .limit(1)
-                .execute()
-            )
-            if existing and existing.data:
-                return _learning_candidate_row_to_out(existing.data[0], reused=True)
+            if sa_id:
+                q = (
+                    db.table("core_learning_candidates")
+                    .select("*")
+                    .eq("source_action_id", sa_id)
+                    .eq("scope", scope_str)
+                )
+                if out_id:
+                    q = q.eq("outcome_id", out_id)
+                else:
+                    q = q.is_("outcome_id", "null")
+                if body.client_id:
+                    q = q.eq("client_id", body.client_id)
+                res = q.limit(1).execute()
+            elif sr_id:
+                q = (
+                    db.table("core_learning_candidates")
+                    .select("*")
+                    .eq("source_recommendation_id", sr_id)
+                    .is_("source_action_id", "null")
+                    .eq("scope", scope_str)
+                )
+                if out_id:
+                    q = q.eq("outcome_id", out_id)
+                else:
+                    q = q.is_("outcome_id", "null")
+                if body.client_id:
+                    q = q.eq("client_id", body.client_id)
+                res = q.limit(1).execute()
+            else:
+                return None
+            return res.data[0] if (res and res.data) else None
         except Exception:
-            pass
-    elif body.source_recommendation_id:
-        # Fallback key: source_recommendation_id + scope (no action link)
-        try:
-            existing = (
-                db.table("core_learning_candidates")
-                .select("*")
-                .eq("source_recommendation_id", body.source_recommendation_id)
-                .eq("scope", scope_str)
-                .is_("source_action_id", "null")
-                .limit(1)
-                .execute()
-            )
-            if existing and existing.data:
-                return _learning_candidate_row_to_out(existing.data[0], reused=True)
-        except Exception:
-            pass
+            return None
+
+    existing_row = _lc_lookup(body.source_action_id, body.source_recommendation_id, body.outcome_id)
+    if existing_row:
+        return _learning_candidate_row_to_out(existing_row, reused=True)
 
     insert_row = {
         "statement":                body.statement,
@@ -3333,33 +3343,10 @@ async def create_learning_candidate(
     except Exception as exc:
         exc_str = str(exc).lower()
         if "unique" in exc_str or "23505" in exc_str:
-            # Race: re-fetch the winning row
-            try:
-                if body.source_action_id:
-                    refetch = (
-                        db.table("core_learning_candidates")
-                        .select("*")
-                        .eq("source_action_id", body.source_action_id)
-                        .eq("scope", scope_str)
-                        .limit(1)
-                        .execute()
-                    )
-                elif body.source_recommendation_id:
-                    refetch = (
-                        db.table("core_learning_candidates")
-                        .select("*")
-                        .eq("source_recommendation_id", body.source_recommendation_id)
-                        .eq("scope", scope_str)
-                        .is_("source_action_id", "null")
-                        .limit(1)
-                        .execute()
-                    )
-                else:
-                    refetch = None
-                if refetch and refetch.data:
-                    return _learning_candidate_row_to_out(refetch.data[0], reused=True)
-            except Exception:
-                pass
+            # Race: re-fetch the winning row using the same canonical key
+            refetched = _lc_lookup(body.source_action_id, body.source_recommendation_id, body.outcome_id)
+            if refetched:
+                return _learning_candidate_row_to_out(refetched, reused=True)
         logger.error("create_learning_candidate: DB error: %s", exc)
         raise HTTPException(503, "database error")
     if not inserted:
@@ -5122,3 +5109,92 @@ def ingest_tracking_events(
     db = _get_db()
     result = ingest_events(db, client_uuid, body.events)
     return TrackingIngestOut(**result)
+
+
+# ── POST /admin/h4-fixture ────────────────────────────────────────────────────
+
+@router.post(
+    "/admin/h4-fixture",
+    summary="Safe H4 integration fixture — full chain in DB with guaranteed rollback",
+    response_model=dict,
+    status_code=200,
+)
+async def run_h4_fixture(
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+) -> dict:
+    """
+    Executes the H4 persistence chain (diagnosis → recommendation → task →
+    action_event → action → outcome → learning_candidate) inside a PL/pgSQL
+    EXCEPTION block that always rolls back.
+
+    Returns IDs, rows_during, rows_after_rollback, rollback_verified, and
+    traceability map.  No external effects.  No persistent rows.
+
+    Guarded by:
+      - SCOPE_ADMIN_ONLY (agency_admin JWT only)
+      - H4_FIXTURE_ENABLED env var must be "true"
+    """
+    import os
+    if os.environ.get("H4_FIXTURE_ENABLED", "").lower() != "true":
+        raise HTTPException(403, "H4 fixture is disabled (set H4_FIXTURE_ENABLED=true to enable)")
+
+    db = _get_db()
+    try:
+        res = db.rpc("h4_fixture_execute", {}).execute()
+    except Exception as exc:
+        logger.error("h4_fixture: RPC error: %s", exc)
+        raise HTTPException(503, f"fixture RPC failed: {exc}")
+
+    data = res.data if res and res.data else None
+    if not data:
+        raise HTTPException(503, "fixture returned no data")
+
+    # RPC returns the jsonb directly as a dict (single row, single column)
+    if isinstance(data, list) and data:
+        result = data[0]
+        if isinstance(result, dict) and "h4_fixture_execute" in result:
+            result = result["h4_fixture_execute"]
+    else:
+        result = data
+
+    return result
+
+
+@router.post(
+    "/admin/h4-idempotency-test",
+    summary="Safe H4 idempotency test — constraint enforcement with guaranteed rollback",
+    response_model=dict,
+    status_code=200,
+)
+async def run_h4_idempotency_test(
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+) -> dict:
+    """
+    Tests the outcome unique constraint (action_event_id, evaluation_window_days)
+    inside a PL/pgSQL EXCEPTION block that always rolls back.
+
+    Returns dup_blocked_by_constraint, distinct_window_allowed, rollback_verified.
+    """
+    import os
+    if os.environ.get("H4_FIXTURE_ENABLED", "").lower() != "true":
+        raise HTTPException(403, "H4 fixture is disabled (set H4_FIXTURE_ENABLED=true to enable)")
+
+    db = _get_db()
+    try:
+        res = db.rpc("h4_idempotency_test", {}).execute()
+    except Exception as exc:
+        logger.error("h4_idempotency_test: RPC error: %s", exc)
+        raise HTTPException(503, f"idempotency test RPC failed: {exc}")
+
+    data = res.data if res and res.data else None
+    if not data:
+        raise HTTPException(503, "idempotency test returned no data")
+
+    if isinstance(data, list) and data:
+        result = data[0]
+        if isinstance(result, dict) and "h4_idempotency_test" in result:
+            result = result["h4_idempotency_test"]
+    else:
+        result = data
+
+    return result
