@@ -508,6 +508,8 @@ class ActionCreate(_Base):
     reason: Optional[str] = None
     provenance: dict[str, Any] = Field(default_factory=dict)
     requires_external_write: bool = False
+    action_event_id: Optional[str] = None  # approving decision event ("decision_id")
+    task_id: Optional[str] = None          # task that triggered this action
 
 
 class ActionOut(_Base):
@@ -531,6 +533,8 @@ class ActionOut(_Base):
     provenance: dict[str, Any] = Field(default_factory=dict)
     requires_external_write: bool = False
     change_log_id: Optional[str] = None
+    action_event_id: Optional[str] = None
+    task_id: Optional[str] = None
     created_at: datetime
 
 
@@ -636,15 +640,17 @@ class LearningCandidateCreate(_Base):
     context: dict[str, Any] = Field(default_factory=dict)
     client_id: Optional[str] = None
     visibility_scope: VisibilityScope = VisibilityScope.AGENCY_ONLY
+    source_action_id: Optional[str] = None          # idempotency key (preferred)
+    source_recommendation_id: Optional[str] = None  # idempotency key (fallback)
+    outcome_id: Optional[str] = None                # outcome that motivated this candidate
 
 
 class LearningCandidateOut(LearningCandidateCreate):
     id: str
     status: LearningCandidateStatus = LearningCandidateStatus.PENDING
-    source_action_id: Optional[str] = None
-    source_recommendation_id: Optional[str] = None
     pattern: Optional[str] = None
     observed_outcome: dict[str, Any] = Field(default_factory=dict)
+    reused: bool = False
     created_at: datetime
 
 
@@ -859,6 +865,7 @@ class EntityPerformanceOut(_Base):
 class OutcomeCreate(_Base):
     schema_version: Literal["1.1"] = SCHEMA_VERSION
     action_event_id: Optional[str] = None
+    evaluation_window_days: Optional[int] = None  # idempotency key together with action_event_id
     measurement_period: dict[str, Any] = Field(default_factory=dict)
     metric_refs: list[str] = Field(default_factory=list)
     before_state: Optional[dict[str, Any]] = None
@@ -873,9 +880,9 @@ class OutcomeOut(OutcomeCreate):
     action_id: Optional[str] = None
     recommendation_id: Optional[str] = None
     client_id: Optional[str] = None
-    evaluation_window_days: Optional[int] = None
     confidence: Optional[str] = None
     data_health: dict[str, Any] = Field(default_factory=dict)
+    reused: bool = False
     created_at: datetime
     created_by: str = "human"
 

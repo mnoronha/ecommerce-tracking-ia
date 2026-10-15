@@ -2724,7 +2724,7 @@ async def get_action_event_outcomes(
 
 # ── POST /outcomes ────────────────────────────────────────────────────────────
 
-def _outcome_row_to_out(row: dict) -> OutcomeOut:
+def _outcome_row_to_out(row: dict, reused: bool = False) -> OutcomeOut:
     from .enums import OutcomeStatus as _OutcomeStatus
     try:
         status = _OutcomeStatus(row.get("status", "PENDING"))
@@ -2732,6 +2732,7 @@ def _outcome_row_to_out(row: dict) -> OutcomeOut:
         status = _OutcomeStatus.PENDING
     return OutcomeOut(
         action_event_id=str(row["action_event_id"]) if row.get("action_event_id") else None,
+        evaluation_window_days=row.get("evaluation_window_days"),
         measurement_period=row.get("measurement_period") or {},
         metric_refs=row.get("metric_refs") or [],
         before_state=row.get("before_state"),
@@ -2743,9 +2744,9 @@ def _outcome_row_to_out(row: dict) -> OutcomeOut:
         action_id=str(row["action_id"]) if row.get("action_id") else None,
         recommendation_id=str(row["recommendation_id"]) if row.get("recommendation_id") else None,
         client_id=str(row["client_id"]) if row.get("client_id") else None,
-        evaluation_window_days=row.get("evaluation_window_days"),
         confidence=row.get("confidence"),
         data_health=row.get("data_health") or {},
+        reused=reused,
         created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
         created_by=row.get("created_by", "human"),
     )
@@ -2762,18 +2763,53 @@ async def create_outcome(
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
 ) -> OutcomeOut:
     db = _get_db()
+
+    # Idempotency: same (action_event_id, evaluation_window_days) → return existing
+    if body.action_event_id:
+        try:
+            q = (
+                db.table("core_outcomes")
+                .select("*")
+                .eq("action_event_id", body.action_event_id)
+            )
+            if body.evaluation_window_days is not None:
+                q = q.eq("evaluation_window_days", body.evaluation_window_days)
+            existing = q.limit(1).execute()
+            if existing and existing.data:
+                return _outcome_row_to_out(existing.data[0], reused=True)
+        except Exception:
+            pass  # idempotency check failure is non-fatal; attempt insert below
+
+    insert_row = {
+        "action_event_id":        body.action_event_id,
+        "evaluation_window_days": body.evaluation_window_days,
+        "measurement_period":     body.measurement_period,
+        "metric_refs":            body.metric_refs,
+        "before_state":           body.before_state,
+        "after_state":            body.after_state,
+        "delta":                  body.delta,
+        "status":                 body.status if isinstance(body.status, str) else body.status.value,
+        "measured_at":            body.measured_at.isoformat() if body.measured_at else None,
+    }
     try:
-        ins = db.table("core_outcomes").insert({
-            "action_event_id":    body.action_event_id,
-            "measurement_period": body.measurement_period,
-            "metric_refs":        body.metric_refs,
-            "before_state":       body.before_state,
-            "after_state":        body.after_state,
-            "delta":              body.delta,
-            "status":             body.status if isinstance(body.status, str) else body.status.value,
-            "measured_at":        body.measured_at.isoformat() if body.measured_at else None,
-        }).execute()
+        ins = db.table("core_outcomes").insert(insert_row).execute()
     except Exception as exc:
+        exc_str = str(exc).lower()
+        # Unique constraint violation (race condition) — re-fetch the winning row
+        if "unique" in exc_str or "23505" in exc_str:
+            try:
+                q = (
+                    db.table("core_outcomes")
+                    .select("*")
+                    .eq("action_event_id", body.action_event_id)
+                )
+                if body.evaluation_window_days is not None:
+                    q = q.eq("evaluation_window_days", body.evaluation_window_days)
+                refetch = q.limit(1).execute()
+                if refetch and refetch.data:
+                    return _outcome_row_to_out(refetch.data[0], reused=True)
+            except Exception:
+                pass
         logger.error("create_outcome: insert failed: %s", exc)
         raise HTTPException(503, "database error")
     row = ins.data[0] if (ins and ins.data) else None
@@ -2844,6 +2880,8 @@ def _action_row_to_out(row: dict) -> ActionOut:
         provenance=row.get("provenance") or {},
         requires_external_write=bool(row.get("requires_external_write", False)),
         change_log_id=str(row["change_log_id"]) if row.get("change_log_id") else None,
+        action_event_id=str(row["action_event_id"]) if row.get("action_event_id") else None,
+        task_id=str(row["task_id"]) if row.get("task_id") else None,
         created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
     )
 
@@ -2914,6 +2952,8 @@ async def create_recommendation_action(
         "reason": body.reason,
         "provenance": body.provenance,
         "requires_external_write": body.requires_external_write,
+        "action_event_id": str(body.action_event_id) if body.action_event_id else None,
+        "task_id": str(body.task_id) if body.task_id else None,
     }
     try:
         ins = db.table("core_actions").insert(row).execute()
@@ -3158,7 +3198,7 @@ async def get_client_learning_candidates(
     return [_learning_candidate_row_to_out(r) for r in rows]
 
 
-def _learning_candidate_row_to_out(row: dict) -> LearningCandidateOut:
+def _learning_candidate_row_to_out(row: dict, reused: bool = False) -> LearningCandidateOut:
     return LearningCandidateOut(
         id=str(row["id"]),
         statement=row.get("statement", ""),
@@ -3168,11 +3208,13 @@ def _learning_candidate_row_to_out(row: dict) -> LearningCandidateOut:
         context=row.get("context") or {},
         client_id=str(row["client_id"]) if row.get("client_id") else None,
         visibility_scope=row.get("visibility_scope", "AGENCY_ONLY"),
-        status=row.get("status", "PENDING"),
         source_action_id=str(row["source_action_id"]) if row.get("source_action_id") else None,
         source_recommendation_id=str(row["source_recommendation_id"]) if row.get("source_recommendation_id") else None,
+        outcome_id=str(row["outcome_id"]) if row.get("outcome_id") else None,
+        status=row.get("status", "PENDING"),
         pattern=row.get("pattern"),
         observed_outcome=row.get("observed_outcome") or {},
+        reused=reused,
         created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
     )
 
@@ -3238,20 +3280,86 @@ async def create_learning_candidate(
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
 ) -> LearningCandidateOut:
     db = _get_db()
-    row = {
-        "statement": body.statement,
-        "scope": str(body.scope),
-        "evidence_level": str(body.evidence_level),
-        "evidence_refs": body.evidence_refs,
-        "context": body.context,
-        "client_id": body.client_id,
-        "visibility_scope": str(body.visibility_scope),
-        "status": "PENDING",
+    scope_str = str(body.scope)
+
+    # Idempotency: source_action_id + scope (preferred key)
+    if body.source_action_id:
+        try:
+            existing = (
+                db.table("core_learning_candidates")
+                .select("*")
+                .eq("source_action_id", body.source_action_id)
+                .eq("scope", scope_str)
+                .limit(1)
+                .execute()
+            )
+            if existing and existing.data:
+                return _learning_candidate_row_to_out(existing.data[0], reused=True)
+        except Exception:
+            pass
+    elif body.source_recommendation_id:
+        # Fallback key: source_recommendation_id + scope (no action link)
+        try:
+            existing = (
+                db.table("core_learning_candidates")
+                .select("*")
+                .eq("source_recommendation_id", body.source_recommendation_id)
+                .eq("scope", scope_str)
+                .is_("source_action_id", "null")
+                .limit(1)
+                .execute()
+            )
+            if existing and existing.data:
+                return _learning_candidate_row_to_out(existing.data[0], reused=True)
+        except Exception:
+            pass
+
+    insert_row = {
+        "statement":                body.statement,
+        "scope":                    scope_str,
+        "evidence_level":           str(body.evidence_level),
+        "evidence_refs":            body.evidence_refs,
+        "context":                  body.context,
+        "client_id":                body.client_id,
+        "visibility_scope":         str(body.visibility_scope),
+        "source_action_id":         body.source_action_id,
+        "source_recommendation_id": body.source_recommendation_id,
+        "outcome_id":               body.outcome_id,
+        "status":                   "PENDING",
     }
     try:
-        ins = db.table("core_learning_candidates").insert(row).execute()
+        ins = db.table("core_learning_candidates").insert(insert_row).execute()
         inserted = ins.data[0] if (ins and ins.data) else None
     except Exception as exc:
+        exc_str = str(exc).lower()
+        if "unique" in exc_str or "23505" in exc_str:
+            # Race: re-fetch the winning row
+            try:
+                if body.source_action_id:
+                    refetch = (
+                        db.table("core_learning_candidates")
+                        .select("*")
+                        .eq("source_action_id", body.source_action_id)
+                        .eq("scope", scope_str)
+                        .limit(1)
+                        .execute()
+                    )
+                elif body.source_recommendation_id:
+                    refetch = (
+                        db.table("core_learning_candidates")
+                        .select("*")
+                        .eq("source_recommendation_id", body.source_recommendation_id)
+                        .eq("scope", scope_str)
+                        .is_("source_action_id", "null")
+                        .limit(1)
+                        .execute()
+                    )
+                else:
+                    refetch = None
+                if refetch and refetch.data:
+                    return _learning_candidate_row_to_out(refetch.data[0], reused=True)
+            except Exception:
+                pass
         logger.error("create_learning_candidate: DB error: %s", exc)
         raise HTTPException(503, "database error")
     if not inserted:
