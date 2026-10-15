@@ -23,6 +23,12 @@ _VALID_EVENT_NAMES = frozenset(
 )
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
+# Maps Phase 7 API event names to the legacy tracking_events.event_type CHECK values.
+_EVENT_TYPE_MAP = {
+    "page_view": "pageview",
+    "view_item": "view_product",
+}
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -104,7 +110,7 @@ def _resolve_session(sb, client_uuid: str, event) -> bool:
             .maybe_single()
             .execute()
         )
-        if check.data:
+        if check is not None and check.data:
             return False
 
         sb.table("tracking_sessions").insert({
@@ -153,7 +159,7 @@ def _resolve_identity(sb, client_uuid: str, event) -> tuple[bool, bool]:
             .maybe_single()
             .execute()
         )
-        if check.data:
+        if check is not None and check.data:
             update_data: dict = {"last_seen_at": now}
             for col in ("fbp", "fbc", "gbraid", "wbraid", "ga_client_id"):
                 val = getattr(event, col, None)
@@ -301,7 +307,7 @@ def ingest_events(sb, client_uuid: str, events: list) -> dict:
             sb.table("tracking_events").insert({
                 "client_id":        client_uuid,
                 "event_id":         eid,
-                "event_type":       event.event_name,
+                "event_type":       _EVENT_TYPE_MAP.get(event.event_name, event.event_name),
                 "session_id":       getattr(event, "session_id", None),
                 "visitor_cookie_id": getattr(event, "visitor_cookie_id", None),
                 "url":              getattr(event, "url", None),
