@@ -29,7 +29,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     if (!clientId) return
-    fetch(`${API_URL}/setup/clients`)
+    fetch('/api/portal/clients')
       .then(r => r.json())
       .then((d: any) => {
         const list: any[] = Array.isArray(d) ? d : (d.clients || [])

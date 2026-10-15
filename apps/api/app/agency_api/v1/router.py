@@ -4610,7 +4610,7 @@ async def create_task(
         "priority":         body.priority.value if hasattr(body.priority, "value") else str(body.priority),
         "owner":            body.owner,
         "due_date":         body.due_date.isoformat() if body.due_date else None,
-        "source_type":      body.source_type.value if body.source_type else None,
+        "source_type":      (body.source_type.value if hasattr(body.source_type, "value") else str(body.source_type)) if body.source_type else None,
         "source_id":        str(body.source_id) if body.source_id else None,
         "visibility_scope": body.visibility_scope.value if hasattr(body.visibility_scope, "value") else str(body.visibility_scope),
         "sync_state":       "none",
@@ -4738,15 +4738,26 @@ def _meeting_row_to_out(row: dict, summary: Optional[dict] = None) -> MeetingOut
 
 
 def _summary_row_to_out(row: dict) -> MeetingSummaryOut:
+    import json as _json
+
+    def _parse_jsonb(v):
+        """Supabase returns jsonb as already-parsed Python objects; strings need parsing."""
+        if isinstance(v, str):
+            try:
+                return _json.loads(v)
+            except Exception:
+                return []
+        return v or []
+
     return MeetingSummaryOut(
         id=str(row["id"]),
         meeting_id=str(row["meeting_id"]),
         summary=row.get("summary"),
-        decisions=row.get("decisions") or [],
-        open_questions=row.get("open_questions") or [],
-        commitments=row.get("commitments") or [],
-        follow_ups=row.get("follow_ups") or [],
-        tasks_created=row.get("tasks_created") or [],
+        decisions=_parse_jsonb(row.get("decisions")),
+        open_questions=_parse_jsonb(row.get("open_questions")),
+        commitments=_parse_jsonb(row.get("commitments")),
+        follow_ups=_parse_jsonb(row.get("follow_ups")),
+        tasks_created=_parse_jsonb(row.get("tasks_created")),
         processor=row.get("processor", "manual"),
         created_at=row["created_at"],
     )

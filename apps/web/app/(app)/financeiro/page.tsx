@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
@@ -10,7 +10,7 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface Summary {
   mrr: number
@@ -44,7 +44,7 @@ interface FinNotification {
 
 type Tab = 'resumo' | 'contratos' | 'receber' | 'pagar' | 'notificacoes'
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const fmt = (v: number) =>
   'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -65,13 +65,13 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: 'bg-slate-500/15 text-slate-400',
 }
 const CAT_LABEL: Record<string, string> = {
-  tool: 'Ferramenta', service: 'Serviço', freelancer: 'Freelancer',
-  tax: 'Imposto', salary: 'Salário', other: 'Outro',
+  tool: 'Ferramenta', service: 'ServiÃ§o', freelancer: 'Freelancer',
+  tax: 'Imposto', salary: 'SalÃ¡rio', other: 'Outro',
 }
 
 const thisMonth = () => new Date().toISOString().slice(0, 7)
 
-// ── Modal genérico ─────────────────────────────────────────────────────────────
+// â”€â”€ Modal genÃ©rico â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -99,7 +99,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 const inputCls = "w-full bg-[#0f1117] border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
 const selectCls = inputCls
 
-// ── KPI Card ──────────────────────────────────────────────────────────────────
+// â”€â”€ KPI Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function KPI({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
   return (
@@ -111,7 +111,7 @@ function KPI({ label, value, sub, color }: { label: string; value: string; sub?:
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// â”€â”€ Main Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export default function FinanceiroPage() {
   const router = useRouter()
@@ -131,7 +131,7 @@ export default function FinanceiroPage() {
   const [showPayModal, setShowPayModal]             = useState(false)
   const [editContract, setEditContract]             = useState<Contract | null>(null)
 
-  // Auth check — only agency owner can access
+  // Auth check â€” only agency owner can access
   useEffect(() => {
     const checkOwner = async () => {
       const supabase = createSupabaseBrowserClient()
@@ -153,11 +153,11 @@ export default function FinanceiroPage() {
     setLoading(true)
     try {
       const [sumRes, cRes, rRes, pRes, nRes] = await Promise.all([
-        fetch(`${API_URL}/finance/summary`),
-        fetch(`${API_URL}/finance/contracts`),
-        fetch(`${API_URL}/finance/receivables?month=${filterMonth}`),
-        fetch(`${API_URL}/finance/payables?month=${filterMonth}`),
-        fetch(`${API_URL}/finance/notifications`),
+        fetch(`/api/finance/summary`),
+        fetch(`/api/finance/contracts`),
+        fetch(`/api/finance/receivables?month=${filterMonth}`),
+        fetch(`/api/finance/payables?month=${filterMonth}`),
+        fetch(`/api/finance/notifications`),
       ])
       if (sumRes.ok) setSummary(await sumRes.json())
       if (cRes.ok)   setContracts(await cRes.json())
@@ -172,7 +172,7 @@ export default function FinanceiroPage() {
   useEffect(() => { load() }, [load])
 
   const markRecvPaid = async (id: string) => {
-    await fetch(`${API_URL}/finance/receivables/${id}`, {
+    await fetch(`/api/finance/receivables/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'paid' }),
     })
@@ -180,7 +180,7 @@ export default function FinanceiroPage() {
   }
 
   const markPayPaid = async (id: string) => {
-    await fetch(`${API_URL}/finance/payables/${id}`, {
+    await fetch(`/api/finance/payables/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'paid' }),
     })
@@ -188,24 +188,24 @@ export default function FinanceiroPage() {
   }
 
   const generateReceivables = async () => {
-    await fetch(`${API_URL}/finance/receivables/generate?month=${filterMonth}`, { method: 'POST' })
+    await fetch(`/api/finance/receivables/generate?month=${filterMonth}`, { method: 'POST' })
     load()
   }
 
   const markAllNotifsRead = async () => {
-    await fetch(`${API_URL}/finance/notifications/read-all`, { method: 'POST' })
+    await fetch(`/api/finance/notifications/read-all`, { method: 'POST' })
     setNotifications([])
     setSummary(s => s ? { ...s, unread_notifications: 0 } : s)
   }
 
   const markNotifRead = async (id: string) => {
-    await fetch(`${API_URL}/finance/notifications/${id}/read`, { method: 'POST' })
+    await fetch(`/api/finance/notifications/${id}/read`, { method: 'POST' })
     setNotifications(n => n.filter(x => x.id !== id))
   }
 
   const cancelContract = async (id: string) => {
     if (!confirm('Cancelar este contrato?')) return
-    await fetch(`${API_URL}/finance/contracts/${id}`, { method: 'DELETE' })
+    await fetch(`/api/finance/contracts/${id}`, { method: 'DELETE' })
     load()
   }
 
@@ -218,7 +218,7 @@ export default function FinanceiroPage() {
   ]
 
   if (!authorized) {
-    return <div className="min-h-screen bg-[#0f1117] flex items-center justify-center text-slate-500 text-sm">Verificando acesso…</div>
+    return <div className="min-h-screen bg-[#0f1117] flex items-center justify-center text-slate-500 text-sm">Verificando acessoâ€¦</div>
   }
 
   return (
@@ -251,21 +251,21 @@ export default function FinanceiroPage() {
           ))}
         </div>
 
-        {/* ── Resumo ── */}
+        {/* â”€â”€ Resumo â”€â”€ */}
         {tab === 'resumo' && summary && (
           <div className="space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <KPI label="MRR" value={fmt(summary.mrr)} sub={`${summary.active_contracts} contratos ativos`} color="text-indigo-400" />
-              <KPI label="A Receber (mês)" value={fmt(summary.receivables.month_total)} sub={`${fmt(summary.receivables.paid)} já pago`} color="text-emerald-400" />
-              <KPI label="A Pagar (mês)" value={fmt(summary.payables.month_total)} sub={`${fmt(summary.payables.paid)} já pago`} color="text-orange-400" />
-              <KPI label="Inadimplência" value={fmt(summary.receivables.overdue)} sub="pendentes vencidos" color={summary.receivables.overdue > 0 ? 'text-red-400' : 'text-slate-400'} />
+              <KPI label="A Receber (mÃªs)" value={fmt(summary.receivables.month_total)} sub={`${fmt(summary.receivables.paid)} jÃ¡ pago`} color="text-emerald-400" />
+              <KPI label="A Pagar (mÃªs)" value={fmt(summary.payables.month_total)} sub={`${fmt(summary.payables.paid)} jÃ¡ pago`} color="text-orange-400" />
+              <KPI label="InadimplÃªncia" value={fmt(summary.receivables.overdue)} sub="pendentes vencidos" color={summary.receivables.overdue > 0 ? 'text-red-400' : 'text-slate-400'} />
             </div>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Recebíveis pendentes */}
+              {/* RecebÃ­veis pendentes */}
               <div className="bg-[#1a1f2e] rounded-xl border border-slate-700/50 p-5">
-                <p className="font-semibold text-white mb-3">Recebíveis pendentes</p>
+                <p className="font-semibold text-white mb-3">RecebÃ­veis pendentes</p>
                 {receivables.filter(r => r.status === 'pending').length === 0
-                  ? <p className="text-sm text-slate-500">Nenhum pendente no mês</p>
+                  ? <p className="text-sm text-slate-500">Nenhum pendente no mÃªs</p>
                   : receivables.filter(r => r.status === 'pending').map(r => (
                     <div key={r.id} className="flex items-center justify-between py-2 border-b border-slate-700/50 last:border-0">
                       <div>
@@ -283,12 +283,12 @@ export default function FinanceiroPage() {
               <div className="bg-[#1a1f2e] rounded-xl border border-slate-700/50 p-5">
                 <p className="font-semibold text-white mb-3">Contas a pagar pendentes</p>
                 {payables.filter(p => p.status === 'pending').length === 0
-                  ? <p className="text-sm text-slate-500">Nenhuma pendente no mês</p>
+                  ? <p className="text-sm text-slate-500">Nenhuma pendente no mÃªs</p>
                   : payables.filter(p => p.status === 'pending').map(p => (
                     <div key={p.id} className="flex items-center justify-between py-2 border-b border-slate-700/50 last:border-0">
                       <div>
                         <p className="text-sm text-white font-medium">{p.description}</p>
-                        <p className="text-xs text-slate-500">{CAT_LABEL[p.category]} · Vence {fmtDate(p.due_date)}</p>
+                        <p className="text-xs text-slate-500">{CAT_LABEL[p.category]} Â· Vence {fmtDate(p.due_date)}</p>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-bold text-white">{fmt(p.amount)}</span>
@@ -301,7 +301,7 @@ export default function FinanceiroPage() {
           </div>
         )}
 
-        {/* ── Contratos ── */}
+        {/* â”€â”€ Contratos â”€â”€ */}
         {tab === 'contratos' && (
           <div className="space-y-4">
             <div className="flex justify-end">
@@ -316,7 +316,7 @@ export default function FinanceiroPage() {
                   <th className="text-right px-4 py-3 text-xs text-slate-400 font-medium">Mensalidade</th>
                   <th className="text-center px-4 py-3 text-xs text-slate-400 font-medium">Vence dia</th>
                   <th className="text-center px-4 py-3 text-xs text-slate-400 font-medium">Status</th>
-                  <th className="text-right px-4 py-3 text-xs text-slate-400 font-medium">Início</th>
+                  <th className="text-right px-4 py-3 text-xs text-slate-400 font-medium">InÃ­cio</th>
                   <th className="px-4 py-3"></th>
                 </tr></thead>
                 <tbody>
@@ -334,7 +334,7 @@ export default function FinanceiroPage() {
                       <td className="px-4 py-3 text-center">
                         <span className={`text-xs px-2 py-0.5 rounded font-medium ${STATUS_COLOR[c.status] || ''}`}>{STATUS_LABEL[c.status] || c.status}</span>
                       </td>
-                      <td className="px-4 py-3 text-right text-xs text-slate-400">{fmtDate(c.start_date)}{c.end_date ? ` → ${fmtDate(c.end_date)}` : ''}</td>
+                      <td className="px-4 py-3 text-right text-xs text-slate-400">{fmtDate(c.start_date)}{c.end_date ? ` â†’ ${fmtDate(c.end_date)}` : ''}</td>
                       <td className="px-4 py-3">
                         <div className="flex gap-2 justify-end">
                           <button onClick={() => { setEditContract(c); setShowContractModal(true) }} className="text-xs text-indigo-400 hover:text-indigo-300">Editar</button>
@@ -351,14 +351,14 @@ export default function FinanceiroPage() {
           </div>
         )}
 
-        {/* ── A Receber ── */}
+        {/* â”€â”€ A Receber â”€â”€ */}
         {tab === 'receber' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <input type="month" value={filterMonth} onChange={e => setFilterMonth(e.target.value)} className={`${inputCls} w-40`} />
               <div className="flex gap-2">
                 <button onClick={generateReceivables} className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-sm">
-                  <RefreshCw size={13} /> Gerar do mês
+                  <RefreshCw size={13} /> Gerar do mÃªs
                 </button>
                 <button onClick={() => setShowRecvModal(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium">
                   <Plus size={14} /> Novo
@@ -369,7 +369,7 @@ export default function FinanceiroPage() {
               <table className="w-full">
                 <thead><tr className="border-b border-slate-700">
                   <th className="text-left px-4 py-3 text-xs text-slate-400 font-medium">Cliente</th>
-                  <th className="text-left px-4 py-3 text-xs text-slate-400 font-medium">Descrição</th>
+                  <th className="text-left px-4 py-3 text-xs text-slate-400 font-medium">DescriÃ§Ã£o</th>
                   <th className="text-right px-4 py-3 text-xs text-slate-400 font-medium">Valor</th>
                   <th className="text-center px-4 py-3 text-xs text-slate-400 font-medium">Vencimento</th>
                   <th className="text-center px-4 py-3 text-xs text-slate-400 font-medium">Status</th>
@@ -377,7 +377,7 @@ export default function FinanceiroPage() {
                 </tr></thead>
                 <tbody>
                   {receivables.length === 0 && (
-                    <tr><td colSpan={6} className="text-center py-10 text-slate-500 text-sm">Nenhum recebível no mês</td></tr>
+                    <tr><td colSpan={6} className="text-center py-10 text-slate-500 text-sm">Nenhum recebÃ­vel no mÃªs</td></tr>
                   )}
                   {receivables.map(r => (
                     <tr key={r.id} className="border-b border-slate-700/50 last:border-0 hover:bg-slate-800/30">
@@ -403,7 +403,7 @@ export default function FinanceiroPage() {
           </div>
         )}
 
-        {/* ── A Pagar ── */}
+        {/* â”€â”€ A Pagar â”€â”€ */}
         {tab === 'pagar' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -415,7 +415,7 @@ export default function FinanceiroPage() {
             <div className="bg-[#1a1f2e] rounded-xl border border-slate-700/50 overflow-hidden">
               <table className="w-full">
                 <thead><tr className="border-b border-slate-700">
-                  <th className="text-left px-4 py-3 text-xs text-slate-400 font-medium">Descrição</th>
+                  <th className="text-left px-4 py-3 text-xs text-slate-400 font-medium">DescriÃ§Ã£o</th>
                   <th className="text-left px-4 py-3 text-xs text-slate-400 font-medium">Categoria</th>
                   <th className="text-right px-4 py-3 text-xs text-slate-400 font-medium">Valor</th>
                   <th className="text-center px-4 py-3 text-xs text-slate-400 font-medium">Vencimento</th>
@@ -424,7 +424,7 @@ export default function FinanceiroPage() {
                 </tr></thead>
                 <tbody>
                   {payables.length === 0 && (
-                    <tr><td colSpan={6} className="text-center py-10 text-slate-500 text-sm">Nenhuma conta a pagar no mês</td></tr>
+                    <tr><td colSpan={6} className="text-center py-10 text-slate-500 text-sm">Nenhuma conta a pagar no mÃªs</td></tr>
                   )}
                   {payables.map(p => (
                     <tr key={p.id} className="border-b border-slate-700/50 last:border-0 hover:bg-slate-800/30">
@@ -453,7 +453,7 @@ export default function FinanceiroPage() {
           </div>
         )}
 
-        {/* ── Notificações ── */}
+        {/* â”€â”€ NotificaÃ§Ãµes â”€â”€ */}
         {tab === 'notificacoes' && (
           <div className="space-y-3">
             {notifications.length > 0 && (
@@ -489,7 +489,7 @@ export default function FinanceiroPage() {
         )}
       </div>
 
-      {/* ── Modal: Contrato ── */}
+      {/* â”€â”€ Modal: Contrato â”€â”€ */}
       {showContractModal && (
         <ContractModal
           initial={editContract}
@@ -498,12 +498,12 @@ export default function FinanceiroPage() {
         />
       )}
 
-      {/* ── Modal: Recebível ── */}
+      {/* â”€â”€ Modal: RecebÃ­vel â”€â”€ */}
       {showRecvModal && (
         <ReceivableModal contracts={contracts} onClose={() => setShowRecvModal(false)} onSave={load} />
       )}
 
-      {/* ── Modal: Conta a Pagar ── */}
+      {/* â”€â”€ Modal: Conta a Pagar â”€â”€ */}
       {showPayModal && (
         <PayableModal onClose={() => setShowPayModal(false)} onSave={load} />
       )}
@@ -511,7 +511,7 @@ export default function FinanceiroPage() {
   )
 }
 
-// ── Contract Modal ─────────────────────────────────────────────────────────────
+// â”€â”€ Contract Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ContractModal({ initial, onClose, onSave }: { initial: Contract | null; onClose: () => void; onSave: () => void }) {
   const [form, setForm] = useState({
@@ -529,7 +529,7 @@ function ContractModal({ initial, onClose, onSave }: { initial: Contract | null;
   const save = async () => {
     setSaving(true)
     const body = { ...form, monthly_value: parseFloat(form.monthly_value), due_day: parseInt(form.due_day) }
-    const url  = initial ? `${API_URL}/finance/contracts/${initial.id}` : `${API_URL}/finance/contracts`
+    const url  = initial ? `/api/finance/contracts/${initial.id}` : `/api/finance/contracts`
     await fetch(url, { method: initial ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     setSaving(false)
     onSave()
@@ -543,13 +543,13 @@ function ContractModal({ initial, onClose, onSave }: { initial: Contract | null;
     <Modal title={initial ? 'Editar contrato' : 'Novo contrato'} onClose={onClose}>
       <div className="space-y-4">
         <Field label="Cliente *"><input className={inputCls} value={form.client_name} onChange={set('client_name')} placeholder="Nome do cliente" /></Field>
-        <Field label="Descrição"><input className={inputCls} value={form.description} onChange={set('description')} placeholder="Ex: Gestão de tráfego" /></Field>
+        <Field label="DescriÃ§Ã£o"><input className={inputCls} value={form.description} onChange={set('description')} placeholder="Ex: GestÃ£o de trÃ¡fego" /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Mensalidade (R$) *"><input className={inputCls} type="number" value={form.monthly_value} onChange={set('monthly_value')} placeholder="3500" /></Field>
           <Field label="Dia do vencimento *"><input className={inputCls} type="number" min={1} max={28} value={form.due_day} onChange={set('due_day')} /></Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Início *"><input className={inputCls} type="date" value={form.start_date} onChange={set('start_date')} /></Field>
+          <Field label="InÃ­cio *"><input className={inputCls} type="date" value={form.start_date} onChange={set('start_date')} /></Field>
           <Field label="Fim (opcional)"><input className={inputCls} type="date" value={form.end_date} onChange={set('end_date')} /></Field>
         </div>
         <Field label="Status">
@@ -559,7 +559,7 @@ function ContractModal({ initial, onClose, onSave }: { initial: Contract | null;
             <option value="cancelled">Cancelado</option>
           </select>
         </Field>
-        <Field label="Observações"><textarea className={inputCls} rows={2} value={form.notes} onChange={set('notes')} /></Field>
+        <Field label="ObservaÃ§Ãµes"><textarea className={inputCls} rows={2} value={form.notes} onChange={set('notes')} /></Field>
         <button onClick={save} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white py-2.5 rounded-lg font-medium">
           {saving ? 'Salvando...' : 'Salvar'}
         </button>
@@ -568,7 +568,7 @@ function ContractModal({ initial, onClose, onSave }: { initial: Contract | null;
   )
 }
 
-// ── Receivable Modal ───────────────────────────────────────────────────────────
+// â”€â”€ Receivable Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function ReceivableModal({ contracts, onClose, onSave }: { contracts: Contract[]; onClose: () => void; onSave: () => void }) {
   const nextMonth = new Date(); nextMonth.setMonth(nextMonth.getMonth() + 1)
@@ -590,23 +590,23 @@ function ReceivableModal({ contracts, onClose, onSave }: { contracts: Contract[]
   const save = async () => {
     setSaving(true)
     const body = { ...form, amount: parseFloat(form.amount), contract_id: form.contract_id || null }
-    await fetch(`${API_URL}/finance/receivables`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    await fetch(`/api/finance/receivables`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     setSaving(false); onSave(); onClose()
   }
 
   return (
-    <Modal title="Novo recebível" onClose={onClose}>
+    <Modal title="Novo recebÃ­vel" onClose={onClose}>
       <div className="space-y-4">
         <Field label="Contrato (opcional)">
           <select className={selectCls} value={form.contract_id} onChange={e => selectContract(e.target.value)}>
-            <option value="">— Selecionar contrato —</option>
+            <option value="">â€” Selecionar contrato â€”</option>
             {contracts.filter(c => c.status === 'active').map(c => (
-              <option key={c.id} value={c.id}>{c.client_name} — {fmt(c.monthly_value)}</option>
+              <option key={c.id} value={c.id}>{c.client_name} â€” {fmt(c.monthly_value)}</option>
             ))}
           </select>
         </Field>
         <Field label="Cliente *"><input className={inputCls} value={form.client_name} onChange={set('client_name')} placeholder="Nome do cliente" /></Field>
-        <Field label="Descrição *"><input className={inputCls} value={form.description} onChange={set('description')} /></Field>
+        <Field label="DescriÃ§Ã£o *"><input className={inputCls} value={form.description} onChange={set('description')} /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Valor (R$) *"><input className={inputCls} type="number" value={form.amount} onChange={set('amount')} /></Field>
           <Field label="Vencimento *"><input className={inputCls} type="date" value={form.due_date} onChange={set('due_date')} /></Field>
@@ -619,7 +619,7 @@ function ReceivableModal({ contracts, onClose, onSave }: { contracts: Contract[]
   )
 }
 
-// ── Payable Modal ──────────────────────────────────────────────────────────────
+// â”€â”€ Payable Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function PayableModal({ onClose, onSave }: { onClose: () => void; onSave: () => void }) {
   const [form, setForm] = useState({
@@ -634,14 +634,14 @@ function PayableModal({ onClose, onSave }: { onClose: () => void; onSave: () => 
   const save = async () => {
     setSaving(true)
     const body = { ...form, amount: parseFloat(form.amount) }
-    await fetch(`${API_URL}/finance/payables`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    await fetch(`/api/finance/payables`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     setSaving(false); onSave(); onClose()
   }
 
   return (
     <Modal title="Nova conta a pagar" onClose={onClose}>
       <div className="space-y-4">
-        <Field label="Descrição *"><input className={inputCls} value={form.description} onChange={set('description')} placeholder="Ex: Google Workspace" /></Field>
+        <Field label="DescriÃ§Ã£o *"><input className={inputCls} value={form.description} onChange={set('description')} placeholder="Ex: Google Workspace" /></Field>
         <Field label="Fornecedor"><input className={inputCls} value={form.supplier} onChange={set('supplier')} placeholder="Ex: Google" /></Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Valor (R$) *"><input className={inputCls} type="number" value={form.amount} onChange={set('amount')} /></Field>
@@ -663,3 +663,4 @@ function PayableModal({ onClose, onSave }: { onClose: () => void; onSave: () => 
     </Modal>
   )
 }
+

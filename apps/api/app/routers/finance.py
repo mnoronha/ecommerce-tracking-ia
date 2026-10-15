@@ -9,9 +9,10 @@ from datetime import date, timedelta
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from ..agency_api.v1.auth import AuthContext, SCOPE_ADMIN_ONLY
 from ..database import get_supabase
 
 router = APIRouter(prefix="/finance", tags=["finance"])
@@ -81,7 +82,7 @@ class PayablePatch(BaseModel):
 # ── Summary ────────────────────────────────────────────────────────────────────
 
 @router.get("/summary")
-def get_summary():
+def get_summary(ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     """MRR, total a receber no mês, total a pagar no mês, inadimplência."""
     sb    = get_supabase()
     today = date.today()
@@ -129,7 +130,7 @@ def get_summary():
 # ── Contracts ─────────────────────────────────────────────────────────────────
 
 @router.get("/contracts")
-def list_contracts(status: Optional[str] = Query(None)):
+def list_contracts(ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY), status: Optional[str] = Query(None)):
     sb = get_supabase()
     q  = sb.table("contracts").select("*").order("client_name")
     if status:
@@ -138,7 +139,7 @@ def list_contracts(status: Optional[str] = Query(None)):
 
 
 @router.post("/contracts", status_code=201)
-def create_contract(body: ContractIn):
+def create_contract(body: ContractIn, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb  = get_supabase()
     row = body.model_dump(exclude_none=True)
     res = sb.table("contracts").insert(row).execute()
@@ -146,7 +147,7 @@ def create_contract(body: ContractIn):
 
 
 @router.patch("/contracts/{contract_id}")
-def update_contract(contract_id: str, body: ContractPatch):
+def update_contract(contract_id: str, body: ContractPatch, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb      = get_supabase()
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
@@ -160,7 +161,7 @@ def update_contract(contract_id: str, body: ContractPatch):
 
 
 @router.delete("/contracts/{contract_id}", status_code=204)
-def cancel_contract(contract_id: str):
+def cancel_contract(contract_id: str, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb = get_supabase()
     from datetime import datetime, timezone
     sb.table("contracts").update({"status": "cancelled", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", contract_id).execute()
@@ -170,6 +171,7 @@ def cancel_contract(contract_id: str):
 
 @router.get("/receivables")
 def list_receivables(
+    ctx:        AuthContext = Depends(SCOPE_ADMIN_ONLY),
     status:     Optional[str] = Query(None),
     month:      Optional[str] = Query(None, description="YYYY-MM — filtra pelo mês de vencimento"),
 ):
@@ -183,7 +185,7 @@ def list_receivables(
 
 
 @router.post("/receivables", status_code=201)
-def create_receivable(body: ReceivableIn):
+def create_receivable(body: ReceivableIn, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb  = get_supabase()
     row = body.model_dump(exclude_none=True)
     res = sb.table("receivables").insert(row).execute()
@@ -191,7 +193,7 @@ def create_receivable(body: ReceivableIn):
 
 
 @router.patch("/receivables/{receivable_id}")
-def update_receivable(receivable_id: str, body: ReceivablePatch):
+def update_receivable(receivable_id: str, body: ReceivablePatch, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb      = get_supabase()
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
@@ -208,7 +210,7 @@ def update_receivable(receivable_id: str, body: ReceivablePatch):
 
 
 @router.post("/receivables/generate")
-def generate_receivables_from_contracts(month: str = Query(..., description="YYYY-MM")):
+def generate_receivables_from_contracts(ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY), month: str = Query(..., description="YYYY-MM")):
     """Gera recebíveis para o mês a partir dos contratos ativos (ignora se já existir)."""
     sb        = get_supabase()
     contracts = sb.table("contracts").select("*").eq("status", "active").execute().data or []
@@ -243,6 +245,7 @@ def generate_receivables_from_contracts(month: str = Query(..., description="YYY
 
 @router.get("/payables")
 def list_payables(
+    ctx:      AuthContext = Depends(SCOPE_ADMIN_ONLY),
     status:   Optional[str] = Query(None),
     month:    Optional[str] = Query(None, description="YYYY-MM"),
     category: Optional[str] = Query(None),
@@ -259,7 +262,7 @@ def list_payables(
 
 
 @router.post("/payables", status_code=201)
-def create_payable(body: PayableIn):
+def create_payable(body: PayableIn, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb  = get_supabase()
     row = body.model_dump(exclude_none=True)
     res = sb.table("payables").insert(row).execute()
@@ -267,7 +270,7 @@ def create_payable(body: PayableIn):
 
 
 @router.patch("/payables/{payable_id}")
-def update_payable(payable_id: str, body: PayablePatch):
+def update_payable(payable_id: str, body: PayablePatch, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb      = get_supabase()
     updates = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     if not updates:
@@ -283,7 +286,7 @@ def update_payable(payable_id: str, body: PayablePatch):
 
 
 @router.delete("/payables/{payable_id}", status_code=204)
-def delete_payable(payable_id: str):
+def delete_payable(payable_id: str, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     sb = get_supabase()
     sb.table("payables").update({"status": "cancelled"}).eq("id", payable_id).execute()
 
@@ -291,7 +294,7 @@ def delete_payable(payable_id: str):
 # ── Notifications ─────────────────────────────────────────────────────────────
 
 @router.get("/notifications")
-def list_notifications(unread_only: bool = Query(True)):
+def list_notifications(ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY), unread_only: bool = Query(True)):
     sb = get_supabase()
     q  = sb.table("finance_notifications").select("*").order("created_at", desc=True).limit(50)
     if unread_only:
@@ -300,14 +303,14 @@ def list_notifications(unread_only: bool = Query(True)):
 
 
 @router.post("/notifications/{notification_id}/read", status_code=204)
-def mark_read(notification_id: str):
+def mark_read(notification_id: str, ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     from datetime import datetime, timezone
     sb = get_supabase()
     sb.table("finance_notifications").update({"read_at": datetime.now(timezone.utc).isoformat()}).eq("id", notification_id).execute()
 
 
 @router.post("/notifications/read-all", status_code=204)
-def mark_all_read():
+def mark_all_read(ctx: AuthContext = Depends(SCOPE_ADMIN_ONLY)):
     from datetime import datetime, timezone
     sb = get_supabase()
     sb.table("finance_notifications").update({"read_at": datetime.now(timezone.utc).isoformat()}).is_("read_at", "null").execute()
