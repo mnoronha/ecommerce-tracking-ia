@@ -44,6 +44,16 @@ class TestH4FixtureRpc:
         for table, count in after.items():
             assert count == 0, f"Residual rows in {table}: count={count}"
 
+    def test_fixture_change_log_id_present(self, supabase_service):
+        res = supabase_service.rpc("h4_fixture_execute", {}).execute()
+        result = res.data[0] if isinstance(res.data, list) else res.data
+        if isinstance(result, dict) and "h4_fixture_execute" in result:
+            result = result["h4_fixture_execute"]
+
+        assert result["change_log_id"] is not None, (
+            "change_log_id must be a real UUID — fixture must insert a core_change_log row"
+        )
+
     def test_fixture_traceability_ids_linked(self, supabase_service):
         res = supabase_service.rpc("h4_fixture_execute", {}).execute()
         result = res.data[0] if isinstance(res.data, list) else res.data
@@ -51,14 +61,15 @@ class TestH4FixtureRpc:
             result = result["h4_fixture_execute"]
 
         t = result["traceability"]
-        assert t["action.recommendation_id"] == result["recommendation_id"]
-        assert t["action.action_event_id"]    == result["action_event_id"]
-        assert t["action.task_id"]            == result["task_id"]
-        assert t["outcome.action_event_id"]   == result["action_event_id"]
-        assert t["outcome.action_id"]         == result["action_id"]
-        assert t["lc.source_action_id"]       == result["action_id"]
-        assert t["lc.source_recommendation_id"] == result["recommendation_id"]
-        assert t["lc.outcome_id"]             == result["outcome_id"]
+        assert t["action.recommendation_id"]    == result["recommendation_id"]
+        assert t["action.action_event_id"]       == result["action_event_id"]
+        assert t["action.task_id"]               == result["task_id"]
+        assert t["change_log.linked_action_id"]  == result["action_id"]
+        assert t["outcome.action_event_id"]      == result["action_event_id"]
+        assert t["outcome.action_id"]            == result["action_id"]
+        assert t["lc.source_action_id"]          == result["action_id"]
+        assert t["lc.source_recommendation_id"]  == result["recommendation_id"]
+        assert t["lc.outcome_id"]                == result["outcome_id"]
 
     def test_fixture_rows_before_all_zero(self, supabase_service):
         res = supabase_service.rpc("h4_fixture_execute", {}).execute()
@@ -78,7 +89,7 @@ class TestH4FixtureRpc:
 
         during = result["rows_during"]
         # Single-row tables
-        for table in ("recommendations", "action_events", "actions", "tasks"):
+        for table in ("recommendations", "action_events", "actions", "tasks", "change_log"):
             assert during[table] == 1, f"Expected 1 row during in {table}, got {during[table]}"
         # Two rows: O1 + O2, LC1 + LC2
         assert during["outcomes"] == 2, f"Expected 2 outcomes during, got {during['outcomes']}"
