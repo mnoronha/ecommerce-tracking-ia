@@ -238,3 +238,101 @@ SCOPE_PLATFORM_WRITE = require_scopes("agency_admin", "platform_web")
 SCOPE_ADMIN_ONLY     = require_scopes("agency_admin")
 SCOPE_ANY_AUTH       = require_scopes("agency_admin", "hermes_service", "platform_web", "client_viewer")
 SCOPE_CLIENT_VIEWER  = require_scopes("agency_admin", "platform_web", "client_viewer")
+
+
+# ── Tracking ingestion auth ───────────────────────────────────────────────────
+# Accepts service tokens (agency_admin, platform_web) OR per-client ingest tokens.
+# Ingest tokens are stored as SHA-256 hashes in tracking_ingest_tokens; raw token
+# is never persisted.  NEVER expose AGENCY_API_ADMIN_KEY / AGENCY_API_PLATFORM_KEY
+# in browser snippets — use a dedicated ingest token instead.
+
+
+import hashlib as _hashlib
+
+
+def _get_client_uuid_for_tracking(client_id: str) -> str | None:
+    """Resolve pixel_id or slug to clients.id UUID without importing router.py."""
+    from ...database import get_supabase
+    sb = get_supabase()
+    try:
+        r = sb.table("clients").select("id").eq("pixel_id", client_id).limit(1).execute()
+        if r and r.data:
+            return str(r.data[0]["id"])
+        r2 = sb.table("clients").select("id").eq("client_id", client_id).limit(1).execute()
+        return str(r2.data[0]["id"]) if (r2 and r2.data) else None
+    except Exception:
+        return None
+
+
+def require_tracking_write() -> Callable:
+    """
+    Dependency factory for tracking ingestion endpoints.
+
+    Resolution order:
+    1. Service token (agency_admin / platform_web) — no DB lookup
+    2. Tracking ingest token — DB lookup in tracking_ingest_tokens, bound to client_id in URL
+
+    The `client_id` path parameter is injected by FastAPI automatically.
+    """
+    async def _dep(client_id: str, authorization: str = Header(default="")) -> AuthContext:
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or malformed Authorization header. Expected: Bearer <token>",
+            )
+
+        # 1. Try service token (no I/O)
+        ctx = _resolve_service_token(token)
+        if ctx is not None:
+            if ctx.scope in ("agency_admin", "platform_web"):
+                return ctx
+            raise HTTPException(
+                status_code=403,
+                detail=f"Scope '{ctx.scope}' is not permitted for tracking ingestion",
+            )
+
+        # 2. Try tracking ingest token (DB lookup)
+        token_hash = _hashlib.sha256(token.encode()).hexdigest()
+        from ...database import get_supabase
+        sb = get_supabase()
+        try:
+            token_row = (
+                sb.table("tracking_ingest_tokens")
+                .select("client_id")
+                .eq("token_hash", token_hash)
+                .eq("is_active", True)
+                .maybe_single()
+                .execute()
+            )
+        except Exception:
+            logger.exception("tracking_ingest_tokens lookup failed")
+            raise HTTPException(status_code=503, detail="Auth service unavailable")
+
+        if not token_row or not token_row.data:
+            raise HTTPException(status_code=401, detail="Invalid or unrecognised token")
+
+        token_client_uuid = str(token_row.data["client_id"])
+
+        # Verify the URL client_id resolves to the same UUID the token is bound to
+        url_client_uuid = _get_client_uuid_for_tracking(client_id)
+        if not url_client_uuid:
+            raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+        if url_client_uuid != token_client_uuid:
+            raise HTTPException(status_code=403, detail="Token is not authorized for this client")
+
+        # Best-effort last_used_at update
+        try:
+            from datetime import datetime, timezone
+            sb.table("tracking_ingest_tokens").update(
+                {"last_used_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("token_hash", token_hash).execute()
+        except Exception:
+            pass
+
+        return AuthContext(scope="tracking_ingest", client_ids=[token_client_uuid])
+
+    return _dep
+
+
+SCOPE_TRACKING_WRITE = require_tracking_write()

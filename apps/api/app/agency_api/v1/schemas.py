@@ -32,7 +32,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .enums import (
     ActionEventType,
@@ -1151,3 +1151,92 @@ class MeetingOut(_Base):
     summary:            Optional[MeetingSummaryOut] = None
     created_at:         datetime
     updated_at:         datetime
+
+
+# ── 17. Tracking Ingestion (Phase 7) ─────────────────────────────────────────
+
+_VALID_EVENT_NAMES = frozenset(
+    {"page_view", "view_item", "add_to_cart", "begin_checkout", "purchase"}
+)
+
+
+class TrackingEventIn(_Base):
+    """Single browser/server tracking event sent to the ingestion endpoint."""
+
+    event_id:           str
+    event_name:         str
+    occurred_at:        datetime
+    session_id:         Optional[str]   = None
+    visitor_cookie_id:  Optional[str]   = None
+    url:                Optional[str]   = None
+    referrer:           Optional[str]   = None
+    utm_source:         Optional[str]   = None
+    utm_medium:         Optional[str]   = None
+    utm_campaign:       Optional[str]   = None
+    utm_content:        Optional[str]   = None
+    utm_term:           Optional[str]   = None
+    fbp:                Optional[str]   = None
+    fbc:                Optional[str]   = None
+    fbclid:             Optional[str]   = None
+    gclid:              Optional[str]   = None
+    gbraid:             Optional[str]   = None
+    wbraid:             Optional[str]   = None
+    ga_client_id:       Optional[str]   = None
+    order_id:           Optional[str]   = None
+    value:              Optional[float] = None
+    currency:           Optional[str]   = None
+    product_id:         Optional[str]   = None
+    product_name:       Optional[str]   = None
+    product_price:      Optional[float] = None
+    product_quantity:   Optional[int]   = None
+    product_category:   Optional[str]   = None
+    properties:         Optional[dict]  = None
+
+    @field_validator("event_id")
+    @classmethod
+    def event_id_nonempty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("event_id must be a non-empty string")
+        return v
+
+    @field_validator("event_name")
+    @classmethod
+    def event_name_valid(cls, v: str) -> str:
+        if v not in _VALID_EVENT_NAMES:
+            raise ValueError(
+                f"unknown event_name '{v}'. Valid: {sorted(_VALID_EVENT_NAMES)}"
+            )
+        return v
+
+
+class TrackingEventBatchIn(_Base):
+    """Batch wrapper. Use `{\"events\": [...]}` for single or multiple events."""
+
+    events: list[TrackingEventIn]
+
+    @field_validator("events")
+    @classmethod
+    def max_batch_size(cls, v: list) -> list:
+        if len(v) > 50:
+            raise ValueError("Batch limit is 50 events per request")
+        if len(v) == 0:
+            raise ValueError("events list must not be empty")
+        return v
+
+
+class TrackingEventResult(_Base):
+    event_id:   str
+    status:     Literal["accepted", "duplicate", "rejected"]
+    reason:     Optional[str] = None
+
+
+class TrackingIngestOut(_Base):
+    events_received:        int
+    events_inserted:        int
+    events_deduplicated:    int
+    events_rejected:        int
+    sessions_created:       int
+    sessions_reused:        int
+    identities_created:     int
+    identities_linked:      int
+    results:                list[TrackingEventResult]

@@ -76,6 +76,7 @@ from .auth import (
     SCOPE_HERMES_WRITE,
     SCOPE_PLATFORM_WRITE,
     SCOPE_READ_ANY,
+    SCOPE_TRACKING_WRITE,
     SCOPE_WRITE_ANY,
     AuthContext,
     require_scopes,
@@ -192,6 +193,9 @@ from .schemas import (
     MeetingProvider,
     TranscriptStatus,
     MeetingProcessingStatus,
+    # Phase 7 — Tracking Ingestion
+    TrackingEventBatchIn,
+    TrackingIngestOut,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -4967,3 +4971,46 @@ async def process_meeting(
     }).eq("id", meeting_id).execute()
 
     return _summary_row_to_out(created_sum)
+
+
+# ── Phase 7 — Tracking Ingestion ─────────────────────────────────────────────
+
+
+@router.post(
+    "/clients/{client_id}/tracking/events",
+    response_model=TrackingIngestOut,
+    summary="Ingest browser/server tracking events (evidence only)",
+    tags=["tracking"],
+)
+def ingest_tracking_events(
+    client_id: str,
+    body: TrackingEventBatchIn,
+    ctx: AuthContext = Depends(SCOPE_TRACKING_WRITE),
+) -> TrackingIngestOut:
+    """
+    Ingest one or more tracking events for a client.
+
+    Accepts:
+    - service tokens (agency_admin, platform_web) for server-side sends
+    - per-client tracking_ingest_token for browser snippet sends
+
+    Stores raw evidence in tracking_events, tracking_sessions,
+    tracking_identities, and tracking_attribution_inputs.
+
+    Invariants:
+    - ZERO Meta CAPI sends
+    - ZERO Google Enhanced Conversion sends
+    - ZERO Platform writes
+    - Purchase events do NOT become Business Truth
+    - No cross-client data access
+    """
+    from ...core.tracking_ingestion import ingest_events
+
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+
+    client_uuid = str(meta["id"])
+    db = _get_db()
+    result = ingest_events(db, client_uuid, body.events)
+    return TrackingIngestOut(**result)
