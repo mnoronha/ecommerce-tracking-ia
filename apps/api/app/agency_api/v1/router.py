@@ -1039,7 +1039,8 @@ async def get_recommendations(
     except Exception as exc:
         logger.error("get_recommendations: DB error %s: %s", client_id, exc)
         raise HTTPException(503, "database error")
-    return [_recommendation_row_to_out(r) for r in rows]
+    slug_map = {str(client["id"]): client["client_id"]} if client.get("client_id") else {}
+    return [_recommendation_row_to_out(r, slug_map) for r in rows]
 
 
 # ── GET /clients/{client_id}/report-contracts ─────────────────────────────────
@@ -1417,12 +1418,18 @@ def _fetch_slug_map(rows: list[dict]) -> dict[str, str]:
         return {}
 
 
-def _diagnosis_row_to_out(row: dict) -> DiagnosisOut:
+def _diagnosis_row_to_out(row: dict, slug_map: dict[str, str] | None = None) -> DiagnosisOut:
     """Convert a core_diagnoses row to DiagnosisOut."""
+    client_uuid = row.get("client_id")
+    client_slug: Optional[str] = None
+    if slug_map and client_uuid:
+        client_slug = slug_map.get(str(client_uuid))
+    elif client_uuid:
+        client_slug = str(client_uuid)  # fallback: caller should provide slug_map
     return DiagnosisOut(
         id=str(row["id"]),
         alert_id=str(row["alert_id"]),
-        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        client_id=client_slug,
         status=row.get("status", "DRAFT"),
         summary=row.get("summary", ""),
         root_cause_hypotheses=row.get("root_cause_hypotheses") or [],
@@ -1435,13 +1442,19 @@ def _diagnosis_row_to_out(row: dict) -> DiagnosisOut:
     )
 
 
-def _recommendation_row_to_out(row: dict) -> RecommendationOut:
+def _recommendation_row_to_out(row: dict, slug_map: dict[str, str] | None = None) -> RecommendationOut:
     """Convert a core_recommendations row to RecommendationOut."""
+    client_uuid = row.get("client_id")
+    client_slug: Optional[str] = None
+    if slug_map and client_uuid:
+        client_slug = slug_map.get(str(client_uuid))
+    elif client_uuid:
+        client_slug = str(client_uuid)  # fallback: caller should provide slug_map
     return RecommendationOut(
         id=str(row["id"]),
         diagnosis_id=str(row["diagnosis_id"]),
         alert_id=str(row["alert_id"]),
-        client_id=str(row["client_id"]) if row.get("client_id") else None,
+        client_id=client_slug,
         title=row.get("title", ""),
         action=row.get("action", ""),
         rationale=row.get("rationale", ""),
@@ -1966,7 +1979,9 @@ async def get_alert_diagnoses(
             .order("created_at", desc=True)
             .execute()
         )
-        return [_diagnosis_row_to_out(r) for r in (res.data or [])]
+        rows = res.data or []
+        slug_map = _fetch_slug_map(rows)
+        return [_diagnosis_row_to_out(r, slug_map) for r in rows]
     except Exception as exc:
         logger.error("get_alert_diagnoses: DB error %s: %s", alert_id, exc)
         raise HTTPException(503, "database error")
@@ -1998,7 +2013,7 @@ async def get_diagnosis(
     row = res.data[0] if (res and res.data) else None
     if not row:
         raise HTTPException(404, f"diagnosis not found: {diagnosis_id!r}")
-    return _diagnosis_row_to_out(row)
+    return _diagnosis_row_to_out(row, _fetch_slug_map([row]))
 
 
 @router.get(
@@ -2021,7 +2036,9 @@ async def get_diagnosis_recommendations(
             .order("created_at", desc=True)
             .execute()
         )
-        return [_recommendation_row_to_out(r) for r in (res.data or [])]
+        rows = res.data or []
+        slug_map = _fetch_slug_map(rows)
+        return [_recommendation_row_to_out(r, slug_map) for r in rows]
     except Exception as exc:
         logger.error("get_diagnosis_recommendations: DB error %s: %s", diagnosis_id, exc)
         raise HTTPException(503, "database error")
@@ -2053,7 +2070,7 @@ async def get_recommendation(
     row = res.data[0] if (res and res.data) else None
     if not row:
         raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
-    return _recommendation_row_to_out(row)
+    return _recommendation_row_to_out(row, _fetch_slug_map([row]))
 
 
 # ── POST /recommendations/{recommendation_id}/decision ───────────────────────
@@ -2118,7 +2135,7 @@ async def decide_recommendation(
     if idempotency_key:
         fingerprint = f"dec:{recommendation_id}:{idempotency_key}"
         if row.get("decision_fingerprint") == fingerprint:
-            return _recommendation_row_to_out(row)
+            return _recommendation_row_to_out(row, _fetch_slug_map([row]))
 
     # State machine: only PROPOSED and DEFERRED accept a new decision
     current_status = row.get("status", "PROPOSED")
@@ -2149,6 +2166,7 @@ async def decide_recommendation(
         logger.error("decide_recommendation: update failed %s: %s", recommendation_id, exc)
         raise HTTPException(503, "database error")
     updated_row = (upd.data[0] if (upd and upd.data) else None) or {**row, **update_payload}
+    rec_slug_map = _fetch_slug_map([updated_row])
 
     # Audit trail: insert action event (non-fatal on failure — rec already updated)
     try:
@@ -2170,7 +2188,7 @@ async def decide_recommendation(
         recommendation_id, current_status, new_status, body.actor,
         getattr(_auth, "scope", "unknown") if _auth else "unknown",
     )
-    return _recommendation_row_to_out(updated_row)
+    return _recommendation_row_to_out(updated_row, rec_slug_map)
 
 
 # ── Intel chain: POST endpoints (Hermes write) ────────────────────────────────
@@ -2221,7 +2239,7 @@ async def create_diagnosis_for_alert(
                 .execute()
             )
             if dup and dup.data:
-                return _diagnosis_row_to_out(dup.data[0])
+                return _diagnosis_row_to_out(dup.data[0], _fetch_slug_map([dup.data[0]]))
         except Exception:
             pass  # dedup lookup failed — proceed with insert
 
@@ -2246,7 +2264,7 @@ async def create_diagnosis_for_alert(
     row = ins.data[0] if (ins and ins.data) else None
     if not row:
         raise HTTPException(503, "insert returned no data")
-    return _diagnosis_row_to_out(row)
+    return _diagnosis_row_to_out(row, _fetch_slug_map([row]))
 
 
 @router.post(
@@ -2296,7 +2314,7 @@ async def create_recommendation_for_diagnosis(
                 .execute()
             )
             if dup and dup.data:
-                return _recommendation_row_to_out(dup.data[0])
+                return _recommendation_row_to_out(dup.data[0], _fetch_slug_map([dup.data[0]]))
         except Exception:
             pass
 
@@ -2325,7 +2343,7 @@ async def create_recommendation_for_diagnosis(
     row = ins.data[0] if (ins and ins.data) else None
     if not row:
         raise HTTPException(503, "insert returned no data")
-    return _recommendation_row_to_out(row)
+    return _recommendation_row_to_out(row, _fetch_slug_map([row]))
 
 
 # ── POST /changes ─────────────────────────────────────────────────────────────
