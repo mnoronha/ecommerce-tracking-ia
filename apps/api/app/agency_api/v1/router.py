@@ -4563,7 +4563,7 @@ async def list_tasks(
     client_id: str,
     status: Optional[str] = Query(None, description="Filter by status (OPEN|IN_PROGRESS|DONE|ARCHIVED|BLOCKED)"),
     source_type: Optional[str] = Query(None, description="Filter by source_type"),
-    _auth: Annotated[AuthContext, Depends(SCOPE_CLIENT_VIEWER)] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> list[TaskOut]:
     meta = _load_client_meta(client_id)
     if not meta:
@@ -4637,7 +4637,7 @@ async def create_task(
 )
 async def get_task(
     task_id: str,
-    _auth: Annotated[AuthContext, Depends(SCOPE_CLIENT_VIEWER)] = None,
+    _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> TaskOut:
     db = _get_db()
     try:
