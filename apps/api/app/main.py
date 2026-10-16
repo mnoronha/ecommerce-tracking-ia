@@ -356,6 +356,41 @@ _scheduler.add_job(
     max_instances=1,
     misfire_grace_time=3600,
 )
+# NOTION SYNC — DESATIVADO até smoke test manual passar.
+# Ativar após:
+#   1. Configurar NOTION_API_KEY + NOTION_TASKS_DATABASE_ID no Railway
+#   2. Criar Task de teste via POST /agency/v1/clients/{id}/tasks
+#   3. Executar POST /agency/v1/admin/notion/sync/task/{id} manualmente
+#   4. Verificar Core Task ID na página Notion + sync_state=synced no DB
+#   5. Alterar Status no Notion → executar POST /agency/v1/admin/notion/sync/pending
+#   6. Verificar writeback no Core
+# Só após esse smoke: descomentar os dois jobs abaixo e fazer deploy.
+#
+# from .core.notion_adapter import NotionTaskAdapter as _NotionAdapter
+# from .database import get_supabase as _get_supabase_for_notion
+#
+# def _notion_sync_pending():
+#     _NotionAdapter(supabase=_get_supabase_for_notion()).sync_pending_tasks_to_notion()
+#
+# def _notion_poll_updates():
+#     _NotionAdapter(supabase=_get_supabase_for_notion()).poll_notion_task_updates()
+#
+# _scheduler.add_job(
+#     _notion_sync_pending,
+#     "interval",
+#     minutes=5,
+#     id="notion_sync_pending",
+#     max_instances=1,
+#     misfire_grace_time=300,
+# )
+# _scheduler.add_job(
+#     _notion_poll_updates,
+#     "interval",
+#     minutes=5,
+#     id="notion_poll_updates",
+#     max_instances=1,
+#     misfire_grace_time=300,
+# )
 
 
 @app.on_event("startup")
@@ -393,6 +428,47 @@ else:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# ── Request body size limit ────────────────────────────────────────────────────
+# Uvicorn has no default body size limit. Railway's proxy is not documented.
+# This guard rejects oversized requests before JSON parsing runs.
+# Tracking ingest max: 50 events × ~500 B ≈ 25 KB. Global cap at 1 MB is safe.
+#
+# Two paths:
+#   Fast — Content-Length present: reject on header value before reading body.
+#   Slow — Content-Length absent (chunked transfer or missing header on POST/PUT/PATCH):
+#          buffer body chunks up to the limit, then re-inject via request._body
+#          so downstream Pydantic parsing can still read it.
+
+_MAX_REQUEST_BODY_BYTES = 1_048_576  # 1 MB
+
+
+@app.middleware("http")
+async def _body_size_limit(request, call_next):
+    from starlette.responses import Response as _R
+
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > _MAX_REQUEST_BODY_BYTES:
+                return _R("Request body too large", status_code=413)
+        except ValueError:
+            pass  # malformed header — pass through; Pydantic will reject bad JSON
+        return await call_next(request)
+
+    # No Content-Length: buffer actual body for write methods only.
+    if request.method in ("POST", "PUT", "PATCH"):
+        chunks = []
+        total = 0
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > _MAX_REQUEST_BODY_BYTES:
+                return _R("Request body too large", status_code=413)
+            chunks.append(chunk)
+        request._body = b"".join(chunks)  # type: ignore[attr-defined]
+
+    return await call_next(request)
+
 
 # ── Agency API request correlation (CCR-012) ──────────────────────────────────
 # Outermost middleware: echoes X-Request-ID for /agency/v1 routes,

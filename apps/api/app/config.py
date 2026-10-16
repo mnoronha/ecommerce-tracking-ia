@@ -135,6 +135,12 @@ class Settings(BaseSettings):
     OBSIDIAN_VAULT_REPO:   str = ""   # e.g. "mnoronha/agency-knowledge-vault"
     OBSIDIAN_VAULT_BRANCH: str = "main"
 
+    # ── Notion (task sync adapter — Phase NOTION REAL) ────────────────────────
+    # Internal integration token from https://www.notion.so/my-integrations
+    # Backend-only. NEVER expose to frontend or logs.
+    NOTION_API_KEY:           str = ""   # secret_... internal integration token
+    NOTION_TASKS_DATABASE_ID: str = ""   # Notion database ID for core_tasks sync
+
 
 @lru_cache()
 def get_settings() -> Settings:

@@ -328,3 +328,132 @@ async def pipeline_audit(
         "snapshots":    snaps_out,
         "queried_at":   datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Notion task sync — admin endpoints (Phase NOTION REAL)
+#
+# All endpoints require agency_admin scope.
+# NOTION_API_KEY is NEVER returned in responses.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class NotionSyncTaskOut(BaseModel):
+    task_id:          str
+    status:           str          # synced | error | CONFIG_REQUIRED
+    external_task_id: Optional[str] = None
+    operation:        Optional[str] = None  # create | update
+    error:            Optional[str] = None
+    missing:          Optional[list[str]] = None
+    ran_at:           str
+
+
+class NotionSyncPendingOut(BaseModel):
+    status:  str
+    total:   int = 0
+    synced:  int = 0
+    errors:  int = 0
+    skipped: int = 0
+    missing: Optional[list[str]] = None
+    ran_at:  str
+
+
+class NotionSyncStatusOut(BaseModel):
+    total_tasks:      int
+    synced:           int
+    pending:          int
+    error_count:      int
+    none_count:       int
+    config_ok:        bool
+    missing_config:   list[str]
+    queried_at:       str
+
+
+@admin_router.post(
+    "/notion/sync/task/{task_id}",
+    response_model=NotionSyncTaskOut,
+    summary="[Admin] Manually push one Core task to Notion",
+)
+async def admin_notion_sync_task(
+    task_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+) -> NotionSyncTaskOut:
+    from ...core.notion_adapter import NotionTaskAdapter
+    from ...database import get_supabase
+
+    adapter = NotionTaskAdapter(supabase=get_supabase())
+    result  = adapter.sync_task_to_notion(task_id)
+    return NotionSyncTaskOut(
+        task_id          = task_id,
+        status           = result.get("status", "error"),
+        external_task_id = result.get("external_task_id"),
+        operation        = result.get("operation"),
+        error            = result.get("error"),
+        missing          = result.get("missing"),
+        ran_at           = datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@admin_router.post(
+    "/notion/sync/pending",
+    response_model=NotionSyncPendingOut,
+    summary="[Admin] Sync all pending Core tasks to Notion (batch, max 50)",
+)
+async def admin_notion_sync_pending(
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+    limit: int = Query(default=50, ge=1, le=200),
+) -> NotionSyncPendingOut:
+    from ...core.notion_adapter import NotionTaskAdapter
+    from ...database import get_supabase
+
+    adapter = NotionTaskAdapter(supabase=get_supabase())
+    result  = adapter.sync_pending_tasks_to_notion(limit=limit)
+    return NotionSyncPendingOut(
+        status  = result.get("status", "error"),
+        total   = result.get("total", 0),
+        synced  = result.get("synced", 0),
+        errors  = result.get("errors", 0),
+        skipped = result.get("skipped", 0),
+        missing = result.get("missing"),
+        ran_at  = datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@admin_router.get(
+    "/notion/sync/status",
+    response_model=NotionSyncStatusOut,
+    summary="[Admin] Notion sync health overview — counts by sync_state",
+)
+async def admin_notion_sync_status(
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+) -> NotionSyncStatusOut:
+    from ...database import get_supabase
+    from ...config import settings as _settings
+
+    db = get_supabase()
+    try:
+        res = db.table("core_tasks").select("sync_state").execute()
+        rows = res.data or []
+    except Exception as exc:
+        raise HTTPException(503, detail=f"db error: {exc}")
+
+    counts: dict[str, int] = {}
+    for r in rows:
+        st = r.get("sync_state", "none")
+        counts[st] = counts.get(st, 0) + 1
+
+    missing: list[str] = []
+    if not _settings.NOTION_API_KEY:
+        missing.append("NOTION_API_KEY")
+    if not _settings.NOTION_TASKS_DATABASE_ID:
+        missing.append("NOTION_TASKS_DATABASE_ID")
+
+    return NotionSyncStatusOut(
+        total_tasks    = len(rows),
+        synced         = counts.get("synced", 0),
+        pending        = counts.get("pending", 0),
+        error_count    = counts.get("error", 0),
+        none_count     = counts.get("none", 0),
+        config_ok      = len(missing) == 0,
+        missing_config = missing,
+        queried_at     = datetime.now(timezone.utc).isoformat(),
+    )
