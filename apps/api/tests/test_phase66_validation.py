@@ -216,60 +216,144 @@ class TestFinanceAuth:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestNotionAdapterContract:
-    """Notion adapter stub contract — Core remains canonical."""
+    """
+    Notion adapter contract — Core remains canonical.
+
+    Updated for Phase NOTION REAL: stub replaced with production adapter.
+    When NOTION_API_KEY is not configured, adapter returns CONFIG_REQUIRED
+    and marks sync_error without writing a fake external_task_id.
+    """
 
     def _mock_sb(self):
         sb = MagicMock()
         tbl = MagicMock()
-        for method in ("select", "eq", "update", "maybe_single"):
+        for method in ("select", "eq", "update", "maybe_single", "limit", "in_"):
             getattr(tbl, method).return_value = tbl
         tbl.execute.return_value = MagicMock(data=None)
         sb.table.return_value = tbl
         return sb
 
-    def test_create_external_task_returns_structured_response(self):
+    def test_create_external_task_without_config_returns_error(self):
+        """Without NOTION_API_KEY, create_external_task returns error (not a stub id)."""
         from app.core.notion_adapter import NotionTaskAdapter
 
         sb      = self._mock_sb()
         adapter = NotionTaskAdapter(supabase=sb)
         task    = {"id": _TASK_UUID, "title": "Test", "status": "OPEN"}
 
+        # No config set → CONFIG_REQUIRED path
         result = adapter.create_external_task(task)
+
+        assert result["system"]     == "notion"
+        # When config is missing the adapter must NOT produce a fake external_task_id
+        assert result["external_task_id"] is None
+        assert result["sync_state"] in ("error",)
+
+    def test_create_external_task_with_config_writes_sync_fields_to_core(self):
+        """With config + mocked httpx, create_external_task writes real sync metadata."""
+        from unittest.mock import patch as _patch
+        from app.core.notion_adapter import NotionTaskAdapter
+
+        sb   = self._mock_sb()
+        # Make DB return the task row
+        task_row = {
+            "id": _TASK_UUID, "title": "Test task", "status": "OPEN",
+            "priority": "MEDIUM", "client_id": _CLIENT_SLUG,
+            "description": None, "owner": None, "due_date": None,
+            "source_type": None, "source_id": None,
+            "external_task_id": None, "created_at": _TS, "updated_at": _TS,
+        }
+        sb.table.return_value.execute.return_value = MagicMock(data=[task_row])
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "notion-page-real-001", "object": "page"}
+        mock_response.headers = {}
+
+        with _patch("app.core.notion_adapter.settings") as mock_cfg, \
+             _patch("app.core.notion_adapter.httpx.request", return_value=mock_response):
+            mock_cfg.NOTION_API_KEY           = "secret_test_key"
+            mock_cfg.NOTION_TASKS_DATABASE_ID = "db-test-id"
+            adapter = NotionTaskAdapter(supabase=sb)
+            result  = adapter.create_external_task({"id": _TASK_UUID, "title": "Test", "status": "OPEN"})
 
         assert result["system"]        == "notion"
         assert result["sync_state"]    == "synced"
-        assert "external_task_id"      in result
-        assert result["external_task_id"].startswith("notion-stub-")
+        assert result["external_task_id"] == "notion-page-real-001"
+        # Must NOT start with the old stub prefix
+        assert not str(result["external_task_id"]).startswith("notion-stub-")
 
     def test_create_external_task_writes_sync_fields_to_core(self):
-        """create_external_task must update Core DB with sync metadata."""
+        """With config, Core DB must receive real sync metadata (not stub id)."""
+        from unittest.mock import patch as _patch
         from app.core.notion_adapter import NotionTaskAdapter
 
-        sb      = self._mock_sb()
-        adapter = NotionTaskAdapter(supabase=sb)
-        task    = {"id": _TASK_UUID, "title": "Test", "status": "OPEN"}
+        sb       = self._mock_sb()
+        task_row = {
+            "id": _TASK_UUID, "title": "Test task", "status": "OPEN",
+            "priority": "MEDIUM", "client_id": _CLIENT_SLUG,
+            "description": None, "owner": None, "due_date": None,
+            "source_type": None, "source_id": None,
+            "external_task_id": None, "created_at": _TS, "updated_at": _TS,
+        }
+        sb.table.return_value.execute.return_value = MagicMock(data=[task_row])
 
-        adapter.create_external_task(task)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "notion-page-real-002", "object": "page"}
+        mock_response.headers = {}
+
+        with _patch("app.core.notion_adapter.settings") as mock_cfg, \
+             _patch("app.core.notion_adapter.httpx.request", return_value=mock_response):
+            mock_cfg.NOTION_API_KEY           = "secret_test_key"
+            mock_cfg.NOTION_TASKS_DATABASE_ID = "db-test-id"
+            adapter = NotionTaskAdapter(supabase=sb)
+            adapter.create_external_task({"id": _TASK_UUID, "title": "Test", "status": "OPEN"})
 
         # Verify .update() was called on core_tasks
         sb.table.assert_any_call("core_tasks")
         update_calls = sb.table.return_value.update.call_args_list
         assert len(update_calls) >= 1
-        updated_fields = update_calls[0].args[0] if update_calls[0].args else update_calls[0].kwargs
+        updated_fields = update_calls[-1].args[0] if update_calls[-1].args else update_calls[-1].kwargs
         assert updated_fields.get("sync_state")      == "synced"
         assert updated_fields.get("external_system") == "notion"
         assert "external_task_id" in updated_fields
         assert "last_synced_at"   in updated_fields
         assert updated_fields.get("sync_error") is None
 
-    def test_update_external_task_does_not_touch_core_db(self):
-        """update_external_task is Notion-only — Core task content is never modified."""
+    def test_update_external_task_does_not_touch_core_db_when_no_config(self):
+        """update_external_task without config returns CONFIG_REQUIRED, never touches Core DB."""
         from app.core.notion_adapter import NotionTaskAdapter
 
         sb      = self._mock_sb()
         adapter = NotionTaskAdapter(supabase=sb)
 
         result = adapter.update_external_task("notion-page-123", {"status": "Done", "priority": "High"})
+
+        # Core DB must NOT be touched
+        sb.table.assert_not_called()
+        assert result["external_task_id"] == "notion-page-123"
+        assert result["system"]           == "notion"
+        assert set(result["patched_fields"]) == {"status", "priority"}
+
+    def test_update_external_task_does_not_touch_core_db(self):
+        """update_external_task is Notion-only — Core task content is never modified."""
+        from unittest.mock import patch as _patch
+        from app.core.notion_adapter import NotionTaskAdapter
+
+        sb      = self._mock_sb()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"id": "notion-page-123", "object": "page"}
+        mock_response.headers = {}
+
+        with _patch("app.core.notion_adapter.settings") as mock_cfg, \
+             _patch("app.core.notion_adapter.httpx.request", return_value=mock_response):
+            mock_cfg.NOTION_API_KEY           = "secret_test_key"
+            mock_cfg.NOTION_TASKS_DATABASE_ID = "db-test-id"
+            adapter = NotionTaskAdapter(supabase=sb)
+            result  = adapter.update_external_task("notion-page-123", {"status": "DONE", "priority": "HIGH"})
 
         # Core DB must NOT be touched
         sb.table.assert_not_called()
@@ -284,15 +368,16 @@ class TestNotionAdapterContract:
         sb  = self._mock_sb()
         sb.table.return_value.execute.return_value = MagicMock(data={
             "id":               _TASK_UUID,
-            "external_task_id": "notion-stub-abc",
+            "external_task_id": "notion-page-abc",
             "sync_state":       "synced",
+            "last_synced_at":   _TS,
         })
         adapter = NotionTaskAdapter(supabase=sb)
 
         result = adapter.sync_task_status(_TASK_UUID)
 
         assert result["task_id"]          == _TASK_UUID
-        assert result["external_task_id"] == "notion-stub-abc"
+        assert result["external_task_id"] == "notion-page-abc"
         assert result["sync_state"]       == "synced"
 
     def test_sync_task_status_raises_for_missing_task(self):
