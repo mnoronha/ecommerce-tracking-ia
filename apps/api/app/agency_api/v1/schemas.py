@@ -1189,10 +1189,13 @@ class TrackingEventIn(_Base):
     gbraid:             Optional[str]   = None
     wbraid:             Optional[str]   = None
     ga_client_id:       Optional[str]   = None
+    ga_session_id:      Optional[str]   = None   # v4.3.1+: GA4 session from _ga_<MEASUREMENT_ID>
     order_id:           Optional[str]   = None
     value:              Optional[float] = None
     currency:           Optional[str]   = None
     product_id:         Optional[str]   = None
+    variant_id:         Optional[str]   = None   # v4.3+
+    sku:                Optional[str]   = None   # v4.3+
     product_name:       Optional[str]   = None
     product_price:      Optional[float] = None
     product_quantity:   Optional[int]   = None

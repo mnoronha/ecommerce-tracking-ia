@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
+from ..core import tracking_reconciliation
 from ..services import attribution_engine, crypto, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
@@ -820,6 +821,11 @@ async def receive_webhook(
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
+
+    # Noro Tracking v4.3 — link the order to browsing evidence (shadow mode:
+    # writes tracking_order_matches only, sends nothing). Never blocks/raises.
+    if platform == "shopify" and client_uuid:
+        background_tasks.add_task(tracking_reconciliation.record_from_webhook, client_uuid, event, order_uuid)
 
     # Server-side mid-funnel: AddToCart on `carts/create` + InitiateCheckout
     # on `checkouts/create|update`. Backup for sessions where the browser
