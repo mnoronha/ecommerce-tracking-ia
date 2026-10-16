@@ -399,8 +399,8 @@ async def admin_notion_sync_task(
     summary="[Admin] Sync all pending Core tasks to Notion (batch, max 50)",
 )
 async def admin_notion_sync_pending(
-    limit: int = Query(default=50, ge=1, le=200),
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> NotionSyncPendingOut:
     from ...core.notion_adapter import NotionTaskAdapter
     from ...database import get_supabase
