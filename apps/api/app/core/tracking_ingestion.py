@@ -41,6 +41,94 @@ def _occurred_iso(event) -> str:
     return occ.isoformat() if hasattr(occ, "isoformat") else str(occ)
 
 
+# ── v4.3 helpers ──────────────────────────────────────────────────────────────
+#
+# Columns added by migration 067. Writes try them first and fall back to the
+# Phase 7 column set if the migration has not been applied yet, so deploying
+# the code before the migration never breaks ingestion.
+
+_V43_EVENT_COLUMNS = (
+    "checkout_token", "variant_id", "sku", "gclid", "ga_session_id",
+    "consent_analytics", "consent_advertising", "event_source",
+)
+_V43_IDENTITY_COLUMNS = (
+    "ga_session_id", "consent_advertising", "consent_updated_at",
+    "last_ip_address", "last_user_agent",
+)
+
+
+def _props(event) -> dict:
+    p = getattr(event, "properties", None)
+    return p if isinstance(p, dict) else {}
+
+
+def _bool_or_none(value) -> Optional[bool]:
+    return value if isinstance(value, bool) else None
+
+
+def extract_consent(event) -> tuple[Optional[bool], Optional[bool]]:
+    """
+    Return (analytics, advertising) consent as recorded by the browser.
+
+    - Storefront tracker v4.3+: properties.consent = {analytics, advertising, source}
+    - Shopify Custom Pixel v2+: properties.identity.consent = {analytics, marketing, storefront}
+      where storefront is the cart attribute "a<0|1>m<0|1>".
+    - Anything older: (None, None) = unknown.
+    """
+    props = _props(event)
+    c = props.get("consent")
+    if isinstance(c, dict):
+        return _bool_or_none(c.get("analytics")), _bool_or_none(c.get("advertising"))
+
+    ident = props.get("identity")
+    if isinstance(ident, dict) and isinstance(ident.get("consent"), dict):
+        pc = ident["consent"]
+        analytics = _bool_or_none(pc.get("analytics"))
+        marketing = _bool_or_none(pc.get("marketing"))
+        storefront = pc.get("storefront")
+        if isinstance(storefront, str) and re.fullmatch(r"a[01]m[01]", storefront):
+            sf_marketing = storefront.endswith("m1")
+            marketing = sf_marketing if marketing is None else (marketing and sf_marketing)
+            if analytics is None:
+                analytics = storefront[1] == "1"
+        return analytics, marketing
+    return None, None
+
+
+def extract_event_source(event) -> str:
+    props = _props(event)
+    if props.get("source") == "shopify_web_pixel" or props.get("purchase_source") == "shopify_web_pixel":
+        return "shopify_web_pixel"
+    if props.get("tracker_version"):
+        return "storefront"
+    return "server"
+
+
+def extract_checkout_token(event) -> Optional[str]:
+    token = _props(event).get("checkout_token")
+    return str(token) if token else None
+
+
+def _missing_column_error(exc: Exception, columns: tuple) -> bool:
+    msg = str(exc).lower()
+    return any(col in msg for col in columns) or "pgrst204" in msg or "column" in msg
+
+
+def _write_resilient(op, row: dict, optional_cols: tuple):
+    """
+    Run op(row). If it fails because a v4.3 column does not exist yet,
+    retry once without the optional columns.
+    """
+    try:
+        return op(row)
+    except Exception as exc:
+        stripped = {k: v for k, v in row.items() if k not in optional_cols}
+        if stripped != row and _missing_column_error(exc, optional_cols):
+            logger.warning("tracking v4.3 columns unavailable (apply migration 067): %s", exc)
+            return op(stripped)
+        raise
+
+
 # ── Validation ────────────────────────────────────────────────────────────────
 
 
@@ -135,7 +223,34 @@ def _resolve_session(sb, client_uuid: str, event) -> bool:
 # ── Identity resolution ───────────────────────────────────────────────────────
 
 
-def _resolve_identity(sb, client_uuid: str, event) -> tuple[bool, bool]:
+def _identity_signals(event, request_meta: Optional[dict]) -> dict:
+    """
+    Non-null identity signals carried by this event.
+
+    Click ids are only present when the browser had advertising consent
+    (enforced by tracker v4.3+). IP / User-Agent are stored only when the
+    event explicitly records advertising consent — they exist solely for
+    future ad-platform matching (Meta CAPI).
+    """
+    signals: dict = {}
+    for col in ("fbp", "fbc", "gclid", "gbraid", "wbraid", "ga_client_id", "ga_session_id"):
+        val = getattr(event, col, None)
+        if val:
+            signals[col] = val
+
+    _, advertising = extract_consent(event)
+    if advertising is not None:
+        signals["consent_advertising"] = advertising
+        signals["consent_updated_at"] = _now_iso()
+    if advertising is True and request_meta:
+        if request_meta.get("ip"):
+            signals["last_ip_address"] = request_meta["ip"]
+        if request_meta.get("user_agent"):
+            signals["last_user_agent"] = str(request_meta["user_agent"])[:512]
+    return signals
+
+
+def _resolve_identity(sb, client_uuid: str, event, request_meta: Optional[dict] = None) -> tuple[bool, bool]:
     """
     Upsert a tracking_identity keyed on (client_id, visitor_cookie_id).
 
@@ -150,6 +265,7 @@ def _resolve_identity(sb, client_uuid: str, event) -> tuple[bool, bool]:
         return False, False
 
     now = _now_iso()
+    signals = _identity_signals(event, request_meta)
     try:
         check = (
             sb.table("tracking_identities")
@@ -160,27 +276,30 @@ def _resolve_identity(sb, client_uuid: str, event) -> tuple[bool, bool]:
             .execute()
         )
         if check is not None and check.data:
-            update_data: dict = {"last_seen_at": now}
-            for col in ("fbp", "fbc", "gbraid", "wbraid", "ga_client_id"):
-                val = getattr(event, col, None)
-                if val:
-                    update_data[col] = val
-            sb.table("tracking_identities").update(update_data).eq(
-                "client_id", client_uuid
-            ).eq("visitor_cookie_id", vid).execute()
+            update_data: dict = {"last_seen_at": now, **signals}
+            # Consent revoked: drop stored ad identifiers for this visitor.
+            if signals.get("consent_advertising") is False:
+                for col in ("gclid", "gbraid", "wbraid", "fbc", "fbp", "last_ip_address", "last_user_agent"):
+                    update_data[col] = None
+            _write_resilient(
+                lambda row: sb.table("tracking_identities").update(row)
+                .eq("client_id", client_uuid).eq("visitor_cookie_id", vid).execute(),
+                update_data,
+                _V43_IDENTITY_COLUMNS,
+            )
             return False, True
 
-        sb.table("tracking_identities").insert({
-            "client_id":        client_uuid,
-            "visitor_cookie_id": vid,
-            "fbp":              getattr(event, "fbp", None),
-            "fbc":              getattr(event, "fbc", None),
-            "gbraid":           getattr(event, "gbraid", None),
-            "wbraid":           getattr(event, "wbraid", None),
-            "ga_client_id":     getattr(event, "ga_client_id", None),
-            "first_seen_at":    now,
-            "last_seen_at":     now,
-        }).execute()
+        _write_resilient(
+            lambda row: sb.table("tracking_identities").insert(row).execute(),
+            {
+                "client_id":         client_uuid,
+                "visitor_cookie_id": vid,
+                "first_seen_at":     now,
+                "last_seen_at":      now,
+                **signals,
+            },
+            _V43_IDENTITY_COLUMNS,
+        )
         return True, False
 
     except Exception as exc:
@@ -233,9 +352,12 @@ def _store_attribution_input(sb, client_uuid: str, event) -> None:
 # ── Main ingestion orchestrator ───────────────────────────────────────────────
 
 
-def ingest_events(sb, client_uuid: str, events: list) -> dict:
+def ingest_events(sb, client_uuid: str, events: list, request_meta: Optional[dict] = None) -> dict:
     """
     Ingest a list of TrackingEventIn objects for one client.
+
+    request_meta: {"ip": ..., "user_agent": ...} observed by the server for
+    this request (stored on the identity only with advertising consent).
 
     Returns a dict compatible with TrackingIngestOut schema.
 
@@ -285,7 +407,7 @@ def ingest_events(sb, client_uuid: str, events: list) -> dict:
             counters["sessions_reused"] += 1
 
         # 4. Identity resolution (deterministic, no cross-client)
-        id_created, id_linked = _resolve_identity(sb, client_uuid, event)
+        id_created, id_linked = _resolve_identity(sb, client_uuid, event, request_meta)
         if id_created:
             counters["identities_created"] += 1
         elif id_linked:
@@ -303,8 +425,21 @@ def ingest_events(sb, client_uuid: str, events: list) -> dict:
         if getattr(event, "fbclid", None):
             extra_props["fbclid"] = event.fbclid
 
+        consent_analytics, consent_advertising = extract_consent(event)
+        v43_fields = {
+            "checkout_token":      extract_checkout_token(event),
+            "variant_id":          getattr(event, "variant_id", None),
+            "sku":                 getattr(event, "sku", None),
+            "gclid":               getattr(event, "gclid", None),
+            "ga_session_id":       getattr(event, "ga_session_id", None),
+            "consent_analytics":   consent_analytics,
+            "consent_advertising": consent_advertising,
+            "event_source":        extract_event_source(event),
+        }
+
         try:
-            sb.table("tracking_events").insert({
+            _write_resilient(lambda row: sb.table("tracking_events").insert(row).execute(), {
+                **v43_fields,
                 "client_id":        client_uuid,
                 "event_id":         eid,
                 "event_type":       _EVENT_TYPE_MAP.get(event.event_name, event.event_name),
@@ -333,7 +468,7 @@ def ingest_events(sb, client_uuid: str, events: list) -> dict:
                 "product_category": getattr(event, "product_category", None),
                 "properties":       extra_props,
                 "created_at":       _occurred_iso(event),
-            }).execute()
+            }, _V43_EVENT_COLUMNS)
             counters["events_inserted"] += 1
             results.append({"event_id": eid, "status": "accepted"})
             logger.info(

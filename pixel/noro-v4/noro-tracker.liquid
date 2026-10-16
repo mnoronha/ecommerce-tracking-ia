@@ -1,0 +1,103 @@
+{% comment %}
+  Noro Tracker v4.3.1 — Shopify storefront loader
+  File: snippets/noro-tracker.liquid
+
+  ENUTRI PROFILE
+  - Noro tracking: ON
+  - GA4 adapter: ON but all ecommerce events suppressed until GTM audit
+  - Google click evidence: ON, gated by Shopify advertising/marketing consent
+  - Meta/TikTok/Pinterest: OFF
+  - Shopify cart attribution bridge: ON
+
+  IMPORTANT
+  - Storefront/theme pages only.
+  - Checkout/thank-you: companion Shopify Custom Web Pixel (noro-shopify-web-pixel.js (v2.1)).
+  - Shopify/Core webhook (orders/paid) remains Business Truth for purchase.
+  - No raw email, phone, DOB, or Facebook Login ID is collected.
+
+  INSTALL
+  1. Upload pixel/noro-v4/noro-tracker.js to Theme > Assets as: noro-tracker.js
+  2. Save this file in Theme > Snippets as: noro-tracker.liquid
+  3. Replace __CLIENT_INGEST_TOKEN__ with the PUBLIC write-only Enutri ingest key.
+  4. Render before </body> in layout/theme.liquid:
+       {% render 'noro-tracker' %}
+{% endcomment %}
+
+{% if template.name == 'product' %}
+<script>
+window.__noroProductCtx = {
+  product_id:       {{ product.id | json }},
+  variant_id:       {{ product.selected_or_first_available_variant.id | json }},
+  product_sku:      {{ product.selected_or_first_available_variant.sku | json }},
+  product_name:     {{ product.title | json }},
+  product_price:    {{ product.selected_or_first_available_variant.price | divided_by: 100.0 | json }},
+  product_category: {{ product.type | json }}
+};
+window.__noroPageType = 'product';
+</script>
+{% elsif template.name == 'cart' %}
+<script>window.__noroPageType = 'cart';</script>
+{% elsif template.name == 'collection' %}
+<script>window.__noroPageType = 'collection';</script>
+{% elsif template.name == 'search' %}
+<script>window.__noroPageType = 'search';</script>
+{% elsif template.name == 'index' %}
+<script>window.__noroPageType = 'index';</script>
+{% else %}
+<script>window.__noroPageType = 'other';</script>
+{% endif %}
+
+<script>
+window.__NORO_CONFIG__ = {
+  client: 'enutri',
+  ingestToken: '__CLIENT_INGEST_TOKEN__',
+  apiBase: 'https://ecommerce-tracking-ia-production.up.railway.app',
+
+  // Recommended once the first-party subdomain is live (reduces ad-blocker loss):
+  // ingestUrl: 'https://data.enutri.com.br/e',
+
+  currency: {{ shop.currency | json }},
+
+  // GA4 property of the store: lets the tracker read the GA4 session id
+  // (cookie _ga_<ID>) so the server-side purchase keeps the original session.
+  ga4MeasurementId: 'G-DXEZVE9CLN',
+
+  modules: {
+    noro: true,
+    ga4: true,
+    google: true,
+    meta: false,
+    tiktok: false,
+    pinterest: false
+  },
+
+  shopify: {
+    bridge: true
+  },
+
+  // Used only until the Shopify Customer Privacy API responds.
+  consent: {
+    defaults: {
+      tracking: true,
+      analytics: false,
+      advertising: false
+    }
+  },
+
+  ga4: {
+    suppressEvents: [
+      'page_view',
+      'view_item',
+      'add_to_cart',
+      'begin_checkout',
+      'purchase'
+    ]
+  },
+
+  server: {
+    purchaseReconciliation: 'required'
+  }
+};
+</script>
+
+<script src="{{ 'noro-tracker.js' | asset_url }}" defer></script>

@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from ..database import get_supabase
+from ..core import send_guard
 from ..services import crypto, integrations_health
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ async def google_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     and populates orders.google_sent. orderId dedup prevents double counting.
     Targets paid orders in the last `hours` where google_sent is not true.
     """
+    if send_guard.sends_blocked(pixel_id, "google_backfill"):
+        return {"status": "blocked", "reason": "CONVERSION_SENDS_DISABLED"}
     from datetime import datetime, timezone, timedelta
     from ..config import settings
     from ..services import google_ads
@@ -126,6 +129,8 @@ async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     in the last `hours` where tiktok_sent is not true.
     TikTok deduplicates by event_id, so re-sending is safe.
     """
+    if send_guard.sends_blocked(pixel_id, "tiktok_backfill"):
+        return {"status": "blocked", "reason": "CONVERSION_SENDS_DISABLED"}
     from datetime import datetime, timezone, timedelta
     from ..services import tiktok_capi
     from ..services.capi_retry import _build_event
@@ -207,6 +212,8 @@ async def tiktok_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
 # @router.post("/{pixel_id}/pinterest/backfill", summary="Reenviar conversões pagas ao Pinterest Conversions API")
 async def pinterest_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
     """Re-sends paid orders to Pinterest CAPI that were never delivered or failed."""
+    if send_guard.sends_blocked(pixel_id, "pinterest_backfill"):
+        return {"status": "blocked", "reason": "CONVERSION_SENDS_DISABLED"}
     from datetime import datetime, timezone, timedelta
     from ..services import pinterest_capi
     from ..services.capi_retry import _build_event

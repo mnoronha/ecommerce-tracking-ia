@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from ..database import get_supabase
+from ..core import send_guard
 from ..services import crypto, ga4 as ga4_svc, meta_capi, writer
 from ..services.adapters.shopify_adapter import ShopifyAdapter
 
@@ -47,6 +48,8 @@ def _cancel_voided_in_meta(client: dict) -> int:
     Returns the number of cancellation events successfully sent.
     """
     client_uuid = client["id"]
+    if send_guard.sends_blocked(client_uuid, "meta_cancel_sync"):
+        return 0
     domain      = (client.get("shopify_domain") or "").strip().rstrip("/")
     token       = client.get("shopify_access_token") or ""
     pixel_id    = client.get("meta_pixel_id") or ""
@@ -145,6 +148,8 @@ def _dispatch_ga4_purchase(
     PIX orders (customer leaves the site before thank-you loads) are captured
     exclusively by this server-side dispatch.
     """
+    if send_guard.sends_blocked(getattr(event, "client_id", None), "shopify_sync_ga4"):
+        return
     # GA4 rejects events older than 72h — skip historical backfill rows
     paid_at = raw_order.get("processed_at") or raw_order.get("created_at") or ""
     if paid_at:

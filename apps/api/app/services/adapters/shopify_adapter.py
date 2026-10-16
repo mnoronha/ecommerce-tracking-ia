@@ -418,6 +418,14 @@ class ShopifyAdapter(BaseAdapter):
         # cart, not just the first URL the customer hit.
         nattr = self._parse_note_attributes(payload)
 
+        # Noro tracker v4.3+ records consent as "_noro_consent" = "a<0|1>m<0|1>".
+        # When the visitor explicitly denied advertising (m0), click ids from the
+        # landing URL must not be used either (the cart attributes are already empty).
+        noro_consent = nattr.get("_noro_consent")
+        ads_denied = isinstance(noro_consent, str) and noro_consent.endswith("m0")
+        if ads_denied:
+            qs = {k: v for k, v in qs.items() if k not in ("gclid", "gbraid", "wbraid", "fbclid")}
+
         # Shipping address — denormalized for country/state/city dashboard filters
         shipping = payload.get("shipping_address") or payload.get("billing_address") or {}
 
@@ -445,9 +453,18 @@ class ShopifyAdapter(BaseAdapter):
                 "gclid":             nattr.get("_gclid")  or qs.get("gclid"),
                 "gbraid":            nattr.get("_gbraid") or qs.get("gbraid"),
                 "wbraid":            nattr.get("_wbraid") or qs.get("wbraid"),
-                "fbclid":            qs.get("fbclid"),
+                "fbclid":            nattr.get("_fbclid") or qs.get("fbclid"),
                 "referring_site":    payload.get("referring_site"),
                 "cart_token":        payload.get("cart_token"),
+                "checkout_token":    payload.get("checkout_token"),
+                # Noro tracker v4.3+ cart attributes
+                "noro_session_id":   nattr.get("_noro_sid"),
+                "ga_session_id":     nattr.get("_ga_sid"),
+                "noro_consent":      noro_consent,
+                "ads_consent_denied": ads_denied,
+                "click_source":      nattr.get("_noro_click_src"),
+                "tracker_version":   nattr.get("_noro_ver"),
+                "processed_at":      payload.get("processed_at"),
                 "refund_id":         str(payload.get("id")) if event_type == EventType.ORDER_REFUNDED else None,
                 # Browse-session attribution from note_attributes
                 "visitor_cookie_id": nattr.get("_etv"),

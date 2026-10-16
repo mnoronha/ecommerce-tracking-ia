@@ -65,7 +65,7 @@ import uuid as _uuid_mod
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 
 logger = logging.getLogger(__name__)
 
@@ -5098,6 +5098,7 @@ async def process_meeting(
 def ingest_tracking_events(
     client_id: str,
     body: TrackingEventBatchIn,
+    request: Request,
     ctx: AuthContext = Depends(SCOPE_TRACKING_WRITE),
 ) -> TrackingIngestOut:
     """
@@ -5125,8 +5126,120 @@ def ingest_tracking_events(
 
     client_uuid = str(meta["id"])
     db = _get_db()
-    result = ingest_events(db, client_uuid, body.events)
+    result = ingest_events(db, client_uuid, body.events, _tracking_request_meta(request))
     return TrackingIngestOut(**result)
+
+
+@router.get(
+    "/clients/{client_id}/tracking/quality",
+    summary="Tracking quality KPIs: coverage vs Shopify, match rate, shadow readiness",
+    tags=["tracking"],
+    response_model=dict,
+)
+def tracking_quality(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+    date_from: Optional[date] = Query(None, description="Inclusive, order created date (UTC). Default: 30 days ago."),
+    date_to: Optional[date] = Query(None, description="Inclusive, order created date (UTC). Default: today."),
+) -> dict:
+    """
+    Read-only. Compares tracking_order_matches with public.orders (paid) for the
+    period and returns match rate by source, consent mix and how many paid orders
+    would be sendable to GA4 / Google Ads (shadow mode — nothing is sent).
+    """
+    from ...core.tracking_reconciliation import compute_quality
+
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+    client_uuid = str(meta["id"])
+
+    d_to = date_to or datetime.now(timezone.utc).date()
+    d_from = date_from or (d_to - timedelta(days=30))
+    if d_from > d_to:
+        raise HTTPException(status_code=422, detail="date_from must be <= date_to")
+    start = datetime(d_from.year, d_from.month, d_from.day, tzinfo=timezone.utc).isoformat()
+    end = (datetime(d_to.year, d_to.month, d_to.day, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
+
+    db = _get_db()
+    try:
+        matches = (
+            db.table("tracking_order_matches")
+            .select("financial_status, excluded_reason, total_price, match_source, consent_advertising,"
+                    " gclid, gbraid, wbraid, shadow_ga4, shadow_google_ads")
+            .eq("client_id", client_uuid)
+            .gte("order_created_at", start)
+            .lt("order_created_at", end)
+            .limit(10000)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.error("tracking_quality: matches read failed %s: %s", client_id, exc)
+        raise HTTPException(503, detail="tracking_order_matches unavailable (migration 067 applied?)")
+
+    shopify_orders: Optional[int] = None
+    shopify_revenue: Optional[float] = None
+    try:
+        orders = (
+            db.table("orders")
+            .select("total_price")
+            .eq("client_id", client_uuid)
+            .eq("financial_status", "paid")
+            .gte("created_at", start)
+            .lt("created_at", end)
+            .limit(10000)
+            .execute()
+        ).data or []
+        shopify_orders = len(orders)
+        shopify_revenue = round(sum(float(o.get("total_price") or 0) for o in orders), 2)
+    except Exception as exc:
+        logger.warning("tracking_quality: orders read failed %s: %s", client_id, exc)
+
+    kpis = compute_quality(matches, shopify_orders, shopify_revenue)
+    return {"client_id": client_id, "date_from": d_from.isoformat(), "date_to": d_to.isoformat(),
+            "mode": "shadow", **kpis}
+
+
+@router.post(
+    "/clients/{client_id}/tracking/reconcile",
+    summary="Rebuild order↔visit matches from stored Shopify webhook events (shadow mode)",
+    tags=["tracking"],
+    response_model=dict,
+)
+def tracking_reconcile(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+    days: int = Query(7, ge=1, le=90),
+) -> dict:
+    """Admin only. Writes tracking_order_matches; sends nothing to ad platforms."""
+    from ...core.tracking_reconciliation import backfill_from_events
+
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+    client_uuid = str(meta["id"])
+    db = _get_db()
+    try:
+        pix = db.table("clients").select("pixel_id").eq("id", client_uuid).limit(1).execute()
+        pixel_id = (pix.data or [{}])[0].get("pixel_id")
+    except Exception as exc:
+        logger.error("tracking_reconcile: pixel_id lookup failed %s: %s", client_id, exc)
+        raise HTTPException(503, detail="client lookup failed")
+    if not pixel_id:
+        raise HTTPException(422, detail="client has no pixel_id (Shopify webhook not configured)")
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = backfill_from_events(db, client_uuid, pixel_id, since)
+    return {"client_id": client_id, "days": days, "mode": "shadow", **result}
+
+
+def _tracking_request_meta(request: Request) -> dict:
+    """Client IP (first X-Forwarded-For hop behind Railway) and User-Agent."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else None
+    if not ip and request.client:
+        ip = request.client.host
+    return {"ip": ip or None, "user_agent": request.headers.get("user-agent")}
 
 
 # ── POST /admin/h4-fixture ────────────────────────────────────────────────────

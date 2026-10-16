@@ -77,18 +77,27 @@ def send_purchase(
                 "quantity":  int(item.quantity or 1),
             })
 
+    purchase_params = {
+        "transaction_id": str(order.id),
+        "value":          float(order.total or 0),
+        "currency":       (order.currency or "BRL").upper(),
+        "items":          items,
+    }
+    # Noro tracker v4.3.1+ forwards the GA4 session (cart attribute `_ga_sid`).
+    # With session_id + engagement_time_msec GA4 attaches the purchase to the
+    # visitor's original session, keeping source/medium/campaign.
+    ga_session_id = (event.metadata or {}).get("ga_session_id")
+    if ga_session_id and str(ga_session_id).isdigit():
+        purchase_params["session_id"] = str(ga_session_id)
+        purchase_params["engagement_time_msec"] = 1
+
     payload = {
         "client_id":       effective_client_id,
         "timestamp_micros": int(time.time() * 1_000_000),
         "events": [
             {
                 "name": "purchase",
-                "params": {
-                    "transaction_id": str(order.id),
-                    "value":          float(order.total or 0),
-                    "currency":       (order.currency or "BRL").upper(),
-                    "items":          items,
-                },
+                "params": purchase_params,
             }
         ],
     }

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ..config import settings
 from ..database import get_supabase
 from ..limiter import limiter
+from ..core import send_guard
 from ..services import crypto, ga4, google_ads, meta_capi, writer
 from ..models.events import EventType, NormalizedEvent, UTMParams
 
@@ -193,6 +194,8 @@ def _persist(event: NormalizedEvent) -> None:
 
 def _dispatch_pixel_ga4(client_pixel_id: str, event: NormalizedEvent) -> None:
     """Send view_item / add_to_cart / begin_checkout to GA4 Measurement Protocol."""
+    if send_guard.sends_blocked(client_pixel_id, "pixel_ga4"):
+        return
     try:
         creds = (
             get_supabase().table("clients")
@@ -221,6 +224,8 @@ def _dispatch_pixel_google_ads(
     action_column: str,
 ) -> None:
     """Upload AddToCart or Checkout conversion to Google Ads when visitor has a gclid."""
+    if send_guard.sends_blocked(client_pixel_id, "pixel_google_ads"):
+        return
     try:
         creds = (
             get_supabase().table("clients")
@@ -251,6 +256,8 @@ def _dispatch_pixel_google_ads(
 
 def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
     """Send ViewContent / AddToCart / InitiateCheckout to Meta CAPI (background)."""
+    if send_guard.sends_blocked(client_pixel_id, "pixel_meta"):
+        return
     try:
         creds = (
             get_supabase().table("clients")

@@ -6,6 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
+from ..core import send_guard, tracking_reconciliation
 from ..services import attribution_engine, crypto, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
@@ -104,6 +105,8 @@ def _dispatch_refund_capi(
     Fire refund event to Meta CAPI (Purchase with negative value) and GA4.
     Runs in a background task — never blocks the webhook response.
     """
+    if send_guard.sends_blocked(client_pixel_id, "refund"):
+        return
     try:
         order = getattr(event, "order", None)
         if not order or not order.id:
@@ -275,6 +278,8 @@ def _dispatch_purchase_capi(
     Runs in a background task — never blocks the webhook response.
     Skips silently if capi_sent is already True (idempotent on retries).
     """
+    if send_guard.sends_blocked(client_pixel_id, "purchase"):
+        return
     try:
         # Guard: skip if already sent (webhook retry / duplicate delivery)
         if order_uuid:
@@ -596,6 +601,9 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
     """
     import hashlib
 
+    if send_guard.sends_blocked(client_pixel_id, "funnel"):
+        return
+
     try:
         topic = (getattr(event, "metadata", {}) or {}).get("topic", "")
 
@@ -820,6 +828,11 @@ async def receive_webhook(
     )
     order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
+
+    # Noro Tracking v4.3 — link the order to browsing evidence (shadow mode:
+    # writes tracking_order_matches only, sends nothing). Never blocks/raises.
+    if platform == "shopify" and client_uuid:
+        background_tasks.add_task(tracking_reconciliation.record_from_webhook, client_uuid, event, order_uuid)
 
     # Server-side mid-funnel: AddToCart on `carts/create` + InitiateCheckout
     # on `checkouts/create|update`. Backup for sessions where the browser
