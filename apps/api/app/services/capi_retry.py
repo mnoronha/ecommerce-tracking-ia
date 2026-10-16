@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from ..database import get_supabase
+from ..core import send_guard
 from ..services import crypto
 from ..config import settings
 from . import meta_capi, ga4, tiktok_capi
@@ -137,6 +138,8 @@ def retry_failed_capi() -> None:
     logger.info("capi_retry: processing %d failed orders", len(failed))
 
     for order in failed:
+        if send_guard.sends_blocked(order.get("client_id"), "capi_retry"):
+            continue
         try:
             # ── Fetch credentials for this client ─────────────────────────────
             # NOTE: use .limit(1) instead of .maybe_single() — the latter raises
@@ -283,6 +286,8 @@ def retry_failed_tiktok() -> None:
     logger.info("tiktok_retry: processing %d failed orders", len(failed))
 
     for order in failed:
+        if send_guard.sends_blocked(order.get("client_id"), "tiktok_retry"):
+            continue
         try:
             client_row = (
                 sb.table("clients")

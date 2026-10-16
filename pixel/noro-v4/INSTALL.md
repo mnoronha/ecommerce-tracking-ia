@@ -29,11 +29,13 @@ No snippet, `ga4MeasurementId` = ID do GA4 da loja (Enutri: `G-DXEZVE9CLN`).
    mas sem os campos novos).
 3. Webhooks do Shopify apontando para `/webhook/shopify/<pixel_id>`:
    `orders/create`, `orders/updated`, `orders/paid`, `orders/cancelled`, `refunds/create`.
-4. Modo sombra: o pipeline de webhooks já existente envia conversões sempre que
-   o cliente tem credenciais cadastradas. Até validar os números, manter vazios
-   no cadastro do cliente: `ga4_api_secret`, `google_ads_conversion_action_id`,
-   `meta_access_token` (e TikTok / Pinterest). Com eles vazios, nada é enviado;
-   a tabela `tracking_order_matches` registra o que seria enviado.
+4. Modo só-tracking (obrigatório nesta fase): no Railway, definir a variável
+   `CONVERSION_SENDS_DISABLED` com o cliente (ex.: `enutri`; aceita slug,
+   pixel_id ou UUID, separados por vírgula; `*` bloqueia todos). Com ela, nenhum
+   envio de conversão sai para Google Ads, GA4, Meta, TikTok ou Pinterest para
+   esse cliente, mesmo com credenciais preenchidas. O tracking continua: eventos,
+   pedidos e `tracking_order_matches` (com o que seria enviado) seguem gravados.
+   Para liberar os envios no futuro: remover o cliente da variável.
 
 ## Verificação
 

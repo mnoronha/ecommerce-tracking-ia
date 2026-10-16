@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from ..config import settings
 from ..database import get_supabase
-from ..core import tracking_reconciliation
+from ..core import send_guard, tracking_reconciliation
 from ..services import attribution_engine, crypto, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
@@ -105,6 +105,8 @@ def _dispatch_refund_capi(
     Fire refund event to Meta CAPI (Purchase with negative value) and GA4.
     Runs in a background task — never blocks the webhook response.
     """
+    if send_guard.sends_blocked(client_pixel_id, "refund"):
+        return
     try:
         order = getattr(event, "order", None)
         if not order or not order.id:
@@ -276,6 +278,8 @@ def _dispatch_purchase_capi(
     Runs in a background task — never blocks the webhook response.
     Skips silently if capi_sent is already True (idempotent on retries).
     """
+    if send_guard.sends_blocked(client_pixel_id, "purchase"):
+        return
     try:
         # Guard: skip if already sent (webhook retry / duplicate delivery)
         if order_uuid:
@@ -596,6 +600,9 @@ def _dispatch_funnel_capi(client_pixel_id: str, event: object) -> None:
     item dropped into the cart.
     """
     import hashlib
+
+    if send_guard.sends_blocked(client_pixel_id, "funnel"):
+        return
 
     try:
         topic = (getattr(event, "metadata", {}) or {}).get("topic", "")
