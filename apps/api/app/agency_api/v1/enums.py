@@ -59,9 +59,12 @@ class VisibilityScope(str, Enum):
 
 
 class ChangeLogSource(str, Enum):
-    AUTO_GOOGLE_ADS = "AUTO_GOOGLE_ADS"
-    AUTO_META       = "AUTO_META"
-    HUMAN           = "HUMAN"
+    AUTO_GOOGLE_ADS       = "AUTO_GOOGLE_ADS"
+    AUTO_META             = "AUTO_META"
+    HUMAN                 = "HUMAN"
+    HERMES_RECOMMENDATION = "HERMES_RECOMMENDATION"
+    AUTOMATION            = "AUTOMATION"
+    PLATFORM_DETECTED     = "PLATFORM_DETECTED"
 
 
 class MatchStatus(str, Enum):
@@ -111,19 +114,38 @@ class ActionEventType(str, Enum):
 
 
 class ChangeType(str, Enum):
-    BUDGET          = "BUDGET"
-    TARGET_ROAS     = "TARGET_ROAS"
-    TARGET_CPA      = "TARGET_CPA"
-    BID_STRATEGY    = "BID_STRATEGY"
-    CREATIVE_LAUNCH = "CREATIVE_LAUNCH"
-    CREATIVE_PAUSE  = "CREATIVE_PAUSE"
-    CAMPAIGN_LAUNCH = "CAMPAIGN_LAUNCH"
-    CAMPAIGN_PAUSE  = "CAMPAIGN_PAUSE"
-    AUDIENCE        = "AUDIENCE"
-    LANDING_PAGE    = "LANDING_PAGE"
-    OFFER           = "OFFER"
-    TRACKING        = "TRACKING"
-    OTHER           = "OTHER"
+    # --- campaign-level ---
+    BUDGET                       = "BUDGET"
+    TARGET_ROAS                  = "TARGET_ROAS"
+    TARGET_CPA                   = "TARGET_CPA"
+    BID_STRATEGY                 = "BID_STRATEGY"
+    CAMPAIGN_LAUNCH              = "CAMPAIGN_LAUNCH"
+    CAMPAIGN_PAUSE               = "CAMPAIGN_PAUSE"
+    # --- adset / adgroup ---
+    ADSET_STATUS_CHANGE          = "ADSET_STATUS_CHANGE"
+    # --- ad-level ---
+    AD_STATUS_CHANGE             = "AD_STATUS_CHANGE"
+    # --- creative ---
+    CREATIVE_LAUNCH              = "CREATIVE_LAUNCH"
+    CREATIVE_PAUSE               = "CREATIVE_PAUSE"
+    CREATIVE_ADDED               = "CREATIVE_ADDED"
+    CREATIVE_REPLACED            = "CREATIVE_REPLACED"
+    ASSET_CHANGE                 = "ASSET_CHANGE"
+    PMAX_ASSET_GROUP_CHANGE      = "PMAX_ASSET_GROUP_CHANGE"
+    # --- keyword / targeting ---
+    KEYWORD_ADDED                = "KEYWORD_ADDED"
+    KEYWORD_REMOVED              = "KEYWORD_REMOVED"
+    NEGATIVE_KEYWORD_ADDED       = "NEGATIVE_KEYWORD_ADDED"
+    MATCH_TYPE_CHANGE            = "MATCH_TYPE_CHANGE"
+    PLACEMENT_CHANGE             = "PLACEMENT_CHANGE"
+    SHOPPING_PRODUCT_SCOPE_CHANGE = "SHOPPING_PRODUCT_SCOPE_CHANGE"
+    CONVERSION_ACTION_CHANGE     = "CONVERSION_ACTION_CHANGE"
+    # --- funnel / growth ---
+    AUDIENCE                     = "AUDIENCE"
+    LANDING_PAGE                 = "LANDING_PAGE"
+    OFFER                        = "OFFER"
+    TRACKING                     = "TRACKING"
+    OTHER                        = "OTHER"
 
 
 class ChangeConfidence(str, Enum):
