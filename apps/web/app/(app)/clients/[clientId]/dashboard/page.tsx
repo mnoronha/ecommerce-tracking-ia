@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCircle, Sparkles, AlertTriangle, Lightbulb, BarChart2, Loader2, Target, Globe, UserX, DollarSign } from 'lucide-react'
 import IntegrationsHealth from '@/components/IntegrationsHealth'
 import { useDatePeriod, periodLabelLong, periodToQuery } from '@/lib/use-date-range'
+import { useClientConfig } from '@/lib/use-client-config'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ColHeader, SourceBadge } from '@/components/ui/metric-tooltip'
@@ -317,12 +318,12 @@ function KPICard({ title, value, icon: Icon, change, color, hint, spark, onClick
   )
 }
 
-function ConversionFunnel({ funnel }: { funnel: Ga4Funnel }) {
+function ConversionFunnel({ funnel, topLabel = 'Sessões' }: { funnel: Ga4Funnel; topLabel?: string }) {
   const total = funnel.sessions || 1
   const fmtN  = (n: number) => n.toLocaleString('pt-BR')
 
   const steps = [
-    { label: 'Sessões',   value: funnel.sessions,       color: '#6366f1', widthPct: 100 },
+    { label: topLabel,    value: funnel.sessions,       color: '#6366f1', widthPct: 100 },
     { label: 'Carrinho',  value: funnel.add_to_cart,    color: '#8b5cf6', widthPct: 76  },
     { label: 'Checkout',  value: funnel.begin_checkout, color: '#ec4899', widthPct: 54  },
     { label: 'Compras',   value: funnel.purchases,      color: '#10b981', widthPct: 34  },
@@ -799,6 +800,8 @@ export default function DashboardPage() {
   const [ga4Channels, setGa4Channels]   = useState<Ga4Channel[]>([])
   const [ga4Sources, setGa4Sources]     = useState<{source: string; medium: string; sessions: number; purchases: number; revenue: number}[]>([])
   const [ga4Funnel, setGa4Funnel]       = useState<Ga4Funnel | null>(null)
+  // Funil do Noro Tracking (tracking_events + pedidos pagos). Preferido ao GA4 quando há dados.
+  const [noroFunnel, setNoroFunnel]     = useState<Ga4Funnel | null>(null)
   const [ga4TopPages, setGa4TopPages]   = useState<Ga4TopPage[]>([])
   const [ltvStats, setLtvStats]         = useState<LtvStats | null>(null)
   const [refundsSummary, setRefundsSummary] = useState<{ count: number; total: number; rate_pct: number } | null>(null)
@@ -829,6 +832,10 @@ export default function DashboardPage() {
     () => (params?.clientId as string) || process.env.NEXT_PUBLIC_CLIENT_PIXEL_ID || 'lk-sneakers',
     [params?.clientId],
   )
+
+  // Canais configurados no cliente — só buscamos dados dos ativos.
+  const { config: clientConfig, ready: channelsReady } = useClientConfig(CLIENT_PIXEL_ID)
+  const ch = clientConfig.channels
 
   const periodForApi = useMemo(() => {
     const now = new Date()
@@ -1052,6 +1059,20 @@ export default function DashboardPage() {
     // ── Conversion funnel — Supabase RPC funnel_stats returns fields directly
     const fd   = funnelJson || {}
     const fTop = fd.pageview || 1
+    if ((fd.pageview || 0) > 0) {
+      const paid = allOrders.length
+      setNoroFunnel({
+        sessions:       fd.pageview,
+        add_to_cart:    fd.add_to_cart    || 0,
+        begin_checkout: fd.begin_checkout || 0,
+        purchases:      paid,
+        atc_rate:       ((fd.add_to_cart    || 0) / fTop) * 100,
+        checkout_rate:  ((fd.begin_checkout || 0) / fTop) * 100,
+        purchase_rate:  (paid / fTop) * 100,
+      })
+    } else {
+      setNoroFunnel(null)
+    }
     setFunnelSteps([
       { label: 'Pageviews',         count: fd.pageview       || 0, pct: 100 },
       { label: 'Produto Visto',     count: fd.view_product   || 0, pct: ((fd.view_product   || 0) / fTop) * 100 },
@@ -1259,6 +1280,8 @@ export default function DashboardPage() {
 
   const loadGA4 = useCallback(async () => {
     if (period === 'custom' && (!from || !to)) return
+    if (!channelsReady) return
+    if (!ch.ga4) { setGa4Summary(null); setGa4Channels([]); setGa4Funnel(null); return }
     try {
       const qs = periodToQuery(period, from, to)
       const [res, funnelRes] = await Promise.all([
@@ -1277,13 +1300,14 @@ export default function DashboardPage() {
       setGa4Summary(null)
       setGa4Channels([])
     }
-  }, [CLIENT_PIXEL_ID, period, from, to])
+  }, [CLIENT_PIXEL_ID, period, from, to, channelsReady, ch.ga4])
 
   const loadAdsAbortRef = useRef<AbortController | null>(null)
 
   const loadAds = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
     if (period === 'custom' && (!from || !to)) return
+    if (!channelsReady) return
 
     // Cancel any in-flight request to avoid stale overwrites
     if (loadAdsAbortRef.current) loadAdsAbortRef.current.abort()
@@ -1291,11 +1315,12 @@ export default function DashboardPage() {
     loadAdsAbortRef.current = controller
 
     const qs = periodToQuery(period, from, to)
-    const [metaRes, googleRes, tiktokRes, pinterestRes] = await Promise.all([
-      fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
-      fetch(`${API_URL}/google-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
-      fetch(`${API_URL}/tiktok-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
-      fetch(`${API_URL}/pinterest-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null),
+    const skip = Promise.resolve(null)
+    // Só canais configurados no cliente (Pinterest removido da plataforma).
+    const [metaRes, googleRes, tiktokRes] = await Promise.all([
+      ch.meta      ? fetch(`${API_URL}/meta-ads/${CLIENT_PIXEL_ID}/overview?${qs}`,   { signal: controller.signal }).catch(() => null) : skip,
+      ch.googleAds ? fetch(`${API_URL}/google-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null) : skip,
+      ch.tiktok    ? fetch(`${API_URL}/tiktok-ads/${CLIENT_PIXEL_ID}/overview?${qs}`, { signal: controller.signal }).catch(() => null) : skip,
     ])
 
     if (controller.signal.aborted) return
@@ -1322,18 +1347,12 @@ export default function DashboardPage() {
     } else {
       setTiktokSummary(null)
     }
-    if (pinterestRes?.ok) {
-      const data = await pinterestRes.json()
-      const t = data.totals
-      if (t && (t.orders > 0 || t.spend > 0)) setPinterestSummary({ spend: t.spend ?? 0, roas: t.roas ?? null, cpa: t.cpa ?? null, purchases: t.orders ?? 0, revenue: t.revenue ?? 0 })
-      else setPinterestSummary(null)
-    } else {
-      setPinterestSummary(null)
-    }
-  }, [CLIENT_PIXEL_ID, period, from, to])
+    setPinterestSummary(null)
+  }, [CLIENT_PIXEL_ID, period, from, to, channelsReady, ch.meta, ch.googleAds, ch.tiktok])
 
   const loadTrafficTab = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
+    if (!channelsReady || !ch.ga4) return
     const qs = periodToQuery(period, from, to)
     const [funnelRes, pagesRes, sourcesRes] = await Promise.all([
       fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/funnel?${qs}`).catch(() => null),
@@ -1354,7 +1373,7 @@ export default function DashboardPage() {
     } else {
       setGa4Sources([])
     }
-  }, [CLIENT_PIXEL_ID, period, from, to])
+  }, [CLIENT_PIXEL_ID, period, from, to, channelsReady, ch.ga4])
 
   const loadClientsTab = useCallback(async () => {
     if (!CLIENT_PIXEL_ID) return
@@ -1902,9 +1921,16 @@ export default function DashboardPage() {
           <div className="bg-[#1a1f2e] rounded-xl p-5 border border-[#2a2f3e]">
             <div className="flex items-center gap-2 mb-4">
               <h2 className="text-sm font-semibold text-slate-300">Funil de Conversão</h2>
-              <SourceBadge source="ga4" />
+              <SourceBadge source={noroFunnel ? 'noro' : 'ga4'} />
+              {noroFunnel && (
+                <Link href={`/clients/${CLIENT_PIXEL_ID}/tracking`} className="ml-auto text-[11px] text-indigo-400 hover:text-indigo-300">
+                  Qualidade do tracking →
+                </Link>
+              )}
             </div>
-            {ga4Funnel && ga4Funnel.sessions > 0 ? (
+            {noroFunnel ? (
+              <ConversionFunnel funnel={noroFunnel} topLabel="Páginas vistas" />
+            ) : ga4Funnel && ga4Funnel.sessions > 0 ? (
               <ConversionFunnel funnel={ga4Funnel} />
             ) : (
               <EmptyState

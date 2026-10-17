@@ -3,8 +3,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { Loader2, RefreshCw, Sparkles, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react'
-import { useAgencyPlan } from '@/lib/use-agency-plan'
-import { PlanGate } from '@/components/plan-gate'
 import { useDatePeriod, periodToQuery } from '@/lib/use-date-range'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import { detectOutlier } from '@/lib/outlier-detection'
@@ -53,7 +51,6 @@ const fmt = (n: number) =>
 export default function CreativesPage() {
   const params  = useParams()
   const pixelId = params.clientId as string
-  const { plan } = useAgencyPlan(pixelId)
 
   const { period, from, to, setPreset, setCustom } = useDatePeriod()
   const [creatives, setCreatives] = useState<CreativeRow[]>([])
@@ -189,7 +186,7 @@ export default function CreativesPage() {
       )}
 
       {/* Analysis card — Creative Intelligence (Predição plan) */}
-      <PlanGate feature="creative_intelligence" planId={plan.planId}>
+      <>
       {analysis && (
         <div className="mx-6 mt-6 bg-gradient-to-br from-indigo-500/10 to-violet-500/5 border border-indigo-500/30 rounded-2xl p-5">
           <div className="flex items-start gap-3 mb-3">
@@ -236,7 +233,7 @@ export default function CreativesPage() {
           )}
         </div>
       )}
-      </PlanGate>
+      </>
 
       {/* KPIs */}
       <div className="px-6 pt-6 grid grid-cols-2 md:grid-cols-4 gap-3">

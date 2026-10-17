@@ -41,16 +41,13 @@ function LoginForm() {
             <BarChart2 size={22} className="text-indigo-400" />
           </div>
           <h1 className="text-xl font-bold text-white">Ecommerce Tracking IA</h1>
-          <p className="text-sm text-slate-500 mt-1">by Pareto Plus</p>
+          <p className="text-sm text-slate-500 mt-1">by Noro Labs</p>
         </div>
 
         <div className="bg-[#1a1f2e] rounded-2xl border border-[#2a2f3e] p-6">
           <h2 className="text-base font-semibold text-white mb-1">Entrar na plataforma</h2>
           <p className="text-xs text-slate-500 mb-5">
-            Não tem conta?{' '}
-            <a href="/register" className="text-indigo-400 hover:text-indigo-300 transition-colors">
-              Criar conta grátis →
-            </a>
+            Acesso restrito à equipe e clientes da Noro Labs.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -96,7 +93,7 @@ function LoginForm() {
         </div>
 
         <p className="text-center text-xs text-slate-600 mt-5">
-          Pareto Plus © {new Date().getFullYear()}
+          Noro Labs © {new Date().getFullYear()}
         </p>
       </div>
     </div>

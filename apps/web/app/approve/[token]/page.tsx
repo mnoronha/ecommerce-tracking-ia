@@ -159,7 +159,7 @@ export default function ApprovalPage() {
         {/* Agency header */}
         <div className="text-center mb-10">
           <p className="text-sm text-gray-400 uppercase tracking-widest mb-1 font-medium">
-            Pareto Plus
+            Noro Labs
           </p>
           <h1 className="text-3xl font-bold text-gray-900 mb-1">
             Aprovação de conteúdo

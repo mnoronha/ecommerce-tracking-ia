@@ -28,7 +28,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     check()
   }, [])
 
-  const isClientsRoot = pathname === '/dashboard' || pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas' || pathname === '/billing' || pathname === '/configuracoes' || pathname === '/financeiro' || pathname === '/system-health'
+  const isClientsRoot = pathname === '/dashboard' || pathname === '/clients' || pathname === '/clients/new' || pathname === '/alertas' || pathname === '/configuracoes' || pathname === '/financeiro' || pathname === '/system-health'
 
   async function handleSignOut() {
     const supabase = createSupabaseBrowserClient()
@@ -45,7 +45,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-2">
             <BarChart2 size={16} className="text-indigo-400" />
             <span className="text-sm font-bold text-white">Ecommerce Tracking IA</span>
-            <span className="text-slate-600 text-xs ml-1">· Pareto Plus</span>
+            <span className="text-slate-600 text-xs ml-1">· Noro Labs</span>
           </div>
           <div className="flex items-center gap-4">
             <Link href="/dashboard" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/dashboard' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
@@ -62,9 +62,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <Wallet size={13} />Financeiro
               </Link>
             )}
-            <Link href="/billing" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/billing' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
-              <CreditCard size={13} />Plano
-            </Link>
             <Link href="/system-health" className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/system-health' ? 'text-white' : 'text-slate-500 hover:text-white'}`}>
               <Activity size={13} />Sistema
             </Link>

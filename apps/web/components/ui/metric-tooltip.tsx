@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 
 // ── Source badge ───────────────────────────────────────────────────────────────
 
-type SourceKey = 'shopify' | 'meta' | 'google' | 'tiktok' | 'pinterest' | 'server' | 'ga4'
+type SourceKey = 'shopify' | 'meta' | 'google' | 'tiktok' | 'pinterest' | 'server' | 'ga4' | 'noro'
 
 const SOURCE_CONFIG: Record<SourceKey, { label: string; color: string }> = {
   shopify:   { label: 'Shopify (servidor)',    color: 'text-emerald-400/70 bg-emerald-500/8 border-emerald-500/15' },
@@ -15,6 +15,7 @@ const SOURCE_CONFIG: Record<SourceKey, { label: string; color: string }> = {
   pinterest: { label: 'Pinterest Ads API',     color: 'text-rose-400/70 bg-rose-500/8 border-rose-500/15' },
   server:    { label: 'Servidor próprio (CAPI)', color: 'text-indigo-400/70 bg-indigo-500/8 border-indigo-500/15' },
   ga4:       { label: 'Google Analytics 4',   color: 'text-orange-400/70 bg-orange-500/8 border-orange-500/15' },
+  noro:      { label: 'Noro Tracking',        color: 'text-indigo-400/70 bg-indigo-500/8 border-indigo-500/15' },
 }
 
 export function SourceBadge({ source }: { source: SourceKey }) {
