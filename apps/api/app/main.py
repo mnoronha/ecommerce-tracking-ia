@@ -28,6 +28,8 @@ from .core.weekly_review import run_weekly_review_all_clients
 from .core.monthly_review import run_monthly_review_all_clients
 from .core.balance_monitor import run_balance_check_all_prepaid
 from .core.outcome_evaluator import evaluate_pending_outcomes as _evaluate_pending_outcomes
+from .core.notion_adapter import NotionTaskAdapter as _NotionAdapter
+from .database import get_supabase as _get_supabase_for_notion
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -356,41 +358,30 @@ _scheduler.add_job(
     max_instances=1,
     misfire_grace_time=3600,
 )
-# NOTION SYNC — DESATIVADO até smoke test manual passar.
-# Ativar após:
-#   1. Configurar NOTION_API_KEY + NOTION_TASKS_DATABASE_ID no Railway
-#   2. Criar Task de teste via POST /agency/v1/clients/{id}/tasks
-#   3. Executar POST /agency/v1/admin/notion/sync/task/{id} manualmente
-#   4. Verificar Core Task ID na página Notion + sync_state=synced no DB
-#   5. Alterar Status no Notion → executar POST /agency/v1/admin/notion/sync/pending
-#   6. Verificar writeback no Core
-# Só após esse smoke: descomentar os dois jobs abaixo e fazer deploy.
-#
-# from .core.notion_adapter import NotionTaskAdapter as _NotionAdapter
-# from .database import get_supabase as _get_supabase_for_notion
-#
-# def _notion_sync_pending():
-#     _NotionAdapter(supabase=_get_supabase_for_notion()).sync_pending_tasks_to_notion()
-#
-# def _notion_poll_updates():
-#     _NotionAdapter(supabase=_get_supabase_for_notion()).poll_notion_task_updates()
-#
-# _scheduler.add_job(
-#     _notion_sync_pending,
-#     "interval",
-#     minutes=5,
-#     id="notion_sync_pending",
-#     max_instances=1,
-#     misfire_grace_time=300,
-# )
-# _scheduler.add_job(
-#     _notion_poll_updates,
-#     "interval",
-#     minutes=5,
-#     id="notion_poll_updates",
-#     max_instances=1,
-#     misfire_grace_time=300,
-# )
+def _notion_sync_pending():
+    _NotionAdapter(supabase=_get_supabase_for_notion()).sync_pending_tasks_to_notion()
+
+
+def _notion_poll_updates():
+    _NotionAdapter(supabase=_get_supabase_for_notion()).poll_notion_task_updates()
+
+
+_scheduler.add_job(
+    _notion_sync_pending,
+    "interval",
+    minutes=5,
+    id="notion_sync_pending",
+    max_instances=1,
+    misfire_grace_time=300,
+)
+_scheduler.add_job(
+    _notion_poll_updates,
+    "interval",
+    minutes=5,
+    id="notion_poll_updates",
+    max_instances=1,
+    misfire_grace_time=300,
+)
 
 
 @app.on_event("startup")
