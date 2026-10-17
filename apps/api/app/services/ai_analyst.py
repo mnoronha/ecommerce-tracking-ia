@@ -55,7 +55,7 @@ def _collect_metrics(client_uuid: str) -> dict:
 
     # ── Pedidos 7d e 30d ──────────────────────────────────────────────────
     orders_30 = sb.table("orders").select(
-        "total_price, financial_status, utm_source, utm_medium, utm_campaign, created_at, email"
+        "total_price, financial_status, utm_source, utm_medium, utm_campaign, created_at, email_hash"
     ).eq("client_id", client_uuid).gte("created_at", ago(30)).execute()
 
     orders_7 = [o for o in (orders_30.data or [])
@@ -126,19 +126,19 @@ def _collect_metrics(client_uuid: str) -> dict:
         for months_ago in range(1, 4):
             c_start = (now - timedelta(days=30 * months_ago)).isoformat()
             c_end   = (now - timedelta(days=30 * (months_ago - 1))).isoformat()
-            first_buyers = sb.table("orders").select("email", count="exact", head=False).eq(
+            first_buyers = sb.table("orders").select("email_hash", count="exact", head=False).eq(
                 "client_id", client_uuid).eq("is_first_purchase", True).gte(
                 "created_at", c_start).lt("created_at", c_end).execute()
-            emails = list({o["email"] for o in (first_buyers.data or []) if o.get("email")})
+            emails = list({o["email_hash"] for o in (first_buyers.data or []) if o.get("email_hash")})
             returned = 0
             if emails:
                 batch = emails[:200]
                 # Single query instead of N+1 individual lookups per email.
-                r = sb.table("orders").select("email").eq(
+                r = sb.table("orders").select("email_hash").eq(
                     "client_id", client_uuid).eq(
                     "is_first_purchase", False).in_(
-                    "email", batch).execute()
-                returned = len({o["email"] for o in (r.data or []) if o.get("email")})
+                    "email_hash", batch).execute()
+                returned = len({o["email_hash"] for o in (r.data or []) if o.get("email_hash")})
             cohort_data.append({
                 "mes": f"M-{months_ago}",
                 "novos_compradores": len(emails),
@@ -219,7 +219,7 @@ def _collect_metrics(client_uuid: str) -> dict:
         "budget_intel_por_canal": budget_intel,
         "qualidade_dados": {
             "pedidos_com_utm_30d": sum(1 for o in o30 if o.get("utm_source")),
-            "pedidos_com_email_30d": sum(1 for o in o30 if o.get("email")),
+            "pedidos_com_email_30d": sum(1 for o in o30 if o.get("email_hash")),
             "total_pedidos_30d": len(o30),
         },
     }

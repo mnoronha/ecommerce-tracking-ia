@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
+import { emailHash } from '@/lib/pii'
 import { supabase } from '@/lib/supabase'
 import { Search, ChevronLeft, ChevronRight, CheckCircle, XCircle, MinusCircle } from 'lucide-react'
 
@@ -123,19 +124,30 @@ export default function PedidosPage() {
     return () => clearTimeout(t)
   }, [search])
 
+  // Email completo → hash (emails não são guardados em texto). Outro texto → nº do pedido.
+  const [searchHash, setSearchHash] = useState<string | null>(null)
+  const [searchReady, setSearchReady] = useState(true)
+  useEffect(() => {
+    let cancelled = false
+    if (!debSearch.includes('@')) { setSearchHash(null); setSearchReady(true); return }
+    setSearchReady(false)
+    emailHash(debSearch).then(h => { if (!cancelled) { setSearchHash(h); setSearchReady(true) } })
+    return () => { cancelled = true }
+  }, [debSearch])
+
   // Reset page on filter change
   useEffect(() => { setPage(0) }, [statusFilter, datePreset])
 
   // Load orders
   useEffect(() => {
-    if (!clientId) return
+    if (!clientId || !searchReady) return
     setLoading(true)
 
     const { gte, lte } = dateRange(datePreset)
 
     let q = supabase.from('orders')
       .select(
-        'id, platform_order_number, email, total_price, currency, financial_status, utm_source, utm_medium, utm_campaign, platform_source, capi_sent, capi_last_error, google_sent, google_last_error, tiktok_sent, tiktok_last_error, created_at',
+        'id, platform_order_number, email:email_masked, total_price, currency, financial_status, utm_source, utm_medium, utm_campaign, platform_source, capi_sent, capi_last_error, google_sent, google_last_error, tiktok_sent, tiktok_last_error, created_at',
         { count: 'exact' }
       )
       .eq('client_id', clientId)
@@ -145,27 +157,30 @@ export default function PedidosPage() {
 
     if (gte)                    q = (q as any).gte('created_at', gte)
     if (lte)                    q = (q as any).lte('created_at', lte)
-    if (debSearch)              q = (q as any).ilike('email', `%${debSearch}%`)
+    if (debSearch && debSearch.includes('@')) q = (q as any).eq('email_hash', searchHash ?? '__none__')
+    else if (debSearch)         q = (q as any).ilike('platform_order_number', `%${debSearch.replace('#', '')}%`)
     if (statusFilter !== 'all') q = (q as any).eq('financial_status', statusFilter)
 
     q.then(({ data, count }) => {
       setOrders((data as Order[]) || [])
       setTotal(count || 0)
+      // Com busca ativa, o total vem das linhas encontradas (a RPC de soma não filtra por hash).
+      if (debSearch) setTotalRev(((data as Order[]) || []).reduce((s, o) => s + (o.total_price || 0), 0))
       setLoading(false)
     })
-  }, [clientId, page, debSearch, statusFilter, datePreset])
+  }, [clientId, page, debSearch, searchHash, searchReady, statusFilter, datePreset])
 
   // Total revenue for current filter — single aggregate via RPC instead of
   // fetching all rows and summing on the client.
   useEffect(() => {
-    if (!clientId) return
+    if (!clientId || debSearch) return
     const { gte, lte } = dateRange(datePreset)
     supabase.rpc('orders_revenue_sum', {
       p_client_id:    clientId,
       p_gte:          gte  ?? null,
       p_lte:          lte  ?? null,
       p_status:       statusFilter !== 'all' ? statusFilter : null,
-      p_email_search: debSearch || null,
+      p_email_search: null,
     }).then(({ data }) => {
       setTotalRev(Number(data) || 0)
     })
@@ -207,7 +222,7 @@ export default function PedidosPage() {
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
-              placeholder="Buscar por email…"
+              placeholder="Nº do pedido ou email completo…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-lg pl-9 pr-4 py-2 text-sm text-slate-200 placeholder-slate-500 outline-none focus:border-indigo-500 w-52"

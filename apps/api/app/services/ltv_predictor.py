@@ -71,10 +71,10 @@ def compute_ltv_stats_for_client(client_uuid: str) -> dict:
     try:
         rows = (
             sb.table("orders")
-            .select("email, utm_source, utm_medium, total_price, is_first_purchase, created_at")
+            .select("email:email_hash, utm_source, utm_medium, total_price, is_first_purchase, created_at")
             .eq("client_id", client_uuid)
             .gte("created_at", cutoff)
-            .not_.is_("email", "null")
+            .not_.is_("email_hash", "null")
             .execute()
         ).data or []
     except Exception as exc:

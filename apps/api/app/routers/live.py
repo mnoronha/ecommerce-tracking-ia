@@ -49,7 +49,8 @@ async def live_orders(
 
     q = (
         sb.table("orders")
-        .select("id, platform_order_number, email, total_price, currency, "
+        # email = masked (LGPD) — raw customer emails are not stored/exposed
+        .select("id, platform_order_number, email:email_masked, total_price, currency, "
                 "utm_source, utm_medium, utm_campaign, platform_source, "
                 "is_first_purchase, financial_status, created_at")
         .eq("client_id", client_uuid)

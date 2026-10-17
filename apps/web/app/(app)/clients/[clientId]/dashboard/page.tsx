@@ -923,7 +923,7 @@ export default function DashboardPage() {
       { data: refundOrders },
     ] = await Promise.all([
       supabase.from('orders')
-        .select('id, email, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
+        .select('id, email:email_masked, total_price, gross_profit, margin_pct, financial_status, platform_source, utm_source, utm_medium, utm_campaign, is_first_purchase, shipping_country, created_at')
         .eq('client_id', clientId)
         .eq('financial_status', 'paid')
         .gt('total_price', 0)
@@ -1213,7 +1213,7 @@ export default function DashboardPage() {
     const start90 = new Date(); start90.setDate(start90.getDate() - 90)
     const { data: allOrders90 } = await supabase
       .from('orders')
-      .select('email, created_at')
+      .select('email:email_hash, created_at')
       .eq('client_id', cohortClientId)
       .eq('financial_status', 'paid')
       .gt('total_price', 0)
@@ -1389,22 +1389,23 @@ export default function DashboardPage() {
     }
     const { data: allOrders } = await supabase
       .from('orders')
-      .select('email, total_price, created_at')
+      .select('email_hash, email_masked, total_price, created_at')
       .eq('client_id', cid)
       .eq('financial_status', 'paid')
       .gt('total_price', 0)
-      .not('email', 'is', null)
+      .not('email_hash', 'is', null)
       .order('created_at', { ascending: false })
       .limit(10000)
     if (!allOrders) return
-    const custMap: Record<string, { total: number; orders: number; lastOrder: string }> = {}
+    // Clientes identificados por email_hash (LGPD); exibidos com email mascarado.
+    const custMap: Record<string, { total: number; orders: number; lastOrder: string; masked: string }> = {}
     allOrders.forEach((o: any) => {
-      if (!o.email) return
-      if (!custMap[o.email]) custMap[o.email] = { total: 0, orders: 0, lastOrder: o.created_at }
-      custMap[o.email].total += o.total_price || 0
-      custMap[o.email].orders += 1
+      if (!o.email_hash) return
+      if (!custMap[o.email_hash]) custMap[o.email_hash] = { total: 0, orders: 0, lastOrder: o.created_at, masked: o.email_masked || 'cliente' }
+      custMap[o.email_hash].total += o.total_price || 0
+      custMap[o.email_hash].orders += 1
     })
-    const customers = Object.entries(custMap).map(([email, v]) => ({ email, ...v }))
+    const customers = Object.entries(custMap).map(([, v]) => ({ email: v.masked, ...v }))
     const totalRev = customers.reduce((s, c) => s + c.total, 0)
     const avgLtv = customers.length > 0 ? totalRev / customers.length : 0
     const sixtyDaysAgo = new Date(); sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60)

@@ -23,6 +23,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from ..core.pii import email_hash
 from ..database import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ async def klaviyo_webhook(pixel_id: str, request: Request):
                     sb.table("visitors")
                     .select("id")
                     .eq("client_id", client["id"])
-                    .eq("email", email.lower().strip())
+                    .eq("email_hash", email_hash(email))
                     .order("last_seen_at", desc=True)
                     .limit(1)
                     .execute()
@@ -139,10 +140,10 @@ async def klaviyo_webhook(pixel_id: str, request: Request):
                 "event_id":   event_id,
                 "visitor_id": visitor_id,
                 "properties": {
-                    "email":      email,
+                    "email_hash": email_hash(email),
                     "source":     "klaviyo",
                     "event_name": event_name,
-                    **{k: v for k, v in props.items() if k not in ("email",)},
+                    **{k: v for k, v in props.items() if k not in ("email", "$email", "phone_number", "$phone_number")},
                 },
                 "created_at": event_at,
             }

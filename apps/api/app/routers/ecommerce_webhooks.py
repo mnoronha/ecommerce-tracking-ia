@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from ..config import settings
 from ..database import get_supabase
 from ..core import send_guard, tracking_reconciliation
+from ..core.pii import email_hash
 from ..services import attribution_engine, crypto, ga4, google_ads, meta_capi, pinterest_capi, profitability, tiktok_capi, writer
 from ..services.adapters import (
     NuvemshopAdapter,
@@ -426,12 +427,15 @@ def _dispatch_purchase_capi(
         # the common case for stores that don't have our Liquid snippet
         # installed, or guest checkouts that came in via gateway.
         cust_email = (event.customer.email if hasattr(event, "customer") and event.customer else None)
-        if cust_email and (not fbp or not fbc or not client_ip):
+        cust_email_hash = email_hash(cust_email)
+        client_row_uuid = writer.resolve_client_uuid(client_pixel_id) if cust_email_hash else None
+        if cust_email_hash and client_row_uuid and (not fbp or not fbc or not client_ip):
             try:
                 vis_email_q = (
                     get_supabase().table("visitors")
                     .select("id, fbp, fbc, gclid, ga_client_id, last_seen_at")
-                    .eq("email", cust_email.strip().lower())
+                    .eq("client_id", client_row_uuid)
+                    .eq("email_hash", cust_email_hash)
                     .order("last_seen_at", desc=True)
                     .limit(5)
                     .execute()
