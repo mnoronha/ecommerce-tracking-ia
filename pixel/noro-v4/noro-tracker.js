@@ -1,4 +1,4 @@
-/* Noro Tracker v4.3.1 — Shopify storefront collector
+/* Noro Tracker v4.3.2 — Shopify storefront collector
  * 2026-10-16
  *
  * Scope:
@@ -12,6 +12,11 @@
  *   when advertising consent is granted. Without consent they are held in
  *   sessionStorage only (never sent) and promoted if consent arrives later.
  * - Sent URLs are sanitized: path + UTM params only.
+ *
+ * v4.3.2 changes vs v4.3.1:
+ * - storefront no longer sends begin_checkout (intent); the Custom Pixel sends the
+ *   confirmed one, so funnels count each checkout once. Checkout click still
+ *   refreshes the cart attribution bridge.
  *
  * v4.3.1 changes vs v4.3:
  * - GA4 session id captured from the _ga_<MEASUREMENT_ID> cookie (GS1 and GS2
@@ -39,7 +44,7 @@
   if (window.__noroLoaded) return;
   window.__noroLoaded = true;
 
-  const VERSION = "4.3.1";
+  const VERSION = "4.3.2";
 
   const VALID_EVENTS = Object.freeze([
     "page_view",
@@ -1015,11 +1020,12 @@
       watchAddToCart(onConfirmedATC);
       resolvePendingTraditionalATC(onConfirmedATC);
 
-      watchBeginCheckout((info) => {
+      // Checkout click: only refresh the cart attribution bridge right before
+      // Shopify takes over. The begin_checkout EVENT comes from the Custom Pixel
+      // (checkout_started, confirmed) — sending an "intent" event here too would
+      // double-count the checkout step in every funnel that reads tracking_events.
+      watchBeginCheckout(() => {
         bridgeCart(true);
-        fire("begin_checkout", {
-          properties: { checkout_state: info.checkout_state, trigger: info.trigger }
-        });
       });
 
       window.addEventListener("focus", () => queue.flush());
