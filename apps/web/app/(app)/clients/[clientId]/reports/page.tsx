@@ -8,8 +8,6 @@ import {
   AlertTriangle, RefreshCw, Download, FileText, Send, CheckCircle,
   Plus, X,
 } from 'lucide-react'
-import { useAgencyPlan } from '@/lib/use-agency-plan'
-import { PlanGate } from '@/components/plan-gate'
 import { supabase } from '@/lib/supabase'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
@@ -386,7 +384,6 @@ function ReportToggleRow({ title, desc, enabled, onToggle }: {
 export default function ReportsPage() {
   const params   = useParams()
   const clientId = params.clientId as string
-  const { plan, loading: planLoading } = useAgencyPlan(clientId)
 
   const [insights,    setInsights]    = useState<Insight[]>([])
   const [loading,     setLoading]     = useState(true)
@@ -557,9 +554,6 @@ export default function ReportsPage() {
 
   const unread = insights.filter(i => !i.is_read).length
 
-  if (!planLoading && !plan.gates['ai_insights']) {
-    return <PlanGate feature="ai_insights" planId={plan.planId} fullPage>{null}</PlanGate>
-  }
 
   return (
     <div className="min-h-screen bg-[#0f1117] text-slate-200">

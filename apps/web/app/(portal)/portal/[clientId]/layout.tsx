@@ -47,11 +47,9 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
     { href: `/portal/${clientId}/meta-ads`,      label: 'Meta Ads',      icon: Target },
     { href: `/portal/${clientId}/google-ads`,    label: 'Google Ads',    icon: TrendingUp },
     { href: `/portal/${clientId}/tiktok-ads`,    label: 'TikTok Ads',    icon: BarChart },
-    { href: `/portal/${clientId}/pinterest-ads`, label: 'Pinterest Ads', icon: BarChart2 },
     { href: `/portal/${clientId}/ga4`,           label: 'GA4',           icon: BarChart2 },
     { href: `/portal/${clientId}/creatives`,     label: 'Criativos',     icon: Sparkles },
     { href: `/portal/${clientId}/reports`,       label: 'IA',            icon: FileText },
-    { href: `/portal/${clientId}/metas`,         label: 'Metas',         icon: Target },
   ]
 
   return (
