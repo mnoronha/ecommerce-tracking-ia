@@ -498,9 +498,12 @@ async def tracker_js_adblock_alias():
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
-# Noro Platform agora consome dados via APIs. Manter código para referência futura.
-# app.include_router(ecommerce_webhooks.router)
+# 2026-06-19: tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
+# 2026-10-17: webhook receiver reativado para o Noro Tracking v4.3 (pedidos = Business Truth,
+#   ligação pedido→visita em modo sombra). Envios de conversão continuam controlados por
+#   CONVERSION_SENDS_DISABLED (core/send_guard.py) — usar "*" para modo só-tracking global.
+# O pixel legado (/p/e) segue desativado: o tracker v4.3 usa /agency/v1/.../tracking/events.
+app.include_router(ecommerce_webhooks.router)
 # app.include_router(pixel.router)
 app.include_router(insights.router)
 app.include_router(meta_ads.router)
