@@ -3,7 +3,7 @@ Phase 6.6 Production Smoke Test
 Reads AGENCY_API_ADMIN_KEY and AGENCY_API_PLATFORM_KEY from env vars — keys never printed.
 
 Usage (PowerShell):
-  $env:AGENCY_API_ADMIN_KEY="<key>"; $env:AGENCY_API_PLATFORM_KEY="<key>"; python smoke_p66.py
+  $env:AGENCY_API_ADMIN_KEY="<key>"; $env:AGENCY_API_PLATFORM_KEY="<key>"; python scripts/smoke_p66.py
 """
 import os, sys
 import urllib.request, urllib.error, json
