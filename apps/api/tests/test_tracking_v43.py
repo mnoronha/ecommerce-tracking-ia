@@ -400,3 +400,14 @@ class TestZeroExternalSends:
             src = inspect.getsource(mod)
             for forbidden in ("import httpx", "import requests", "urllib.request", "google_ads.", "meta_capi.", "ga4.send"):
                 assert forbidden not in src, f"{mod.__name__} must not reference {forbidden}"
+
+
+# ── §9 Hourly Shopify sync also reconciles ───────────────────────────────────
+
+
+class TestShopifySyncReconciles:
+    def test_sync_calls_reconciliation_and_requests_join_fields(self):
+        import pathlib
+        src = (pathlib.Path(__file__).resolve().parents[1] / "app" / "services" / "shopify_sync.py").read_text(encoding="utf-8")
+        assert "tracking_reconciliation.record_from_webhook(client_uuid, event, order_uuid)" in src
+        assert "checkout_token" in src.split("_ORDER_FIELDS", 1)[1].split(")", 1)[0]

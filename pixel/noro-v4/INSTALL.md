@@ -22,6 +22,9 @@ cliente). Nunca usar tokens de admin, platform ou Hermes.
 
 No snippet, `ga4MeasurementId` = ID do GA4 da loja (Enutri: `G-DXEZVE9CLN`).
 
+Use o **pixel_id** do cliente (o trecho da URL da plataforma em `/clients/<pixel_id>/`)
+em `client` no snippet e no `ingestUrl` do pixel. Enutri: `enutri-4sph`.
+
 ## Backend (antes de instalar)
 
 1. Aplicar `apps/api/migrations/067_noro_tracking_v43.sql` no Supabase.

@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from ..database import get_supabase
-from ..core import send_guard
+from ..core import send_guard, tracking_reconciliation
 from ..services import crypto, ga4 as ga4_svc, meta_capi, writer
 from ..services.adapters.shopify_adapter import ShopifyAdapter
 
@@ -32,7 +32,7 @@ _ORDER_FIELDS        = (
     "id,name,email,phone,total_price,currency,financial_status,fulfillment_status,"
     "created_at,updated_at,processed_at,source_name,landing_site,referring_site,"
     "line_items,customer,shipping_address,billing_address,note_attributes,"
-    "browser_ip,client_details"
+    "browser_ip,client_details,checkout_token,cart_token,test,order_status_url"
 )
 
 
@@ -283,8 +283,13 @@ def sync_client(
                         client_id=client_uuid,
                         headers={"x-shopify-topic": "orders/paid"},
                     )
-                    writer.write_order(client_uuid, None, event)
+                    order_uuid = writer.write_order(client_uuid, None, event)
                     imported += 1
+
+                    # Noro Tracking v4.3 — same order↔visit reconciliation as the
+                    # webhook path, so orders whose webhook was lost still get a
+                    # tracking_order_matches row (shadow mode; never raises).
+                    tracking_reconciliation.record_from_webhook(client_uuid, event, order_uuid)
 
                     # GA4 server-side purchase — captures PIX orders missed client-side
                     if ga4_mid and ga4_secret:

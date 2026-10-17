@@ -35,8 +35,8 @@
 
 const NORO = {
   version: "pixel-2.1.0",
-  client: "enutri",
-  ingestUrl: "https://ecommerce-tracking-ia-production.up.railway.app/agency/v1/clients/enutri/tracking/events",
+  client: "enutri-4sph",
+  ingestUrl: "https://ecommerce-tracking-ia-production.up.railway.app/agency/v1/clients/enutri-4sph/tracking/events",
   ingestToken: "__CLIENT_INGEST_TOKEN__",
   sessionTtlMs: 30 * 60 * 1000
 };
