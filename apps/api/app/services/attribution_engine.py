@@ -242,8 +242,8 @@ def attribute_order(order: dict, visitor: Optional[dict]) -> int:
             )
             if visitor_cookie:
                 cookie_q = cookie_q.eq('visitor_cookie_id', visitor_cookie)
-            elif order.get('email'):
-                cookie_q = cookie_q.eq('email', str(order['email']).strip().lower())
+            elif order.get('email_hash'):
+                cookie_q = cookie_q.eq('email_hash', order['email_hash'])
             else:
                 cookie_q = None
             if cookie_q is not None:
@@ -341,7 +341,7 @@ def recompute_for_client(client_uuid: str, days: int = 90) -> dict:
     orders_resp = (
         sb.table('orders')
         .select('id, client_id, visitor_id, total_price, created_at, '
-                'utm_source, utm_medium, utm_campaign, utm_content, email, platform_source')
+                'utm_source, utm_medium, utm_campaign, utm_content, email_hash, platform_source')
         .eq('client_id', client_uuid)
         .eq('financial_status', 'paid')
         .gte('created_at', cutoff)

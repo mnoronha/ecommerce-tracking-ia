@@ -83,10 +83,10 @@ def _fetch_high_ltv(client_uuid: str, ltv_threshold: float = 300.0) -> list[dict
     try:
         result = (
             get_supabase().table("visitors")
-            .select("email, phone")
+            .select("email_hash, phone_hash")
             .eq("client_id", client_uuid)
             .gte("ltv", ltv_threshold)
-            .not_.is_("email", "null")
+            .not_.is_("email_hash", "null")
             .limit(10000)
             .execute()
         )
@@ -101,11 +101,11 @@ def _fetch_cart_abandoners(client_uuid: str) -> list[dict]:
     try:
         result = (
             get_supabase().table("visitors")
-            .select("email, phone")
+            .select("email_hash, phone_hash")
             .eq("client_id", client_uuid)
             .eq("total_orders", 0)
             .gt("retargeting_score", 10)
-            .not_.is_("email", "null")
+            .not_.is_("email_hash", "null")
             .limit(10000)
             .execute()
         )
@@ -121,10 +121,10 @@ def _fetch_recent_buyers(client_uuid: str, days: int = 7) -> list[dict]:
     try:
         result = (
             get_supabase().table("visitors")
-            .select("email, phone")
+            .select("email_hash, phone_hash")
             .eq("client_id", client_uuid)
             .gte("last_purchase_at", cutoff)
-            .not_.is_("email", "null")
+            .not_.is_("email_hash", "null")
             .limit(10000)
             .execute()
         )
@@ -154,10 +154,10 @@ def _fetch_top_customers(client_uuid: str) -> list[dict]:
 
         result = (
             get_supabase().table("visitors")
-            .select("email, phone")
+            .select("email_hash, phone_hash")
             .eq("client_id", client_uuid)
             .gte("ltv", p90)
-            .not_.is_("email", "null")
+            .not_.is_("email_hash", "null")
             .limit(5000)
             .execute()
         )
@@ -173,11 +173,11 @@ def _fetch_inactive(client_uuid: str, days: int = 90) -> list[dict]:
     try:
         result = (
             get_supabase().table("visitors")
-            .select("email, phone")
+            .select("email_hash, phone_hash")
             .eq("client_id", client_uuid)
             .gt("total_orders", 0)
             .lt("last_seen_at", cutoff)
-            .not_.is_("email", "null")
+            .not_.is_("email_hash", "null")
             .limit(10000)
             .execute()
         )
@@ -251,8 +251,9 @@ def _push_users_to_audience(
     # Build schema and hashed data
     data_rows = []
     for u in users:
-        email_hash = _h(u.get("email"))
-        phone_hash = _hash_phone(u.get("phone"))
+        # Stored hashes use the same normalization as _h / _hash_phone (core/pii.py)
+        email_hash = u.get("email_hash") or _h(u.get("email"))
+        phone_hash = u.get("phone_hash") or _hash_phone(u.get("phone"))
         if email_hash:
             row = [email_hash]
             if phone_hash:

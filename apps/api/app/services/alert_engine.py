@@ -885,7 +885,7 @@ def _eval_high_ticket_anomaly(rule: dict, client: dict) -> list[dict]:
 
         recent_big = (
             sb.table("orders")
-            .select("id, platform_order_id, total_price, email")
+            .select("id, platform_order_id, total_price, email:email_masked")
             .eq("client_id", client["id"])
             .eq("financial_status", "paid")
             .gt("total_price", threshold_value)

@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from typing import Optional
 import json
 
+import os
+
+from ..core.pii import email_hash, pii_fields
 from ..database import get_supabase
 from ..models.events import NormalizedEvent, EventType
 
@@ -44,6 +47,23 @@ _TRACKING_EVENT_TYPE_MAP: dict[str, str] = {
 # The dict is bounded by the number of active clients (tens, not thousands).
 _client_uuid_cache: dict[str, str] = {}
 
+
+
+# ── Customer PII (LGPD) ───────────────────────────────────────────────────────
+# Customers are identified by email_hash / phone_hash (see core/pii.py).
+# Raw email/phone are NOT stored unless STORE_RAW_CUSTOMER_PII=true (kept only
+# as an emergency rollback switch).
+
+def _store_raw_pii() -> bool:
+    return os.environ.get("STORE_RAW_CUSTOMER_PII", "").strip().lower() in ("1", "true", "yes")
+
+
+def _raw_email(email: Optional[str]) -> Optional[str]:
+    return email.strip().lower() if (email and _store_raw_pii()) else None
+
+
+def _raw_phone(phone: Optional[str]) -> Optional[str]:
+    return phone if (phone and _store_raw_pii()) else None
 
 def resolve_client_uuid(pixel_id: str) -> Optional[str]:
     """
@@ -217,7 +237,7 @@ def upsert_visitor_by_email(
         if visitor_cookie_id and client_uuid:
             by_cookie = (
                 sb.table("visitors")
-                .select("id, email, phone, fbp, fbc, gclid, ga_client_id, platform_customer_id")
+                .select("id, email_hash, phone_hash, fbp, fbc, gclid, ga_client_id, platform_customer_id")
                 .eq("client_id", client_uuid)
                 .eq("visitor_id", visitor_cookie_id)
                 .limit(1)
@@ -226,10 +246,15 @@ def upsert_visitor_by_email(
             if by_cookie and by_cookie.data:
                 row = by_cookie.data[0]
                 update: dict = {"last_seen_at": "now()"}
-                if email and not row.get("email"):
-                    update["email"] = email.strip().lower()
-                if phone and not row.get("phone"):
-                    update["phone"] = phone
+                pii = pii_fields(email, phone)
+                if pii.get("email_hash") and not row.get("email_hash"):
+                    update.update({k: v for k, v in pii.items() if k != "phone_hash"})
+                    if _raw_email(email):
+                        update["email"] = _raw_email(email)
+                if pii.get("phone_hash") and not row.get("phone_hash"):
+                    update["phone_hash"] = pii["phone_hash"]
+                    if _raw_phone(phone):
+                        update["phone"] = _raw_phone(phone)
                 if platform_customer_id and not row.get("platform_customer_id"):
                     update["platform_customer_id"] = platform_customer_id
                 # Backfill identifiers if the visitor row is missing any
@@ -244,13 +269,13 @@ def upsert_visitor_by_email(
                 logger.debug("visitor %s matched by _etv cookie", row["id"])
                 return row["id"]
 
-        # ── 2. Lookup by email ────────────────────────────────────────────
-        if email:
+        # ── 2. Lookup by email (hash) ─────────────────────────────────────
+        if email_hash(email):
             existing = (
                 sb.table("visitors")
                 .select("id, fbp, fbc, gclid, ga_client_id, platform_customer_id")
                 .eq("client_id", client_uuid)
-                .eq("email", email)
+                .eq("email_hash", email_hash(email))
                 .limit(1)
                 .execute()
             )
@@ -274,7 +299,7 @@ def upsert_visitor_by_email(
         if cart_token and client_uuid:
             by_cart = (
                 sb.table("visitors")
-                .select("id, email, phone, fbp, fbc, gclid, ga_client_id")
+                .select("id, email_hash, phone_hash, fbp, fbc, gclid, ga_client_id")
                 .eq("client_id", client_uuid)
                 .eq("cart_token", cart_token)
                 .limit(1)
@@ -283,10 +308,15 @@ def upsert_visitor_by_email(
             if by_cart and by_cart.data:
                 row = by_cart.data[0]
                 update = {"last_seen_at": "now()"}
-                if email and not row.get("email"):
-                    update["email"] = email.strip().lower()
-                if phone and not row.get("phone"):
-                    update["phone"] = phone
+                pii = pii_fields(email, phone)
+                if pii.get("email_hash") and not row.get("email_hash"):
+                    update.update({k: v for k, v in pii.items() if k != "phone_hash"})
+                    if _raw_email(email):
+                        update["email"] = _raw_email(email)
+                if pii.get("phone_hash") and not row.get("phone_hash"):
+                    update["phone_hash"] = pii["phone_hash"]
+                    if _raw_phone(phone):
+                        update["phone"] = _raw_phone(phone)
                 if platform_customer_id:
                     update["platform_customer_id"] = platform_customer_id
                 if fbp and not row.get("fbp"):                   update["fbp"]          = fbp
@@ -296,15 +326,16 @@ def upsert_visitor_by_email(
                 if ttclid and not row.get("ttclid"):             update["ttclid"]       = ttclid
                 if ttp and not row.get("ttp"):                   update["ttp"]          = ttp
                 sb.table("visitors").update(update).eq("id", row["id"]).execute()
-                logger.debug("visitor %s found by cart_token, email linked: %s", row["id"], email)
+                logger.debug("visitor %s found by cart_token, email linked", row["id"])
                 return row["id"]
 
         # ── 4. Create new visitor from order ──────────────────────────────
         insert_row: dict = {
             "client_id": client_uuid,
-            "visitor_id": visitor_cookie_id or f"order_{platform_customer_id or email}",
-            "email": email,
-            "phone": phone,
+            "visitor_id": visitor_cookie_id or f"order_{platform_customer_id or email_hash(email)}",
+            "email": _raw_email(email),
+            "phone": _raw_phone(phone),
+            **pii_fields(email, phone),
             "platform_customer_id": platform_customer_id,
             "first_platform": platform,
             "total_orders": 0,
@@ -442,13 +473,13 @@ def write_order(
 
     # ── Determine first vs repeat purchase ───────────────────────────────────
     is_first = True
-    if client_uuid and customer and customer.email:
+    if client_uuid and customer and email_hash(customer.email):
         try:
             prior = (
                 sb.table("orders")
                 .select("*", count="exact")
                 .eq("client_id", client_uuid)
-                .eq("email", customer.email)
+                .eq("email_hash", email_hash(customer.email))
                 .eq("financial_status", "paid")
                 .neq("platform_order_id", order.id)
                 .limit(0)
@@ -508,14 +539,14 @@ def write_order(
     if (
         client_uuid
         and not effective_utm_source
-        and customer and customer.email
+        and customer and email_hash(customer.email)
     ):
         try:
             prior = (
                 sb.table("visitors")
                 .select("first_utm_source,first_utm_medium,first_utm_campaign,first_utm_content,first_seen_at")
                 .eq("client_id", client_uuid)
-                .eq("email", customer.email.strip().lower())
+                .eq("email_hash", email_hash(customer.email))
                 .not_.is_("first_utm_source", "null")
                 .order("first_seen_at")  # earliest = first-touch
                 .limit(1)
@@ -527,10 +558,7 @@ def write_order(
                 effective_utm_medium   = v.get("first_utm_medium")
                 effective_utm_campaign = v.get("first_utm_campaign")
                 effective_utm_content  = v.get("first_utm_content")
-                logger.info(
-                    "writer: cross-device UTM recovered for %s — first-touch from prior visit",
-                    customer.email[:3] + "***",
-                )
+                logger.info("writer: cross-device UTM recovered — first-touch from prior visit")
         except Exception as exc:
             logger.debug("cross-device UTM inheritance failed: %s", exc)
 
@@ -591,8 +619,9 @@ def write_order(
         "platform_order_number": order.number,
         "platform_source":       event.platform,
         "platform":              event.platform,
-        "email":                 customer.email      if customer else None,
-        "phone":                 customer.phone      if customer else None,
+        "email":                 _raw_email(customer.email) if customer else None,
+        "phone":                 _raw_phone(customer.phone) if customer else None,
+        **(pii_fields(customer.email, customer.phone) if customer else {}),
         "first_name":            customer.first_name if customer else None,
         "last_name":             customer.last_name  if customer else None,
         "total_price":           order.total,
@@ -706,11 +735,15 @@ def set_visitor_email(
     if not visitor_uuid or not email:
         return
     try:
-        update: dict = {"email": email.strip().lower()}
-        if phone:
-            update["phone"] = phone
+        update: dict = pii_fields(email, phone)
+        if _raw_email(email):
+            update["email"] = _raw_email(email)
+        if _raw_phone(phone):
+            update["phone"] = _raw_phone(phone)
+        if not update:
+            return
         get_supabase().table("visitors").update(update).eq("id", visitor_uuid).execute()
-        logger.debug("visitor %s → email linked: %s", visitor_uuid, email)
+        logger.debug("visitor %s → email linked", visitor_uuid)
     except Exception as exc:
         logger.warning("set_visitor_email failed: %s", exc)
 
@@ -810,8 +843,8 @@ def lookup_attribution_cookie(
         )
         if visitor_cookie_id:
             q = q.eq("visitor_cookie_id", visitor_cookie_id)
-        elif email:
-            q = q.eq("email", email.strip().lower())
+        elif email_hash(email):
+            q = q.eq("email_hash", email_hash(email))
         rows = q.execute().data or []
     except Exception as exc:
         logger.debug("lookup_attribution_cookie failed: %s", exc)
