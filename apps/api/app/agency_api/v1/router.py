@@ -5276,6 +5276,65 @@ def tracking_matches(
             "mode": "shadow", "items": items}
 
 
+@router.get(
+    "/clients/{client_id}/tracking/visitors",
+    summary="Visitors seen by the Noro tracker (v4.3 tables), with first touch and paid orders",
+    tags=["tracking"],
+    response_model=dict,
+)
+def tracking_visitors(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """Read-only. Never returns click ids, IP, User-Agent or email hashes."""
+    from ...core.tracking_visitors import list_visitors
+
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+    d_to = date_to or datetime.now(timezone.utc).date()
+    d_from = date_from or (d_to - timedelta(days=30))
+    start = datetime(d_from.year, d_from.month, d_from.day, tzinfo=timezone.utc).isoformat()
+    end = (datetime(d_to.year, d_to.month, d_to.day, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
+    try:
+        result = list_visitors(_get_db(), str(meta["id"]), start, end, limit, offset)
+    except Exception as exc:
+        logger.error("tracking_visitors: read failed %s: %s", client_id, exc)
+        raise HTTPException(503, detail="tracking visitors unavailable")
+    return {"client_id": client_id, "date_from": d_from.isoformat(), "date_to": d_to.isoformat(),
+            "limit": limit, "offset": offset, **result}
+
+
+@router.get(
+    "/clients/{client_id}/tracking/visitors/{visitor_id}/journey",
+    summary="Chronological journey of one visitor: sessions, events and orders",
+    tags=["tracking"],
+    response_model=dict,
+)
+def tracking_visitor_journey(
+    client_id: str,
+    visitor_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+) -> dict:
+    from ...core.tracking_visitors import visitor_journey
+
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+    try:
+        result = visitor_journey(_get_db(), str(meta["id"]), visitor_id)
+    except Exception as exc:
+        logger.error("tracking_visitor_journey: read failed %s: %s", client_id, exc)
+        raise HTTPException(503, detail="tracking journey unavailable")
+    if result is None:
+        raise HTTPException(404, detail="visitor not found")
+    return {"client_id": client_id, **result}
+
+
 @router.post(
     "/clients/{client_id}/tracking/reconcile",
     summary="Rebuild order↔visit matches from stored Shopify webhook events (shadow mode)",
