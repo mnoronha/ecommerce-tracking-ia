@@ -5,7 +5,7 @@ Reads AGENCY_API_PLATFORM_KEY (or AGENCY_API_ADMIN_KEY as fallback) from env
 or from apps/api/.env.  No keys ever printed.
 
 Usage (PowerShell):
-  $env:AGENCY_API_PLATFORM_KEY="<key>"; python smoke_p7.py
+  $env:AGENCY_API_PLATFORM_KEY="<key>"; python scripts/smoke_p7.py
 
 Zero external writes:
   - NO Meta CAPI sends

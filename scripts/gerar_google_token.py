@@ -1,6 +1,6 @@
 """
 Gera um novo Google OAuth refresh token para o Google Ads API.
-Rode com: python gerar_google_token.py
+Rode com: python scripts/gerar_google_token.py
 
 Precisa do GOOGLE_ADS_OAUTH_CLIENT_ID e GOOGLE_ADS_OAUTH_CLIENT_SECRET
 que estão no Railway (Settings → Variables).
