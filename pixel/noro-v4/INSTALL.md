@@ -1,4 +1,4 @@
-# Noro Tracker v4.3.1 — instalação Shopify
+# Noro Tracker v4.3.2 — instalação Shopify
 
 ## Arquivos
 
@@ -21,6 +21,9 @@ de ingestão do cliente (tabela `tracking_ingest_tokens`, só escrita, vinculado
 cliente). Nunca usar tokens de admin, platform ou Hermes.
 
 No snippet, `ga4MeasurementId` = ID do GA4 da loja (Enutri: `G-DXEZVE9CLN`).
+
+Use o **pixel_id** do cliente (o trecho da URL da plataforma em `/clients/<pixel_id>/`)
+em `client` no snippet e no `ingestUrl` do pixel. Enutri: `enutri-4sph`.
 
 ## Backend (antes de instalar)
 
@@ -52,7 +55,7 @@ No snippet, `ga4MeasurementId` = ID do GA4 da loja (Enutri: `G-DXEZVE9CLN`).
 - [ ] página de produto: view_item com `variant_id` e `sku`
 - [ ] adicionar ao carrinho: exatamente UM add_to_cart (abrir /cart continua um)
 - [ ] `/cart.js` mostra `_etv`, `_noro_sid`, `_gcid`, `_ga_sid`, `_utm_*`
-- [ ] checkout: begin_checkout de intenção (storefront) e confirmado (pixel) com `checkout_token`
+- [ ] checkout: um único begin_checkout, vindo do pixel (`event_source = shopify_web_pixel`) com `checkout_token`
 - [ ] pedido de teste: linha em `tracking_order_matches` com `match_source = cart_attributes`
 - [ ] `shadow_ga4.session_id` preenchido; `shadow_google_ads.mode = click` quando houve gclid
 - [ ] recarregar a página de obrigado: mesmo `event_id` de purchase (deduplicado)

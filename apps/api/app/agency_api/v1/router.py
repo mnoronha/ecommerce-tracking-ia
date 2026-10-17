@@ -5200,6 +5200,82 @@ def tracking_quality(
             "mode": "shadow", **kpis}
 
 
+@router.get(
+    "/clients/{client_id}/tracking/matches",
+    summary="Recent orders with how each was linked to browsing (no identifiers exposed)",
+    tags=["tracking"],
+    response_model=dict,
+)
+def tracking_matches(
+    client_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """
+    Read-only list for the Tracking Quality screen. Click ids, cookies and
+    email hashes are NOT returned — only whether they exist.
+    """
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail=f"Client '{client_id}' not found")
+    client_uuid = str(meta["id"])
+
+    d_to = date_to or datetime.now(timezone.utc).date()
+    d_from = date_from or (d_to - timedelta(days=30))
+    start = datetime(d_from.year, d_from.month, d_from.day, tzinfo=timezone.utc).isoformat()
+    end = (datetime(d_to.year, d_to.month, d_to.day, tzinfo=timezone.utc) + timedelta(days=1)).isoformat()
+
+    try:
+        rows = (
+            _get_db().table("tracking_order_matches")
+            .select("order_id, order_number, order_created_at, paid_at, financial_status, total_price,"
+                    " currency, excluded_reason, is_first_purchase, match_source, utm_source, utm_medium,"
+                    " utm_campaign, click_source, gclid, gbraid, wbraid, consent_advertising,"
+                    " shadow_ga4, shadow_google_ads")
+            .eq("client_id", client_uuid)
+            .gte("order_created_at", start)
+            .lt("order_created_at", end)
+            .order("order_created_at", desc=True)
+            .limit(limit)
+            .execute()
+        ).data or []
+    except Exception as exc:
+        logger.error("tracking_matches: read failed %s: %s", client_id, exc)
+        raise HTTPException(503, detail="tracking_order_matches unavailable")
+
+    items = []
+    for r in rows:
+        ga4 = r.get("shadow_ga4") or {}
+        ads = r.get("shadow_google_ads") or {}
+        items.append({
+            "order_id":           r.get("order_id"),
+            "order_number":       r.get("order_number"),
+            "order_created_at":   r.get("order_created_at"),
+            "paid_at":            r.get("paid_at"),
+            "financial_status":   r.get("financial_status"),
+            "total_price":        r.get("total_price"),
+            "currency":           r.get("currency"),
+            "excluded_reason":    r.get("excluded_reason"),
+            "is_first_purchase":  r.get("is_first_purchase"),
+            "match_source":       r.get("match_source"),
+            "utm_source":         r.get("utm_source"),
+            "utm_medium":         r.get("utm_medium"),
+            "utm_campaign":       r.get("utm_campaign"),
+            "click_source":       r.get("click_source"),
+            "has_google_click":   bool(r.get("gclid") or r.get("gbraid") or r.get("wbraid")),
+            "consent_advertising": r.get("consent_advertising"),
+            "ga4_ready":          bool(ga4.get("would_send")),
+            "ga4_in_session":     bool(ga4.get("would_send") and ga4.get("session_id")),
+            "google_ads_ready":   bool(ads.get("would_send")),
+            "google_ads_mode":    ads.get("mode"),
+            "blockers":           sorted(set((ga4.get("blockers") or []) + (ads.get("blockers") or []))),
+        })
+    return {"client_id": client_id, "date_from": d_from.isoformat(), "date_to": d_to.isoformat(),
+            "mode": "shadow", "items": items}
+
+
 @router.post(
     "/clients/{client_id}/tracking/reconcile",
     summary="Rebuild order↔visit matches from stored Shopify webhook events (shadow mode)",

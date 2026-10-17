@@ -43,6 +43,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
         { href: `/clients/${clientId}/audiencias`,  label: 'Audiências',  icon: Layers,      gate: null },
         { href: `/clients/${clientId}/attribution`, label: 'Atribuição',  icon: TrendingUp,  gate: null },
         { href: `/clients/${clientId}/journey`,     label: 'Jornada',     icon: GitBranch,   gate: null },
+        { href: `/clients/${clientId}/tracking`,    label: 'Qualidade do Tracking', icon: Target,    gate: null },
       ],
     },
     {
