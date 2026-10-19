@@ -260,9 +260,12 @@ analytics.subscribe("checkout_started", async (event) => {
   delete base._identity;
 
   const token = checkout.token || null;
-  const eventId = token
-    ? await sha256("begin_checkout_noro_" + token)
-    : (event.id || stableFallbackHash("checkout_started:" + event.timestamp));
+  let eventId;
+  if (token) {
+    eventId = await sha256("begin_checkout_noro_" + token);
+  } else {
+    eventId = event.id || stableFallbackHash("checkout_started:" + event.timestamp);
+  }
 
   const values = valueBreakdown(checkout);
 
