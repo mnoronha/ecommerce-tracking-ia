@@ -231,14 +231,21 @@ def _identity_signals(event, request_meta: Optional[dict]) -> dict:
     (enforced by tracker v4.3+). IP / User-Agent are stored only when the
     event explicitly records advertising consent — they exist solely for
     future ad-platform matching (Meta CAPI).
+    ga_client_id / ga_session_id require analytics consent (LGPD).
     """
     signals: dict = {}
-    for col in ("fbp", "fbc", "gclid", "gbraid", "wbraid", "ga_client_id", "ga_session_id"):
+    for col in ("fbp", "fbc", "gclid", "gbraid", "wbraid"):
         val = getattr(event, col, None)
         if val:
             signals[col] = val
 
-    _, advertising = extract_consent(event)
+    analytics, advertising = extract_consent(event)
+    # ga_client_id / ga_session_id only stored when analytics consent is known and granted.
+    if analytics is not False:
+        for col in ("ga_client_id", "ga_session_id"):
+            val = getattr(event, col, None)
+            if val:
+                signals[col] = val
     if advertising is not None:
         signals["consent_advertising"] = advertising
         signals["consent_updated_at"] = _now_iso()
@@ -277,10 +284,15 @@ def _resolve_identity(sb, client_uuid: str, event, request_meta: Optional[dict] 
         )
         if check is not None and check.data:
             update_data: dict = {"last_seen_at": now, **signals}
-            # Consent revoked: drop stored ad identifiers for this visitor.
+            # Advertising consent revoked: drop stored ad identifiers.
             if signals.get("consent_advertising") is False:
                 for col in ("gclid", "gbraid", "wbraid", "fbc", "fbp", "last_ip_address", "last_user_agent"):
                     update_data[col] = None
+            # Analytics consent revoked: drop GA identifiers.
+            consent_analytics_now, _ = extract_consent(event)
+            if consent_analytics_now is False:
+                update_data["ga_client_id"] = None
+                update_data["ga_session_id"] = None
             _write_resilient(
                 lambda row: sb.table("tracking_identities").update(row)
                 .eq("client_id", client_uuid).eq("visitor_cookie_id", vid).execute(),
