@@ -1,4 +1,4 @@
-/* Noro Tracker v4.3.2 — Shopify storefront collector
+/* Noro Tracker v4.3.3 — Shopify storefront collector
  * 2026-10-16
  *
  * Scope:
@@ -12,6 +12,9 @@
  *   when advertising consent is granted. Without consent they are held in
  *   sessionStorage only (never sent) and promoted if consent arrives later.
  * - Sent URLs are sanitized: path + UTM params only.
+ *
+ * v4.3.3 changes vs v4.3.2:
+ *   - ga_client_id / ga_session_id (and cart _gcid/_ga_sid) only with analytics consent
  *
  * v4.3.2 changes vs v4.3.1:
  * - storefront no longer sends begin_checkout (intent); the Custom Pixel sends the
@@ -44,7 +47,7 @@
   if (window.__noroLoaded) return;
   window.__noroLoaded = true;
 
-  const VERSION = "4.3.2";
+  const VERSION = "4.3.3";
 
   const VALID_EVENTS = Object.freeze([
     "page_view",
@@ -948,12 +951,15 @@
 
     function context() {
       const consentState = consent.getState();
+      // LGPD: GA identifiers only with analytics consent (empty otherwise, which
+      // also clears _gcid/_ga_sid from the cart if consent is revoked).
+      const analyticsOk = consent.isGranted("analytics");
       return {
         visitor_id: visitor.getVisitorId(),
         session_id: session.touch(),
         touch: attribution.getCurrentTouch() || {},
-        ga_client_id: getGoogleClientId(),
-        ga_session_id: getGoogleSessionId(config.ga4MeasurementId),
+        ga_client_id: analyticsOk ? getGoogleClientId() : null,
+        ga_session_id: analyticsOk ? getGoogleSessionId(config.ga4MeasurementId) : null,
         ads: clickIds.get(),
         consent: consentState
       };
