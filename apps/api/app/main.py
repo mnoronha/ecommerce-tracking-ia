@@ -420,6 +420,36 @@ else:
         allow_headers=["*"],
     )
 
+# ── CORS for the Shopify Custom Web Pixel (sandboxed iframe) ──────────────────
+# Custom pixels run in a sandboxed iframe whose requests carry `Origin: null`,
+# which the regex above does not match, so the preflight failed and checkout
+# events (begin_checkout / purchase) never arrived. Allowed ONLY on the tracking
+# ingest endpoint, without credentials (auth there is the Bearer ingest token).
+import re as _re
+
+_TRACKING_INGEST_PATH = _re.compile(r"^/agency/v1/clients/[^/]+/tracking/events/?$")
+
+
+@app.middleware("http")
+async def _pixel_sandbox_cors(request, call_next):
+    if request.headers.get("origin") != "null" or not _TRACKING_INGEST_PATH.match(request.url.path):
+        return await call_next(request)
+
+    from starlette.responses import Response as _R
+
+    cors = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Max-Age": "86400",
+    }
+    if request.method == "OPTIONS":
+        return _R(status_code=204, headers=cors)
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
 # ── Request body size limit ────────────────────────────────────────────────────
 # Uvicorn has no default body size limit. Railway's proxy is not documented.
 # This guard rejects oversized requests before JSON parsing runs.
