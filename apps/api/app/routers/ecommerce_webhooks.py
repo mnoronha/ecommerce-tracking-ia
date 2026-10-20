@@ -1,4 +1,5 @@
 import json
+import time
 import logging
 from typing import Optional
 
@@ -32,7 +33,24 @@ ADAPTERS = {
 _OFFLINE_SOURCE_NAMES = {"pos", "shopify_draft_order"}
 
 
+_SECRET_CACHE: dict = {}
+_SECRET_TTL_S = 300
+
+
 def _get_client_secret(client_id: str, platform: str) -> str:
+    """Webhook secret for the client, cached 5 min (only successful DB reads)."""
+    key = (client_id, platform)
+    hit = _SECRET_CACHE.get(key)
+    if hit and time.monotonic() - hit[1] < _SECRET_TTL_S:
+        return hit[0]
+    secret = _fetch_client_secret(client_id, platform)
+    if secret is not None:
+        _SECRET_CACHE[key] = (secret, time.monotonic())
+        return secret
+    return settings.DEFAULT_WEBHOOK_SECRET
+
+
+def _fetch_client_secret(client_id: str, platform: str) -> Optional[str]:
     secret_column = {
         "shopify":     "shopify_webhook_secret",
         "woocommerce": "woo_webhook_secret",
@@ -52,7 +70,7 @@ def _get_client_secret(client_id: str, platform: str) -> str:
             return crypto.decrypt_secret(result.data[secret_column])
     except Exception as exc:
         logger.warning("Could not fetch client secret for %s/%s: %s", platform, client_id, exc)
-    return settings.DEFAULT_WEBHOOK_SECRET
+    return None
 
 
 def _store_event(event_dict: dict) -> None:
@@ -796,21 +814,26 @@ async def receive_webhook(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Request body is not valid JSON")
 
-    # Everything below does blocking Supabase I/O. Run it in the threadpool so a
-    # webhook never stalls the event loop (Shopify retries after 5 s without a 2xx).
-    return await run_in_threadpool(
-        _process_webhook, platform, client_id, raw_body, payload_dict, headers, background_tasks,
-    )
+    # Shopify retries when it gets no 2xx within 5 s. Processing an order takes
+    # several Supabase round-trips (~10 s measured), so: verify the signature
+    # here, acknowledge at once, and do the work after the response is sent.
+    event = await run_in_threadpool(_verify_webhook, platform, client_id, raw_body, payload_dict, headers)
+    background_tasks.add_task(_handle_event_safe, platform, client_id, event, headers)
+    return {"status": "accepted", "event_id": event.event_id, "event_type": event.event_type}
 
 
-def _process_webhook(
-    platform: str,
-    client_id: str,
-    raw_body: bytes,
-    payload_dict: dict,
-    headers: dict,
-    background_tasks: BackgroundTasks,
-):
+class _RunNow:
+    """BackgroundTasks stand-in used once we are already off the request path:
+    runs each follow-up immediately, isolating failures."""
+
+    def add_task(self, fn, *args, **kwargs) -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception:
+            logger.exception("webhook follow-up %s failed", getattr(fn, "__name__", fn))
+
+
+def _verify_webhook(platform: str, client_id: str, raw_body: bytes, payload_dict: dict, headers: dict):
     secret = _get_client_secret(client_id, platform)
 
     try:
@@ -824,7 +847,30 @@ def _process_webhook(
     except SignatureError as exc:
         logger.warning("Signature validation failed for %s/%s: %s", platform, client_id, exc)
         raise HTTPException(status_code=401, detail=str(exc))
+    return event
 
+
+def _handle_event_safe(platform: str, client_id: str, event, headers: dict) -> None:
+    try:
+        _handle_event(platform, client_id, event, headers, _RunNow())
+    except Exception as exc:
+        logger.exception("webhook processing failed for %s/%s %s", platform, client_id, event.event_id)
+        # Keep the payload so the delivery can be replayed (Shopify will not retry: it got 200).
+        try:
+            get_supabase().table("webhook_deliveries").insert({
+                "platform": event.platform,
+                "platform_event_id": event.event_id,
+                "event_topic": (event.metadata or {}).get("topic", event.event_type.value),
+                "payload": event.raw_payload or {},
+                "headers": {k: v for k, v in headers.items() if k.lower().startswith(("x-shopify", "x-wc", "x-nuvemshop"))},
+                "signature_valid": True,
+                "status": "failed",
+            }).execute()
+        except Exception:
+            logger.exception("could not record failed webhook delivery %s", event.event_id)
+
+
+def _handle_event(platform: str, client_id: str, event, headers: dict, background_tasks) -> None:
     _store_event(event.model_dump(mode="json"))
 
     client_uuid = writer.resolve_client_uuid(client_id)
