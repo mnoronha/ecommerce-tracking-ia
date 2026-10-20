@@ -492,6 +492,38 @@ class RecommendationDecision(_Base):
     reason: Optional[str] = None
 
 
+# ── 9c. Recommendation approve (H10 bridge: hermes_service → Core Task) ──────
+
+class RecommendationApproval(_Base):
+    """
+    Request body for POST /recommendations/{id}/approve.
+
+    Allowed scopes: agency_admin, hermes_service  (SCOPE_RECOMMENDATION_APPROVE).
+    platform_web is excluded — human approvals use /recommendations/{id}/decision.
+
+    This is the ONLY path for hermes_service to trigger task creation.
+    Generic POST /tasks remains blocked to hermes_service.
+    """
+    actor: str = Field(
+        description=(
+            "Stable identifier of who/what is approving "
+            "(human slug/UUID for human-in-loop; service identity for automated H10)."
+        )
+    )
+    reason: Optional[str] = None
+
+
+class RecommendationApprovalOut(_Base):
+    """Response for POST /recommendations/{id}/approve."""
+    schema_version: Literal["1.1"] = SCHEMA_VERSION
+    recommendation_id: str
+    task_id: str
+    client_id: str
+    actor: str
+    approved_at: datetime
+    created: bool  # True = new task; False = idempotent replay of existing task
+
+
 # ── 10. Action events ─────────────────────────────────────────────────────────
 
 class ActionEventCreate(_Base):

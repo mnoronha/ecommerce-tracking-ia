@@ -39,6 +39,7 @@ Route inventory (48 routes):
   POST /clients/{client_id}/monthly-review/replay
   POST /alert-rule-suggestions/{suggestion_id}/decision
   POST /recommendations/{recommendation_id}/decision  [human-only, PLATFORM_WRITE]
+  POST /recommendations/{recommendation_id}/approve   [H10 bridge, RECOMMENDATION_APPROVE]
   POST /learning-candidates
   POST /jobs/{job_id}/replay
   GET  /clients/{client_id}/entity-performance
@@ -76,6 +77,7 @@ from .auth import (
     SCOPE_HERMES_WRITE,
     SCOPE_PLATFORM_WRITE,
     SCOPE_READ_ANY,
+    SCOPE_RECOMMENDATION_APPROVE,
     SCOPE_TRACKING_WRITE,
     SCOPE_WRITE_ANY,
     AuthContext,
@@ -137,6 +139,8 @@ from .schemas import (
     OutcomeOut,
     Period,
     PipelineHealthOut,
+    RecommendationApproval,
+    RecommendationApprovalOut,
     RecommendationCreate,
     RecommendationDecision,
     RecommendationOut,
@@ -2273,6 +2277,214 @@ def decide_recommendation(
         getattr(_auth, "scope", "unknown") if _auth else "unknown",
     )
     return _recommendation_row_to_out(updated_row, rec_slug_map)
+
+
+# ── POST /recommendations/{recommendation_id}/approve ─────────────────────────
+#
+# H10 Core Bridge — Hermes-approved recommendation → canonical Core Task.
+#
+# Invariants:
+#   1. SCOPE_RECOMMENDATION_APPROVE: agency_admin + hermes_service.
+#      platform_web is DENIED — use /decision for human approvals.
+#   2. Generic POST /tasks remains blocked to hermes_service. This endpoint
+#      is the ONLY path for hermes_service to create a task.
+#   3. Validation: recommendation must exist, be PROPOSED/DEFERRED, and have
+#      requires_human_approval=True.
+#   4. Idempotency: source_type=recommendation + source_id=rec_id unique index.
+#      Repeat call returns the existing task_id with created=False.
+#   5. Priority escalation: HIGH→URGENT, MEDIUM→HIGH, LOW→MEDIUM.
+#   6. Audit: core_recommendation_approvals row always written.
+#   7. No Media Change, no platform writes, no Notion scheduler change.
+
+_REC_APPROVABLE_STATES: frozenset[str] = frozenset({"PROPOSED", "DEFERRED"})
+_REC_ALREADY_APPROVED: frozenset[str]  = frozenset({"APPROVED", "EXECUTED"})
+
+_REC_PRIORITY_TO_TASK: dict[str, str] = {
+    "HIGH":   "URGENT",
+    "MEDIUM": "HIGH",
+    "LOW":    "MEDIUM",
+}
+
+
+def _map_rec_priority_to_task(rec_priority: str) -> str:
+    return _REC_PRIORITY_TO_TASK.get(rec_priority.upper(), "MEDIUM")
+
+
+def _build_task_description_from_rec(rec: dict) -> str:
+    parts: list[str] = []
+    if rec.get("action"):
+        parts.append(f"**Action:** {rec['action']}")
+    if rec.get("rationale"):
+        parts.append(f"**Rationale:** {rec['rationale']}")
+    if rec.get("risk"):
+        parts.append(f"**Risk:** {rec['risk']}")
+    if rec.get("expected_impact"):
+        parts.append(f"**Expected Impact:** {rec['expected_impact']}")
+    parts.append(f"*Source: recommendation/{rec['id']}*")
+    return "\n\n".join(parts)
+
+
+def _find_task_for_recommendation(db, recommendation_id: str) -> dict | None:
+    try:
+        res = (
+            db.table("core_tasks")
+            .select("id")
+            .eq("source_type", "recommendation")
+            .eq("source_id", recommendation_id)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if (res and res.data) else None
+    except Exception:
+        return None
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/approve",
+    response_model=RecommendationApprovalOut,
+    status_code=201,
+    summary="Approve a recommendation → creates exactly one canonical Core Task (H10 bridge)",
+)
+async def approve_recommendation(
+    recommendation_id: str,
+    body: RecommendationApproval,
+    _auth: Annotated[AuthContext, Depends(SCOPE_RECOMMENDATION_APPROVE)] = None,
+) -> RecommendationApprovalOut:
+    if not _is_valid_uuid(recommendation_id):
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+    db = _get_db()
+
+    # Load recommendation
+    try:
+        res = (
+            db.table("core_recommendations")
+            .select("*")
+            .eq("id", recommendation_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("approve_recommendation: fetch failed %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "database error")
+    row = (res.data[0] if (res and res.data) else None)
+    if not row:
+        raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
+
+    current_status = row.get("status", "PROPOSED")
+
+    # Already approved: idempotent — return existing task without side effects
+    if current_status in _REC_ALREADY_APPROVED:
+        existing = _find_task_for_recommendation(db, recommendation_id)
+        if existing:
+            return RecommendationApprovalOut(
+                recommendation_id=recommendation_id,
+                task_id=str(existing["id"]),
+                client_id=row.get("client_id", ""),
+                actor=body.actor,
+                approved_at=datetime.now(timezone.utc),
+                created=False,
+            )
+        # Approved but no task — fall through to create it
+
+    # State guard: REJECTED and DEFERRED-then-REJECTED block approval
+    if current_status == "REJECTED":
+        raise HTTPException(
+            422,
+            f"recommendation {recommendation_id!r} has been rejected; "
+            "it cannot be approved without an explicit state transition",
+        )
+
+    if current_status not in _REC_APPROVABLE_STATES and current_status not in _REC_ALREADY_APPROVED:
+        raise HTTPException(
+            422,
+            f"recommendation {recommendation_id!r} is in state {current_status!r}; "
+            "only PROPOSED or DEFERRED recommendations can be approved",
+        )
+
+    # Must require human approval (auto-execute recommendations are not bridged here)
+    if not row.get("requires_human_approval", True):
+        raise HTTPException(
+            422,
+            f"recommendation {recommendation_id!r} has requires_human_approval=false; "
+            "only recommendations requiring approval can use this bridge",
+        )
+
+    # Idempotency check: task already exists for this recommendation
+    existing = _find_task_for_recommendation(db, recommendation_id)
+    if existing:
+        return RecommendationApprovalOut(
+            recommendation_id=recommendation_id,
+            task_id=str(existing["id"]),
+            client_id=row.get("client_id", ""),
+            actor=body.actor,
+            approved_at=datetime.now(timezone.utc),
+            created=False,
+        )
+
+    # Create task
+    now_utc = datetime.now(timezone.utc)
+    task_row = {
+        "client_id":        row["client_id"],
+        "title":            row["title"],
+        "description":      _build_task_description_from_rec(row),
+        "status":           "OPEN",
+        "priority":         _map_rec_priority_to_task(row.get("priority", "MEDIUM")),
+        "source_type":      "recommendation",
+        "source_id":        recommendation_id,
+        "visibility_scope": "AGENCY_ONLY",
+        "sync_state":       "none",
+        "created_at":       now_utc.isoformat(),
+        "updated_at":       now_utc.isoformat(),
+    }
+    try:
+        task_res = _get_db().table("core_tasks").insert(task_row).execute()
+        task = task_res.data[0]
+    except Exception as exc:
+        logger.error("approve_recommendation: task insert failed %s: %s", recommendation_id, exc)
+        raise HTTPException(503, "task creation failed")
+
+    task_id = str(task["id"])
+
+    # Transition recommendation → APPROVED (non-fatal if it fails; task is canonical)
+    try:
+        _get_db().table("core_recommendations").update({
+            "status":     "APPROVED",
+            "updated_at": now_utc.isoformat(),
+        }).eq("id", recommendation_id).execute()
+    except Exception as exc:
+        logger.warning(
+            "approve_recommendation: status update failed (task created, non-fatal) %s: %s",
+            recommendation_id, exc,
+        )
+
+    # Audit trail (non-fatal)
+    try:
+        _get_db().table("core_recommendation_approvals").insert({
+            "recommendation_id": recommendation_id,
+            "task_id":           task_id,
+            "actor":             body.actor,
+            "reason":            body.reason,
+            "approved_at":       now_utc.isoformat(),
+        }).execute()
+    except Exception as exc:
+        logger.warning(
+            "approve_recommendation: audit insert failed (non-fatal) %s: %s",
+            recommendation_id, exc,
+        )
+
+    logger.info(
+        "approve_recommendation: rec=%s task=%s actor=%s scope=%s",
+        recommendation_id, task_id, body.actor,
+        getattr(_auth, "scope", "unknown") if _auth else "unknown",
+    )
+    return RecommendationApprovalOut(
+        recommendation_id=recommendation_id,
+        task_id=task_id,
+        client_id=row["client_id"],
+        actor=body.actor,
+        approved_at=now_utc,
+        created=True,
+    )
 
 
 # ── Intel chain: POST endpoints (Hermes write) ────────────────────────────────

@@ -239,6 +239,12 @@ SCOPE_ADMIN_ONLY     = require_scopes("agency_admin")
 SCOPE_ANY_AUTH       = require_scopes("agency_admin", "hermes_service", "platform_web", "client_viewer")
 SCOPE_CLIENT_VIEWER  = require_scopes("agency_admin", "platform_web", "client_viewer")
 
+# Narrow scope for the H10 recommendation→task bridge.
+# Grants: agency_admin (always), hermes_service (H10 automated approval).
+# Explicitly excludes platform_web — human decisions use /recommendations/{id}/decision.
+# Must NOT be broadened to permit generic task creation.
+SCOPE_RECOMMENDATION_APPROVE = require_scopes("agency_admin", "hermes_service")
+
 
 # ── Tracking ingestion auth ───────────────────────────────────────────────────
 # Accepts service tokens (agency_admin, platform_web) OR per-client ingest tokens.
