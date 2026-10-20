@@ -22,7 +22,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 OVERLAP_MINUTES = 2    # safe window overlap to avoid missing events at boundaries
-BACKFILL_DAYS   = 30   # look-back window when no cursor exists (first run)
+BACKFILL_DAYS   = 29   # look-back window when no cursor exists (first run)
 
 
 # ── Cursor ────────────────────────────────────────────────────────────────────

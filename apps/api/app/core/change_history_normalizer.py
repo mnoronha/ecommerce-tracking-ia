@@ -324,14 +324,17 @@ def normalize_meta_activity(
     event_type  = activity.get("event_type") or ""
     object_type = (activity.get("object_type") or "").lower().strip()
     object_id   = str(activity.get("object_id") or "")
-    timestamp   = activity.get("timestamp")
+    event_time  = activity.get("event_time")
 
-    if not event_type or not timestamp:
+    if not event_type or not event_time:
         return None
 
     try:
-        occurred_at = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+        # Meta returns "2026-10-20T18:41:14+0000"; fromisoformat needs "+00:00"
+        raw = str(event_time).replace("+0000", "+00:00").replace("-0000", "+00:00")
+        occurred_at = datetime.fromisoformat(raw).astimezone(timezone.utc)
     except Exception:
+        logger.debug("meta_normalizer: unparseable event_time %r", event_time)
         return None
 
     extra_data  = _parse_extra(activity.get("extra_data"))
@@ -351,7 +354,7 @@ def normalize_meta_activity(
     )
     raw_ad_id = object_id if object_type == "ad" else None
 
-    external_id = _meta_ext_id(account_id, object_id, event_type, timestamp)
+    external_id = _meta_ext_id(account_id, object_id, event_type, event_time)
 
     return {
         "client_id":           client_id,

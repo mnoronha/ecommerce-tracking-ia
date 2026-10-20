@@ -40,9 +40,8 @@ FROM change_event
 WHERE change_event.change_datetime >= '{since}'
   AND change_event.change_datetime < '{until}'
 ORDER BY change_event.change_datetime DESC
+LIMIT 10000
 """
-
-_PAGE_SIZE = 1000  # change_event returns at most a few hundred per 15-min window
 
 
 def fetch_change_events(
@@ -102,7 +101,7 @@ def fetch_change_events(
 
     try:
         while True:
-            body: dict = {"query": query, "pageSize": _PAGE_SIZE}
+            body: dict = {"query": query}
             if page_token:
                 body["pageToken"] = page_token
 

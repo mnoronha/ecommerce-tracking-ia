@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 _GRAPH_BASE = "https://graph.facebook.com/v22.0"
 _FIELDS = (
     "object_id,object_name,object_type,event_type,"
-    "extra_data,translated_text,timestamp,actor_id,actor_name"
+    "extra_data,event_time,actor_id,actor_name"
 )
 _PAGE_LIMIT = 100  # Meta default is 25; 100 keeps pagination overhead low
 

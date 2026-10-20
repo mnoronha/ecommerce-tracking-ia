@@ -90,8 +90,7 @@ _META_ACTIVITY = {
     "object_type":    "campaign",
     "event_type":     "campaign_status_change",
     "extra_data":     json.dumps({"new_value": "ACTIVE", "old_value": "PAUSED"}),
-    "translated_text": "Campaign status changed",
-    "timestamp":      1761033600,  # 2026-10-20 12:00:00 UTC
+    "event_time":     "2026-10-20T12:00:00+0000",  # Meta ISO format (not Unix)
     "actor_name":     "john.doe",
 }
 
@@ -264,7 +263,7 @@ class TestMetaNormalization:
         assert row1["external_change_id"].startswith("meta_")
 
     def test_external_id_content(self):
-        expected = _meta_ext_id(_ACCOUNT_M, "555", "campaign_status_change", 1761033600)
+        expected = _meta_ext_id(_ACCOUNT_M, "555", "campaign_status_change", "2026-10-20T12:00:00+0000")
         row = normalize_meta_activity(_META_ACTIVITY, _CLIENT_ID, _ACCOUNT_M, _DETECTED_AT)
         assert row["external_change_id"] == expected
 
@@ -280,9 +279,9 @@ class TestMetaNormalization:
         row = normalize_meta_activity(_META_ACTIVITY, _CLIENT_ID, _ACCOUNT_M, _DETECTED_AT)
         assert row["executed_by"] == "john.doe"
 
-    def test_missing_timestamp_returns_none(self):
+    def test_missing_event_time_returns_none(self):
         act = dict(_META_ACTIVITY)
-        del act["timestamp"]
+        del act["event_time"]
         assert normalize_meta_activity(act, _CLIENT_ID, _ACCOUNT_M, _DETECTED_AT) is None
 
     def test_missing_event_type_returns_none(self):
@@ -335,7 +334,7 @@ class TestMetaHashDedup:
     def test_different_timestamp_different_hash(self):
         act1 = dict(_META_ACTIVITY)
         act2 = dict(_META_ACTIVITY)
-        act2["timestamp"] = 1761033700  # +100s
+        act2["event_time"] = "2026-10-20T12:01:40+0000"  # +100s
 
         row1 = normalize_meta_activity(act1, _CLIENT_ID, _ACCOUNT_M, _DETECTED_AT)
         row2 = normalize_meta_activity(act2, _CLIENT_ID, _ACCOUNT_M, _DETECTED_AT)
