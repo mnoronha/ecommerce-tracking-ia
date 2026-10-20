@@ -1,3 +1,5 @@
+# FastAPI is unpinned upward: a 2026-10 release rejects Query(enum=...) (fixed in #19).
+# TODO: pin exact versions (lock file) so builds are reproducible.
 fastapi>=0.115.0
 jsonschema>=4.23.0,<5
 PyJWT>=2.8.0
