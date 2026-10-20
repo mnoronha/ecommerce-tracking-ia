@@ -1,4 +1,4 @@
-# Noro Tracker v4.3.2 — instalação Shopify
+# Noro Tracker v4.3.3 — instalação Shopify
 
 ## Arquivos
 

@@ -80,7 +80,7 @@ function marketingAllowed() {
 /* ---------------- helpers ---------------- */
 
 function numericId(value) {
-  if (value == null) return null;
+  if (value === null || value === undefined) return null;
   const m = String(value).match(/(\d+)\s*$/);
   return m ? m[1] : null;
 }
@@ -112,7 +112,7 @@ async function sha256(input) {
 }
 
 function money(m) {
-  if (!m || m.amount == null) return null;
+  if (!m || m.amount === null || m.amount === undefined) return null;
   const n = Number(m.amount);
   return Number.isFinite(n) ? n : null;
 }
@@ -121,7 +121,7 @@ function attributesMap(list) {
   const out = {};
   if (Array.isArray(list)) {
     list.forEach((a) => {
-      if (a && a.key) out[a.key] = a.value != null ? String(a.value) : "";
+      if (a && a.key) out[a.key] = (a.value === null || a.value === undefined) ? "" : String(a.value);
     });
   }
   return out;
@@ -139,7 +139,7 @@ async function readSession() {
   const id = await readLocal("_noro_s");
   if (!id) return { id: null, expired: null };
   const exp = parseInt((await readLocal("_noro_se")) || "0", 10);
-  return { id, expired: !(exp > Date.now()) };
+  return { id, expired: !exp || exp <= Date.now() };
 }
 
 function safePath(event) {
@@ -260,9 +260,12 @@ analytics.subscribe("checkout_started", async (event) => {
   delete base._identity;
 
   const token = checkout.token || null;
-  const eventId = token
-    ? await sha256("begin_checkout_noro_" + token)
-    : (event.id || stableFallbackHash("checkout_started:" + event.timestamp));
+  let eventId;
+  if (token) {
+    eventId = await sha256("begin_checkout_noro_" + token);
+  } else {
+    eventId = event.id || stableFallbackHash("checkout_started:" + event.timestamp);
+  }
 
   const values = valueBreakdown(checkout);
 
