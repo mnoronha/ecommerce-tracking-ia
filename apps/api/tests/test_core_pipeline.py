@@ -237,6 +237,7 @@ class TestMERDerivedState:
             "meta_ad_account_id": "1242062509867163", "meta_access_token": "tok",
             "google_ads_customer_id": "162-897-1213", "google_ads_refresh_token": "ref",
             "google_ads_login_customer_id": None, "ga4_property_id": "348553567",
+            "ecommerce_platform": "shopify",
         }
         mock_truth = MagicMock()
         mock_truth.data = [{"client_version": 1, "target_version": 1, "conversion_map_version": 1}]
@@ -293,6 +294,7 @@ class TestMERDerivedState:
             "meta_ad_account_id": "1242062509867163", "meta_access_token": "tok",
             "google_ads_customer_id": "162-897-1213", "google_ads_refresh_token": "ref",
             "google_ads_login_customer_id": None, "ga4_property_id": "348553567",
+            "ecommerce_platform": "shopify",
         }
         mock_truth = MagicMock()
         mock_truth.data = [{"client_version": 1, "target_version": 1, "conversion_map_version": 1}]
@@ -349,6 +351,7 @@ class TestPipelineFullRun:
             "google_ads_refresh_token": "fake_refresh",
             "google_ads_login_customer_id": None,
             "ga4_property_id": "348553567",
+            "ecommerce_platform": "shopify",
         }
         mock_truth = MagicMock()
         mock_truth.data = [{"client_version": 1, "target_version": 1, "conversion_map_version": 1}]
@@ -411,6 +414,7 @@ class TestAdminPipelineEndpoint:
         "google_ads_refresh_token": "fake_refresh",
         "google_ads_login_customer_id": None,
         "ga4_property_id": "348553567",
+        "ecommerce_platform": "shopify",
     }
 
     @staticmethod

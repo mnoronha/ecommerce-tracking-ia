@@ -111,16 +111,16 @@ def _load_client(sb, client_id: str) -> Optional[dict]:
 
 def _load_snapshot(sb, client_id: str, period_end: date) -> Optional[dict]:
     try:
+        from .snapshot_selector import select_best_snapshot
         res = (
             sb.table("core_metric_snapshots")
             .select("id, metrics, health, computed_at, period_start, period_end")
             .eq("client_id", client_id)
             .eq("period_end", period_end.isoformat())
-            .order("computed_at", desc=True)
-            .limit(1)
             .execute()
         )
-        return res.data[0] if res.data else None
+        snapshots = res.data or []
+        return select_best_snapshot(snapshots)
     except Exception as exc:
         logger.warning("monthly_review: snapshot load failed %s/%s: %s", client_id, period_end, exc)
         return None

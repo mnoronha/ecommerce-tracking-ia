@@ -224,6 +224,7 @@ def run_pipeline(
     period_start: date,
     period_end: date,
     view: str = "live",
+    persist_campaign_rows: bool = True,
 ) -> PipelineResult:
     run_id = f"core:{client_id}:{period_start.isoformat()}:{uuid.uuid4().hex[:8]}"
     logger.info("pipeline: starting run %s", run_id)
@@ -307,7 +308,8 @@ def run_pipeline(
         health["meta_ads"] = dqg.source_state
         if dqg.source_state in ("READY", "PARTIAL"):
             all_aggs.update(coll.aggregates)
-            _persist_campaign_rows(client_uuid, "meta", period_end, coll.rows)
+            if persist_campaign_rows:
+                _persist_campaign_rows(client_uuid, "meta", period_end, coll.rows)
         sources.append(SourceResult("meta_ads", src_key, coll, dqg))
     else:
         health["meta_ads"] = "NOT_CONTRACTED"
@@ -333,7 +335,8 @@ def run_pipeline(
         health["google_ads"] = dqg.source_state
         if dqg.source_state in ("READY", "PARTIAL"):
             all_aggs.update(coll.aggregates)
-            _persist_campaign_rows(client_uuid, "google", period_end, coll.rows)
+            if persist_campaign_rows:
+                _persist_campaign_rows(client_uuid, "google", period_end, coll.rows)
         sources.append(SourceResult("google_ads", src_key, coll, dqg))
     else:
         health["google_ads"] = "NOT_CONTRACTED"
