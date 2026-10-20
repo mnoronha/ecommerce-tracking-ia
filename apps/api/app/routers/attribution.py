@@ -42,7 +42,7 @@ def recompute(pixel_id: str, background_tasks: BackgroundTasks, days: int = 90):
 @router.get("/{pixel_id}/summary")
 def summary(
     pixel_id: str,
-    model: str  = Query("last_click", regex="^(last_click|first_click|linear|time_decay|position_based)$"),
+    model: str  = Query("last_click", pattern="^(last_click|first_click|linear|time_decay|position_based)$"),
     days:  int  = Query(30, ge=1, le=365),
     start: str  = Query(None),
     end:   str  = Query(None),

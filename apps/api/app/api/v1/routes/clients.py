@@ -142,12 +142,12 @@ def _get_client_or_404(client_id: str) -> dict:
 def list_clients(
     request: Request,
     key: ApiKey,
-    status: str = Query("active", enum=["active", "paused", "archived", "all"]),
+    status: str = Query("active", json_schema_extra={"enum": ["active", "paused", "archived", "all"]}),
     type: Optional[str] = Query(None),
     cursor: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=100),
-    sort: str = Query("name", enum=["name", "created_at", "health_score"]),
-    order: str = Query("asc", enum=["asc", "desc"]),
+    sort: str = Query("name", json_schema_extra={"enum": ["name", "created_at", "health_score"]}),
+    order: str = Query("asc", json_schema_extra={"enum": ["asc", "desc"]}),
 ):
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)

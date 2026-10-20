@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Janela de retenção dos eventos brutos (tracking_events), em dias.
     EVENT_RETENTION_DAYS: int = 90
 
+    # ── Public URLs (OAuth redirects) ─────────────────────────────────────
+    # Public base URL of this API (used as OAuth redirect_uri) and of the Platform.
+    PUBLIC_API_URL: str = "https://ecommerce-tracking-ia-production.up.railway.app"
+    PLATFORM_URL: str = "https://track.noroia.com.br"
+
     # ── Webhook secrets ───────────────────────────────────────────────────
     # Fallback secret used when no per-client secret is found in the database.
     DEFAULT_WEBHOOK_SECRET: str = ""

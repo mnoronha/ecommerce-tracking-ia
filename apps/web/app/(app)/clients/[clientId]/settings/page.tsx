@@ -14,6 +14,9 @@ interface ClientRow {
   ecommerce_platform: string
   shopify_domain: string | null
   shopify_access_token: string | null
+  shopify_app_client_id?: string | null
+  shopify_app_installed_at?: string | null
+  shopify_app_scopes?: string | null
   meta_pixel_id: string | null
   meta_access_token: string | null
   meta_ad_account_id: string | null
@@ -73,6 +76,9 @@ export default function ClientSettingsPage() {
   const [saved,   setSaved]   = useState(false)
   const [error,   setError]   = useState('')
   const [registeringHooks, setRegisteringHooks] = useState(false)
+  const [appSecret, setAppSecret] = useState('')
+  const [savingApp, setSavingApp] = useState(false)
+  const [appMsg, setAppMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [hooksResult, setHooksResult] = useState<{ ok: number; fail: number } | null>(null)
   const [cnameInput, setCnameInput] = useState('')
   const [cnameSecret, setCnameSecret] = useState<string | null>(null)
@@ -406,6 +412,29 @@ export default function ClientSettingsPage() {
     }
   }
 
+  // App Shopify (Dev Dashboard): grava Client ID/secret via backend (secret cifrado).
+  async function handleSaveShopifyApp() {
+    setSavingApp(true)
+    setAppMsg(null)
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+      const body: Record<string, string | null> = { shopify_app_client_id: form.shopify_app_client_id || null }
+      if (appSecret.trim()) body.shopify_app_client_secret = appSecret.trim()
+      const res = await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      setAppSecret('')
+      setAppMsg({ ok: true, text: 'App salvo. Agora instale o app na loja pelo link da Shopify.' })
+    } catch {
+      setAppMsg({ ok: false, text: 'Não foi possível salvar o app.' })
+    } finally {
+      setSavingApp(false)
+    }
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
@@ -578,6 +607,43 @@ export default function ClientSettingsPage() {
               <Field label="Shopify Access Token">
                 <input type="password" value={form.shopify_access_token || ''} onChange={e => set('shopify_access_token', e.target.value)}
                   placeholder="shpat_..." className={INPUT} />
+              </Field>
+              <Field label="App Shopify (Dev Dashboard)" hint="acesso somente leitura via instalação do app — substitui o token manual">
+                <div className="space-y-2 text-xs">
+                  {searchParams.get('shopify') === 'connected' && (
+                    <p className="text-emerald-400">✓ App instalado — token salvo e cifrado.</p>
+                  )}
+                  {searchParams.get('shopify') === 'error' && (
+                    <p className="text-red-400">A instalação falhou. Confira Client ID/secret e tente o link de instalação de novo.</p>
+                  )}
+                  {form.shopify_app_installed_at ? (
+                    <p className="text-emerald-400">
+                      Conectado em {new Date(form.shopify_app_installed_at).toLocaleString('pt-BR')}
+                      {form.shopify_app_scopes ? ` · ${form.shopify_app_scopes}` : ''}
+                    </p>
+                  ) : (
+                    <p className="text-slate-500">Não instalado.</p>
+                  )}
+                  <div className="bg-[#0f1117] border border-[#2a2f3e] rounded-lg p-3 space-y-1 text-slate-400">
+                    <p>No Dev Dashboard, na versão do app:</p>
+                    <p>App URL: <code className="text-slate-200 break-all">{(process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app')}/shopify/app/{clientId}/install</code></p>
+                    <p>Redirect URL: <code className="text-slate-200 break-all">{(process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app')}/shopify/app/{clientId}/callback</code></p>
+                    <p>Escopos: <code className="text-slate-200">read_orders, read_customers, read_products, read_inventory</code></p>
+                  </div>
+                  <input value={form.shopify_app_client_id || ''} onChange={e => set('shopify_app_client_id', e.target.value)}
+                    placeholder="Client ID" className={INPUT} />
+                  <input type="password" value={appSecret} onChange={e => setAppSecret(e.target.value)}
+                    placeholder="Client secret (deixe vazio para manter o atual)" className={INPUT} autoComplete="new-password" />
+                  <button
+                    type="button"
+                    onClick={handleSaveShopifyApp}
+                    disabled={savingApp || !form.shopify_app_client_id}
+                    className="flex items-center justify-center gap-2 w-full bg-[#0f1117] border border-[#2a2f3e] hover:border-indigo-500 disabled:opacity-50 text-slate-300 hover:text-white text-sm font-medium py-2.5 rounded-lg transition-colors"
+                  >
+                    {savingApp ? <><Loader2 size={14} className="animate-spin" /> Salvando…</> : 'Salvar app Shopify'}
+                  </button>
+                  {appMsg && <p className={appMsg.ok ? 'text-emerald-400' : 'text-red-400'}>{appMsg.text}</p>}
+                </div>
               </Field>
               <Field label="Webhooks" hint="cria automaticamente todos os webhooks necessários na Shopify">
                 <div className="space-y-2">

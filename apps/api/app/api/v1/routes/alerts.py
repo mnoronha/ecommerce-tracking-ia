@@ -67,7 +67,7 @@ def _get_client_names(client_ids: list[str]) -> dict[str, str]:
 def list_alerts(
     request: Request,
     key: ApiKey,
-    status: str = Query("active", enum=["active", "resolved", "silenced", "all"]),
+    status: str = Query("active", json_schema_extra={"enum": ["active", "resolved", "silenced", "all"]}),
     severity: Optional[str] = Query(None),
     type: Optional[str] = Query(None),
     client_id: Optional[str] = Query(None),
