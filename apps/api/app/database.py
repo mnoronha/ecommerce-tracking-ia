@@ -33,7 +33,7 @@ def _new_client():
             storage_client_timeout=_DB_TIMEOUT_S,
         )
         return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY, options=opts)
-    except (ImportError, TypeError) as exc:  # older/newer supabase-py signature
+    except Exception as exc:  # older/newer supabase-py signature — never block startup
         logger.warning("supabase ClientOptions unavailable (%s); using defaults", exc)
         return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
 
