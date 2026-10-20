@@ -48,7 +48,7 @@ class MerchantSetupPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/setup", summary="Configura Merchant Center para o cliente")
-async def setup_merchant(pixel_id: str, body: MerchantSetupPayload):
+def setup_merchant(pixel_id: str, body: MerchantSetupPayload):
     c  = _get_client(pixel_id)
     sb = get_supabase()
     sb.table("clients").update({
@@ -61,7 +61,7 @@ async def setup_merchant(pixel_id: str, body: MerchantSetupPayload):
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/summary", summary="Snapshot mais recente do feed")
-async def get_summary(pixel_id: str):
+def get_summary(pixel_id: str):
     c = _get_client(pixel_id)
     if not c.get("merchant_center_id"):
         return {"configured": False}
@@ -80,7 +80,7 @@ async def get_summary(pixel_id: str):
 
 
 @router.get("/{pixel_id}/health-history", summary="Histórico do Feed Health Score")
-async def get_health_history(
+def get_health_history(
     pixel_id: str,
     days: int = Query(30, ge=7, le=90),
 ):
@@ -89,7 +89,7 @@ async def get_health_history(
 
 
 @router.get("/{pixel_id}/products", summary="Produtos do catálogo")
-async def get_products(
+def get_products(
     pixel_id:   str,
     date:       Optional[str] = Query(None, description="YYYY-MM-DD (default: último snapshot)"),
     status:     Optional[str] = Query(None),
@@ -107,7 +107,7 @@ async def get_products(
 
 
 @router.get("/{pixel_id}/issues", summary="Issues agrupadas por código")
-async def get_issues(
+def get_issues(
     pixel_id: str,
     date:     Optional[str] = Query(None),
 ):
@@ -121,7 +121,7 @@ async def get_issues(
 
 
 @router.get("/{pixel_id}/pricing", summary="Price competitiveness summary")
-async def get_pricing(
+def get_pricing(
     pixel_id: str,
     date:     Optional[str] = Query(None),
 ):
@@ -137,7 +137,7 @@ async def get_pricing(
 # ── Manual sync ───────────────────────────────────────────────────────────────
 
 @router.post("/{pixel_id}/sync", summary="Força sincronização imediata")
-async def force_sync(pixel_id: str):
+def force_sync(pixel_id: str):
     c = _get_client(pixel_id)
     if not c.get("merchant_center_id"):
         raise HTTPException(status_code=400, detail="merchant center not configured")
@@ -150,7 +150,7 @@ async def force_sync(pixel_id: str):
 # ── Suggestions ───────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/suggestions", summary="Sugestões de otimização da IA")
-async def get_suggestions(
+def get_suggestions(
     pixel_id: str,
     status:   str = Query("pending"),
 ):
@@ -172,7 +172,7 @@ class SuggestionUpdate(BaseModel):
 
 
 @router.patch("/suggestions/{suggestion_id}", summary="Atualiza status de sugestão")
-async def update_suggestion(suggestion_id: str, body: SuggestionUpdate):
+def update_suggestion(suggestion_id: str, body: SuggestionUpdate):
     sb = get_supabase()
     from datetime import datetime, timezone
     update = {"status": body.status}

@@ -64,7 +64,7 @@ def _get_client_names(client_ids: list[str]) -> dict[str, str]:
 # ── List ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-async def list_alerts(
+def list_alerts(
     request: Request,
     key: ApiKey,
     status: str = Query("active", enum=["active", "resolved", "silenced", "all"]),
@@ -122,7 +122,7 @@ async def list_alerts(
 # ── Detail ──────────────────────────────────────────────────────────────────
 
 @router.get("/{alert_id}")
-async def get_alert(request: Request, alert_id: str, key: ApiKey):
+def get_alert(request: Request, alert_id: str, key: ApiKey):
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
 
@@ -160,7 +160,7 @@ class CreateAlertRequest(BaseModel):
 
 
 @router.post("", status_code=201)
-async def create_alert(request: Request, key: ApiKey, body: CreateAlertRequest):
+def create_alert(request: Request, key: ApiKey, body: CreateAlertRequest):
     key.assert_write()
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
@@ -201,7 +201,7 @@ class PatchAlertRequest(BaseModel):
 
 
 @router.patch("/{alert_id}")
-async def patch_alert(request: Request, alert_id: str, key: ApiKey, body: PatchAlertRequest):
+def patch_alert(request: Request, alert_id: str, key: ApiKey, body: PatchAlertRequest):
     key.assert_write()
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
@@ -250,7 +250,7 @@ async def patch_alert(request: Request, alert_id: str, key: ApiKey, body: PatchA
 # ── Soft delete ──────────────────────────────────────────────────────────────
 
 @router.delete("/{alert_id}", status_code=204)
-async def delete_alert(request: Request, alert_id: str, key: ApiKey):
+def delete_alert(request: Request, alert_id: str, key: ApiKey):
     key.assert_write()
     sb = get_supabase()
     rows = (

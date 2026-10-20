@@ -21,7 +21,7 @@ router = APIRouter()
     summary="Recent paid orders for the live ticker",
     tags=["live"],
 )
-async def live_orders(
+def live_orders(
     pixel_id: str,
     since: Optional[str] = None,
     limit: int = 20,
@@ -74,7 +74,7 @@ async def live_orders(
     summary="Live stats for the today-so-far header",
     tags=["live"],
 )
-async def live_stats(pixel_id: str):
+def live_stats(pixel_id: str):
     """
     Snapshot of today's revenue + orders + last-hour velocity.
     Refresh on the same poll interval as the ticker.

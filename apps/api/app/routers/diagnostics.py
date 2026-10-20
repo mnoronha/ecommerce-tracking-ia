@@ -23,7 +23,7 @@ router = APIRouter()
     summary="Full data-pipeline health snapshot",
     tags=["diagnostics"],
 )
-async def get_diagnostics(pixel_id: str):
+def get_diagnostics(pixel_id: str):
     sb = get_supabase()
 
     client_row = (
@@ -275,7 +275,7 @@ async def get_diagnostics(pixel_id: str):
     summary="Dispara o monitor de saúde manualmente",
     tags=["diagnostics"],
 )
-async def run_health_monitor(
+def run_health_monitor(
     date: Optional[str] = Query(
         default=None,
         description="Data alvo YYYY-MM-DD (default: ontem UTC)",
@@ -338,7 +338,7 @@ async def run_health_monitor(
     summary="Status dos canais de notificação (email + WhatsApp)",
     tags=["diagnostics"],
 )
-async def notifications_status():
+def notifications_status():
     """
     Verifica quais canais de notificação estão configurados e operacionais.
     """
@@ -373,7 +373,7 @@ async def notifications_status():
     summary="Resolve link de convite WhatsApp para JID do grupo",
     tags=["diagnostics"],
 )
-async def resolve_whatsapp_invite(invite: str = Query(..., description="Link ou código do convite")):
+def resolve_whatsapp_invite(invite: str = Query(..., description="Link ou código do convite")):
     result = wa_svc.resolve_group_invite(invite)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error", "Não foi possível resolver o convite"))
@@ -385,7 +385,7 @@ async def resolve_whatsapp_invite(invite: str = Query(..., description="Link ou 
     summary="Lista todas as instâncias Evolution API (debug)",
     tags=["diagnostics"],
 )
-async def list_whatsapp_instances():
+def list_whatsapp_instances():
     """Mostra todas as instâncias disponíveis na Evolution API para debug."""
     return wa_svc.list_instances()
 
@@ -395,7 +395,7 @@ async def list_whatsapp_instances():
     summary="Testa geração de PDF com WeasyPrint",
     tags=["diagnostics"],
 )
-async def test_pdf_generation():
+def test_pdf_generation():
     """Gera um PDF simples e retorna info sobre o resultado."""
     try:
         from weasyprint import HTML as WP_HTML
@@ -417,7 +417,7 @@ async def test_pdf_generation():
     summary="Envia email de teste para AGENCY_NOTIFY_EMAIL",
     tags=["diagnostics"],
 )
-async def test_email_notification(to: Optional[str] = Query(default=None)):
+def test_email_notification(to: Optional[str] = Query(default=None)):
     result = notify_svc.test_email(to=to)
     if not result["ok"]:
         raise HTTPException(status_code=400, detail=result.get("error", "falha ao enviar"))
@@ -429,7 +429,7 @@ async def test_email_notification(to: Optional[str] = Query(default=None)):
     summary="Envia mensagem de teste via WhatsApp (Evolution API)",
     tags=["diagnostics"],
 )
-async def test_whatsapp_notification(phone: Optional[str] = Query(default=None)):
+def test_whatsapp_notification(phone: Optional[str] = Query(default=None)):
     result = notify_svc.test_whatsapp(phone=phone)
     if not result["ok"]:
         raise HTTPException(status_code=400, detail=result.get("error", "falha ao enviar"))

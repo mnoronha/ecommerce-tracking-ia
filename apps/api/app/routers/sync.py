@@ -46,7 +46,7 @@ def _get_client(pixel_id: str) -> dict:
 
 
 @router.post("/shopify/{pixel_id}", summary="Trigger Shopify API sync")
-async def trigger_shopify_sync(
+def trigger_shopify_sync(
     pixel_id: str,
     since: Optional[str] = Query(
         None,
@@ -77,7 +77,7 @@ async def trigger_shopify_sync(
 
 
 @router.post("/shopify/{pixel_id}/backfill", summary="Full Shopify backfill")
-async def trigger_shopify_backfill(pixel_id: str):
+def trigger_shopify_backfill(pixel_id: str):
     """
     Importa TODOS os pedidos pagos desde sempre.
     Use apenas uma vez para novos clientes ou para reconstruir dados históricos.
@@ -94,7 +94,7 @@ async def trigger_shopify_backfill(pixel_id: str):
 
 
 @router.get("/shopify/{pixel_id}/status", summary="Shopify sync status")
-async def shopify_sync_status(pixel_id: str):
+def shopify_sync_status(pixel_id: str):
     row = _get_client(pixel_id)
     return {
         "pixel_id":              pixel_id,
@@ -116,7 +116,7 @@ async def trigger_metrics_cache():
 
 
 @router.post("/metrics-cache/{pixel_id}", summary="Trigger metrics cache refresh for one client")
-async def trigger_metrics_cache_client(pixel_id: str):
+def trigger_metrics_cache_client(pixel_id: str):
     """Atualiza o cache de métricas externas para um cliente (GA4 se disponível, senão Google Ads)."""
     sb = get_supabase()
     rows = (
@@ -428,7 +428,7 @@ async def trigger_pipeline_any_period(
 
 
 @router.get("/shopify/{pixel_id}/note-attributes", summary="Inspect raw note_attributes from Shopify (GTM tag validation)")
-async def inspect_note_attributes(
+def inspect_note_attributes(
     pixel_id: str,
     limit: int = Query(5, ge=1, le=20, description="Número de pedidos recentes a inspecionar"),
 ):
@@ -483,7 +483,7 @@ async def inspect_note_attributes(
 
 
 @router.post("/spend/{pixel_id}/backfill", summary="Backfill histórico de ad spend — Meta + Google Ads mensal")
-async def spend_backfill(
+def spend_backfill(
     pixel_id: str,
     from_date: str = Query(..., description="Data inicial YYYY-MM-DD"),
     to_date:   Optional[str] = Query(None, description="Data final YYYY-MM-DD (padrão: hoje)"),
@@ -688,7 +688,7 @@ async def meta_attributions_backfill(
 
 
 @router.post("/spend/{pixel_id}/debug", summary="Testa spend sync TikTok+Pinterest e retorna resposta bruta das APIs")
-async def debug_spend_sync(
+def debug_spend_sync(
     pixel_id: str,
     target_date: Optional[str] = Query(None, description="Data alvo YYYY-MM-DD (padrão: ontem)"),
 ):
@@ -797,7 +797,7 @@ async def debug_spend_sync(
 
 
 @router.patch("/shopify/{pixel_id}/enable", summary="Enable/disable Shopify API sync")
-async def toggle_shopify_sync(pixel_id: str, enabled: bool = Query(...)):
+def toggle_shopify_sync(pixel_id: str, enabled: bool = Query(...)):
     """Ativa ou desativa o polling horário para um cliente."""
     row = _get_client(pixel_id)
     get_supabase().table("clients").update(

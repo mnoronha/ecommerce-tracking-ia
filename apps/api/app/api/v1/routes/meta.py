@@ -27,7 +27,7 @@ router = APIRouter(tags=["meta"])
 # ── Health ─────────────────────────────────────────────────────────────────────
 
 @router.get("/health", include_in_schema=True)
-async def api_health():
+def api_health():
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     db_status = "healthy"
     try:
@@ -49,7 +49,7 @@ async def api_health():
 # ── Me ─────────────────────────────────────────────────────────────────────────
 
 @router.get("/me")
-async def get_me(request: Request, key: ApiKey):
+def get_me(request: Request, key: ApiKey):
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
     try:
@@ -106,7 +106,7 @@ class CreateKeyRequest(BaseModel):
 
 
 @router.get("/api-keys")
-async def list_api_keys(request: Request, key: ApiKey):
+def list_api_keys(request: Request, key: ApiKey):
     key.assert_admin()
     req_id = get_request_id(request)
     sb = get_supabase()
@@ -121,7 +121,7 @@ async def list_api_keys(request: Request, key: ApiKey):
 
 
 @router.post("/api-keys", status_code=201)
-async def create_api_key(request: Request, key: ApiKey, body: CreateKeyRequest):
+def create_api_key(request: Request, key: ApiKey, body: CreateKeyRequest):
     key.assert_admin()
     req_id = get_request_id(request)
 
@@ -155,7 +155,7 @@ async def create_api_key(request: Request, key: ApiKey, body: CreateKeyRequest):
 
 
 @router.post("/api-keys/{key_id}/rotate", status_code=201)
-async def rotate_api_key(request: Request, key_id: str, key: ApiKey):
+def rotate_api_key(request: Request, key_id: str, key: ApiKey):
     key.assert_admin()
     req_id = get_request_id(request)
     sb = get_supabase()
@@ -198,7 +198,7 @@ async def rotate_api_key(request: Request, key_id: str, key: ApiKey):
 
 
 @router.delete("/api-keys/{key_id}", status_code=204)
-async def revoke_api_key(request: Request, key_id: str, key: ApiKey):
+def revoke_api_key(request: Request, key_id: str, key: ApiKey):
     key.assert_admin()
     sb = get_supabase()
     sb.table("api_keys").update({

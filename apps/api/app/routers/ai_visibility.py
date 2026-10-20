@@ -137,7 +137,7 @@ async def import_confirm(pixel_id: str, background_tasks: BackgroundTasks, file:
 # ── Dashboard ─────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/summary", summary="KPIs do dashboard de AI Visibility")
-async def get_summary(
+def get_summary(
     pixel_id: str,
     start: str = Query(..., description="YYYY-MM-DD"),
     end:   str = Query(..., description="YYYY-MM-DD"),
@@ -148,7 +148,7 @@ async def get_summary(
 
 
 @router.get("/{pixel_id}/trend", summary="Série temporal de menção por plataforma")
-async def get_trend(
+def get_trend(
     pixel_id: str,
     start: str = Query(...),
     end:   str = Query(...),
@@ -159,7 +159,7 @@ async def get_trend(
 
 
 @router.get("/{pixel_id}/prompts", summary="Performance por prompt")
-async def get_prompts(
+def get_prompts(
     pixel_id: str,
     start: str = Query(...),
     end:   str = Query(...),
@@ -170,7 +170,7 @@ async def get_prompts(
 
 
 @router.get("/{pixel_id}/competitors", summary="Share of voice por competidor")
-async def get_competitors(
+def get_competitors(
     pixel_id: str,
     start: str = Query(...),
     end:   str = Query(...),
@@ -183,13 +183,13 @@ async def get_competitors(
 # ── Import history ────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/imports", summary="Histórico de imports")
-async def get_imports(pixel_id: str):
+def get_imports(pixel_id: str):
     client = _get_client(pixel_id)
     return svc.get_import_history(client["id"])
 
 
 @router.post("/imports/{import_id}/revert", summary="Reverte um import")
-async def revert_import(import_id: str):
+def revert_import(import_id: str):
     sb  = get_supabase()
     imp = (
         sb.table("ai_visibility_imports")
@@ -210,7 +210,7 @@ async def revert_import(import_id: str):
 # ── Brands ────────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/brands", summary="Marcas cadastradas")
-async def get_brands(pixel_id: str):
+def get_brands(pixel_id: str):
     client = _get_client(pixel_id)
     return svc.get_brands(client["id"])
 
@@ -224,7 +224,7 @@ class BrandPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/brands", summary="Cadastra/atualiza marca")
-async def upsert_brand(pixel_id: str, body: BrandPayload):
+def upsert_brand(pixel_id: str, body: BrandPayload):
     client = _get_client(pixel_id)
     return svc.upsert_brand(
         client_id            = client["id"],
@@ -239,7 +239,7 @@ async def upsert_brand(pixel_id: str, body: BrandPayload):
 # ── AI Insights ───────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/insights", summary="Insights IA de AI Visibility")
-async def get_insights(pixel_id: str, limit: int = Query(10, le=50)):
+def get_insights(pixel_id: str, limit: int = Query(10, le=50)):
     client = _get_client(pixel_id)
     rows = (
         get_supabase()
@@ -255,7 +255,7 @@ async def get_insights(pixel_id: str, limit: int = Query(10, le=50)):
 
 
 @router.post("/{pixel_id}/insights/trigger", summary="Dispara análise manual de AI Visibility")
-async def trigger_analysis(pixel_id: str, background_tasks: BackgroundTasks):
+def trigger_analysis(pixel_id: str, background_tasks: BackgroundTasks):
     client = _get_client(pixel_id)
     background_tasks.add_task(analyst_svc.run_visibility_analysis, client["id"])
     return {"ok": True, "message": "Análise iniciada em background"}
@@ -264,7 +264,7 @@ async def trigger_analysis(pixel_id: str, background_tasks: BackgroundTasks):
 # ── DataForSEO config ─────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/config", summary="Configuração DataForSEO do cliente")
-async def get_config(pixel_id: str):
+def get_config(pixel_id: str):
     client = _get_client(pixel_id)
     config = svc.get_dataforseo_config(client["id"])
     return config or {"client_id": client["id"], "is_enabled": False, "configured": False}
@@ -281,7 +281,7 @@ class DataForSEOConfigPayload(BaseModel):
 
 
 @router.put("/{pixel_id}/config", summary="Cria/atualiza configuração DataForSEO")
-async def upsert_config(pixel_id: str, body: DataForSEOConfigPayload):
+def upsert_config(pixel_id: str, body: DataForSEOConfigPayload):
     client = _get_client(pixel_id)
     fields = {k: v for k, v in body.model_dump().items() if v is not None}
     result = svc.upsert_dataforseo_config(client["id"], **fields)
@@ -291,7 +291,7 @@ async def upsert_config(pixel_id: str, body: DataForSEOConfigPayload):
 # ── Manual collection trigger ─────────────────────────────────────────────────
 
 @router.post("/{pixel_id}/collect", summary="Dispara coleta DataForSEO agora")
-async def trigger_collection(
+def trigger_collection(
     pixel_id: str,
     background_tasks: BackgroundTasks,
     force: bool = Query(False, description="Ignora verificação de budget"),
@@ -304,5 +304,5 @@ async def trigger_collection(
 # ── Agency cost dashboard ─────────────────────────────────────────────────────
 
 @router.get("/costs", summary="Resumo de custos DataForSEO (agência)")
-async def get_costs(days: int = Query(30, le=90)):
+def get_costs(days: int = Query(30, le=90)):
     return svc.get_usage_summary(client_id=None, days=days)

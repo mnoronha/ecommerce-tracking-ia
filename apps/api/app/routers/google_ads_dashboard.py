@@ -44,7 +44,7 @@ def _delta(curr: float | None, prev: float | None) -> float | None:
     summary="Dashboard Google Ads — dados server-side (pedidos + match_type)",
     tags=["google_ads"],
 )
-async def google_overview(
+def google_overview(
     pixel_id: str,
     days: int = 30,
     start: str | None = None,
@@ -479,7 +479,7 @@ async def google_overview(
 # ── GA4 Reporting ─────────────────────────────────────────────────────────────
 
 @router.get("/ga4/{pixel_id}/report", summary="GA4 Data API — sessões e conversões")
-async def ga4_report(
+def ga4_report(
     pixel_id: str,
     start: Optional[str] = None,
     end:   Optional[str] = None,
@@ -581,7 +581,7 @@ def _resolve_dates(start: Optional[str], end: Optional[str], days: int):
 
 
 @router.get("/ga4/{pixel_id}/funnel", summary="GA4 — funil de conversão por canal", tags=["ga4"])
-async def ga4_funnel(
+def ga4_funnel(
     pixel_id: str,
     start: Optional[str] = None,
     end:   Optional[str] = None,
@@ -597,7 +597,7 @@ async def ga4_funnel(
 
 
 @router.get("/ga4/{pixel_id}/ai-traffic", summary="GA4 — tráfego de ferramentas de IA", tags=["ga4"])
-async def ga4_ai_traffic(
+def ga4_ai_traffic(
     pixel_id: str,
     start: Optional[str] = None,
     end:   Optional[str] = None,
@@ -613,7 +613,7 @@ async def ga4_ai_traffic(
 
 
 @router.get("/ga4/{pixel_id}/top-pages", summary="GA4 — top páginas de produto", tags=["ga4"])
-async def ga4_top_pages(
+def ga4_top_pages(
     pixel_id: str,
     start:  Optional[str] = None,
     end:    Optional[str] = None,
@@ -630,7 +630,7 @@ async def ga4_top_pages(
 
 
 @router.get("/ga4/{pixel_id}/sources", summary="GA4 — breakdown por source/medium", tags=["ga4"])
-async def ga4_sources(
+def ga4_sources(
     pixel_id: str,
     start: Optional[str] = None,
     end:   Optional[str] = None,
@@ -680,7 +680,7 @@ async def ga4_sources(
 
 
 @router.get("/ga4/{pixel_id}/audience", summary="GA4 — novos vs recorrentes", tags=["ga4"])
-async def ga4_audience(
+def ga4_audience(
     pixel_id: str,
     start: Optional[str] = None,
     end:   Optional[str] = None,

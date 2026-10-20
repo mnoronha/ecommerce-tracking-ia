@@ -36,7 +36,7 @@ def _resolve(pixel_id: str) -> tuple[str, dict]:
 
 
 @router.get("/creatives/{pixel_id}", tags=["creatives"])
-async def list_creatives(
+def list_creatives(
     pixel_id: str,
     days: int = 30,
     start: str | None = None,
@@ -133,7 +133,7 @@ async def list_creatives(
 
 
 @router.get("/creatives/{pixel_id}/latest-analysis", tags=["creatives"])
-async def latest_analysis(pixel_id: str):
+def latest_analysis(pixel_id: str):
     """Return the most recent creative_analysis insight for the client, if any."""
     client_uuid, _ = _resolve(pixel_id)
     r = (
@@ -151,7 +151,7 @@ async def latest_analysis(pixel_id: str):
 
 
 @router.post("/creatives/{pixel_id}/sync", tags=["creatives"])
-async def sync_now(pixel_id: str):
+def sync_now(pixel_id: str):
     """Manual trigger for the creative_sync flow. Returns counts."""
     client_uuid, client = _resolve(pixel_id)
     if not (client.get("meta_ad_account_id") and client.get("meta_access_token")):
@@ -164,7 +164,7 @@ async def sync_now(pixel_id: str):
 
 
 @router.post("/creatives/{pixel_id}/analyze", tags=["creatives"])
-async def analyze_now(pixel_id: str):
+def analyze_now(pixel_id: str):
     """
     Manual trigger for Claude Vision analysis. Rate-limited at one run per hour
     per client to keep Anthropic spend bounded.

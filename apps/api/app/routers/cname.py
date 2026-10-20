@@ -45,7 +45,7 @@ _HOSTNAME_RE = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,253}[a-zA-Z0-9])?$")
 
 
 @router.post("/cname/{pixel_id}/init")
-async def cname_init(pixel_id: str, body: dict):
+def cname_init(pixel_id: str, body: dict):
     """
     Step 1: store the desired CNAME and generate a verification secret.
 
@@ -94,7 +94,7 @@ async def cname_init(pixel_id: str, body: dict):
 
 
 @router.post("/cname/{pixel_id}/verify")
-async def cname_verify(pixel_id: str):
+def cname_verify(pixel_id: str):
     """
     Step 2: probe https://{cname}/_verify/{secret} and confirm the response
     matches the stored secret. Marks tracking_cname_verified=true on success.

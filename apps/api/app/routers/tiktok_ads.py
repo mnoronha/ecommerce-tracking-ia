@@ -96,7 +96,7 @@ def _campaigns(orders: list[dict]) -> list[dict]:
 # ── Endpoint ───────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/overview", summary="TikTok Ads — atribuição server-side + saúde CAPI")
-async def tiktok_overview(
+def tiktok_overview(
     pixel_id: str,
     days: int = 30,
     start: Optional[str] = None,

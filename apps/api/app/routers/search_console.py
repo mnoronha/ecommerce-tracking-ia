@@ -71,7 +71,7 @@ def _parse_dates(start: Optional[str], end: Optional[str], days: int):
     summary="Search Console — visão geral live: clicks, CTR, posição, top queries/páginas",
     tags=["search_console"],
 )
-async def sc_overview(
+def sc_overview(
     pixel_id: str,
     start:    Optional[str] = None,
     end:      Optional[str] = None,
@@ -100,7 +100,7 @@ async def sc_overview(
     summary="Search Console — oportunidades live: CTR baixo + posições 4-10",
     tags=["search_console"],
 )
-async def sc_opportunities_live(
+def sc_opportunities_live(
     pixel_id: str,
     start:    Optional[str] = None,
     end:      Optional[str] = None,
@@ -128,7 +128,7 @@ async def sc_opportunities_live(
     summary="Search Console — snapshots diários do DB",
     tags=["search_console"],
 )
-async def sc_snapshots(
+def sc_snapshots(
     pixel_id: str,
     start:    Optional[str] = None,
     end:      Optional[str] = None,
@@ -177,7 +177,7 @@ async def sc_snapshots(
     summary="Search Console — AI Overview: aparições por URL e query",
     tags=["search_console"],
 )
-async def sc_ai_overviews(
+def sc_ai_overviews(
     pixel_id: str,
     start:    Optional[str] = None,
     end:      Optional[str] = None,
@@ -249,7 +249,7 @@ async def sc_ai_overviews(
     summary="Search Console — oportunidades identificadas (DB)",
     tags=["search_console"],
 )
-async def sc_opportunities_db(
+def sc_opportunities_db(
     pixel_id:     str,
     status:       Optional[str] = None,
     opp_type:     Optional[str] = None,
@@ -286,7 +286,7 @@ class OppUpdate(BaseModel):
     summary="Atualiza status de oportunidade",
     tags=["search_console"],
 )
-async def update_opportunity(pixel_id: str, opp_id: str, body: OppUpdate):
+def update_opportunity(pixel_id: str, opp_id: str, body: OppUpdate):
     _get_sc_client(pixel_id)
     sb     = get_supabase()
     update = {k: v for k, v in body.model_dump().items() if v is not None}
@@ -301,7 +301,7 @@ async def update_opportunity(pixel_id: str, opp_id: str, body: OppUpdate):
     summary="Search Console — performance das peças do AI Presence",
     tags=["search_console"],
 )
-async def sc_piece_performance(
+def sc_piece_performance(
     pixel_id: str,
     start:    Optional[str] = None,
     end:      Optional[str] = None,
@@ -337,7 +337,7 @@ class BackfillRequest(BaseModel):
     summary="Search Console — backfill histórico (até 16 meses, background)",
     tags=["search_console"],
 )
-async def sc_backfill(pixel_id: str, body: BackfillRequest, background_tasks: BackgroundTasks):
+def sc_backfill(pixel_id: str, body: BackfillRequest, background_tasks: BackgroundTasks):
     c = _get_sc_client(pixel_id)
     if body.months_back < 1 or body.months_back > 16:
         raise HTTPException(status_code=400, detail="months_back deve ser entre 1 e 16")
@@ -370,7 +370,7 @@ class SyncRequest(BaseModel):
     summary="Search Console — sync manual de N dias (background)",
     tags=["search_console"],
 )
-async def sc_sync_manual(pixel_id: str, body: SyncRequest, background_tasks: BackgroundTasks):
+def sc_sync_manual(pixel_id: str, body: SyncRequest, background_tasks: BackgroundTasks):
     c = _get_sc_client(pixel_id)
     from datetime import date as _date
     today = datetime.now(timezone.utc).date()

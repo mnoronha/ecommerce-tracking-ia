@@ -110,7 +110,7 @@ def _delta(curr_str: Optional[str], prev_str: Optional[str]) -> Optional[dict]:
 # ── GET /api/v1/clients/{id}/performance/daily ───────────────────────────────
 
 @router.get("/clients/{client_id}/performance/daily")
-async def performance_daily(
+def performance_daily(
     request: Request,
     client_id: str,
     key: ApiKey,
@@ -334,7 +334,7 @@ async def performance_daily(
 # ── GET /api/v1/clients/{id}/performance/campaigns ───────────────────────────
 
 @router.get("/clients/{client_id}/performance/campaigns")
-async def performance_campaigns(
+def performance_campaigns(
     request: Request,
     client_id: str,
     key: ApiKey,

@@ -22,7 +22,7 @@ router = APIRouter()
     summary="ROAS por campanha (Meta Ads spend + pedidos)",
     tags=["meta_ads"],
 )
-async def get_roas(pixel_id: str, days: int = 30):
+def get_roas(pixel_id: str, days: int = 30):
     """
     Retorna por campanha:
       - spend  (Meta Ads API)
@@ -249,7 +249,7 @@ async def get_roas(pixel_id: str, days: int = 30):
     summary="Breakdown por idade/gênero/dispositivo/plataforma das campanhas Meta Ads",
     tags=["meta_ads"],
 )
-async def get_breakdowns(
+def get_breakdowns(
     pixel_id:  str,
     breakdown: str  = "age",
     days:      int  = 30,
@@ -307,7 +307,7 @@ async def get_breakdowns(
     summary="Dashboard Meta Ads completo — usa meta_ad_attributions (sync diário)",
     tags=["meta_ads"],
 )
-async def get_overview(
+def get_overview(
     pixel_id: str,
     days: int = 30,
     start: str | None = None,

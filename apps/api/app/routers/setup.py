@@ -29,7 +29,7 @@ router = APIRouter(prefix="/setup", tags=["setup"])
 
 
 @router.post("/admin/encrypt-credentials", summary="Migração única: cifra credenciais em texto puro (idempotente)")
-async def admin_encrypt_credentials(confirm: str = ""):
+def admin_encrypt_credentials(confirm: str = ""):
     if confirm != "encrypt-now":
         raise HTTPException(400, "passe ?confirm=encrypt-now para confirmar")
     return crypto.encrypt_existing_credentials()
@@ -209,7 +209,7 @@ def _install_script_tag(shop_domain: str, access_token: str, pixel_id: str,
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/shopify/{pixel_id}/webhooks")
-async def register_shopify_webhooks(pixel_id: str):
+def register_shopify_webhooks(pixel_id: str):
     """
     Register all required Shopify webhooks for a client. Idempotent — re-running
     is safe (existing webhooks are not duplicated).
@@ -271,7 +271,7 @@ async def register_shopify_webhooks(pixel_id: str):
     summary="Full one-shot Shopify onboarding: webhooks + pixel ScriptTag",
     tags=["setup"],
 )
-async def install_shopify(pixel_id: str):
+def install_shopify(pixel_id: str):
     """
     Single endpoint that handles the entire Shopify technical setup:
       1. Registers all required webhooks (orders, carts, customers, refunds)

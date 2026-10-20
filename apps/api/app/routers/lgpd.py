@@ -60,7 +60,7 @@ def _subject_hash(email: str) -> str:
 
 
 @router.get("/{pixel_id}/subject", summary="Prévia: o que existe de um titular (por email)")
-async def preview_subject(pixel_id: str, email: str):
+def preview_subject(pixel_id: str, email: str):
     cid = _resolve(pixel_id)
     if not cid:
         raise HTTPException(404, "client not found")
@@ -79,7 +79,7 @@ async def preview_subject(pixel_id: str, email: str):
 
 
 @router.post("/{pixel_id}/forget", summary="Apaga/anonimiza os dados pessoais de um titular (LGPD)")
-async def forget_subject(pixel_id: str, body: ForgetBody):
+def forget_subject(pixel_id: str, body: ForgetBody):
     cid = _resolve(pixel_id)
     if not cid:
         raise HTTPException(404, "client not found")

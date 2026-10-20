@@ -70,7 +70,7 @@ def _aggregate(orders: list[dict]) -> dict:
     summary="Faturamento real do Shopify — KPIs, série diária, canais, produtos",
     tags=["shopify"],
 )
-async def shopify_revenue(
+def shopify_revenue(
     pixel_id: str,
     start: Optional[str] = None,
     end:   Optional[str] = None,

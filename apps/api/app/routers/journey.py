@@ -161,7 +161,7 @@ def _fetch_paid_orders_with_items(
     summary="Top campaigns and the products they drove",
     tags=["journey"],
 )
-async def by_campaign(
+def by_campaign(
     pixel_id: str,
     days: int = 30,
     top_products: int = 5,
@@ -296,7 +296,7 @@ async def by_campaign(
     summary="Group sales by channel (Meta, Google, …) and list top products sold",
     tags=["journey"],
 )
-async def by_channel(
+def by_channel(
     pixel_id: str,
     days: int = 30,
     top_products: int = 8,
@@ -404,7 +404,7 @@ async def by_channel(
     summary="Top products and the campaigns that drove their sales",
     tags=["journey"],
 )
-async def by_product(
+def by_product(
     pixel_id: str,
     days: int = 30,
     top_campaigns: int = 5,
@@ -512,7 +512,7 @@ async def by_product(
     summary="Campaigns ranked by Meta-reported purchases (server-side reconciliation)",
     tags=["journey"],
 )
-async def by_meta_attribution(
+def by_meta_attribution(
     pixel_id: str,
     days: int = 30,
     start: Optional[str] = None,
@@ -625,7 +625,7 @@ async def by_meta_attribution(
     summary="Force a sync of Meta-reported attribution (otherwise runs daily)",
     tags=["journey"],
 )
-async def force_sync_meta_attribution(pixel_id: str, days: int = 7):
+def force_sync_meta_attribution(pixel_id: str, days: int = 7):
     client_uuid = _resolve(pixel_id)
     sb = get_supabase()
     creds = (
@@ -653,7 +653,7 @@ async def force_sync_meta_attribution(pixel_id: str, days: int = 7):
     summary="Run probabilistic match for orders without UTM (Phase 3)",
     tags=["journey"],
 )
-async def run_probable_match(pixel_id: str, days: int = 30):
+def run_probable_match(pixel_id: str, days: int = 30):
     """
     Assigns probable_meta_campaign_* on orders that came from Meta but have
     no campaign UTM, based on which ad had the most clicks that day.
@@ -668,7 +668,7 @@ async def run_probable_match(pixel_id: str, days: int = 30):
     summary="Sync Meta Ads campaign id → name cache",
     tags=["journey"],
 )
-async def resolve_meta_names(pixel_id: str):
+def resolve_meta_names(pixel_id: str):
     """
     Pulls every campaign on the client's Meta ad account and caches name in
     `meta_campaign_names`. After this, journey reports show readable names
@@ -724,7 +724,7 @@ class SurveyResponseBody(BaseModel):
     summary="Submit a post-purchase 'how did you hear about us?' answer",
     tags=["journey"],
 )
-async def submit_survey_response(pixel_id: str, body: SurveyResponseBody):
+def submit_survey_response(pixel_id: str, body: SurveyResponseBody):
     if body.source_declared not in _VALID_SURVEY_SOURCES:
         raise HTTPException(400, f"invalid source_declared (must be one of {sorted(_VALID_SURVEY_SOURCES)})")
 
@@ -788,7 +788,7 @@ async def submit_survey_response(pixel_id: str, body: SurveyResponseBody):
     summary="Aggregate orders by buyer-declared source, with UTM cross-check",
     tags=["journey"],
 )
-async def by_declared_source(
+def by_declared_source(
     pixel_id: str,
     days: int = 30,
     start: Optional[str] = None,
@@ -892,7 +892,7 @@ async def by_declared_source(
     summary="Atribuição por anúncio — conversões + produtos vendidos por ad_id",
     tags=["journey"],
 )
-async def by_ad(
+def by_ad(
     pixel_id:     str,
     days:         int = 30,
     top_products: int = 5,
