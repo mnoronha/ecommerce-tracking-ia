@@ -1063,7 +1063,7 @@ async def get_changes(
     summary="Single media change log entry",
     response_model=ChangeOut,
 )
-async def get_change(
+def get_change(
     client_id: str,
     change_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
