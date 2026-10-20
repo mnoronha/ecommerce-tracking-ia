@@ -628,7 +628,7 @@ export default function ClientSettingsPage() {
                     <p>No Dev Dashboard, na versão do app:</p>
                     <p>App URL: <code className="text-slate-200 break-all">{(process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app')}/shopify/app/{clientId}/install</code></p>
                     <p>Redirect URL: <code className="text-slate-200 break-all">{(process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app')}/shopify/app/{clientId}/callback</code></p>
-                    <p>Escopos: <code className="text-slate-200">read_orders, read_all_orders, read_customers, read_products, read_inventory</code></p>
+                    <p>Escopos: <code className="text-slate-200">read_orders, read_customers, read_products, read_inventory</code></p>
                   </div>
                   <input value={form.shopify_app_client_id || ''} onChange={e => set('shopify_app_client_id', e.target.value)}
                     placeholder="Client ID" className={INPUT} />

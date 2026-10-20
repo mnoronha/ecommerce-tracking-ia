@@ -12,7 +12,7 @@ reader (sync, health, schema audit…) already uses.
 Configure in the Dev Dashboard app version:
   App URL:        {PUBLIC_API_URL}/shopify/app/{pixel_id}/install
   Redirect URL:   {PUBLIC_API_URL}/shopify/app/{pixel_id}/callback
-  Scopes:         read_orders, read_all_orders, read_customers, read_products, read_inventory
+  Scopes:         read_orders, read_customers, read_products, read_inventory
 
 The app's Client ID / Client secret are saved per client from the Platform
 settings (PUT /setup/{pixel_id}/credentials → shopify_app_client_id /
@@ -43,7 +43,7 @@ from ..services import crypto
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/shopify/app", tags=["shopify-app"])
 
-SCOPES = "read_orders,read_all_orders,read_customers,read_products,read_inventory"
+SCOPES = "read_orders,read_customers,read_products,read_inventory"
 _STATE_TTL_S = 15 * 60
 _SHOP_RE = re.compile(r"^[a-z0-9][a-z0-9\-]*\.myshopify\.com$")
 
