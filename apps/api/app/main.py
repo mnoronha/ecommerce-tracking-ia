@@ -27,6 +27,7 @@ from .core.scheduler_registry import register as _register_scheduler
 from .core.weekly_review import run_weekly_review_all_clients
 from .core.monthly_review import run_monthly_review_all_clients
 from .core.balance_monitor import run_balance_check_all_prepaid
+from .core.change_history_scheduler import run_change_history_all_clients as _run_change_history
 from .core.outcome_evaluator import evaluate_pending_outcomes as _evaluate_pending_outcomes
 from .core.notion_adapter import NotionTaskAdapter as _NotionAdapter
 from .database import get_supabase as _get_supabase_for_notion
@@ -366,6 +367,14 @@ def _notion_poll_updates():
     _NotionAdapter(supabase=_get_supabase_for_notion()).poll_notion_task_updates()
 
 
+_scheduler.add_job(
+    _run_change_history,
+    "interval",
+    minutes=15,
+    id="change_history_ingest",
+    max_instances=1,
+    misfire_grace_time=900,  # tolerate up to 15-min lag before skipping
+)
 _scheduler.add_job(
     _notion_sync_pending,
     "interval",
