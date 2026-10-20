@@ -94,7 +94,7 @@ def _campaigns(orders: list[dict]) -> list[dict]:
 # ── Endpoint ───────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/overview", summary="Pinterest Ads — atribuição server-side + saúde CAPI")
-async def pinterest_overview(
+def pinterest_overview(
     pixel_id: str,
     days: int = 30,
     start: Optional[str] = None,

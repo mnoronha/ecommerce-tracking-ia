@@ -35,7 +35,7 @@ class GoalPayload(BaseModel):
 
 
 @router.post("/goals/{pixel_id}", summary="Salva meta mensal (service key — bypass RLS)")
-async def upsert_goal(pixel_id: str, body: GoalPayload):
+def upsert_goal(pixel_id: str, body: GoalPayload):
     sb = get_supabase()
 
     client = sb.table("clients").select("id, agency_id").eq("pixel_id", pixel_id).limit(1).execute()
@@ -78,7 +78,7 @@ async def upsert_goal(pixel_id: str, body: GoalPayload):
 
 
 @router.get("/goals/{pixel_id}", summary="Lista metas dos últimos N meses")
-async def list_goals(pixel_id: str, months: int = 6):
+def list_goals(pixel_id: str, months: int = 6):
     sb = get_supabase()
     client = sb.table("clients").select("id").eq("pixel_id", pixel_id).limit(1).execute()
     if not (client and client.data):
@@ -118,7 +118,7 @@ class PersistentGoalsPayload(BaseModel):
 
 
 @router.get("/clients/{pixel_id}/goals", summary="Metas persistentes do cliente")
-async def get_persistent_goals(pixel_id: str):
+def get_persistent_goals(pixel_id: str):
     sb = get_supabase()
     client = (
         sb.table("clients")
@@ -142,7 +142,7 @@ async def get_persistent_goals(pixel_id: str):
 
 
 @router.post("/clients/{pixel_id}/goals", summary="Salva metas persistentes do cliente")
-async def save_persistent_goals(pixel_id: str, body: PersistentGoalsPayload):
+def save_persistent_goals(pixel_id: str, body: PersistentGoalsPayload):
     sb = get_supabase()
     client = (
         sb.table("clients")
@@ -202,7 +202,7 @@ async def save_persistent_goals(pixel_id: str, body: PersistentGoalsPayload):
     summary="Month-to-date pacing vs goals",
     tags=["pacing"],
 )
-async def get_pacing(pixel_id: str):
+def get_pacing(pixel_id: str):
     sb = get_supabase()
     client = (
         sb.table("clients")

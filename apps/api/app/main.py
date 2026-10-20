@@ -503,7 +503,7 @@ if _static_dir.exists():
 
 
 @app.get("/p/t.js", include_in_schema=False)
-async def tracker_js_adblock_alias():
+def tracker_js_adblock_alias():
     """
     Anti-adblock alias for /static/tracker.js.
     Served under a neutral path so EasyPrivacy's ||*/tracker.js$script rule
@@ -567,7 +567,7 @@ app.include_router(public_api_router)
 
 # ── CNAME verify echo (root-level — called via customer's CNAME) ─────────────
 @app.get("/_verify/{secret}", include_in_schema=False)
-async def cname_verify_echo(secret: str):
+def cname_verify_echo(secret: str):
     """
     Echoes the secret in plain text. Used to verify that a customer's
     CNAME (track.cliente.com) is correctly routing to our infrastructure.
@@ -578,7 +578,7 @@ async def cname_verify_echo(secret: str):
 
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health", tags=["meta"])
-async def health_check():
+def health_check():
     from .database import get_supabase
     db_status = "ok"
     db_error = None

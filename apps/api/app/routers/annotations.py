@@ -27,7 +27,7 @@ class AnnotationBody(BaseModel):
 
 
 @router.get("/{pixel_id}", summary="Lista anotações da timeline")
-async def list_annotations(pixel_id: str, start: Optional[str] = None, end: Optional[str] = None):
+def list_annotations(pixel_id: str, start: Optional[str] = None, end: Optional[str] = None):
     cid = _resolve(pixel_id)
     if not cid:
         raise HTTPException(404, "client not found")
@@ -42,7 +42,7 @@ async def list_annotations(pixel_id: str, start: Optional[str] = None, end: Opti
 
 
 @router.post("/{pixel_id}", summary="Cria uma anotação")
-async def create_annotation(pixel_id: str, body: AnnotationBody):
+def create_annotation(pixel_id: str, body: AnnotationBody):
     cid = _resolve(pixel_id)
     if not cid:
         raise HTTPException(404, "client not found")
@@ -57,7 +57,7 @@ async def create_annotation(pixel_id: str, body: AnnotationBody):
 
 
 @router.delete("/{pixel_id}/{annotation_id}", summary="Remove uma anotação")
-async def delete_annotation(pixel_id: str, annotation_id: str):
+def delete_annotation(pixel_id: str, annotation_id: str):
     cid = _resolve(pixel_id)
     if not cid:
         raise HTTPException(404, "client not found")

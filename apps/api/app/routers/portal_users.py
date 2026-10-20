@@ -52,7 +52,7 @@ class PasswordBody(BaseModel):
 
 
 @router.get("/{pixel_id}")
-async def list_portal_users(pixel_id: str):
+def list_portal_users(pixel_id: str):
     _get_pixel(pixel_id)
     sb = get_supabase()
     rows = sb.table("client_users").select("id, email, role, created_at").eq("pixel_id", pixel_id).order("created_at").execute()
@@ -60,7 +60,7 @@ async def list_portal_users(pixel_id: str):
 
 
 @router.post("/{pixel_id}", status_code=201)
-async def create_portal_user(pixel_id: str, body: CreateUserBody):
+def create_portal_user(pixel_id: str, body: CreateUserBody):
     _get_pixel(pixel_id)
     email = body.email.strip().lower()
     password = body.password
@@ -119,7 +119,7 @@ async def create_portal_user(pixel_id: str, body: CreateUserBody):
 
 
 @router.patch("/{pixel_id}/{email}/password")
-async def reset_portal_password(pixel_id: str, email: str, body: PasswordBody):
+def reset_portal_password(pixel_id: str, email: str, body: PasswordBody):
     _get_pixel(pixel_id)
     email = email.strip().lower()
 
@@ -154,7 +154,7 @@ async def reset_portal_password(pixel_id: str, email: str, body: PasswordBody):
 
 
 @router.delete("/{pixel_id}/{email}")
-async def remove_portal_user(pixel_id: str, email: str):
+def remove_portal_user(pixel_id: str, email: str):
     _get_pixel(pixel_id)
     email = email.strip().lower()
     sb = get_supabase()

@@ -36,7 +36,7 @@ def _resolve_client_uuid(pixel_id: str) -> str:
 
 
 @router.get("/{pixel_id}/status", summary="Get sync status for all audience types")
-async def get_audience_status(pixel_id: str):
+def get_audience_status(pixel_id: str):
     """Return sync status for all 5 audience types."""
     row = _resolve_client_uuid(pixel_id)
     status = meta_audiences.get_sync_status(row["id"])
@@ -44,7 +44,7 @@ async def get_audience_status(pixel_id: str):
 
 
 @router.post("/{pixel_id}/sync", summary="Trigger sync for all audience types")
-async def sync_all(pixel_id: str, background_tasks: BackgroundTasks):
+def sync_all(pixel_id: str, background_tasks: BackgroundTasks):
     """
     Trigger a full sync of all 5 audience types to Meta.
     Runs in background — returns immediately.
@@ -70,7 +70,7 @@ async def sync_all(pixel_id: str, background_tasks: BackgroundTasks):
 
 
 @router.post("/{pixel_id}/sync/{audience_type}", summary="Trigger sync for one audience type")
-async def sync_one(pixel_id: str, audience_type: str, background_tasks: BackgroundTasks):
+def sync_one(pixel_id: str, audience_type: str, background_tasks: BackgroundTasks):
     """
     Trigger sync for a single audience type.
     audience_type: high_ltv | cart_abandoners | recent_buyers | top_customers | inactive

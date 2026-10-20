@@ -274,7 +274,7 @@ def require_tracking_write() -> Callable:
 
     The `client_id` path parameter is injected by FastAPI automatically.
     """
-    async def _dep(client_id: str, authorization: str = Header(default="")) -> AuthContext:
+    def _dep(client_id: str, authorization: str = Header(default="")) -> AuthContext:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token:
             raise HTTPException(

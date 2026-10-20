@@ -116,7 +116,7 @@ class PipelineRunResponse(BaseModel):
     summary="[Admin] Trigger Core pipeline and return full audit (no secrets)",
     response_model=PipelineRunResponse,
 )
-async def trigger_pipeline_run(
+def trigger_pipeline_run(
     body: PipelineRunRequest,
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
 ) -> PipelineRunResponse:
@@ -265,7 +265,7 @@ async def trigger_pipeline_run(
     summary="[Admin] Read latest snapshot + data_sources state without re-running",
     response_model=dict,
 )
-async def pipeline_audit(
+def pipeline_audit(
     client_id: str = Query(...),
     period_start: Optional[str] = Query(None),
     period_end: Optional[str] = Query(None),
@@ -373,7 +373,7 @@ class NotionSyncStatusOut(BaseModel):
     response_model=NotionSyncTaskOut,
     summary="[Admin] Manually push one Core task to Notion",
 )
-async def admin_notion_sync_task(
+def admin_notion_sync_task(
     task_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
 ) -> NotionSyncTaskOut:
@@ -398,7 +398,7 @@ async def admin_notion_sync_task(
     response_model=NotionSyncPendingOut,
     summary="[Admin] Sync all pending Core tasks to Notion (batch, max 50)",
 )
-async def admin_notion_sync_pending(
+def admin_notion_sync_pending(
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
     limit: int = Query(default=50, ge=1, le=200),
 ) -> NotionSyncPendingOut:
@@ -423,7 +423,7 @@ async def admin_notion_sync_pending(
     response_model=NotionSyncStatusOut,
     summary="[Admin] Notion sync health overview — counts by sync_state",
 )
-async def admin_notion_sync_status(
+def admin_notion_sync_status(
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
 ) -> NotionSyncStatusOut:
     from ...database import get_supabase

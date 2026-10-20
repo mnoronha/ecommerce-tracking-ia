@@ -72,7 +72,7 @@ class IngestPayload(BaseModel):
     summary="Ingest a norolabs-report-contract-v1 from Hermes / Agency OS",
     status_code=200,
 )
-async def ingest_report_contract(
+def ingest_report_contract(
     payload: IngestPayload,
     authorization: str = Header(default=""),
 ):
@@ -178,7 +178,7 @@ class OperationsPayload(BaseModel):
 
 
 @router.post("/ingest/operations-contract", summary="Store canonical Hermes operational evidence without recalculating or executing", status_code=200)
-async def ingest_operations_contract(payload: OperationsPayload, authorization: str = Header(default="")):
+def ingest_operations_contract(payload: OperationsPayload, authorization: str = Header(default="")):
     _require_ingest_key(authorization)
     contract = payload.contract
     errors = sorted(OPERATIONS_VALIDATOR.iter_errors(contract), key=lambda error: str(list(error.path)))

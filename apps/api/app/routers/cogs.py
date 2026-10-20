@@ -48,7 +48,7 @@ class CogsRow(BaseModel):
 
 
 @router.get("/cogs/{pixel_id}", tags=["cogs"])
-async def list_cogs(pixel_id: str, limit: int = 500):
+def list_cogs(pixel_id: str, limit: int = 500):
     client_uuid = _resolve_client(pixel_id)
     sb = get_supabase()
     rows = (
@@ -63,7 +63,7 @@ async def list_cogs(pixel_id: str, limit: int = 500):
 
 
 @router.post("/cogs/{pixel_id}/import", tags=["cogs"])
-async def import_cogs(
+def import_cogs(
     pixel_id: str,
     body: dict = Body(..., description="Either {csv: '...'} or {rows: [...]}"),
 ):
@@ -142,7 +142,7 @@ async def import_cogs(
 
 
 @router.delete("/cogs/{pixel_id}/{cost_id}", tags=["cogs"])
-async def delete_cogs(pixel_id: str, cost_id: str):
+def delete_cogs(pixel_id: str, cost_id: str):
     client_uuid = _resolve_client(pixel_id)
     sb = get_supabase()
     sb.table("product_costs").delete().eq("client_id", client_uuid).eq("id", cost_id).execute()
@@ -150,7 +150,7 @@ async def delete_cogs(pixel_id: str, cost_id: str):
 
 
 @router.post("/cogs/{pixel_id}/recompute", tags=["cogs"])
-async def recompute_margins(
+def recompute_margins(
     pixel_id: str,
     background_tasks: BackgroundTasks,
     days: int = 365,
@@ -166,7 +166,7 @@ async def recompute_margins(
 
 
 @router.post("/cogs/{pixel_id}/backfill-items", tags=["cogs"])
-async def backfill_items(pixel_id: str, days: int = 365):
+def backfill_items(pixel_id: str, days: int = 365):
     """
     Backfill order_items from historical events. Required after a fresh
     install (or any time we changed the items pipeline) so that the
@@ -180,7 +180,7 @@ async def backfill_items(pixel_id: str, days: int = 365):
 
 
 @router.get("/cogs/{pixel_id}/coverage", tags=["cogs"])
-async def coverage_report(pixel_id: str, days: int = 30):
+def coverage_report(pixel_id: str, days: int = 30):
     """
     What % of orders / revenue has COGS data registered? Helps the merchant
     know if their import is complete enough to trust margin reports.

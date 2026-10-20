@@ -17,7 +17,7 @@ router = APIRouter(prefix="/insights", tags=["insights"])
 
 
 @router.post("/{pixel_id}/generate")
-async def generate_insights(pixel_id: str, background_tasks: BackgroundTasks):
+def generate_insights(pixel_id: str, background_tasks: BackgroundTasks):
     """
     Dispara geração de insights via Claude para o cliente.
     Retorna imediatamente com status 'queued'; processamento roda em background.
@@ -39,7 +39,7 @@ def _run_analysis(pixel_id: str, client_uuid: str) -> None:
 
 
 @router.get("/{pixel_id}")
-async def get_insights(
+def get_insights(
     pixel_id: str,
     limit: int = 10,
     offset: int = 0,
@@ -76,7 +76,7 @@ async def get_insights(
 
 
 @router.get("/{pixel_id}/report-history", summary="Histórico de relatórios enviados (versionamento)")
-async def report_history(pixel_id: str, limit: int = 20):
+def report_history(pixel_id: str, limit: int = 20):
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:
         raise HTTPException(status_code=404, detail="cliente não encontrado")
@@ -92,7 +92,7 @@ async def report_history(pixel_id: str, limit: int = 20):
 
 
 @router.get("/{pixel_id}/report-history/{report_id}", summary="Conteúdo de um relatório versionado")
-async def report_detail(pixel_id: str, report_id: str):
+def report_detail(pixel_id: str, report_id: str):
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:
         raise HTTPException(status_code=404, detail="cliente não encontrado")
@@ -107,7 +107,7 @@ async def report_detail(pixel_id: str, report_id: str):
 
 
 @router.get("/{pixel_id}/funnel")
-async def get_funnel(
+def get_funnel(
     pixel_id: str,
     days: int = 30,
     start: str | None = None,
@@ -180,7 +180,7 @@ async def get_funnel(
 
 
 @router.post("/{pixel_id}/test-alert")
-async def test_alert(pixel_id: str):
+def test_alert(pixel_id: str):
     """Envia alerta de teste para o Slack webhook configurado no cliente."""
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:
@@ -212,7 +212,7 @@ class ReportRequest(BaseModel):
 
 
 @router.post("/{pixel_id}/report", summary="Gera insights + envia relatório por email")
-async def send_report(pixel_id: str, body: ReportRequest | None = None, background_tasks: BackgroundTasks = None):
+def send_report(pixel_id: str, body: ReportRequest | None = None, background_tasks: BackgroundTasks = None):
     """
     Generates fresh Claude insights (if none recent) and sends the requested
     report email. Uses the client's alert_email unless overridden in the body.
@@ -272,7 +272,7 @@ class SpendBackfillRequest(BaseModel):
 
 
 @router.post("/{pixel_id}/spend-backfill", summary="Importa histórico de investimento Meta + Google")
-async def spend_backfill(pixel_id: str, body: SpendBackfillRequest, background_tasks: BackgroundTasks):
+def spend_backfill(pixel_id: str, body: SpendBackfillRequest, background_tasks: BackgroundTasks):
     """
     Busca o investimento diário real nas APIs da Meta e Google para cada dia do período
     e upserta na tabela ad_spend. Útil para preencher dados históricos faltantes.
@@ -307,7 +307,7 @@ async def spend_backfill(pixel_id: str, body: SpendBackfillRequest, background_t
 
 
 @router.get("/{pixel_id}/spend-test")
-async def spend_api_test(pixel_id: str):
+def spend_api_test(pixel_id: str):
     """
     Diagnóstico síncrono: chama as APIs de TikTok e Pinterest e retorna resposta bruta.
     Útil para debugar falhas de permissão/token no spend sync.
@@ -385,7 +385,7 @@ async def spend_api_test(pixel_id: str):
 
 
 @router.get("/{pixel_id}/campaign-products")
-async def get_campaign_products(
+def get_campaign_products(
     pixel_id: str,
     start: str,
     end: str,
@@ -514,7 +514,7 @@ async def get_campaign_products(
 
 
 @router.patch("/{pixel_id}/{insight_id}/read")
-async def mark_as_read(pixel_id: str, insight_id: str):
+def mark_as_read(pixel_id: str, insight_id: str):
     """Marca um insight como lido."""
     client_uuid = resolve_client_uuid(pixel_id)
     if not client_uuid:

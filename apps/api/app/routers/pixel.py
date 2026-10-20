@@ -291,7 +291,7 @@ def _dispatch_pixel_capi(client_pixel_id: str, event: NormalizedEvent) -> None:
 )
 @router.post("/p/e", include_in_schema=False)
 @limiter.limit("100/minute")
-async def receive_pixel_event(
+def receive_pixel_event(
     request: Request,
     body: PixelEventRequest,
     background_tasks: BackgroundTasks,
@@ -391,7 +391,7 @@ async def receive_pixel_event(
     response_class=Response,
 )
 @router.get("/p/e", include_in_schema=False, response_class=Response)
-async def pixel_image_fallback(
+def pixel_image_fallback(
     request: Request,
     cid: str = "",
     et: str = "pageview",

@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from ..config import settings
 from ..database import get_supabase
@@ -31,7 +32,7 @@ ADAPTERS = {
 _OFFLINE_SOURCE_NAMES = {"pos", "shopify_draft_order"}
 
 
-async def _get_client_secret(client_id: str, platform: str) -> str:
+def _get_client_secret(client_id: str, platform: str) -> str:
     secret_column = {
         "shopify":     "shopify_webhook_secret",
         "woocommerce": "woo_webhook_secret",
@@ -795,7 +796,22 @@ async def receive_webhook(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Request body is not valid JSON")
 
-    secret = await _get_client_secret(client_id, platform)
+    # Everything below does blocking Supabase I/O. Run it in the threadpool so a
+    # webhook never stalls the event loop (Shopify retries after 5 s without a 2xx).
+    return await run_in_threadpool(
+        _process_webhook, platform, client_id, raw_body, payload_dict, headers, background_tasks,
+    )
+
+
+def _process_webhook(
+    platform: str,
+    client_id: str,
+    raw_body: bytes,
+    payload_dict: dict,
+    headers: dict,
+    background_tasks: BackgroundTasks,
+):
+    secret = _get_client_secret(client_id, platform)
 
     try:
         event = ADAPTERS[platform].process(

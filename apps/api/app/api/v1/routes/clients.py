@@ -139,7 +139,7 @@ def _get_client_or_404(client_id: str) -> dict:
 # ── List ────────────────────────────────────────────────────────────────────
 
 @router.get("")
-async def list_clients(
+def list_clients(
     request: Request,
     key: ApiKey,
     status: str = Query("active", enum=["active", "paused", "archived", "all"]),
@@ -191,7 +191,7 @@ async def list_clients(
 # ── Detail ──────────────────────────────────────────────────────────────────
 
 @router.get("/{client_id}")
-async def get_client(request: Request, client_id: str, key: ApiKey):
+def get_client(request: Request, client_id: str, key: ApiKey):
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
     key.assert_client_scope(client_id)
@@ -213,7 +213,7 @@ class CreateClientRequest(BaseModel):
 
 
 @router.post("", status_code=201)
-async def create_client(request: Request, key: ApiKey, body: CreateClientRequest):
+def create_client(request: Request, key: ApiKey, body: CreateClientRequest):
     key.assert_write()
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
@@ -258,7 +258,7 @@ class PatchClientRequest(BaseModel):
 
 
 @router.patch("/{client_id}")
-async def patch_client(request: Request, client_id: str, key: ApiKey, body: PatchClientRequest):
+def patch_client(request: Request, client_id: str, key: ApiKey, body: PatchClientRequest):
     key.assert_write()
     key.assert_client_scope(client_id)
     req_id = get_request_id(request)
@@ -297,7 +297,7 @@ async def patch_client(request: Request, client_id: str, key: ApiKey, body: Patc
 # ── Archive (soft delete) ────────────────────────────────────────────────────
 
 @router.delete("/{client_id}", status_code=204)
-async def archive_client(request: Request, client_id: str, key: ApiKey):
+def archive_client(request: Request, client_id: str, key: ApiKey):
     key.assert_write()
     key.assert_client_scope(client_id)
     _get_client_or_404(client_id)

@@ -72,7 +72,7 @@ def _get_or_create_kb(client_id: str) -> dict:
 # ── Knowledge Base ────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/knowledge-base")
-async def get_knowledge_base(pixel_id: str):
+def get_knowledge_base(pixel_id: str):
     c  = _get_client(pixel_id)
     kb = _get_or_create_kb(c["id"])
     doc_count = (
@@ -98,7 +98,7 @@ class KBUpdatePayload(BaseModel):
 
 
 @router.put("/{pixel_id}/knowledge-base")
-async def update_knowledge_base(pixel_id: str, body: KBUpdatePayload):
+def update_knowledge_base(pixel_id: str, body: KBUpdatePayload):
     c  = _get_client(pixel_id)
     kb = _get_or_create_kb(c["id"])
     patch = {k: v for k, v in body.model_dump(exclude_none=True).items()}
@@ -110,7 +110,7 @@ async def update_knowledge_base(pixel_id: str, body: KBUpdatePayload):
 # ── Documents ────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/documents")
-async def list_documents(
+def list_documents(
     pixel_id: str,
     category: Optional[str] = Query(None),
     status:   Optional[str] = Query(None),
@@ -146,7 +146,7 @@ class DocumentPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/documents")
-async def create_document(pixel_id: str, body: DocumentPayload, bg: BackgroundTasks):
+def create_document(pixel_id: str, body: DocumentPayload, bg: BackgroundTasks):
     c  = _get_client(pixel_id)
     kb = _get_or_create_kb(c["id"])
     sb = get_supabase()
@@ -238,7 +238,7 @@ async def upload_document(
 
 
 @router.get("/{pixel_id}/documents/{doc_id}/status")
-async def document_status(pixel_id: str, doc_id: str):
+def document_status(pixel_id: str, doc_id: str):
     """Retorna status de processamento do documento (para polling de progresso)."""
     _get_client(pixel_id)
     rows = (
@@ -255,14 +255,14 @@ async def document_status(pixel_id: str, doc_id: str):
 
 
 @router.post("/{pixel_id}/documents/{doc_id}/index")
-async def reindex_document(pixel_id: str, doc_id: str, bg: BackgroundTasks):
+def reindex_document(pixel_id: str, doc_id: str, bg: BackgroundTasks):
     _get_client(pixel_id)
     bg.add_task(rag_indexer.index_document, doc_id)
     return {"ok": True, "message": "indexação iniciada em background"}
 
 
 @router.delete("/{pixel_id}/documents/{doc_id}")
-async def deactivate_document(pixel_id: str, doc_id: str):
+def deactivate_document(pixel_id: str, doc_id: str):
     _get_client(pixel_id)
     get_supabase().table("rag_documents").update({
         "is_active":   False,
@@ -274,7 +274,7 @@ async def deactivate_document(pixel_id: str, doc_id: str):
 # ── Briefings ─────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/briefings")
-async def list_briefings(
+def list_briefings(
     pixel_id: str,
     status:       Optional[str] = Query(None),
     content_type: Optional[str] = Query(None),
@@ -313,7 +313,7 @@ class BriefingPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/briefings")
-async def create_briefing(pixel_id: str, body: BriefingPayload):
+def create_briefing(pixel_id: str, body: BriefingPayload):
     c  = _get_client(pixel_id)
     row = (
         get_supabase().table("content_briefings").insert({
@@ -325,7 +325,7 @@ async def create_briefing(pixel_id: str, body: BriefingPayload):
 
 
 @router.get("/{pixel_id}/briefings/{briefing_id}")
-async def get_briefing(pixel_id: str, briefing_id: str):
+def get_briefing(pixel_id: str, briefing_id: str):
     _get_client(pixel_id)
     rows = get_supabase().table("content_briefings").select("*").eq("id", briefing_id).limit(1).execute().data
     if not rows:
@@ -334,7 +334,7 @@ async def get_briefing(pixel_id: str, briefing_id: str):
 
 
 @router.patch("/{pixel_id}/briefings/{briefing_id}")
-async def update_briefing(pixel_id: str, briefing_id: str, body: dict):
+def update_briefing(pixel_id: str, briefing_id: str, body: dict):
     _get_client(pixel_id)
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     get_supabase().table("content_briefings").update(body).eq("id", briefing_id).execute()
@@ -342,7 +342,7 @@ async def update_briefing(pixel_id: str, briefing_id: str, body: dict):
 
 
 @router.post("/{pixel_id}/briefings/{briefing_id}/generate")
-async def generate_from_briefing(pixel_id: str, briefing_id: str, bg: BackgroundTasks):
+def generate_from_briefing(pixel_id: str, briefing_id: str, bg: BackgroundTasks):
     _get_client(pixel_id)
     bg.add_task(content_generator.generate_piece, briefing_id)
     return {"ok": True, "message": "geração iniciada em background"}
@@ -351,7 +351,7 @@ async def generate_from_briefing(pixel_id: str, briefing_id: str, bg: Background
 # ── Pieces ────────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/pieces")
-async def list_pieces(
+def list_pieces(
     pixel_id:    str,
     status:      Optional[str] = Query(None),
     briefing_id: Optional[str] = Query(None),
@@ -375,7 +375,7 @@ async def list_pieces(
 
 
 @router.get("/{pixel_id}/pieces/{piece_id}")
-async def get_piece(pixel_id: str, piece_id: str):
+def get_piece(pixel_id: str, piece_id: str):
     _get_client(pixel_id)
     sb = get_supabase()
     piece_rows = sb.table("content_pieces").select("*").eq("id", piece_id).limit(1).execute().data
@@ -412,7 +412,7 @@ class HumanVersionPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/pieces/{piece_id}/versions")
-async def save_human_edit(pixel_id: str, piece_id: str, body: HumanVersionPayload):
+def save_human_edit(pixel_id: str, piece_id: str, body: HumanVersionPayload):
     _get_client(pixel_id)
     sb = get_supabase()
     piece_rows = sb.table("content_pieces").select("client_id,current_version").eq("id", piece_id).limit(1).execute().data
@@ -447,7 +447,7 @@ async def save_human_edit(pixel_id: str, piece_id: str, body: HumanVersionPayloa
 
 
 @router.patch("/{pixel_id}/pieces/{piece_id}")
-async def update_piece(pixel_id: str, piece_id: str, body: dict):
+def update_piece(pixel_id: str, piece_id: str, body: dict):
     _get_client(pixel_id)
     body["updated_at"] = datetime.now(timezone.utc).isoformat()
     get_supabase().table("content_pieces").update(body).eq("id", piece_id).execute()
@@ -455,7 +455,7 @@ async def update_piece(pixel_id: str, piece_id: str, body: dict):
 
 
 @router.post("/{pixel_id}/pieces/{piece_id}/regen")
-async def regen_piece(pixel_id: str, piece_id: str, bg: BackgroundTasks):
+def regen_piece(pixel_id: str, piece_id: str, bg: BackgroundTasks):
     """Regenera uma peça existente a partir do mesmo briefing (nova versão IA)."""
     _get_client(pixel_id)
     sb = get_supabase()
@@ -468,7 +468,7 @@ async def regen_piece(pixel_id: str, piece_id: str, bg: BackgroundTasks):
 
 
 @router.post("/{pixel_id}/pieces/{piece_id}/factcheck")
-async def trigger_factcheck(pixel_id: str, piece_id: str, bg: BackgroundTasks):
+def trigger_factcheck(pixel_id: str, piece_id: str, bg: BackgroundTasks):
     """Dispara fact-check da versão mais recente em background."""
     _get_client(pixel_id)
     sb = get_supabase()
@@ -495,7 +495,7 @@ class SendApprovalPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/pieces/{piece_id}/send-for-approval")
-async def send_for_approval(pixel_id: str, piece_id: str, body: SendApprovalPayload):
+def send_for_approval(pixel_id: str, piece_id: str, body: SendApprovalPayload):
     c      = _get_client(pixel_id)
     result = content_approval.send_for_approval(
         piece_id=piece_id,
@@ -510,7 +510,7 @@ async def send_for_approval(pixel_id: str, piece_id: str, body: SendApprovalPayl
 
 
 @router.get("/{pixel_id}/approvals")
-async def list_approvals(
+def list_approvals(
     pixel_id: str,
     status:   Optional[str] = Query(None),
     page:     int = Query(1, ge=1),
@@ -544,7 +544,7 @@ async def list_approvals(
 
 
 @router.get("/{pixel_id}/pieces/{piece_id}/factcheck")
-async def get_factcheck(pixel_id: str, piece_id: str):
+def get_factcheck(pixel_id: str, piece_id: str):
     _get_client(pixel_id)
     rows = (
         get_supabase()
@@ -563,7 +563,7 @@ async def get_factcheck(pixel_id: str, piece_id: str):
 # ── Pautas ───────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/pautas")
-async def list_pautas(pixel_id: str, status: Optional[str] = Query(None)):
+def list_pautas(pixel_id: str, status: Optional[str] = Query(None)):
     c  = _get_client(pixel_id)
     q  = get_supabase().table("content_pautas").select("*").eq("client_id", c["id"])
     if status:
@@ -577,7 +577,7 @@ class PautaPayload(BaseModel):
 
 
 @router.post("/{pixel_id}/pautas")
-async def create_pauta(pixel_id: str, body: PautaPayload):
+def create_pauta(pixel_id: str, body: PautaPayload):
     c   = _get_client(pixel_id)
     row = (
         get_supabase().table("content_pautas").insert({
@@ -592,7 +592,7 @@ async def create_pauta(pixel_id: str, body: PautaPayload):
 # ── AI Cost Summary ───────────────────────────────────────────────────────────
 
 @router.get("/costs")
-async def get_ai_costs(days: int = Query(30, ge=7, le=90)):
+def get_ai_costs(days: int = Query(30, ge=7, le=90)):
     sb   = get_supabase()
     from datetime import date, timedelta
     since = (date.today() - timedelta(days=days)).isoformat()
@@ -626,7 +626,7 @@ async def get_ai_costs(days: int = Query(30, ge=7, le=90)):
 # ── Public Approval ───────────────────────────────────────────────────────────
 
 @router.get("/approve/{token}")
-async def get_approval_page(token: str):
+def get_approval_page(token: str):
     sb   = get_supabase()
     rows = sb.table("content_approvals").select("*").eq("approval_link_token", token).limit(1).execute().data
     if not rows:
@@ -680,7 +680,7 @@ class ApprovalResponse(BaseModel):
 
 
 @router.post("/approve/{token}")
-async def respond_approval(token: str, body: ApprovalResponse, bg: BackgroundTasks):
+def respond_approval(token: str, body: ApprovalResponse, bg: BackgroundTasks):
     sb   = get_supabase()
     rows = (
         sb.table("content_approvals")

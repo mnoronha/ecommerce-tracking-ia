@@ -276,7 +276,7 @@ def _resolve_slug(pixel_id: str) -> Optional[str]:
     summary="List active clients with business_model, timezone and currency",
     response_model=list[ClientOut],
 )
-async def list_clients(
+def list_clients(
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> list[ClientOut]:
     try:
@@ -311,7 +311,7 @@ async def list_clients(
     summary="Client Truth and Target Truth — current versions",
     response_model=TruthOut,
 )
-async def get_client_truth(
+def get_client_truth(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> TruthOut:
@@ -354,7 +354,7 @@ async def get_client_truth(
     summary="Target Truth — current version enriched with period audit",
     response_model=TargetTruthReadOut,
 )
-async def get_target_truth(
+def get_target_truth(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> TargetTruthReadOut:
@@ -408,7 +408,7 @@ async def get_target_truth(
     summary="Merge-patch Target Truth (append-only versioning)",
     response_model=TargetTruthWriteOut,
 )
-async def put_target_truth(
+def put_target_truth(
     client_id: str,
     body: TargetTruthPatch,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
@@ -603,7 +603,7 @@ def _parse_dt_safe(v: Optional[str]) -> Optional[datetime]:
     summary="Data Health by domain with source_state and derived statuses",
     response_model=DataHealthOut,
 )
-async def get_client_health(
+def get_client_health(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> DataHealthOut:
@@ -662,7 +662,7 @@ async def get_client_health(
     summary="Last collection, certification, alert evaluation, notion sync and report",
     response_model=PipelineHealthOut,
 )
-async def get_pipeline_health(
+def get_pipeline_health(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
 ) -> PipelineHealthOut:
@@ -743,7 +743,7 @@ async def get_pipeline_health(
     summary="Metric contract — live or certified view",
     response_model=MetricContract,
 )
-async def get_metrics(
+def get_metrics(
     client_id: str,
     period: Optional[str] = Query(None, description="YYYY-MM-DD:YYYY-MM-DD"),
     grain: Optional[str] = Query("day"),
@@ -840,7 +840,7 @@ async def get_metrics(
     summary="Campaign-level performance rows (P3 — Wave 1)",
     response_model=EntityPerformanceOut,
 )
-async def get_entity_performance(
+def get_entity_performance(
     client_id: str,
     period_start: str = Query(..., description="YYYY-MM-DD"),
     period_end: str   = Query(..., description="YYYY-MM-DD"),
@@ -984,7 +984,7 @@ def _change_row_to_out(row: dict) -> ChangeOut:
     summary="Change log for a client",
     response_model=list[ChangeOut],
 )
-async def get_changes(
+def get_changes(
     client_id: str,
     since: Optional[str] = Query(None, description="ISO-8601 datetime filter (occurred_at >=)"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
@@ -1015,7 +1015,7 @@ async def get_changes(
     summary="Recommendations and their current status",
     response_model=list[RecommendationOut],
 )
-async def get_recommendations(
+def get_recommendations(
     client_id: str,
     status: Optional[str] = Query(None, description="PROPOSED | ACCEPTED | REJECTED | DEFERRED | EXECUTED"),
     limit: int = Query(50, ge=1, le=200),
@@ -1098,7 +1098,7 @@ def _load_truth_versions(client_id: str) -> TruthVersions:
     summary="Report contracts from legacy agency_report_contracts (CCR-013 compatibility adapter)",
     response_model=list[CoreReportContractOut],
 )
-async def get_report_contracts(
+def get_report_contracts(
     client_id: str,
     report_type: Optional[str] = Query(None, pattern="^(WEEKLY|MONTHLY)$"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
@@ -1240,7 +1240,7 @@ def _narrative_row_to_out(
     summary="Report narratives; client_viewer sees only PUBLISHED",
     response_model=list[ReportNarrativeOut],
 )
-async def get_reports(
+def get_reports(
     client_id: str,
     status: Optional[str] = Query(None, description="Filter by lifecycle status"),
     report_type: Optional[str] = Query(None, pattern="^(WEEKLY|MONTHLY)$"),
@@ -1297,7 +1297,7 @@ async def get_reports(
     summary="Single report narrative by ID",
     response_model=ReportNarrativeOut,
 )
-async def get_report_narrative(
+def get_report_narrative(
     narrative_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> ReportNarrativeOut:
@@ -1484,7 +1484,7 @@ def _is_valid_uuid(value: str) -> bool:
     summary="Core operational alerts for a specific client",
     response_model=list[AlertOut],
 )
-async def get_client_alerts(
+def get_client_alerts(
     client_id: str,
     status: Optional[str] = Query("open", description="OPEN | ACKNOWLEDGED | RESOLVED"),
     limit: int = Query(50, ge=1, le=200),
@@ -1523,7 +1523,7 @@ async def get_client_alerts(
     summary="Core operational alerts — all clients or filtered",
     response_model=list[AlertOut],
 )
-async def list_alerts(
+def list_alerts(
     status: Optional[str] = Query(
         "open",
         description="Alert status filter: OPEN | ACKNOWLEDGED | RESOLVED",
@@ -1569,7 +1569,7 @@ async def list_alerts(
     summary="Single alert by ID",
     response_model=AlertOut,
 )
-async def get_alert_by_id(
+def get_alert_by_id(
     alert_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> AlertOut:
@@ -1602,7 +1602,7 @@ async def get_alert_by_id(
     summary="Full context package for a single alert (for Hermes diagnosis)",
     response_model=AlertContext,
 )
-async def get_alert_context(
+def get_alert_context(
     alert_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> AlertContext:
@@ -1684,7 +1684,7 @@ async def get_alert_context(
     summary="Agency dashboard — per-client aggregates via get_agency_dashboard RPC",
     response_model=list[dict],
 )
-async def get_agency_dashboard_summary(
+def get_agency_dashboard_summary(
     agency_id: str = Query(..., description="Agency UUID"),
     days: int = Query(30, ge=1, le=90),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
@@ -1708,7 +1708,7 @@ async def get_agency_dashboard_summary(
     summary="Alert rule recalibration suggestions pending review",
     response_model=list[AlertRuleSuggestionOut],
 )
-async def list_alert_rule_suggestions(
+def list_alert_rule_suggestions(
     status: Optional[str] = Query("PENDING"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[AlertRuleSuggestionOut]:
@@ -1722,7 +1722,7 @@ async def list_alert_rule_suggestions(
     summary="API, database, scheduler, queues and stuck jobs",
     response_model=SystemHealthOut,
 )
-async def system_health(
+def system_health(
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> SystemHealthOut:
     from ...core.scheduler_registry import get_job_runs, get_scheduler
@@ -1868,7 +1868,7 @@ async def system_health(
     summary="Telegram env var presence/length — never exposes secret values",
     response_model=NotificationsConfigOut,
 )
-async def system_notifications_config(
+def system_notifications_config(
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> NotificationsConfigOut:
     import os
@@ -1919,7 +1919,7 @@ def _job_row_to_out(row: dict) -> JobOut:
     summary="List recent job executions",
     response_model=list[JobOut],
 )
-async def list_jobs(
+def list_jobs(
     status: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)] = None,
@@ -1942,7 +1942,7 @@ async def list_jobs(
     summary="Single job execution detail",
     response_model=JobOut,
 )
-async def get_job(
+def get_job(
     job_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)] = None,
 ) -> JobOut:
@@ -1964,7 +1964,7 @@ async def get_job(
     summary="Diagnoses linked to an alert (FK: core_diagnoses.alert_id)",
     response_model=list[DiagnosisOut],
 )
-async def get_alert_diagnoses(
+def get_alert_diagnoses(
     alert_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[DiagnosisOut]:
@@ -1992,7 +1992,7 @@ async def get_alert_diagnoses(
     summary="Single diagnosis by ID",
     response_model=DiagnosisOut,
 )
-async def get_diagnosis(
+def get_diagnosis(
     diagnosis_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> DiagnosisOut:
@@ -2021,7 +2021,7 @@ async def get_diagnosis(
     summary="Recommendations linked to a diagnosis (FK: core_recommendations.diagnosis_id)",
     response_model=list[RecommendationOut],
 )
-async def get_diagnosis_recommendations(
+def get_diagnosis_recommendations(
     diagnosis_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[RecommendationOut]:
@@ -2049,7 +2049,7 @@ async def get_diagnosis_recommendations(
     summary="Single recommendation by ID",
     response_model=RecommendationOut,
 )
-async def get_recommendation(
+def get_recommendation(
     recommendation_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> RecommendationOut:
@@ -2104,7 +2104,7 @@ _DECISION_TO_EVENT: dict[str, str] = {
     summary="Record a human decision on a recommendation (ACCEPTED / REJECTED / DEFERRED)",
     response_model=RecommendationOut,
 )
-async def decide_recommendation(
+def decide_recommendation(
     recommendation_id: str,
     body: RecommendationDecision,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -2199,7 +2199,7 @@ async def decide_recommendation(
     response_model=DiagnosisOut,
     status_code=201,
 )
-async def create_diagnosis_for_alert(
+def create_diagnosis_for_alert(
     alert_id: str,
     body: DiagnosisCreate,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -2273,7 +2273,7 @@ async def create_diagnosis_for_alert(
     response_model=RecommendationOut,
     status_code=201,
 )
-async def create_recommendation_for_diagnosis(
+def create_recommendation_for_diagnosis(
     diagnosis_id: str,
     body: RecommendationCreate,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -2354,7 +2354,7 @@ async def create_recommendation_for_diagnosis(
     response_model=ChangeOut,
     status_code=201,
 )
-async def create_change(
+def create_change(
     body: ChangeCreate,
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
@@ -2396,7 +2396,7 @@ async def create_change(
     summary="Action events for a recommendation",
     response_model=list[ActionEventOut],
 )
-async def get_recommendation_action_events(
+def get_recommendation_action_events(
     recommendation_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ActionEventOut]:
@@ -2424,7 +2424,7 @@ async def get_recommendation_action_events(
     summary="Flat action events list for a client (2-step: recommendations → events)",
     response_model=list[ActionEventOut],
 )
-async def get_client_action_events(
+def get_client_action_events(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ActionEventOut]:
@@ -2485,7 +2485,7 @@ def _action_event_row_to_out(row: dict) -> ActionEventOut:
     response_model=ActionEventOut,
     status_code=201,
 )
-async def create_action_event(
+def create_action_event(
     body: ActionEventCreate,
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_WRITE_ANY)] = None,
@@ -2517,7 +2517,7 @@ async def create_action_event(
     summary="Mark an alert as useful or noise (Hermes)",
     status_code=204,
 )
-async def create_alert_feedback(
+def create_alert_feedback(
     body: AlertFeedbackCreate,
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
@@ -2533,7 +2533,7 @@ async def create_alert_feedback(
     response_model=ReportNarrativeOut,
     status_code=201,
 )
-async def create_report_narrative(
+def create_report_narrative(
     body: ReportNarrativeCreate,
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
@@ -2599,7 +2599,7 @@ def _trigger_report_delivery(
     summary="Transition narrative lifecycle: DRAFT→READY_FOR_REVIEW→APPROVED→PUBLISHED",
     response_model=ReportNarrativeOut,
 )
-async def transition_narrative(
+def transition_narrative(
     narrative_id: str,
     body: NarrativeTransition,
     background_tasks: BackgroundTasks,
@@ -2719,7 +2719,7 @@ async def transition_narrative(
     summary="Outcomes measured for an action event",
     response_model=list[OutcomeOut],
 )
-async def get_action_event_outcomes(
+def get_action_event_outcomes(
     action_event_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[OutcomeOut]:
@@ -2776,7 +2776,7 @@ def _outcome_row_to_out(row: dict, reused: bool = False) -> OutcomeOut:
     response_model=OutcomeOut,
     status_code=201,
 )
-async def create_outcome(
+def create_outcome(
     body: OutcomeCreate,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
 ) -> OutcomeOut:
@@ -2852,7 +2852,7 @@ async def create_outcome(
     summary="Approve or reject a rule recalibration suggestion",
     response_model=AlertRuleSuggestionOut,
 )
-async def decide_alert_rule_suggestion(
+def decide_alert_rule_suggestion(
     suggestion_id: str,
     body: AlertRuleSuggestionDecision,
     idempotency_key: Optional[str] = Header(default=None, alias="idempotency-key"),
@@ -2912,7 +2912,7 @@ def _action_row_to_out(row: dict) -> ActionOut:
     response_model=ActionOut,
     status_code=201,
 )
-async def create_recommendation_action(
+def create_recommendation_action(
     recommendation_id: str,
     body: ActionCreate,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -2991,7 +2991,7 @@ async def create_recommendation_action(
     summary="List actions registered for a recommendation",
     response_model=list[ActionOut],
 )
-async def get_recommendation_actions(
+def get_recommendation_actions(
     recommendation_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ActionOut]:
@@ -3019,7 +3019,7 @@ async def get_recommendation_actions(
     summary="Single action by ID",
     response_model=ActionOut,
 )
-async def get_action(
+def get_action(
     action_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> ActionOut:
@@ -3043,7 +3043,7 @@ async def get_action(
     summary="Update action status (PLANNED→EXECUTED|FAILED|CANCELLED)",
     response_model=ActionOut,
 )
-async def update_action(
+def update_action(
     action_id: str,
     body: ActionUpdate,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
@@ -3158,7 +3158,7 @@ def _write_action_change_log(db, action: dict) -> None:
     summary="Outcome evaluation for an action",
     response_model=Optional[OutcomeOut],
 )
-async def get_action_outcome(
+def get_action_outcome(
     action_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> Optional[OutcomeOut]:
@@ -3189,7 +3189,7 @@ async def get_action_outcome(
     summary="Learning candidates for a client",
     response_model=list[LearningCandidateOut],
 )
-async def get_client_learning_candidates(
+def get_client_learning_candidates(
     client_id: str,
     status: Optional[str] = Query(None, description="PENDING | APPROVED | REJECTED | SUPERSEDED"),
     limit: int = Query(50, ge=1, le=200),
@@ -3244,7 +3244,7 @@ def _learning_candidate_row_to_out(row: dict, reused: bool = False) -> LearningC
     summary="Approve / reject / supersede a learning candidate (human-only)",
     response_model=LearningCandidateOut,
 )
-async def decide_learning_candidate(
+def decide_learning_candidate(
     learning_candidate_id: str,
     body: LearningCandidateDecision,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -3292,7 +3292,7 @@ async def decide_learning_candidate(
     response_model=LearningCandidateOut,
     status_code=201,
 )
-async def create_learning_candidate(
+def create_learning_candidate(
     body: LearningCandidateCreate,
     idempotency_key: Optional[str] = Header(default=None),
     _auth: Annotated[AuthContext, Depends(SCOPE_HERMES_WRITE)] = None,
@@ -3380,7 +3380,7 @@ async def create_learning_candidate(
     response_model=KnowledgePromotionOut,
     status_code=201,
 )
-async def promote_learning_candidate(
+def promote_learning_candidate(
     learning_candidate_id: str,
     body: KnowledgePromotionCreate,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -3455,7 +3455,7 @@ def _promotion_result_to_out(result: dict, candidate_id: str, actor: str, reason
     summary="Get promotion status for a learning candidate",
     response_model=Optional[KnowledgePromotionOut],
 )
-async def get_learning_candidate_promotion(
+def get_learning_candidate_promotion(
     learning_candidate_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> Optional[KnowledgePromotionOut]:
@@ -3513,7 +3513,7 @@ def _promotion_row_to_out(row: dict) -> KnowledgePromotionOut:
     summary="List Agency Knowledge (Hermes intelligence, human-approved)",
     response_model=list[AgencyKnowledgeOut],
 )
-async def list_agency_knowledge(
+def list_agency_knowledge(
     scope: Optional[str] = Query(None, description="CLIENT_ONLY | BUSINESS_MODEL | PLATFORM | AGENCY_WIDE_CANDIDATE"),
     platform: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -3545,7 +3545,7 @@ async def list_agency_knowledge(
     summary="Single Agency Knowledge document",
     response_model=AgencyKnowledgeOut,
 )
-async def get_agency_knowledge(
+def get_agency_knowledge(
     knowledge_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> AgencyKnowledgeOut:
@@ -3606,7 +3606,7 @@ def _knowledge_row_to_out(row: dict) -> AgencyKnowledgeOut:
     "/obsidian/readiness",
     summary="Read-only GitHub/Obsidian config check (no file written)",
 )
-async def obsidian_readiness(
+def obsidian_readiness(
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
 ) -> dict:
     from ...core.obsidian_writer import check_obsidian_readiness
@@ -3632,7 +3632,7 @@ async def obsidian_readiness(
     summary="Re-execute a failed or DEAD job",
     response_model=JobOut,
 )
-async def replay_job(
+def replay_job(
     job_id: str,
     background_tasks: BackgroundTasks,
     _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
@@ -3692,7 +3692,7 @@ async def replay_job(
     summary="Trigger a first (or fresh) Core pipeline run for a client",
     response_model=JobOut,
 )
-async def trigger_pipeline(
+def trigger_pipeline(
     client_id: str,
     background_tasks: BackgroundTasks,
     period_end_str: Optional[str] = Query(
@@ -3780,7 +3780,7 @@ _META_PAGE_SIZE          = 1_000    # PostgREST max_rows is typically 1000
     summary="Meta Ads diagnostic — READ-ONLY insights from meta_ad_attributions",
     response_model=MetaInsightsOut,
 )
-async def get_meta_insights(
+def get_meta_insights(
     client_id: str,
     date_from: str = Query(..., description="YYYY-MM-DD inclusive start"),
     date_to:   str = Query(..., description="YYYY-MM-DD inclusive end"),
@@ -3981,7 +3981,7 @@ async def get_meta_insights(
     response_model=JobOut,
     status_code=202,
 )
-async def replay_weekly_review(
+def replay_weekly_review(
     client_id: str,
     background_tasks: BackgroundTasks,
     period_end_str: Optional[str] = Query(
@@ -4073,7 +4073,7 @@ async def replay_weekly_review(
     response_model=JobOut,
     status_code=202,
 )
-async def replay_monthly_review(
+def replay_monthly_review(
     client_id: str,
     background_tasks: BackgroundTasks,
     year: Optional[int] = Query(None, description="Year of the closed month. Defaults to last completed month."),
@@ -4156,7 +4156,7 @@ async def replay_monthly_review(
     response_model=ClientBalanceOut,
     summary="Latest balance snapshots for a client's prepaid ad accounts",
 )
-async def get_client_balance(
+def get_client_balance(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> ClientBalanceOut:
@@ -4240,7 +4240,7 @@ async def get_client_balance(
     status_code=200,
     summary="Run an on-demand balance check for a client (synchronous)",
 )
-async def trigger_client_balance(
+def trigger_client_balance(
     client_id: str,
     platform: Optional[str] = Query(None, description="google | meta — omit to check all prepaid"),
     _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
@@ -4270,7 +4270,7 @@ async def trigger_client_balance(
     summary="List budget configs for a client",
     response_model=BudgetConfigListOut,
 )
-async def get_budget_config(
+def get_budget_config(
     client_id: str,
     period_label: Optional[str] = Query(default=None, description="Filter by YYYY-MM"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
@@ -4318,7 +4318,7 @@ async def get_budget_config(
     summary="Upsert budget config for a client/platform/period",
     response_model=BudgetConfigOut,
 )
-async def put_budget_config(
+def put_budget_config(
     client_id: str,
     body: BudgetConfigIn,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -4384,7 +4384,7 @@ async def put_budget_config(
     summary="Pacing contract — budget + target + balance for current month",
     response_model=PacingContract,
 )
-async def get_pacing_contract(
+def get_pacing_contract(
     client_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> PacingContract:
@@ -4672,7 +4672,7 @@ def _task_row_to_out(row: dict) -> TaskOut:
     response_model=list[TaskOut],
     summary="List tasks for a client",
 )
-async def list_tasks(
+def list_tasks(
     client_id: str,
     status: Optional[str] = Query(None, description="Filter by status (OPEN|IN_PROGRESS|DONE|ARCHIVED|BLOCKED)"),
     source_type: Optional[str] = Query(None, description="Filter by source_type"),
@@ -4707,7 +4707,7 @@ async def list_tasks(
     status_code=201,
     summary="Create a task for a client",
 )
-async def create_task(
+def create_task(
     client_id: str,
     body: TaskCreate,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
@@ -4748,7 +4748,7 @@ async def create_task(
     response_model=TaskOut,
     summary="Get task detail",
 )
-async def get_task(
+def get_task(
     task_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> TaskOut:
@@ -4777,7 +4777,7 @@ async def get_task(
     response_model=TaskOut,
     summary="Update a task",
 )
-async def update_task(
+def update_task(
     task_id: str,
     body: TaskUpdate,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
@@ -4885,7 +4885,7 @@ def _summary_row_to_out(row: dict) -> MeetingSummaryOut:
     response_model=list[MeetingOut],
     summary="List meetings for a client",
 )
-async def list_meetings(
+def list_meetings(
     client_id: str,
     limit: int = Query(50, le=200),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
@@ -4910,7 +4910,7 @@ async def list_meetings(
     status_code=201,
     summary="Create a meeting record",
 )
-async def create_meeting(
+def create_meeting(
     client_id: str,
     body: MeetingCreate,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
@@ -4949,7 +4949,7 @@ async def create_meeting(
     response_model=MeetingOut,
     summary="Get meeting detail with latest summary",
 )
-async def get_meeting(
+def get_meeting(
     meeting_id: str,
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> MeetingOut:
@@ -4973,7 +4973,7 @@ async def get_meeting(
     status_code=201,
     summary="Ingest raw transcript for a meeting",
 )
-async def ingest_transcript(
+def ingest_transcript(
     meeting_id: str,
     body: TranscriptIngestCreate,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
@@ -5018,7 +5018,7 @@ async def ingest_transcript(
     status_code=201,
     summary="Submit structured summary and decisions for a meeting",
 )
-async def process_meeting(
+def process_meeting(
     meeting_id: str,
     body: MeetingProcessCreate,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
@@ -5385,7 +5385,7 @@ def _tracking_request_meta(request: Request) -> dict:
     response_model=dict,
     status_code=200,
 )
-async def run_h4_fixture(
+def run_h4_fixture(
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
 ) -> dict:
     """
@@ -5432,7 +5432,7 @@ async def run_h4_fixture(
     response_model=dict,
     status_code=200,
 )
-async def run_h4_idempotency_test(
+def run_h4_idempotency_test(
     _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
 ) -> dict:
     """

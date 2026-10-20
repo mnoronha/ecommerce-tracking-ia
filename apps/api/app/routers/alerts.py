@@ -35,7 +35,7 @@ class RuleToggle(BaseModel):
 
 
 @router.post("/run", summary="Manually run the alert engine")
-async def trigger_alert_engine():
+def trigger_alert_engine():
     """
     Runs all enabled alert_rules now and returns counters. Useful after editing
     a rule's config or seeding goals/budgets — surfaces new alerts immediately
@@ -45,7 +45,7 @@ async def trigger_alert_engine():
 
 
 @router.get("/rules/{pixel_id}", summary="List alert rules for a client")
-async def list_rules_for_client(pixel_id: str):
+def list_rules_for_client(pixel_id: str):
     sb = get_supabase()
     client = (
         sb.table("clients").select("id, agency_id")
@@ -92,7 +92,7 @@ async def list_rules_for_client(pixel_id: str):
 
 
 @router.post("/rules/{pixel_id}/toggle", summary="Liga/desliga um alerta SÓ para este cliente")
-async def toggle_rule_for_client(pixel_id: str, body: RuleToggle):
+def toggle_rule_for_client(pixel_id: str, body: RuleToggle):
     """
     Cria/atualiza um override por cliente para a regra (rule_key, name). Se o
     valor voltar a coincidir com o padrão global, o override é removido (volta
@@ -155,7 +155,7 @@ async def toggle_rule_for_client(pixel_id: str, body: RuleToggle):
 
 
 @router.patch("/rules/{rule_id}", summary="Update a rule (enabled, config)")
-async def update_rule(rule_id: str, body: RuleUpdate):
+def update_rule(rule_id: str, body: RuleUpdate):
     sb = get_supabase()
     patch: dict = {}
     if body.enabled is not None:
@@ -176,7 +176,7 @@ async def update_rule(rule_id: str, body: RuleUpdate):
 
 
 @router.post("/{alert_id}/silence", summary="Silence an alert for 24 hours")
-async def silence_alert(alert_id: str):
+def silence_alert(alert_id: str):
     sb    = get_supabase()
     until = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
     result = (
@@ -192,7 +192,7 @@ async def silence_alert(alert_id: str):
 
 
 @router.post("/{alert_id}/resolve", summary="Manually resolve an alert")
-async def resolve_alert(alert_id: str):
+def resolve_alert(alert_id: str):
     sb  = get_supabase()
     now = datetime.now(timezone.utc).isoformat()
     result = (
@@ -208,7 +208,7 @@ async def resolve_alert(alert_id: str):
 
 
 @router.get("/{pixel_id}", summary="List open alerts for a client")
-async def list_alerts_for_client(
+def list_alerts_for_client(
     pixel_id: str,
     include_resolved: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
@@ -235,7 +235,7 @@ async def list_alerts_for_client(
 
 
 @router.get("", summary="List open alerts across all clients of an agency")
-async def list_alerts_for_agency(
+def list_alerts_for_agency(
     agency_slug: str = Query(..., description="Agency slug (e.g. 'pareto-plus')"),
     include_resolved: bool = Query(False),
     limit: int = Query(100, ge=1, le=500),

@@ -51,7 +51,7 @@ def _get_client(pixel_id: str) -> dict:
 # ── Schema Audit ──────────────────────────────────────────────────────────────
 
 @router.post("/{pixel_id}/schema/audit", summary="Inicia auditoria de schema markup")
-async def start_audit(pixel_id: str, background_tasks: BackgroundTasks):
+def start_audit(pixel_id: str, background_tasks: BackgroundTasks):
     client = _get_client(pixel_id)
     # Check for already running
     sb = get_supabase()
@@ -70,7 +70,7 @@ async def start_audit(pixel_id: str, background_tasks: BackgroundTasks):
 
 
 @router.get("/{pixel_id}/schema/audit/latest", summary="Última auditoria + issues")
-async def get_latest_audit(
+def get_latest_audit(
     pixel_id: str,
     status: Optional[str] = Query(None, description="Filtrar issues por status"),
 ):
@@ -83,7 +83,7 @@ async def get_latest_audit(
 
 
 @router.post("/{pixel_id}/schema/issues/{issue_id}/generate", summary="Gera JSON-LD para issue")
-async def generate_markup(pixel_id: str, issue_id: str):
+def generate_markup(pixel_id: str, issue_id: str):
     _get_client(pixel_id)
     try:
         return schema_auditor.generate_schema_markup(issue_id)
@@ -92,7 +92,7 @@ async def generate_markup(pixel_id: str, issue_id: str):
 
 
 @router.post("/{pixel_id}/schema/issues/{issue_id}/apply", summary="Aplica schema via Shopify API")
-async def apply_markup(pixel_id: str, issue_id: str):
+def apply_markup(pixel_id: str, issue_id: str):
     client = _get_client(pixel_id)
     try:
         return schema_auditor.apply_schema_via_shopify(issue_id, client["id"])
@@ -103,7 +103,7 @@ async def apply_markup(pixel_id: str, issue_id: str):
 # ── llms.txt ──────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/llms-txt", summary="Gera preview do llms.txt")
-async def preview_llms_txt(pixel_id: str):
+def preview_llms_txt(pixel_id: str):
     client = _get_client(pixel_id)
     try:
         return llms_txt_generator.generate_llms_txt(client["id"])
@@ -116,7 +116,7 @@ class LlmsTxtApplyBody(BaseModel):
 
 
 @router.post("/{pixel_id}/llms-txt/apply", summary="Aplica llms.txt no site")
-async def apply_llms_txt(pixel_id: str, body: LlmsTxtApplyBody):
+def apply_llms_txt(pixel_id: str, body: LlmsTxtApplyBody):
     client = _get_client(pixel_id)
     try:
         return llms_txt_generator.apply_llms_txt(client["id"], body.content)
@@ -127,7 +127,7 @@ async def apply_llms_txt(pixel_id: str, body: LlmsTxtApplyBody):
 # ── robots.txt ────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/robots", summary="Valida robots.txt para AI crawlers")
-async def check_robots(pixel_id: str, background_tasks: BackgroundTasks):
+def check_robots(pixel_id: str, background_tasks: BackgroundTasks):
     client = _get_client(pixel_id)
     try:
         result = robots_validator.check_and_save(client["id"])
@@ -139,7 +139,7 @@ async def check_robots(pixel_id: str, background_tasks: BackgroundTasks):
 # ── Core Web Vitals ───────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/core-web-vitals", summary="Verifica Core Web Vitals via PageSpeed")
-async def check_cwv(pixel_id: str):
+def check_cwv(pixel_id: str):
     client = _get_client(pixel_id)
     try:
         return core_web_vitals.check_client(client["id"])
@@ -153,7 +153,7 @@ async def check_cwv(pixel_id: str):
 # ── Pending optimizations ─────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/pending", summary="Lista otimizações técnicas pendentes")
-async def get_pending_optimizations(
+def get_pending_optimizations(
     pixel_id: str,
     severity: Optional[str] = Query(None),
     type:     Optional[str] = Query(None),
@@ -237,7 +237,7 @@ class OptimizationUpdate(BaseModel):
 
 
 @router.patch("/{pixel_id}/optimizations/{opt_id}", summary="Atualiza status de otimização")
-async def update_optimization(pixel_id: str, opt_id: str, body: OptimizationUpdate):
+def update_optimization(pixel_id: str, opt_id: str, body: OptimizationUpdate):
     _get_client(pixel_id)
     sb = get_supabase()
     update: dict = {"status": body.status}
@@ -250,7 +250,7 @@ async def update_optimization(pixel_id: str, opt_id: str, body: OptimizationUpda
 # ── History ───────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/history", summary="Histórico de otimizações aplicadas")
-async def get_history(pixel_id: str, limit: int = Query(50, le=200)):
+def get_history(pixel_id: str, limit: int = Query(50, le=200)):
     client = _get_client(pixel_id)
     sb = get_supabase()
     rows = (
@@ -267,7 +267,7 @@ async def get_history(pixel_id: str, limit: int = Query(50, le=200)):
 # ── Pipeline status ───────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/pipeline", summary="Status do pipeline AI Presence")
-async def get_pipeline(pixel_id: str):
+def get_pipeline(pixel_id: str):
     client = _get_client(pixel_id)
     try:
         return pt_svc.get_pipeline_status(client["id"])
@@ -279,7 +279,7 @@ async def get_pipeline(pixel_id: str):
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
 @router.get("/prompt-templates", summary="Lista templates de prompts por vertical")
-async def list_templates(
+def list_templates(
     vertical: Optional[str] = Query(None),
     intent:   Optional[str] = Query(None),
 ):
@@ -291,7 +291,7 @@ class SeedPromptsBody(BaseModel):
 
 
 @router.post("/{pixel_id}/prompts/seed", summary="Seed de prompts a partir de vertical")
-async def seed_prompts(pixel_id: str, body: SeedPromptsBody):
+def seed_prompts(pixel_id: str, body: SeedPromptsBody):
     client = _get_client(pixel_id)
     result = pt_svc.seed_prompts_for_client(client["id"], body.vertical)
     # Update onboarding vertical
@@ -302,7 +302,7 @@ async def seed_prompts(pixel_id: str, body: SeedPromptsBody):
 # ── Onboarding ────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/onboarding", summary="Estado do onboarding do cliente")
-async def get_onboarding(pixel_id: str):
+def get_onboarding(pixel_id: str):
     client = _get_client(pixel_id)
     ob = pt_svc.get_onboarding(client["id"])
     if not ob:
@@ -318,7 +318,7 @@ class OnboardingUpdate(BaseModel):
 
 
 @router.patch("/{pixel_id}/onboarding", summary="Atualiza estado do onboarding")
-async def update_onboarding(pixel_id: str, body: OnboardingUpdate):
+def update_onboarding(pixel_id: str, body: OnboardingUpdate):
     client = _get_client(pixel_id)
     return pt_svc.upsert_onboarding(
         client["id"],
@@ -331,7 +331,7 @@ async def update_onboarding(pixel_id: str, body: OnboardingUpdate):
 # ── Time logs ─────────────────────────────────────────────────────────────────
 
 @router.get("/{pixel_id}/time-logs", summary="Lista registros de tempo")
-async def get_time_logs(pixel_id: str, limit: int = Query(50, le=200)):
+def get_time_logs(pixel_id: str, limit: int = Query(50, le=200)):
     client = _get_client(pixel_id)
     return pt_svc.get_time_logs(client["id"], limit=limit)
 
@@ -344,7 +344,7 @@ class TimeLogBody(BaseModel):
 
 
 @router.post("/{pixel_id}/time-logs", summary="Registra tempo gasto")
-async def add_time_log(pixel_id: str, body: TimeLogBody):
+def add_time_log(pixel_id: str, body: TimeLogBody):
     client = _get_client(pixel_id)
     return pt_svc.add_time_log(
         client["id"],

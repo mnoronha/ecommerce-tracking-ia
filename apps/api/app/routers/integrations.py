@@ -295,7 +295,7 @@ async def pinterest_backfill(pixel_id: str, hours: int = 48, limit: int = 100):
 
 
 @router.post("/{pixel_id}/tiktok/diagnose", summary="Diagnóstico TikTok: mostra payload real e raw response da API")
-async def tiktok_diagnose(pixel_id: str):
+def tiktok_diagnose(pixel_id: str):
     """
     Sends a minimal Purchase event to TikTok and returns the full raw response
     body, credential preview (token length + first 8 chars), and exact payload sent.
@@ -360,7 +360,7 @@ async def tiktok_diagnose(pixel_id: str):
 
 @router.get("/{pixel_id}/google/conversion-actions",
             summary="Listar conversion actions do Google Ads (diagnóstico)")
-async def google_conversion_actions(pixel_id: str):
+def google_conversion_actions(pixel_id: str):
     """
     Read-only: lists every conversion action in the client's Google Ads account
     (id, name, type, category, status). Use this to pick the correct
@@ -482,14 +482,14 @@ def _cached_view(client: dict) -> dict:
 
 
 @router.get("/{pixel_id}/status", summary="Cached integration health")
-async def get_status(pixel_id: str):
+def get_status(pixel_id: str):
     """Fast read of the last-known health, persisted by the hourly cron."""
     client = _load_client(pixel_id)
     return _cached_view(client)
 
 
 @router.post("/{pixel_id}/status", summary="Re-probe all integrations now")
-async def probe_status(pixel_id: str):
+def probe_status(pixel_id: str):
     """Live probe of every connected integration. ~5-10s response time."""
     client = _load_client(pixel_id)
     results = integrations_health.check_all(client, persist=True)
@@ -497,7 +497,7 @@ async def probe_status(pixel_id: str):
 
 
 @router.post("/{pixel_id}/test/{platform}", summary="Re-probe a single integration")
-async def probe_one(pixel_id: str, platform: str):
+def probe_one(pixel_id: str, platform: str):
     """Wizard "Testar agora" button — single-platform live probe."""
     if platform not in _PLATFORM_KEYS:
         raise HTTPException(status_code=400, detail=f"Unknown platform '{platform}'")

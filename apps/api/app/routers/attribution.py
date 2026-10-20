@@ -27,7 +27,7 @@ def _resolve_client_uuid(pixel_id: str) -> Optional[str]:
 
 
 @router.post("/{pixel_id}/recompute")
-async def recompute(pixel_id: str, background_tasks: BackgroundTasks, days: int = 90):
+def recompute(pixel_id: str, background_tasks: BackgroundTasks, days: int = 90):
     """
     Trigger background re-attribution of all paid orders in the last N days.
     Returns immediately; computation continues in the background.
@@ -40,7 +40,7 @@ async def recompute(pixel_id: str, background_tasks: BackgroundTasks, days: int 
 
 
 @router.get("/{pixel_id}/summary")
-async def summary(
+def summary(
     pixel_id: str,
     model: str  = Query("last_click", regex="^(last_click|first_click|linear|time_decay|position_based)$"),
     days:  int  = Query(30, ge=1, le=365),
