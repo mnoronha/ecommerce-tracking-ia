@@ -125,12 +125,20 @@ def _load_client(pixel_id: str) -> dict:
     return row
 
 
-def _check_shop(row: dict, shop: str) -> None:
+def _check_shop(row: dict, shop: str, signed: bool) -> None:
+    """`shop` must be a myshopify domain. When the request is signed by Shopify
+    (valid HMAC with this client's own app secret), Shopify is authoritative:
+    the app is custom-distributed to one store, so a different value in
+    clients.shopify_domain is just stale/handle data — logged, not fatal."""
     if not valid_shop(shop):
         raise HTTPException(400, "parâmetro shop inválido")
     expected = normalize_shop(row.get("shopify_domain"))
     if expected and expected.endswith(".myshopify.com") and expected != shop:
-        raise HTTPException(403, "loja não corresponde ao cliente")
+        if signed:
+            logger.warning("shopify app: shop %s differs from stored shopify_domain %s for %s — using Shopify's",
+                           shop, expected, row.get("pixel_id"))
+            return
+        raise HTTPException(403, f"loja não corresponde ao cliente (Shopify: {shop}; cadastro: {expected})")
 
 
 # ── routes ────────────────────────────────────────────────────────────────────
@@ -141,12 +149,13 @@ def install(pixel_id: str, request: Request):
     params = list(request.query_params.multi_items())
     shop = normalize_shop(request.query_params.get("shop"))
     row = _load_client(pixel_id)
-    _check_shop(row, shop)
     secret = row["shopify_app_client_secret"]
     # Shopify signs the launch request; a manual visit without hmac is allowed
     # (the callback is always verified), a wrong hmac is not.
-    if request.query_params.get("hmac") and not query_hmac_ok(params, secret):
+    signed = bool(request.query_params.get("hmac"))
+    if signed and not query_hmac_ok(params, secret):
         raise HTTPException(401, "hmac inválido")
+    _check_shop(row, shop, signed)
     q = urlencode({
         "client_id":    row["shopify_app_client_id"],
         "scope":        SCOPES,
@@ -162,11 +171,11 @@ def callback(pixel_id: str, request: Request):
     qp = request.query_params
     shop = normalize_shop(qp.get("shop"))
     row = _load_client(pixel_id)
-    _check_shop(row, shop)
     secret = row["shopify_app_client_secret"]
 
     if not query_hmac_ok(params, secret):
         raise HTTPException(401, "hmac inválido")
+    _check_shop(row, shop, signed=True)
     if not state_ok(qp.get("state") or "", pixel_id, secret):
         raise HTTPException(401, "state inválido ou expirado — reinicie a instalação")
     code = qp.get("code")
@@ -200,7 +209,9 @@ def callback(pixel_id: str, request: Request):
         "shopify_app_scopes":       body.get("scope") or "",
         "shopify_app_installed_at": datetime.now(timezone.utc).isoformat(),
     }
-    if not normalize_shop(row.get("shopify_domain")).endswith(".myshopify.com"):
+    if normalize_shop(row.get("shopify_domain")) != shop:
+        # The installing store's permanent myshopify domain is authoritative
+        # (sync/health use shopify_domain for Admin API calls).
         patch["shopify_domain"] = shop
     get_supabase().table("clients").update(patch).eq("id", row["id"]).execute()
     logger.info("shopify oauth: %s connected (%s) scopes=%s", pixel_id, shop, patch["shopify_app_scopes"])
