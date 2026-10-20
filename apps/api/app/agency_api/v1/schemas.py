@@ -329,6 +329,20 @@ class ChangeCreate(_Base):
     reported_by: Optional[str] = None
     confidence: ChangeConfidence = ChangeConfidence.CONFIRMED
     linked_action_id: Optional[str] = None
+    # v2 — canonical media change contract
+    entity_id: Optional[str] = None
+    description: Optional[str] = None
+    requested_by: Optional[str] = None
+    approved_by: Optional[str] = None
+    executed_by: Optional[str] = None
+    recommendation_id: Optional[str] = None
+    task_id: Optional[str] = None
+    report_id: Optional[str] = None
+    detected_at: Optional[datetime] = None
+    expected_impact: Optional[Any] = None
+    risk_level: Optional[Level] = None
+    outcome_status: Optional[OutcomeStatus] = None
+    outcome_summary: Optional[str] = None
 
 
 class ChangeOut(ChangeCreate):
@@ -337,6 +351,7 @@ class ChangeOut(ChangeCreate):
     match_status: Optional[MatchStatus] = None
     matched_change_id: Optional[str] = None
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
 
 # ── 7. Alerts ─────────────────────────────────────────────────────────────────

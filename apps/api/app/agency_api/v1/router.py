@@ -183,6 +183,7 @@ from .schemas import (
     TaskPriority,
     TaskSourceType,
     NotionSyncState,
+    OutcomeStatus,
     # Phase 5 — Meetings
     MeetingCreate,
     MeetingOut,
@@ -953,6 +954,18 @@ def _change_row_to_out(row: dict) -> ChangeOut:
             match_status = MatchStatus(row["match_status"])
         except ValueError:
             pass
+    risk_level = None
+    if row.get("risk_level"):
+        try:
+            risk_level = Level(row["risk_level"])
+        except ValueError:
+            pass
+    outcome_status = None
+    if row.get("outcome_status"):
+        try:
+            outcome_status = OutcomeStatus(row["outcome_status"])
+        except ValueError:
+            pass
     return ChangeOut(
         client_id=str(row.get("client_id", "")),
         occurred_at=_parse_ts_utc(row.get("occurred_at")) or datetime.now(timezone.utc),
@@ -976,6 +989,21 @@ def _change_row_to_out(row: dict) -> ChangeOut:
         match_status=match_status,
         matched_change_id=str(row["matched_change_id"]) if row.get("matched_change_id") else None,
         created_at=_parse_ts_utc(row.get("created_at")) or datetime.now(timezone.utc),
+        # v2 fields
+        entity_id=row.get("entity_id"),
+        description=row.get("description"),
+        requested_by=row.get("requested_by"),
+        approved_by=row.get("approved_by"),
+        executed_by=row.get("executed_by"),
+        recommendation_id=str(row["recommendation_id"]) if row.get("recommendation_id") else None,
+        task_id=str(row["task_id"]) if row.get("task_id") else None,
+        report_id=str(row["report_id"]) if row.get("report_id") else None,
+        detected_at=_parse_ts_utc(row.get("detected_at")),
+        expected_impact=row.get("expected_impact"),
+        risk_level=risk_level,
+        outcome_status=outcome_status,
+        outcome_summary=row.get("outcome_summary"),
+        updated_at=_parse_ts_utc(row.get("updated_at")),
     )
 
 
@@ -986,7 +1014,15 @@ def _change_row_to_out(row: dict) -> ChangeOut:
 )
 def get_changes(
     client_id: str,
-    since: Optional[str] = Query(None, description="ISO-8601 datetime filter (occurred_at >=)"),
+    since: Optional[str] = Query(None, description="ISO-8601 filter: occurred_at >="),
+    until: Optional[str] = Query(None, description="ISO-8601 filter: occurred_at <="),
+    platform: Optional[str] = Query(None, description="Filter by channel/platform (e.g. meta, google)"),
+    entity_type: Optional[str] = Query(None, description="Filter by entity_type (e.g. CAMPAIGN, ADSET)"),
+    change_type: Optional[str] = Query(None, description="Filter by ChangeType enum value"),
+    source: Optional[str] = Query(None, description="Filter by ChangeLogSource enum value"),
+    task_id: Optional[str] = Query(None, description="Filter by linked task_id (UUID)"),
+    recommendation_id: Optional[str] = Query(None, description="Filter by linked recommendation_id (UUID)"),
+    limit: int = Query(100, ge=1, le=500, description="Max records to return"),
     _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
 ) -> list[ChangeOut]:
     slug = _resolve_slug(client_id) or client_id
@@ -997,15 +1033,63 @@ def get_changes(
             .select("*")
             .eq("client_id", slug)
             .order("occurred_at", desc=True)
-            .limit(100)
+            .limit(limit)
         )
         if since:
             q = q.gte("occurred_at", since)
+        if until:
+            q = q.lte("occurred_at", until)
+        if platform:
+            q = q.eq("channel", platform)
+        if entity_type:
+            q = q.eq("entity_type", entity_type.upper())
+        if change_type:
+            q = q.eq("change_type", change_type.upper())
+        if source:
+            q = q.eq("source", source.upper())
+        if task_id:
+            q = q.eq("task_id", task_id)
+        if recommendation_id:
+            q = q.eq("recommendation_id", recommendation_id)
         res = q.execute()
     except Exception as exc:
         logger.error("get_changes: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, "database error")
     return [_change_row_to_out(r) for r in (res.data or [])]
+
+
+@router.get(
+    "/clients/{client_id}/media-changes/{change_id}",
+    summary="Single media change log entry",
+    response_model=ChangeOut,
+)
+def get_change(
+    client_id: str,
+    change_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> ChangeOut:
+    if not _is_valid_uuid(change_id):
+        raise HTTPException(404, "change not found")
+    slug = _resolve_slug(client_id) or client_id
+    db = _get_db()
+    try:
+        res = (
+            db.table("core_change_log")
+            .select("*")
+            .eq("client_id", slug)
+            .eq("id", change_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception as exc:
+        logger.error("get_change: DB error for %s/%s: %s", client_id, change_id, exc)
+        raise HTTPException(503, "database error")
+    row = res.data if res else None
+    if isinstance(row, list):
+        row = row[0] if row else None
+    if not row:
+        raise HTTPException(404, "change not found")
+    return _change_row_to_out(row)
 
 
 # ── GET /clients/{client_id}/recommendations ─────────────────────────────────
@@ -2379,6 +2463,20 @@ def create_change(
             "reason":              body.reason,
             "reported_by":         body.reported_by,
             "linked_action_id":    body.linked_action_id,
+            # v2 fields
+            "entity_id":           body.entity_id,
+            "description":         body.description,
+            "requested_by":        body.requested_by,
+            "approved_by":         body.approved_by,
+            "executed_by":         body.executed_by,
+            "recommendation_id":   body.recommendation_id,
+            "task_id":             body.task_id,
+            "report_id":           body.report_id,
+            "detected_at":         body.detected_at.isoformat() if body.detected_at else None,
+            "expected_impact":     body.expected_impact,
+            "risk_level":          body.risk_level if isinstance(body.risk_level, str) else (body.risk_level.value if body.risk_level else None),
+            "outcome_status":      body.outcome_status if isinstance(body.outcome_status, str) else (body.outcome_status.value if body.outcome_status else None),
+            "outcome_summary":     body.outcome_summary,
         }).execute()
     except Exception as exc:
         logger.error("create_change: insert failed: %s", exc)

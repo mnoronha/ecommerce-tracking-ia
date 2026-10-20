@@ -116,13 +116,24 @@ class TestBusinessModelEnum:
 
 
 class TestChangeTypeEnum:
-    def test_thirteen_change_types(self):
-        expected = {
+    def test_original_types_present(self):
+        original = {
             "BUDGET", "TARGET_ROAS", "TARGET_CPA", "BID_STRATEGY",
             "CREATIVE_LAUNCH", "CREATIVE_PAUSE", "CAMPAIGN_LAUNCH", "CAMPAIGN_PAUSE",
             "AUDIENCE", "LANDING_PAGE", "OFFER", "TRACKING", "OTHER",
         }
-        assert {m.value for m in ChangeType} == expected
+        assert original.issubset({m.value for m in ChangeType})
+
+    def test_v2_types_present(self):
+        v2 = {
+            "ADSET_STATUS_CHANGE", "AD_STATUS_CHANGE",
+            "KEYWORD_ADDED", "KEYWORD_REMOVED", "NEGATIVE_KEYWORD_ADDED",
+            "MATCH_TYPE_CHANGE", "PLACEMENT_CHANGE",
+            "CREATIVE_ADDED", "CREATIVE_REPLACED",
+            "ASSET_CHANGE", "PMAX_ASSET_GROUP_CHANGE",
+            "SHOPPING_PRODUCT_SCOPE_CHANGE", "CONVERSION_ACTION_CHANGE",
+        }
+        assert v2.issubset({m.value for m in ChangeType})
 
 
 class TestNarrativeStatusEnum:
