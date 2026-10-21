@@ -39,7 +39,6 @@ SELECT
 FROM change_event
 WHERE change_event.change_datetime >= '{since}'
   AND change_event.change_datetime < '{until}'
-ORDER BY change_event.change_datetime DESC
 LIMIT 10000
 """
 
