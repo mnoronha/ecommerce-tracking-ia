@@ -25,13 +25,13 @@ def run_change_history_all_clients() -> None:
     """
     sb  = get_supabase()
     now = datetime.now(timezone.utc)
-    run_id = f"{_JOB_ID}:{now.strftime('%Y%m%dT%H%M%S')}"
+    run_key = f"{_JOB_ID}:{now.strftime('%Y%m%dT%H%M%S')}"
 
     # Log job start
     try:
         sb.table("core_job_runs").insert({
-            "job_id":     _JOB_ID,
-            "run_id":     run_id,
+            "job_type":   _JOB_ID,
+            "run_key":    run_key,
             "status":     "RUNNING",
             "started_at": now.isoformat(),
         }).execute()
@@ -80,15 +80,15 @@ def run_change_history_all_clients() -> None:
         + (f" errors={len(errors)}" if errors else "")
     )
     logger.info("change_history_scheduler: done — %s", summary)
-    _finish_job(sb, run_id, status, "\n".join(errors) if errors else None)
+    _finish_job(sb, run_key, status, "\n".join(errors) if errors else None)
 
 
-def _finish_job(sb, run_id: str, status: str, error: str | None) -> None:
+def _finish_job(sb, run_key: str, status: str, error: str | None) -> None:
     try:
         sb.table("core_job_runs").update({
-            "status":       status,
-            "finished_at":  datetime.now(timezone.utc).isoformat(),
-            "error_message": error[:500] if error else None,
-        }).eq("run_id", run_id).execute()
+            "status":      status,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "error":       error[:500] if error else None,
+        }).eq("run_key", run_key).execute()
     except Exception as exc:
         logger.warning("change_history_scheduler: job_runs update failed: %s", exc)
