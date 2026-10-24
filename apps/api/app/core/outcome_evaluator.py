@@ -140,7 +140,8 @@ def _evaluate_balance_action(action: dict, sb) -> dict:
             "after_state": {},
         }
 
-    collection_ok = snap.get("collection_status") == "OK"
+    # collector writes "PASS" for success; accept "OK" for forward-compatibility
+    collection_ok = snap.get("collection_status") in ("OK", "PASS")
     days_remaining = snap.get("estimated_days_remaining")
     balance = snap.get("balance")
     balance_status = snap.get("balance_status", "MISSING")
