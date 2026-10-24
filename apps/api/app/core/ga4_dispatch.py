@@ -44,7 +44,12 @@ _MP_URL = "https://www.google-analytics.com/mp/collect"
 _MP_DEBUG_URL = "https://www.google-analytics.com/debug/mp/collect"
 _MAX_BACKDATE = timedelta(hours=71)  # GA4 accepts up to 72 h
 _MIN_AGE = timedelta(minutes=15)      # wait for the thank-you pixel event
-_RETRYABLE = "ga4_send_result.is.null,ga4_send_result.like.debug:*,ga4_send_result.like.http_*,ga4_send_result.eq.error"
+
+
+def _retryable(result: Optional[str]) -> bool:
+    """Final outcomes ("skipped:…") are not revisited; debug/http/error are."""
+    r = result or ""
+    return not r.startswith("skipped:") and r != "sent"
 
 
 def mode() -> str:
@@ -214,16 +219,17 @@ def run_pending(sb=None, now: Optional[datetime] = None) -> dict:
         res = (
             sb.table("tracking_order_matches")
             .select("client_id, order_id, financial_status, excluded_reason, checkout_token, order_created_at,"
-                    " paid_at, total_price, currency, shadow_ga4")
+                    " paid_at, total_price, currency, shadow_ga4, ga4_send_result")
             .eq("financial_status", "paid")
             .is_("ga4_sent_at", "null")
-            .or_(_RETRYABLE)
             .gte("updated_at", (now - _MAX_BACKDATE).isoformat())
             .lte("updated_at", (now - _MIN_AGE).isoformat())
             .limit(200)
             .execute()
         )
         for row in res.data or []:
+            if not _retryable(row.get("ga4_send_result")):
+                continue
             stats["checked"] += 1
             reason = maybe_send(sb, row["client_id"], row) or "none"
             stats[reason.split(":")[0]] = stats.get(reason.split(":")[0], 0) + 1
