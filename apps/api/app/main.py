@@ -26,6 +26,7 @@ from .core.alert_evaluator import evaluate_system_alerts as _evaluate_system_ale
 from .core.scheduler_registry import register as _register_scheduler
 from .core.weekly_review import run_weekly_review_all_clients
 from .core.canonical_weekly_scheduler import run_canonical_weekly_all_clients as _run_canonical_weekly
+from .core.canonical_monthly_scheduler import run_canonical_monthly_all_clients as _run_canonical_monthly
 from .core.monthly_review import run_monthly_review_all_clients
 from .core.balance_monitor import run_balance_check_all_prepaid
 from .core.change_history_scheduler import run_change_history_all_clients as _run_change_history
@@ -296,14 +297,28 @@ else:
         minute=0,   # 08:00 UTC = 05:00 BRT segunda — após core_pipeline (07:15) fechar domingo
         id="weekly_review",
     )
-_scheduler.add_job(
-    run_monthly_review_all_clients,
-    "cron",
-    day=1,
-    hour=8,
-    minute=30,  # 08:30 UTC = 05:30 BRT — 1º do mês, após core_pipeline (07:15) fechar mês anterior
-    id="monthly_review",
-)
+if _os.getenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "false").strip().lower() == "true":
+    # Canonical path: H8 scheduler writes to core_canonical_report_records.
+    # Legacy monthly_review is NOT registered to prevent duplicate contract generation.
+    # Rollback: set CANONICAL_MONTHLY_REVIEW_ENABLED=false and redeploy — legacy re-registers.
+    _scheduler.add_job(
+        _run_canonical_monthly,
+        "cron",
+        day=1,
+        hour=8,
+        minute=30,  # 08:30 UTC = 05:30 BRT — 1º do mês, após core_pipeline (07:15) fechar mês anterior
+        id="canonical_monthly_review",
+    )
+else:
+    # Legacy path: builds Hermes handoff contracts in agency_report_contracts.
+    _scheduler.add_job(
+        run_monthly_review_all_clients,
+        "cron",
+        day=1,
+        hour=8,
+        minute=30,
+        id="monthly_review",
+    )
 _scheduler.add_job(
     _evaluate_system_alerts,
     "interval",
