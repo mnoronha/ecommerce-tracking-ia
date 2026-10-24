@@ -43,7 +43,7 @@ _SNAP_OK = {
     "balance_status":           "OK",
     "estimated_days_remaining": 10.1,
     "snapshot_at":              "2026-10-24T02:26:00+00:00",
-    "collection_status":        "OK",
+    "collection_status":        "PASS",  # collector writes "PASS", not "OK"
 }
 
 _GENERIC_ACTION = {
@@ -175,12 +175,34 @@ class TestEvaluateBalanceActionUUIDToSlugFix:
         assert result["status"] == "NEGATIVE"
         assert result["confidence"] == "HIGH"
 
+    def test_collection_status_pass_treated_as_ok(self):
+        """collection_status='PASS' (real collector value) must not block evaluation."""
+        snap_pass = {**_SNAP_OK, "collection_status": "PASS"}
+        sb, _ = _make_sb(
+            clients_data=[{"client_id": _CLIENT_SLUG}],
+            snapshots_data=[snap_pass],
+        )
+        result = _evaluate_balance_action(_BALANCE_ACTION, sb)
+
+        assert result["status"] == "POSITIVE"
+
     def test_collection_not_ok_returns_blocked(self):
-        """Snapshot exists but collection_status != OK → BLOCKED_DATA_QUALITY."""
+        """collection_status=PERMISSION_DENIED → BLOCKED_DATA_QUALITY."""
         snap_perm = {**_SNAP_OK, "collection_status": "PERMISSION_DENIED"}
         sb, _ = _make_sb(
             clients_data=[{"client_id": _CLIENT_SLUG}],
             snapshots_data=[snap_perm],
+        )
+        result = _evaluate_balance_action(_BALANCE_ACTION, sb)
+
+        assert result["status"] == "BLOCKED_DATA_QUALITY"
+
+    def test_collection_blocked_returns_blocked(self):
+        """collection_status=BLOCKED → BLOCKED_DATA_QUALITY."""
+        snap_blocked = {**_SNAP_OK, "collection_status": "BLOCKED"}
+        sb, _ = _make_sb(
+            clients_data=[{"client_id": _CLIENT_SLUG}],
+            snapshots_data=[snap_blocked],
         )
         result = _evaluate_balance_action(_BALANCE_ACTION, sb)
 
