@@ -86,13 +86,39 @@ def _evaluate_balance_action(action: dict, sb) -> dict:
     platform = (action.get("platform") or "").lower()
     before = action.get("before_state") or {}
 
+    # core_balance_snapshots.client_id is TEXT (slug), not UUID.
+    # Resolve UUID → slug via the clients table before querying snapshots.
+    client_slug = client_id_uuid  # safe fallback: UUID won't match any slug row
+    try:
+        slug_res = (
+            sb.table("clients")
+            .select("client_id")
+            .eq("id", client_id_uuid)
+            .limit(1)
+            .execute()
+        )
+        if slug_res and slug_res.data:
+            client_slug = slug_res.data[0]["client_id"]
+        else:
+            logger.warning(
+                "outcome_evaluator: client UUID %s not found in clients table — "
+                "balance snapshot lookup will return 0 rows",
+                client_id_uuid,
+            )
+    except Exception as exc:
+        logger.warning(
+            "outcome_evaluator: client slug lookup failed for UUID %s: %s — "
+            "falling back to UUID (snapshot query will return 0 rows)",
+            client_id_uuid, exc,
+        )
+
     data_health: dict = {"note": "balance_snapshot_lookup"}
 
     try:
         q = (
             sb.table("core_balance_snapshots")
             .select("balance, balance_status, estimated_days_remaining, snapshot_at, collection_status")
-            .eq("client_id", client_id_uuid)
+            .eq("client_id", client_slug)
             .order("snapshot_at", desc=True)
             .limit(1)
         )
