@@ -206,9 +206,34 @@ def maybe_send(sb, client_uuid: str, row: dict) -> Optional[str]:
         return "error"
 
 
+def _released_client_uuids(sb) -> Optional[list[str]]:
+    """UUIDs of clients this job may send for; None = no restriction (nothing blocked)."""
+    if not send_guard.blocked_identifiers():
+        return None
+    wanted = [c for c, ch in send_guard.allowed_pairs() if ch == CHANNEL]
+    uuids: list[str] = []
+    for ident in wanted:
+        for col in ("pixel_id", "client_id", "id"):
+            if col == "id" and len(ident) != 36:
+                continue
+            try:
+                r = sb.table("clients").select("id").eq(col, ident).limit(1).execute()
+            except Exception:
+                continue
+            if r.data:
+                uuids.append(str(r.data[0]["id"]))
+                break
+    return uuids
+
+
+LAST_STATS: dict = {}
+
+
 def run_pending(sb=None, now: Optional[datetime] = None) -> dict:
     """Scheduled entry point. Never raises."""
-    stats: dict = {"mode": mode(), "checked": 0}
+    stats: dict = {"mode": mode(), "checked": 0,
+                   "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    LAST_STATS.clear(); LAST_STATS.update(stats)
     if stats["mode"] == "off":
         return stats
     try:
@@ -216,7 +241,13 @@ def run_pending(sb=None, now: Optional[datetime] = None) -> dict:
             from ..database import get_supabase
             sb = get_supabase()
         now = now or datetime.now(timezone.utc)
-        res = (
+        released = _released_client_uuids(sb)
+        stats["clients"] = len(released) if released is not None else "all"
+        if released == []:
+            logger.info("ga4_dispatch: no client released (%s)", send_guard.ALLOW_ENV_VAR)
+            LAST_STATS.clear(); LAST_STATS.update(stats)
+            return stats
+        q = (
             sb.table("tracking_order_matches")
             .select("client_id, order_id, financial_status, excluded_reason, checkout_token, order_created_at,"
                     " paid_at, total_price, currency, shadow_ga4, ga4_send_result")
@@ -224,9 +255,11 @@ def run_pending(sb=None, now: Optional[datetime] = None) -> dict:
             .is_("ga4_sent_at", "null")
             .gte("updated_at", (now - _MAX_BACKDATE).isoformat())
             .lte("updated_at", (now - _MIN_AGE).isoformat())
-            .limit(200)
-            .execute()
         )
+        if released is not None:
+            q = q.in_("client_id", released)
+        res = q.order("updated_at", desc=True).limit(500).execute()
+        stats["candidates"] = len(res.data or [])
         for row in res.data or []:
             if not _retryable(row.get("ga4_send_result")):
                 continue
@@ -236,6 +269,6 @@ def run_pending(sb=None, now: Optional[datetime] = None) -> dict:
     except Exception as exc:
         logger.warning("ga4_dispatch.run_pending failed: %s", exc)
         stats["error"] = str(exc)[:200]
-    if stats["checked"]:
-        logger.info("ga4_dispatch: %s", stats)
+    logger.info("ga4_dispatch: %s", stats)
+    LAST_STATS.clear(); LAST_STATS.update(stats)
     return stats
