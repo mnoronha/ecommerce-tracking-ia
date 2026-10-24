@@ -84,6 +84,17 @@ def consent_from_attribute(value: Optional[str]) -> Optional[bool]:
     return None
 
 
+def analytics_consent_from_attribute(value: Optional[str]) -> Optional[bool]:
+    """'a1m0' → True, 'a0m1' → False, absent/invalid → None."""
+    if not isinstance(value, str) or len(value) != 4 or not value.startswith("a") or value[2] != "m":
+        return None
+    if value[1] == "1":
+        return True
+    if value[1] == "0":
+        return False
+    return None
+
+
 def facts_from_event(event: Any) -> dict:
     """
     Normalize a webhook event into the facts this module needs.
@@ -136,6 +147,7 @@ def facts_from_event(event: Any) -> dict:
         "fbp":               _clean(meta.get("fbp")),
         "click_source":      _clean(meta.get("click_source")),
         "consent_advertising": consent_from_attribute(meta.get("noro_consent")),
+        "consent_analytics": analytics_consent_from_attribute(meta.get("noro_consent")),
         "ads_consent_denied": bool(meta.get("ads_consent_denied")),
         "tracker_version":   _clean(meta.get("tracker_version")),
         "landing_site":      _clean(meta.get("landing_site")),
@@ -248,14 +260,19 @@ def build_shadow_payloads(facts: dict, match: dict, now: Optional[datetime] = No
     consent_label = "granted" if consent is True else ("denied" if consent is False else "unknown")
 
     ga4_blockers = []
+    consent_analytics = facts.get("consent_analytics")
+    if consent_analytics is not True:
+        ga4_blockers.append("analytics_consent_not_granted")
     if not match.get("ga_client_id"):
         ga4_blockers.append("missing_ga_client_id")
     if not match.get("ga_session_id"):
         ga4_blockers.append("missing_ga_session_id")  # sends, but lands outside the session
     within_ga4_window = (now - paid_at) <= timedelta(hours=GA4_BACKDATE_HOURS)
     shadow_ga4 = {
-        "would_send":     bool(match.get("ga_client_id")),
+        "would_send":     bool(match.get("ga_client_id")) and consent_analytics is True,
         "client_id":      match.get("ga_client_id"),
+        "consent_analytics": consent_analytics,
+        "order_created_at": _iso(facts.get("created_at")),
         "session_id":     match.get("ga_session_id"),
         "transaction_id": facts.get("order_id"),
         "value":          facts.get("total"),

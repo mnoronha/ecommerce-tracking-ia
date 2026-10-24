@@ -367,6 +367,19 @@ def _notion_poll_updates():
     _NotionAdapter(supabase=_get_supabase_for_notion()).poll_notion_task_updates()
 
 
+def _ga4_dispatch_pending():
+    from .core.ga4_dispatch import run_pending
+    run_pending()
+
+
+_scheduler.add_job(
+    _ga4_dispatch_pending,
+    "interval",
+    minutes=10,
+    id="ga4_dispatch_pending",
+    max_instances=1,
+    misfire_grace_time=600,
+)
 _scheduler.add_job(
     _run_change_history,
     "interval",
