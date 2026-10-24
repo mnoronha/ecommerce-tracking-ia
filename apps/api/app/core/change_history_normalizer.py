@@ -190,12 +190,13 @@ def normalize_google_event(
 
     campaign_res = ce.get("campaign") or ""
     adgroup_res  = ce.get("adGroup") or ""
-    ad_res       = ce.get("ad") or ""
+    changed_res  = ce.get("changeResourceName") or ""  # the changed entity, e.g. customers/1/adGroupAds/10~99
+    ad_res       = ce.get("ad") or (changed_res if resource_type == "AD_GROUP_AD" else "")
 
     campaign_id = _resource_id(campaign_res)
     adgroup_id  = _resource_id(adgroup_res)
-    ad_id       = _resource_id(ad_res)
-    entity_id   = _resource_id(resource_name)
+    ad_id       = (_resource_id(ad_res) or "").split("~")[-1] or None
+    entity_id   = (_resource_id(changed_res) or "").split("~")[-1] or _resource_id(resource_name)
 
     obj_key = _G_OBJ_KEY.get(resource_type, "")
     obj = (new_resource.get(obj_key) or old_resource.get(obj_key) or {}) if obj_key else {}
