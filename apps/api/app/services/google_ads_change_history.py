@@ -24,21 +24,20 @@ _ADS_API = "https://googleads.googleapis.com/v23"
 _CHANGE_EVENT_QUERY = """\
 SELECT
   change_event.resource_name,
-  change_event.change_datetime,
+  change_event.change_date_time,
   change_event.change_resource_type,
+  change_event.change_resource_name,
   change_event.resource_change_operation,
   change_event.client_type,
   change_event.new_resource,
   change_event.old_resource,
   change_event.changed_fields,
   change_event.campaign,
-  change_event.ad_group,
-  change_event.ad,
-  change_event.keyword,
-  change_event.feed_item
+  change_event.ad_group
 FROM change_event
-WHERE change_event.change_datetime >= '{since}'
-  AND change_event.change_datetime < '{until}'
+WHERE change_event.change_date_time >= '{since}'
+  AND change_event.change_date_time < '{until}'
+ORDER BY change_event.change_date_time DESC
 LIMIT 10000
 """
 
