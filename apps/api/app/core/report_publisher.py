@@ -1,6 +1,8 @@
 """
 Report Publisher.
 
+LEGACY_REPORT_PUBLISHER — retained unchanged; never used by canonical_reports.
+
 Triggered when a core_report_narratives record transitions to PUBLISHED.
 Fires email + WhatsApp delivery using the existing reports.py send machinery.
 

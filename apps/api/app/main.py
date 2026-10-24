@@ -86,7 +86,7 @@ _register_scheduler(_scheduler, _JOB_RUNS)
 _scheduler.add_listener(_record_job_run, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 _scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
 _scheduler.add_job(
-    reports.send_weekly_reports,
+    reports.send_weekly_reports,  # LEGACY_WEEKLY: retained; canonical path is separately flagged.
     "cron",
     day_of_week="mon",
     hour=11,  # 11 UTC = 08:00 BRT
@@ -94,7 +94,7 @@ _scheduler.add_job(
     id="weekly_reports",
 )
 _scheduler.add_job(
-    reports.send_monthly_reports,
+    reports.send_monthly_reports,  # LEGACY_MONTHLY: retained; canonical path is separately flagged.
     "cron",
     day=1,
     hour=11,  # 11 UTC = 08:00 BRT — 1º dia do mês, sobre o mês anterior fechado
@@ -582,6 +582,9 @@ app.include_router(agency_os.router)
 
 # ── Agency API v1 ────────────────────────────────────────────────────────────
 app.include_router(agency_v1_router)
+# New canonical API has no startup work and never invokes the legacy publisher.
+from .agency_api.v1.canonical_reports import router as canonical_reports_router
+app.include_router(canonical_reports_router)
 app.include_router(agency_v1_admin_router)
 
 # ── Noro Platform Public REST API (v1) ────────────────────────────────────────
