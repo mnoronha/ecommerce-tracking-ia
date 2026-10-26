@@ -7,7 +7,7 @@ from hashlib import sha256
 import json,os,uuid
 
 FLAG_NAMES=('CANONICAL_WEEKLY_REVIEW_ENABLED','CANONICAL_MONTHLY_REVIEW_ENABLED','REPORT_PUBLISH_ENABLED','REPORT_DELIVERY_ENABLED')
-LIFECYCLE={'DRAFT':{'READY_FOR_REVIEW'},'READY_FOR_REVIEW':{'APPROVED'},'APPROVED':{'PUBLISHED'},'PUBLISHED':set()}
+LIFECYCLE={'DRAFT':{'READY_FOR_REVIEW'},'READY_FOR_REVIEW':{'APPROVED','SUPERSEDED'},'APPROVED':{'PUBLISHED','SUPERSEDED'},'PUBLISHED':{'SUPERSEDED'},'SUPERSEDED':set()}
 DELIVERY_STATES=('DELIVERY_PENDING','DELIVERED','DELIVERY_FAILED')
 class ReportError(ValueError):pass
 
@@ -67,12 +67,13 @@ class Reports:
     return old
    return doc
   return self.mutate(key,create)
- def transition(self,report_id,version,target,*,actor,at,expected_hash):
+ def transition(self,report_id,version,target,*,actor,at,expected_hash,superseded_by_version=None):
   if not actor or actor.strip().lower() in ('hermes','hermes_service','platform_web','agency_admin','system','scheduler'):raise ReportError('HUMAN_ACTOR_REQUIRED')
   if target=='PUBLISHED' and not self.flags.REPORT_PUBLISH_ENABLED:raise ReportError('PUBLICATION_DISABLED')
   def change(old):
    if old is None:raise ReportError('REPORT_NOT_FOUND')
    if old['artifact_hash']!=expected_hash:raise ReportError('APPROVAL_HASH_MISMATCH')
+   if old['status']=='SUPERSEDED':raise ReportError('INVALID_TRANSITION')
    if old['status']==target:return old
    if target not in LIFECYCLE.get(old['status'],set()):raise ReportError('INVALID_TRANSITION')
    old['status']=target
@@ -80,6 +81,9 @@ class Reports:
    if target=='PUBLISHED':
     if old.get('approval_hash')!=old['artifact_hash']:raise ReportError('APPROVED_VERSION_REQUIRED')
     old['published_at']=at
+   if target=='SUPERSEDED':
+    old.update(superseded_at=at,superseded_by_actor=actor)
+    if superseded_by_version is not None:old['superseded_by_version']=superseded_by_version
    return old
   return self.mutate(f'report:{report_id}:v{version}',change)
  def prepare_delivery(self,delivery_id,report_id,version,*,channel,recipient_hash,actor,at):
