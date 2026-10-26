@@ -24,16 +24,21 @@ _DEGRADED: frozenset[str] = frozenset({
 })
 
 
-def _load_existing_snapshot(client_id: str, period_end: date) -> Optional[dict]:
-    """Load the best existing snapshot for (client, period_end), or None."""
-    from ..database import get_supabase
+def _load_existing_snapshot(client_id: str, period_start: date, period_end: date) -> Optional[dict]:
+    """Load the best existing full-month snapshot for (client, period_start, period_end), or None.
+
+    Requires BOTH period_start and period_end to match so that a 7-day rolling window
+    ending on the last day of the month is not mistaken for a complete monthly snapshot.
+    """
     from .snapshot_selector import select_best_snapshot
+    from ..database import get_supabase
     try:
         sb = get_supabase()
         res = (
             sb.table("core_metric_snapshots")
             .select("id, health, computed_at, period_start, period_end")
             .eq("client_id", client_id)
+            .eq("period_start", period_start.isoformat())
             .eq("period_end", period_end.isoformat())
             .execute()
         )
@@ -68,8 +73,10 @@ def materialize_closed_month(
     if end >= local_today:
         raise ValueError("MONTH_NOT_CLOSED")
 
-    # Idempotency: skip pipeline if a healthy canonical snapshot already exists
-    existing = _load_existing_snapshot(client_id, end)
+    # Idempotency: skip pipeline if a healthy full-month snapshot already exists.
+    # Uses both period_start and period_end to avoid accepting a 7-day rolling
+    # window that ends on the last day of the month as a completed monthly snapshot.
+    existing = _load_existing_snapshot(client_id, start, end)
     if existing and not _is_degraded(existing):
         run_id = f"backfill:idempotent:{client_id}:{start.isoformat()}"
         return PipelineResult(
