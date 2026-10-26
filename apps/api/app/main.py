@@ -670,4 +670,13 @@ def health_check():
         "supabase_url": settings.SUPABASE_URL[:40] + "..." if settings.SUPABASE_URL else "NOT SET",
         "service_key_set": bool(settings.SUPABASE_SERVICE_KEY),
         "credentials_key_set": bool(settings.CREDENTIALS_KEY),
+        "ga4_dispatch": _ga4_last_stats(),
     }
+
+
+def _ga4_last_stats() -> dict:
+    try:
+        from .core.ga4_dispatch import LAST_STATS
+        return dict(LAST_STATS)
+    except Exception:
+        return {}
