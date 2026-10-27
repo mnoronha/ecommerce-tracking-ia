@@ -11,10 +11,12 @@ import { usePathname, useParams } from 'next/navigation'
 const TABS: { seg: string; label: string }[] = [
   { seg: 'agency-os',           label: 'Visão geral' },
   { seg: 'performance',         label: 'Performance' },
+  { seg: 'canonical-reports',   label: 'Relatórios' },
+  { seg: 'actions',             label: 'Ações' },
+  { seg: 'changes',             label: 'Mudanças' },
   { seg: 'data-health',         label: 'Saúde dos Dados' },
   { seg: 'recommendations',     label: 'Recomendações' },
   { seg: 'learning-candidates', label: 'Aprendizados' },
-  { seg: 'changes',             label: 'Mudanças' },
 ]
 
 export default function AgencyOsLayout({ children }: { children: React.ReactNode }) {
@@ -25,7 +27,7 @@ export default function AgencyOsLayout({ children }: { children: React.ReactNode
   return (
     <div>
       <div className="px-6 pt-5 border-b border-[#2a2f3e] overflow-x-auto">
-        <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Agency OS</p>
+        <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Action Center</p>
         <nav className="flex gap-1 min-w-max">
           {TABS.map(t => {
             const href   = `${base}/${t.seg}`
