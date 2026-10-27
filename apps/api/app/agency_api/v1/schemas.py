@@ -1210,7 +1210,44 @@ class MeetingOut(_Base):
     updated_at:         datetime
 
 
-# ── 17. Tracking Ingestion (Phase 7) ─────────────────────────────────────────
+# ── 17. Fireflies Admin ──────────────────────────────────────────────────────
+
+class FirefliesStatusOut(_Base):
+    api_auth:       str  # PASS | FAIL
+    plan_access:    str  # AVAILABLE | UNAVAILABLE | UNKNOWN
+    transcript_read: str  # AVAILABLE | UNAVAILABLE | UNKNOWN
+    user_id:        Optional[str] = None
+    name:           Optional[str] = None
+    num_transcripts: Optional[int] = None
+
+
+class FireflyMappingCreate(_Base):
+    fireflies_meeting_id: str
+    client_id:            str
+
+
+class FireflyMappingOut(_Base):
+    id:                   str
+    fireflies_meeting_id: str
+    client_id:            str
+    created_by:           Optional[str] = None
+    created_at:           datetime
+
+
+class FireflyEventOut(_Base):
+    id:                   str
+    fireflies_meeting_id: str
+    event_type:           str
+    client_id:            Optional[str] = None
+    resolution_method:    Optional[str] = None
+    meeting_id:           Optional[str] = None
+    status:               str
+    error:                Optional[str] = None
+    received_at:          datetime
+    processed_at:         Optional[datetime] = None
+
+
+# ── 18. Tracking Ingestion (Phase 7) ─────────────────────────────────────────
 
 _VALID_EVENT_NAMES = frozenset(
     {"page_view", "view_item", "add_to_cart", "begin_checkout", "purchase"}

@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6"
 
+    # ── Fireflies.ai ─────────────────────────────────────────────────────
+    FIREFLIES_API_KEY: str = ""
+    FIREFLIES_WEBHOOK_SECRET: str = ""
+
     # ── CORS ─────────────────────────────────────────────────────────────
     CORS_ORIGINS: str = "*"
 

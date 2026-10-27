@@ -201,6 +201,11 @@ from .schemas import (
     # Phase 7 — Tracking Ingestion
     TrackingEventBatchIn,
     TrackingIngestOut,
+    # Fireflies Admin
+    FirefliesStatusOut,
+    FireflyMappingCreate,
+    FireflyMappingOut,
+    FireflyEventOut,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -5434,6 +5439,169 @@ def process_meeting(
     out.processor_manual_status = "AVAILABLE"
     out.processor_claude_status = _claude_processor_status()
     return out
+
+
+# ── Fireflies Admin ───────────────────────────────────────────────────────────
+
+
+@router.get(
+    "/fireflies/status",
+    response_model=FirefliesStatusOut,
+    summary="Validate Fireflies API credentials",
+)
+def get_fireflies_status(
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+) -> FirefliesStatusOut:
+    from ...core import fireflies_adapter as _ff
+    try:
+        info = _ff.validate_auth()
+    except Exception as exc:
+        logger.warning("fireflies: validate_auth failed: %s", exc)
+        return FirefliesStatusOut(
+            api_auth="FAIL",
+            plan_access="UNKNOWN",
+            transcript_read="UNKNOWN",
+        )
+    if not info.get("authenticated"):
+        return FirefliesStatusOut(
+            api_auth="FAIL",
+            plan_access="UNAVAILABLE",
+            transcript_read="UNAVAILABLE",
+        )
+    return FirefliesStatusOut(
+        api_auth="PASS",
+        plan_access=info.get("plan_access", "UNKNOWN"),
+        transcript_read=info.get("transcript_read", "UNKNOWN"),
+        user_id=info.get("user_id"),
+        name=info.get("name"),
+        num_transcripts=info.get("num_transcripts"),
+    )
+
+
+@router.get(
+    "/fireflies/mappings",
+    response_model=list[FireflyMappingOut],
+    summary="List Fireflies client mappings",
+)
+def list_fireflies_mappings(
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+    client_id: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[FireflyMappingOut]:
+    db = _get_db()
+    q = db.table("core_fireflies_client_mapping").select("*")
+    if client_id:
+        q = q.eq("client_id", client_id)
+    rows = q.order("created_at", desc=True).limit(limit).execute().data or []
+    return [
+        FireflyMappingOut(
+            id=str(r["id"]),
+            fireflies_meeting_id=r["fireflies_meeting_id"],
+            client_id=r["client_id"],
+            created_by=r.get("created_by"),
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/fireflies/mappings",
+    response_model=FireflyMappingOut,
+    summary="Create explicit Fireflies → client mapping",
+)
+def create_fireflies_mapping(
+    body: FireflyMappingCreate,
+    response: Response,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
+) -> FireflyMappingOut:
+    db = _get_db()
+    # Validate client exists
+    cl = db.table("clients").select("id").eq("id", body.client_id).limit(1).execute()
+    if not cl.data:
+        raise HTTPException(404, detail=f"client not found: {body.client_id!r}")
+    # Idempotent upsert
+    existing = (
+        db.table("core_fireflies_client_mapping")
+        .select("*")
+        .eq("fireflies_meeting_id", body.fireflies_meeting_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        r = existing.data[0]
+        response.status_code = 200
+    else:
+        res = db.table("core_fireflies_client_mapping").insert({
+            "fireflies_meeting_id": body.fireflies_meeting_id,
+            "client_id": body.client_id,
+            "created_by": _auth.scope,
+        }).execute()
+        r = res.data[0]
+        response.status_code = 201
+    return FireflyMappingOut(
+        id=str(r["id"]),
+        fireflies_meeting_id=r["fireflies_meeting_id"],
+        client_id=r["client_id"],
+        created_by=r.get("created_by"),
+        created_at=r["created_at"],
+    )
+
+
+@router.delete(
+    "/fireflies/mappings/{fireflies_meeting_id}",
+    status_code=204,
+    summary="Remove explicit Fireflies → client mapping",
+)
+def delete_fireflies_mapping(
+    fireflies_meeting_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
+) -> None:
+    db = _get_db()
+    existing = (
+        db.table("core_fireflies_client_mapping")
+        .select("id")
+        .eq("fireflies_meeting_id", fireflies_meeting_id)
+        .limit(1)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(404, detail=f"mapping not found: {fireflies_meeting_id!r}")
+    db.table("core_fireflies_client_mapping").delete().eq(
+        "fireflies_meeting_id", fireflies_meeting_id
+    ).execute()
+
+
+@router.get(
+    "/fireflies/events",
+    response_model=list[FireflyEventOut],
+    summary="List Fireflies webhook events",
+)
+def list_fireflies_events(
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[FireflyEventOut]:
+    db = _get_db()
+    q = db.table("core_fireflies_events").select("*")
+    if status:
+        q = q.eq("status", status)
+    rows = q.order("received_at", desc=True).limit(limit).execute().data or []
+    return [
+        FireflyEventOut(
+            id=str(r["id"]),
+            fireflies_meeting_id=r["fireflies_meeting_id"],
+            event_type=r["event_type"],
+            client_id=r.get("client_id"),
+            resolution_method=r.get("resolution_method"),
+            meeting_id=str(r["meeting_id"]) if r.get("meeting_id") else None,
+            status=r["status"],
+            error=r.get("error"),
+            received_at=r["received_at"],
+            processed_at=r.get("processed_at"),
+        )
+        for r in rows
+    ]
 
 
 # ── Phase 7 — Tracking Ingestion ─────────────────────────────────────────────

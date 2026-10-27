@@ -324,6 +324,7 @@ class MeetingProvider(str, Enum):
     GOOGLE_MEET  = "google_meet"
     TEAMS        = "teams"
     MANUAL       = "manual"
+    FIREFLIES    = "fireflies"
     OTHER        = "other"
 
 
