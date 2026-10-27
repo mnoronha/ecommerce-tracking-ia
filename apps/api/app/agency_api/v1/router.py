@@ -5347,7 +5347,7 @@ def process_meeting(
     tasks_created_entries: list[dict] = []
     if body.create_tasks and body.commitments:
         for c in body.commitments:
-            commitment = c if isinstance(c, dict) else c.model_dump(exclude_none=True)
+            commitment = c if isinstance(c, dict) else c.model_dump(mode='json', exclude_none=True)
             task_title = (commitment.get("what") or "Compromisso de reuniao")[:200]
             task_row = {
                 "client_id":        client_slug,
@@ -5373,10 +5373,10 @@ def process_meeting(
     sum_row = {
         "meeting_id":     meeting_id,
         "summary":        body.summary,
-        "decisions":      _json.dumps([d if isinstance(d, dict) else d.model_dump(exclude_none=True) for d in (body.decisions or [])]),
+        "decisions":      _json.dumps([d if isinstance(d, dict) else d.model_dump(mode='json', exclude_none=True) for d in (body.decisions or [])]),
         "open_questions": _json.dumps(body.open_questions or []),
-        "commitments":    _json.dumps([c if isinstance(c, dict) else c.model_dump(exclude_none=True) for c in (body.commitments or [])]),
-        "follow_ups":     _json.dumps([f if isinstance(f, dict) else f.model_dump(exclude_none=True) for f in (body.follow_ups or [])]),
+        "commitments":    _json.dumps([c if isinstance(c, dict) else c.model_dump(mode='json', exclude_none=True) for c in (body.commitments or [])]),
+        "follow_ups":     _json.dumps([f if isinstance(f, dict) else f.model_dump(mode='json', exclude_none=True) for f in (body.follow_ups or [])]),
         "tasks_created":  _json.dumps(tasks_created_entries),
         "processor":      body.processor or "manual",
         "created_at":     now,
