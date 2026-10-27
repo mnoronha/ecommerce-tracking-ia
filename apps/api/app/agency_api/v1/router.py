@@ -5982,3 +5982,11 @@ def run_h4_idempotency_test(
         result = data
 
     return result
+
+# Canonical read-only transcript access; no provider or storage writes.
+from .meeting_transcript import register_transcript_read as _register_transcript_read
+_register_transcript_read(
+    router, load_db=lambda: _get_db(),
+    load_client_meta=lambda client_id: _load_client_meta(client_id),
+    auth_dependency=SCOPE_READ_ANY,
+)
