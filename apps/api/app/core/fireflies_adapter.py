@@ -72,7 +72,6 @@ query GetTranscript($id: String!) {
     date
     duration
     participants
-    speakers { displayName }
     sentences {
       index
       speaker_name
@@ -119,6 +118,4 @@ def build_participants(transcript: dict) -> list[dict]:
         return [{"email": e, "name": e.split("@")[0]} for e in raw if e]
     if raw and isinstance(raw[0], dict):
         return [{"email": p.get("email", ""), "name": p.get("name", "")} for p in raw]
-    # Fall back to speakers
-    speakers = transcript.get("speakers") or []
-    return [{"name": s.get("displayName", ""), "email": ""} for s in speakers]
+    return []

@@ -169,14 +169,7 @@ def _create_meeting(
         except Exception:
             pass
 
-    speakers = transcript.get("speakers") or []
-    if speakers and len(speakers) == len(participants):
-        merged = [
-            {"name": s.get("displayName", p.get("name", "")), "email": p.get("email", "")}
-            for s, p in zip(speakers, participants)
-        ]
-    else:
-        merged = participants
+    merged = participants
 
     row = {
         "client_id":         client_id,
@@ -214,7 +207,7 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
         return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
 
     meeting_id   = payload.get("meetingId") or payload.get("meeting_id") or ""
-    event_type   = payload.get("webhook_type") or payload.get("event_type") or "unknown"
+    event_type   = payload.get("webhook_type") or payload.get("event_type") or payload.get("event") or "unknown"
 
     if not meeting_id:
         return JSONResponse({"ok": False, "error": "missing_meetingId"}, status_code=400)

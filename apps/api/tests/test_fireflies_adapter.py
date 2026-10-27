@@ -6,7 +6,6 @@ Coverage:
   - build_raw_text with empty sentences → fallback to title
   - build_participants with email strings (Free plan format)
   - build_participants with dict list
-  - build_participants with speakers fallback
   - validate_auth success → authenticated=True, plan_access=AVAILABLE
   - validate_auth GQL error → authenticated=False, plan_access=UNAVAILABLE
   - validate_auth HTTP error → raises RuntimeError
@@ -135,23 +134,8 @@ def test_build_participants_dict_list():
     ]
 
 
-def test_build_participants_speakers_fallback():
-    transcript = {
-        "participants": [],
-        "speakers": [
-            {"displayName": "Alice"},
-            {"displayName": "Bob"},
-        ],
-    }
-    result = build_participants(transcript)
-    assert result == [
-        {"name": "Alice", "email": ""},
-        {"name": "Bob", "email": ""},
-    ]
-
-
 def test_build_participants_empty_returns_empty():
-    transcript = {"participants": [], "speakers": []}
+    transcript = {"participants": []}
     result = build_participants(transcript)
     assert result == []
 
@@ -236,7 +220,6 @@ _SAMPLE_TRANSCRIPT = {
     "date": 1700000000000,
     "duration": 3600,
     "participants": ["alice@example.com"],
-    "speakers": [{"displayName": "Alice"}],
     "sentences": [
         {"index": 0, "speaker_name": "Alice", "text": "Welcome everyone", "start_time": 0, "end_time": 5}
     ],
