@@ -1,8 +1,8 @@
 """Canonical report API; no calls into legacy publication or transport code."""
 from datetime import datetime,timezone
-from fastapi import APIRouter,Depends,HTTPException
+from fastapi import APIRouter,Depends,HTTPException,Query
 from pydantic import BaseModel,Field,ConfigDict
-from typing import Literal
+from typing import Literal,Optional
 from .auth import SCOPE_READ_ANY,SCOPE_HERMES_WRITE,SCOPE_PLATFORM_WRITE,AuthContext
 from ...core.canonical_reports import Reports,CoreStore,Flags,ReportError
 router=APIRouter(prefix='/agency/v1/canonical-reports',tags=['canonical-reports'])
@@ -53,6 +53,32 @@ class Delivery(BaseModel):
  channel:str
  recipient_hash:str=Field(pattern='^[a-f0-9]{64}$')
  actor:str=Field(min_length=1)
+
+@router.get('/list',tags=['canonical-reports'])
+def list_canonical_reports(
+ client_id:str=Query(...,description='Client slug or pixel_id'),
+ status:Optional[str]=Query(None,description='DRAFT|READY_FOR_REVIEW|APPROVED|PUBLISHED|SUPERSEDED'),
+ report_type:Optional[str]=Query(None,description='weekly|monthly'),
+ limit:int=Query(30,ge=1,le=100),
+ auth:AuthContext=Depends(SCOPE_READ_ANY),
+)->list[dict]:
+ from ...database import get_supabase
+ from ..v1.router import _resolve_slug
+ slug=_resolve_slug(client_id) or client_id
+ scope(auth,slug)
+ sb=get_supabase()
+ try:
+  rows=sb.table('core_canonical_report_records').select('entity_key,document').contains('document',{'client_id':slug}).execute().data or []
+ except Exception as exc:
+  raise HTTPException(503,'database error')
+ out=[]
+ for r in rows:
+  doc=r.get('document') or {}
+  if status and doc.get('status')!=status.upper():continue
+  if report_type and doc.get('report_type')!=report_type.lower():continue
+  out.append(doc)
+ out.sort(key=lambda d:(d.get('period_start',''),d.get('version',1)),reverse=True)
+ return out[:limit]
 
 @router.post('/versions',response_model=ReportVersion)
 def generate(body:Generate,auth:AuthContext=Depends(SCOPE_HERMES_WRITE)):
