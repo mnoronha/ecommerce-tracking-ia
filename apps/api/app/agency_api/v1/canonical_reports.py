@@ -53,6 +53,9 @@ class Delivery(BaseModel):
  channel:str
  recipient_hash:str=Field(pattern='^[a-f0-9]{64}$')
  actor:str=Field(min_length=1)
+class DeliveryExecute(BaseModel):
+ recipient:str=Field(min_length=3)
+ actor:str=Field(min_length=1)
 
 @router.get('/list',tags=['canonical-reports'])
 def list_canonical_reports(
@@ -117,3 +120,20 @@ def prepare_delivery(body:Delivery,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE
   scope(auth,s.get(body.report_id,body.report_version)['client_id'])
   return s.prepare_delivery(body.delivery_id,body.report_id,body.report_version,channel=body.channel,recipient_hash=body.recipient_hash,actor=auth.subject or body.actor,at=datetime.now(timezone.utc).isoformat())
  except ReportError as e:fail(e)
+
+@router.post('/delivery-receipts/{delivery_id}/send')
+def send_delivery(delivery_id:str,body:DeliveryExecute,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):
+ if not Flags.environment().REPORT_DELIVERY_ENABLED:raise HTTPException(409,'DELIVERY_DISABLED')
+ from ...core.report_email_transport import dispatch_delivery
+ s=service()
+ try:
+  receipt=s.get_delivery(delivery_id)
+  scope(auth,receipt['client_id'])
+  result=dispatch_delivery(delivery_id,body.recipient,s)
+  if result['status']=='DELIVERY_FAILED':
+   raise HTTPException(409,f"DELIVERY_FAILED:{result.get('error','TRANSPORT_UNAVAILABLE')}")
+  return result
+ except ReportError as e:
+  err=str(e)
+  if err=='DELIVERY_NOT_FOUND':raise HTTPException(404,err)
+  raise HTTPException(409,err)

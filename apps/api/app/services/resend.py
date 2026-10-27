@@ -85,6 +85,47 @@ def send_email_with_attachment(
         return False
 
 
+def send_email_tracked(
+    to: str,
+    subject: str,
+    html_body: str,
+    from_name: str = _FROM_NAME,
+) -> tuple[bool, str | None, str | None]:
+    """Send HTML email. Returns (success, provider_message_id_or_None, error_or_None)."""
+    if settings.RESEND_API_KEY:
+        return _via_resend_tracked(to, subject, html_body, from_name)
+    ok = _smtp.send_email(to, subject, html_body)
+    return (ok, f"smtp:{to}" if ok else None, None if ok else "SMTP send failed")
+
+
+def _via_resend_tracked(to: str, subject: str, html: str, from_name: str) -> tuple[bool, str | None, str | None]:
+    from_addr = settings.RESEND_FROM or _FROM_DOMAIN
+    payload = {
+        "from":    f"{from_name} <{from_addr}>",
+        "to":      [to],
+        "subject": subject,
+        "html":    html,
+    }
+    try:
+        resp = httpx.post(
+            _RESEND_URL,
+            headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=15.0,
+        )
+        resp.raise_for_status()
+        msg_id = (resp.json() or {}).get("id") or f"resend-ok:{to}"
+        logger.info("resend tracked: sent → %s | %s | id=%s", to, subject, msg_id)
+        return True, msg_id, None
+    except httpx.HTTPStatusError as exc:
+        err = exc.response.text[:300]
+        logger.error("resend tracked HTTP %s → %s: %s", exc.response.status_code, to, err)
+        return False, None, f"HTTP {exc.response.status_code}: {err}"
+    except Exception as exc:
+        logger.error("resend tracked error → %s: %s", to, exc)
+        return False, None, str(exc)[:200]
+
+
 def _via_resend(to: str, subject: str, html: str, from_name: str) -> tuple[bool, str]:
     from_addr = settings.RESEND_FROM or _FROM_DOMAIN
     payload = {

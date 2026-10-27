@@ -102,6 +102,10 @@ class Reports:
     return old
    return doc
   return self.mutate('delivery:'+delivery_id,create)
+ def get_delivery(self,delivery_id):
+  row=self.store.get('delivery:'+delivery_id)
+  if row is None:raise ReportError('DELIVERY_NOT_FOUND')
+  return deepcopy(row['document'])
  def record_delivery_result(self,delivery_id,*,artifact_hash,provider_message_id=None,error_code=None):
   # Trusted future Core worker only. Not an API action, approval or a send.
   if bool(provider_message_id)==bool(error_code):raise ReportError('EXACT_PROVIDER_RESULT_REQUIRED')
@@ -114,10 +118,19 @@ class Reports:
     if old['status']==state and old.get('provider_message_id')==provider_message_id and old.get('error')==error_code:return old
     raise ReportError('DELIVERY_RESULT_CONFLICT')
    from datetime import datetime,timezone
-   old.update(status=state,attempt=1,provider_message_id=provider_message_id,error=error_code,
+   old.update(status=state,attempt=old.get('attempt',0)+1,provider_message_id=provider_message_id,error=error_code,
     sent_at=datetime.now(timezone.utc).isoformat() if provider_message_id else None)
    return old
   return self.mutate('delivery:'+delivery_id,finish)
+ def retry_delivery(self,delivery_id):
+  # Reset DELIVERY_FAILED → DELIVERY_PENDING for explicit human retry via /send.
+  def reset(old):
+   if old is None:raise ReportError('DELIVERY_NOT_FOUND')
+   if old['status']=='DELIVERED':raise ReportError('DELIVERY_ALREADY_COMPLETED')
+   if old['status']!='DELIVERY_FAILED':raise ReportError('DELIVERY_NOT_FAILED')
+   old.update(status='DELIVERY_PENDING',error=None,provider_message_id=None,sent_at=None)
+   return old
+  return self.mutate('delivery:'+delivery_id,reset)
  def dispatch(self,*args,**kwargs):raise ReportError('NO_DELIVERY_TRANSPORT_INSTALLED')
 
 class CoreStore:
