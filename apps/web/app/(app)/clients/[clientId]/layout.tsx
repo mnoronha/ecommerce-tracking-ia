@@ -8,7 +8,7 @@ import {
   LayoutDashboard, Users, ShoppingBag, Target, Settings, ArrowLeft, BarChart2,
   TrendingUp, Radio, DollarSign, GitBranch, FileText, UserCog, Bell,
   Layers, Activity, BrainCircuit, Store, PenLine, Search, ShieldCheck, Wrench,
-  History, Rocket, UserCheck, Sparkles,
+  History, Rocket, UserCheck, Sparkles, Calendar,
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,6 +80,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
           match: ['agency-os', 'performance', 'data-health', 'recommendations', 'learning-candidates', 'changes'],
         },
         { href: `${base}/alertas`,     label: 'Alertas',     icon: Bell },
+        { href: `${base}/meetings`,    label: 'Reuniões',    icon: Calendar },
         { href: `${base}/diagnostics`, label: 'Diagnóstico', icon: Activity },
       ],
     },

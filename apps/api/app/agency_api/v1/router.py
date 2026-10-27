@@ -66,7 +66,7 @@ import uuid as _uuid_mod
 from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, Response
 
 logger = logging.getLogger(__name__)
 
@@ -5138,6 +5138,15 @@ def update_task(
 #   POST — SCOPE_PLATFORM_WRITE
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _claude_processor_status() -> str:
+    import os
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        return "UNAVAILABLE_NO_KEY"
+    # Set ANTHROPIC_CREDITS_OK=true in Railway env when credits are restored.
+    if os.getenv("ANTHROPIC_CREDITS_OK", "").lower() in ("1", "true", "yes"):
+        return "LIVE"
+    return "DEGRADED_BLOCKED_CREDITS"
+
 def _meeting_row_to_out(row: dict, summary: Optional[dict] = None) -> MeetingOut:
     import json as _json
     parts = row.get("participants") or []
@@ -5331,10 +5340,13 @@ def ingest_transcript(
 def process_meeting(
     meeting_id: str,
     body: MeetingProcessCreate,
+    response: Response,
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
 ) -> MeetingSummaryOut:
     """Accept structured processor output (summary, decisions, commitments).
-    If create_tasks=True, creates canonical Task entries from commitments."""
+    Idempotent: if a summary already exists, returns it unchanged (replayed=True).
+    If create_tasks=True, creates canonical Task entries from commitments;
+    each entry in tasks_created carries status=created|failed and reason on failure."""
     db = _get_db()
     import json as _json
 
@@ -5342,6 +5354,21 @@ def process_meeting(
     if not (meet_res and meet_res.data):
         raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
     client_slug = meet_res.data[0]["client_id"]
+
+    # Idempotency guard — return existing summary without touching tasks.
+    existing_res = (
+        db.table("core_meeting_summaries").select("*")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if existing_res.data:
+        out = _summary_row_to_out(existing_res.data[0])
+        out.replayed = True
+        out.processor_manual_status = "AVAILABLE"
+        out.processor_claude_status = _claude_processor_status()
+        response.status_code = 200
+        return out
+
     now = datetime.now(timezone.utc).isoformat()
 
     tasks_created_entries: list[dict] = []
@@ -5363,12 +5390,22 @@ def process_meeting(
                 "created_at":       now,
                 "updated_at":       now,
             }
+            entry: dict = {"what": commitment.get("what"), "title": task_title}
             try:
                 t_res = db.table("core_tasks").insert(task_row).execute()
                 tid = t_res.data[0]["id"]
-                tasks_created_entries.append({"task_id": str(tid), "title": task_title})
+                entry["status"] = "created"
+                entry["task_id"] = str(tid)
             except Exception as exc:
-                logger.warning("process_meeting: task creation failed: %s", exc)
+                err_msg = str(exc).lower()
+                logger.warning("process_meeting: task creation failed for %r: %s", task_title, exc)
+                entry["status"] = "failed"
+                entry["reason"] = (
+                    "UNIQUE_VIOLATION"
+                    if any(k in err_msg for k in ("unique", "duplicate", "23505"))
+                    else "DB_ERROR"
+                )
+            tasks_created_entries.append(entry)
 
     sum_row = {
         "meeting_id":     meeting_id,
@@ -5393,7 +5430,10 @@ def process_meeting(
         "updated_at":        now,
     }).eq("id", meeting_id).execute()
 
-    return _summary_row_to_out(created_sum)
+    out = _summary_row_to_out(created_sum)
+    out.processor_manual_status = "AVAILABLE"
+    out.processor_claude_status = _claude_processor_status()
+    return out
 
 
 # ── Phase 7 — Tracking Ingestion ─────────────────────────────────────────────

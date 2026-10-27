@@ -1154,7 +1154,7 @@ class MeetingDecision(_Base):
 
 
 class MeetingCommitment(_Base):
-    who:       str
+    who:       Optional[str] = None
     what:      str
     due_date:  Optional[date] = None
 
@@ -1177,16 +1177,19 @@ class MeetingProcessCreate(_Base):
 
 
 class MeetingSummaryOut(_Base):
-    id:              str
-    meeting_id:      str
-    summary:         Optional[str]          = None
-    decisions:       list[dict]             = Field(default_factory=list)
-    open_questions:  list[str]              = Field(default_factory=list)
-    commitments:     list[dict]             = Field(default_factory=list)
-    follow_ups:      list[dict]             = Field(default_factory=list)
-    tasks_created:   list[dict]             = Field(default_factory=list)
-    processor:       str
-    created_at:      datetime
+    id:                      str
+    meeting_id:              str
+    summary:                 Optional[str]   = None
+    decisions:               list[dict]      = Field(default_factory=list)
+    open_questions:          list[str]       = Field(default_factory=list)
+    commitments:             list[dict]      = Field(default_factory=list)
+    follow_ups:              list[dict]      = Field(default_factory=list)
+    tasks_created:           list[dict]      = Field(default_factory=list)
+    processor:               str
+    processor_manual_status: str             = "AVAILABLE"
+    processor_claude_status: str             = "UNKNOWN"
+    replayed:                bool            = False
+    created_at:              datetime
 
 
 class MeetingOut(_Base):
