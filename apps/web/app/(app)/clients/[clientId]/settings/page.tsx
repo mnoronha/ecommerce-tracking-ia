@@ -110,15 +110,36 @@ export default function ClientSettingsPage() {
   const [resetPassword,  setResetPassword]  = useState('')
   const [resetBusy,      setResetBusy]      = useState(false)
 
+  // Delivery settings
+  type DSRecipient = { id: string; name: string; email: string; active: boolean; created_at?: string; updated_at?: string }
+  type DSSettings  = { weekly_enabled: boolean; monthly_enabled: boolean; weekly_day_of_week: number; weekly_hour: number; monthly_day_of_month: number; monthly_hour: number; report_timezone: string; recipients: DSRecipient[] }
+  const [dsSettings, setDsSettings] = useState<DSSettings | null>(null)
+  const [dsLoading,  setDsLoading]  = useState(true)
+  const [dsSaving,   setDsSaving]   = useState(false)
+  const [dsMsg,      setDsMsg]      = useState<{ ok: boolean; text: string } | null>(null)
+  const [dsNewName,  setDsNewName]  = useState('')
+  const [dsNewEmail, setDsNewEmail] = useState('')
+
   const load = useCallback(async () => {
     const { data } = await supabase
       .from('clients')
-      .select('*')
+      .select(
+        'id, pixel_id, name, client_type, is_active, reports_enabled, ' +
+        'shopify_domain, shopify_app_client_id, shopify_sync_enabled, ' +
+        'meta_pixel_id, meta_ad_account_id, meta_token_health, meta_token_expires_at, meta_prepaid, meta_balance_threshold, ' +
+        'ga4_measurement_id, ga4_property_id, ga4_reporting_enabled, ' +
+        'google_ads_customer_id, google_ads_conversion_action_id, google_ads_add_to_cart_action_id, google_ads_checkout_action_id, google_ads_aw_id, google_prepaid, google_balance_threshold, ' +
+        'tiktok_pixel_id, tiktok_advertiser_id, ' +
+        'merchant_center_id, ' +
+        'logo_url, alert_email, alert_emails, whatsapp_group_jid, slack_webhook_url, ' +
+        'search_console_site_url'
+      )
       .eq('pixel_id', clientId)
       .single()
     if (data) {
-      setClient(data); setForm(data)
-      if (data.merchant_center_id) setMcId(data.merchant_center_id)
+      const row = data as unknown as ClientRow
+      setClient(row); setForm(row)
+      if (row.merchant_center_id) setMcId(row.merchant_center_id)
     }
     const { data: pu } = await supabase
       .from('client_users')
@@ -127,6 +148,35 @@ export default function ClientSettingsPage() {
       .order('created_at', { ascending: true })
     setPortalUsers(pu || [])
     setLoading(false)
+  }, [clientId])
+
+  const loadDS = useCallback(async () => {
+    setDsLoading(true)
+    try {
+      const res = await fetch(`/api/v1/canonical-reports/delivery-settings?client_id=${clientId}`)
+      if (res.ok) setDsSettings(await res.json())
+    } catch {}
+    finally { setDsLoading(false) }
+  }, [clientId])
+
+  const saveDS = useCallback(async (next: DSSettings) => {
+    setDsSettings(next)
+    setDsSaving(true); setDsMsg(null)
+    try {
+      const res = await fetch(`/api/v1/canonical-reports/delivery-settings?client_id=${clientId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      })
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
+      setDsSettings(await res.json())
+      setDsMsg({ ok: true, text: 'Salvo' })
+      setTimeout(() => setDsMsg(null), 2500)
+    } catch (e) {
+      setDsMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setDsSaving(false)
+    }
   }, [clientId])
 
   async function invitePortalUser() {
@@ -186,6 +236,7 @@ export default function ClientSettingsPage() {
   }
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { loadDS() }, [loadDS])
 
   async function lgpdPreview() {
     const e = lgpdEmail.trim()
@@ -255,11 +306,12 @@ export default function ClientSettingsPage() {
   }
 
   async function handleDisconnectGoogle() {
-    // supabase singleton
-    await supabase
-      .from('clients')
-      .update({ google_ads_refresh_token: null })
-      .eq('pixel_id', clientId)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+    await fetch(`${apiUrl}/setup/${encodeURIComponent(clientId)}/credentials`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ google_ads_refresh_token: null }),
+    })
     setForm(f => ({ ...f, google_ads_refresh_token: null }))
   }
 
@@ -348,24 +400,29 @@ export default function ClientSettingsPage() {
   }
 
   async function handleDisconnectMerchant() {
-    await supabase
-      .from('clients')
-      .update({ merchant_center_id: null, merchant_center_refresh_token: null })
-      .eq('pixel_id', clientId)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+    await Promise.all([
+      fetch(`${apiUrl}/setup/${encodeURIComponent(clientId)}/credentials`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ merchant_center_refresh_token: null }),
+      }),
+      supabase.from('clients').update({ merchant_center_id: null }).eq('pixel_id', clientId),
+    ])
     setForm(f => ({ ...f, merchant_center_id: null, merchant_center_refresh_token: null }))
     setMcId(''); setMcToken(''); setMcMsg(null)
   }
 
   async function handleDisconnectMeta() {
-    // supabase singleton
-    await supabase
-      .from('clients')
-      .update({
-        meta_access_token:     null,
-        meta_token_expires_at: null,
-        meta_token_health:     'unknown',
-      })
-      .eq('pixel_id', clientId)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+    await Promise.all([
+      fetch(`${apiUrl}/setup/${encodeURIComponent(clientId)}/credentials`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meta_access_token: null }),
+      }),
+      supabase.from('clients').update({ meta_token_expires_at: null, meta_token_health: 'unknown' }).eq('pixel_id', clientId),
+    ])
     setForm(f => ({
       ...f,
       meta_access_token:     null,
@@ -441,18 +498,16 @@ export default function ClientSettingsPage() {
     setError('')
     setSaved(false)
 
-    // supabase singleton
+    // Only non-credential fields go to Supabase directly.
+    // Secrets (tokens/keys) are written exclusively via the encrypted credentials BFF below.
     const { error: updateError } = await supabase
       .from('clients')
       .update({
         name:                            form.name,
         shopify_domain:                  form.shopify_domain   || null,
-        shopify_access_token:            form.shopify_access_token || null,
         meta_pixel_id:                   form.meta_pixel_id    || null,
-        meta_access_token:               form.meta_access_token || null,
         meta_ad_account_id:              form.meta_ad_account_id || null,
         ga4_measurement_id:              form.ga4_measurement_id || null,
-        ga4_api_secret:                  form.ga4_api_secret   || null,
         ga4_property_id:                 form.ga4_property_id  || null,
         ga4_reporting_enabled:           form.ga4_reporting_enabled ?? false,
         google_ads_customer_id:           form.google_ads_customer_id || null,
@@ -460,16 +515,13 @@ export default function ClientSettingsPage() {
         google_ads_add_to_cart_action_id: form.google_ads_add_to_cart_action_id || null,
         google_ads_checkout_action_id:    form.google_ads_checkout_action_id || null,
         google_ads_aw_id:                 form.google_ads_aw_id || null,
-        google_ads_refresh_token:         form.google_ads_refresh_token || null,
         tiktok_pixel_id:                 form.tiktok_pixel_id      || null,
-        tiktok_access_token:             form.tiktok_access_token  || null,
         tiktok_advertiser_id:            form.tiktok_advertiser_id || null,
         logo_url:                        form.logo_url                  || null,
         alert_email:                     (form.alert_emails as string[] | undefined)?.[0] || form.alert_email || null,
         alert_emails:                    (form.alert_emails as string[] | undefined)?.filter(e => e.trim()) || [],
         whatsapp_group_jid:              form.whatsapp_group_jid    || null,
         slack_webhook_url:               form.slack_webhook_url     || null,
-        webhook_secret:                  form.webhook_secret        || null,
         is_active:                       form.is_active,
         client_type:                     form.client_type           || 'ecommerce',
         reports_enabled:                 form.reports_enabled       ?? false,
@@ -488,24 +540,26 @@ export default function ClientSettingsPage() {
       return
     }
 
-    // Re-grava os segredos via backend (cifra em repouso). A escrita acima pode
-    // ter posto o token em texto puro por um instante; isto sobrescreve cifrado.
+    // Write secrets via backend only (encrypted at rest).
+    // Only send fields the user explicitly filled in — empty means "don't change".
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
-      await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
-        method:  'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shopify_access_token:     form.shopify_access_token || null,
-          meta_access_token:        form.meta_access_token || null,
-          ga4_api_secret:           form.ga4_api_secret || null,
-          google_ads_refresh_token: form.google_ads_refresh_token || null,
-          tiktok_access_token:      form.tiktok_access_token || null,
-          webhook_secret:           form.webhook_secret || null,
-        }),
-      })
+      const newSecrets: Record<string, string | null> = {}
+      if ((form as any).shopify_access_token?.trim())     newSecrets.shopify_access_token     = (form as any).shopify_access_token.trim()
+      if ((form as any).meta_access_token?.trim())        newSecrets.meta_access_token        = (form as any).meta_access_token.trim()
+      if ((form as any).ga4_api_secret?.trim())           newSecrets.ga4_api_secret           = (form as any).ga4_api_secret.trim()
+      if ((form as any).google_ads_refresh_token?.trim()) newSecrets.google_ads_refresh_token = (form as any).google_ads_refresh_token.trim()
+      if ((form as any).tiktok_access_token?.trim())      newSecrets.tiktok_access_token      = (form as any).tiktok_access_token.trim()
+      if ((form as any).webhook_secret?.trim())           newSecrets.webhook_secret           = (form as any).webhook_secret.trim()
+      if (Object.keys(newSecrets).length > 0) {
+        await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
+          method:  'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newSecrets),
+        })
+      }
     } catch (_) {
-      // Falha aqui não bloqueia o save; o cron diário re-cifra como rede de segurança.
+      // Non-blocking; cron re-encrypts daily as safety net.
     }
 
     setSaved(true)
@@ -1357,6 +1411,170 @@ export default function ClientSettingsPage() {
             {lgpdResult.kind === 'preview'
               ? `Encontrados: ${lgpdResult.data.orders} pedido(s), ${lgpdResult.data.visitors} visitante(s), ${lgpdResult.data.attribution_cookies} cookie(s).`
               : `Concluído: ${lgpdResult.data.orders_anonymized} pedido(s) anonimizado(s), ${lgpdResult.data.visitors_anonymized} visitante(s), ${lgpdResult.data.events_anonymized} evento(s), ${lgpdResult.data.attribution_cookies_deleted} cookie(s) apagado(s).`}
+          </div>
+        )}
+      </div>
+
+      {/* Relatórios — delivery settings */}
+      <div className="mt-8 bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5">
+        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Relatórios</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          Configure a entrega de relatórios canônicos. Aprovação humana é sempre obrigatória antes do envio.
+          Destinatários são endereços internos da agência — não informar email de cliente.
+        </p>
+
+        {dsLoading ? (
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <Loader2 size={12} className="animate-spin" /> Carregando…
+          </div>
+        ) : dsSettings && (
+          <div className="space-y-5">
+            {/* Enabled toggles */}
+            <div className="flex flex-wrap gap-5">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={dsSettings.weekly_enabled}
+                  onChange={e => saveDS({ ...dsSettings, weekly_enabled: e.target.checked })}
+                  disabled={dsSaving}
+                  className="rounded border-slate-600 bg-[#0f1117] text-indigo-500 focus:ring-0"
+                />
+                <span className="text-xs text-slate-300">Habilitar semanal</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={dsSettings.monthly_enabled}
+                  onChange={e => saveDS({ ...dsSettings, monthly_enabled: e.target.checked })}
+                  disabled={dsSaving}
+                  className="rounded border-slate-600 bg-[#0f1117] text-indigo-500 focus:ring-0"
+                />
+                <span className="text-xs text-slate-300">Habilitar mensal</span>
+              </label>
+            </div>
+
+            {/* Schedule timing — shown only when at least one is enabled */}
+            {(dsSettings.weekly_enabled || dsSettings.monthly_enabled) && (
+              <div className="space-y-3 pt-2 border-t border-[#2a2f3e]">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider">Horário de disparo — horário de Brasília (America/Sao_Paulo, UTC−3)</p>
+                {dsSettings.weekly_enabled && (
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <span className="text-xs text-slate-400 w-14 shrink-0">Semanal</span>
+                    <select value={dsSettings.weekly_day_of_week ?? 0}
+                      onChange={e => saveDS({ ...dsSettings, weekly_day_of_week: +e.target.value })}
+                      disabled={dsSaving}
+                      className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
+                      {['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'].map((d,i) => (
+                        <option key={i} value={i}>{d}</option>
+                      ))}
+                    </select>
+                    <select value={dsSettings.weekly_hour ?? 8}
+                      onChange={e => saveDS({ ...dsSettings, weekly_hour: +e.target.value })}
+                      disabled={dsSaving}
+                      className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
+                      {Array.from({length:24},(_,h) => {
+                        const utc = (h + 3) % 24
+                        return <option key={h} value={h}>{String(h).padStart(2,'0')}:00 Brasília = {String(utc).padStart(2,'0')}:00 UTC</option>
+                      })}
+                    </select>
+                  </div>
+                )}
+                {dsSettings.monthly_enabled && (
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <span className="text-xs text-slate-400 w-14 shrink-0">Mensal</span>
+                    <select value={dsSettings.monthly_day_of_month ?? 1}
+                      onChange={e => saveDS({ ...dsSettings, monthly_day_of_month: +e.target.value })}
+                      disabled={dsSaving}
+                      className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
+                      {Array.from({length:28},(_,i) => (
+                        <option key={i+1} value={i+1}>Dia {i+1}</option>
+                      ))}
+                    </select>
+                    <select value={dsSettings.monthly_hour ?? 8}
+                      onChange={e => saveDS({ ...dsSettings, monthly_hour: +e.target.value })}
+                      disabled={dsSaving}
+                      className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
+                      {Array.from({length:24},(_,h) => {
+                        const utc = (h + 3) % 24
+                        return <option key={h} value={h}>{String(h).padStart(2,'0')}:00 Brasília = {String(utc).padStart(2,'0')}:00 UTC</option>
+                      })}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Human approval — read-only */}
+            <div className="flex items-center gap-2">
+              <CheckCircle size={12} className="text-emerald-400 shrink-0" />
+              <span className="text-xs text-slate-400">Aprovação humana sempre obrigatória</span>
+            </div>
+
+            {/* Recipients list */}
+            <div>
+              <p className="text-xs font-medium text-slate-300 mb-2">Destinatários</p>
+              <div className="space-y-2 mb-3">
+                {dsSettings.recipients.length === 0 ? (
+                  <p className="text-xs text-slate-600">Nenhum destinatário configurado.</p>
+                ) : dsSettings.recipients.map(r => (
+                  <div key={r.id} className="flex items-center gap-2 bg-[#0f1117] rounded-lg border border-[#2a2f3e] px-3 py-2">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.active ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+                    <span className="text-xs text-slate-300 font-medium flex-1 min-w-0 truncate">{r.name}</span>
+                    <span className="text-[10px] text-slate-500 truncate max-w-[160px]">{r.email}</span>
+                    <button
+                      onClick={() => saveDS({ ...dsSettings, recipients: dsSettings.recipients.map(x => x.id === r.id ? { ...x, active: !x.active } : x) })}
+                      disabled={dsSaving}
+                      className="text-[10px] text-slate-500 hover:text-slate-300 shrink-0 disabled:opacity-50"
+                    >
+                      {r.active ? 'Desativar' : 'Ativar'}
+                    </button>
+                    <button
+                      onClick={() => saveDS({ ...dsSettings, recipients: dsSettings.recipients.filter(x => x.id !== r.id) })}
+                      disabled={dsSaving}
+                      className="text-slate-600 hover:text-red-400 transition-colors shrink-0 disabled:opacity-50"
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add recipient row */}
+              <div className="flex gap-2 flex-wrap items-center">
+                <input
+                  type="text"
+                  value={dsNewName}
+                  onChange={e => setDsNewName(e.target.value)}
+                  placeholder="Nome"
+                  className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1.5 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500 w-32"
+                />
+                <input
+                  type="email"
+                  value={dsNewEmail}
+                  onChange={e => setDsNewEmail(e.target.value)}
+                  placeholder="email@norolabs.com.br"
+                  className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1.5 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500 flex-1 min-w-[180px]"
+                />
+                <button
+                  onClick={() => {
+                    if (!dsNewName.trim() || !dsNewEmail.trim()) return
+                    const newRec = { id: crypto.randomUUID(), name: dsNewName.trim(), email: dsNewEmail.trim().toLowerCase(), active: true }
+                    saveDS({ ...dsSettings!, recipients: [...dsSettings!.recipients, newRec] })
+                    setDsNewName(''); setDsNewEmail('')
+                  }}
+                  disabled={!dsNewName.trim() || !dsNewEmail.trim() || dsSaving}
+                  className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-2 py-1.5 rounded transition-colors shrink-0"
+                >
+                  <Plus size={11} />
+                  Adicionar
+                </button>
+              </div>
+            </div>
+
+            {/* Status feedback */}
+            {dsMsg && (
+              <p className={`text-xs ${dsMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{dsMsg.text}</p>
+            )}
           </div>
         )}
       </div>
