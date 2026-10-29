@@ -210,6 +210,7 @@ def pilot_run(
  report_type:str=Query(...,pattern='^(weekly|monthly)$'),
  period_start:Optional[str]=Query(None,description='YYYY-MM-DD override'),
  period_end:Optional[str]=Query(None,description='YYYY-MM-DD override'),
+ version:Optional[int]=Query(None,ge=1,description='Artifact version; auto-increments past existing immutable records if omitted'),
  auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE),
 )->dict:
  from ...database import get_supabase
@@ -228,20 +229,26 @@ def pilot_run(
   from ...core.canonical_weekly_scheduler import _build_artifact as _ba
  else:
   from ...core.canonical_monthly_scheduler import _build_artifact as _ba
- artifact=_ba(client_id,ps,pe,sb)
  pilot_flags=Flags(CANONICAL_WEEKLY_REVIEW_ENABLED=True,CANONICAL_MONTHLY_REVIEW_ENABLED=True,REPORT_PUBLISH_ENABLED=False,REPORT_DELIVERY_ENABLED=False)
  rpts=Reports(CoreStore(sb),flags=pilot_flags)
- try:
-  doc=rpts.generate(artifact)
- except ReportError as exc:
-  s=str(exc)
-  if 'IMMUTABLE_VERSION_CONFLICT' in s:return{'status':'ALREADY_EXISTS','client_id':client_id,'report_type':report_type,'period_start':str(ps),'period_end':str(pe)}
-  raise HTTPException(409,s)
+ # Try specified version; if omitted, start at 1 and auto-increment past immutable conflicts.
+ start_v=version or 1;max_v=start_v+19
+ for v in range(start_v,max_v+1):
+  artifact=_ba(client_id,ps,pe,sb,version=v)
+  try:
+   doc=rpts.generate(artifact);break
+  except ReportError as exc:
+   s=str(exc)
+   if 'IMMUTABLE_VERSION_CONFLICT' in s:
+    if version is not None or v==max_v:return{'status':'ALREADY_EXISTS','client_id':client_id,'report_type':report_type,'period_start':str(ps),'period_end':str(pe),'version':v}
+    continue
+   raise HTTPException(409,s)
+ ver=doc['version']
  if doc['status']=='DRAFT':
   try:
-   doc=rpts.transition(doc['report_id'],1,'READY_FOR_REVIEW',actor='canonical_pilot_run',at=datetime.now(timezone.utc).isoformat(),expected_hash=doc['artifact_hash'])
+   doc=rpts.transition(doc['report_id'],ver,'READY_FOR_REVIEW',actor='canonical_pilot_run',at=datetime.now(timezone.utc).isoformat(),expected_hash=doc['artifact_hash'])
   except ReportError:pass
- return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'status':doc['status'],'period_start':str(ps),'period_end':str(pe)}
+ return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'version':ver,'status':doc['status'],'period_start':str(ps),'period_end':str(pe)}
 
 @router.post('/delivery-receipts/{delivery_id}/send')
 def send_delivery(delivery_id:str,body:DeliveryExecute,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):
