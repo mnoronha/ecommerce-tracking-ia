@@ -354,6 +354,24 @@ class ChangeOut(ChangeCreate):
     updated_at: Optional[datetime] = None
 
 
+class ManualChangeCreate(_Base):
+    """Simplified schema for human-registered changes (agency admin UI)."""
+    occurred_at: datetime
+    channel: str                              # meta | google | tracking | site | outro
+    change_type: ChangeType
+    entity_name: str
+    entity_type: str = "CAMPAIGN"
+    entity_id: Optional[str] = None
+    before: Optional[Any] = None
+    after: Optional[Any] = None
+    reason: Optional[str] = None
+    description: Optional[str] = None        # hypothesis / objective
+    reported_by: str
+    recommendation_id: Optional[str] = None
+    task_id: Optional[str] = None
+    linked_provider_change_id: Optional[str] = None  # associate with auto-detected change
+
+
 # ── 7. Alerts ─────────────────────────────────────────────────────────────────
 
 class AlertOut(_Base):

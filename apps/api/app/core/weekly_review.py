@@ -250,7 +250,7 @@ def build_weekly_review_contract(
     prior_start = period_start - timedelta(days=7)
     prior_end   = period_end   - timedelta(days=7)
 
-    from .actions_loader import load_executed_actions, load_open_recommendations
+    from .actions_loader import load_executed_actions, load_open_recommendations, load_manual_changes
 
     snapshot       = _load_snapshot(sb, client_id, period_end)
     prior_snapshot = _load_snapshot(sb, client_id, prior_end)
@@ -258,6 +258,7 @@ def build_weekly_review_contract(
     active_alerts  = _load_active_alerts(sb, client_uuid)
     executed_actions     = load_executed_actions(sb, client_uuid, period_start, period_end)
     open_recommendations = load_open_recommendations(sb, client_uuid)
+    manual_changes       = load_manual_changes(sb, client_id, period_start, period_end)
 
     snapshot_found = snapshot is not None
     prior_found    = prior_snapshot is not None
@@ -322,6 +323,7 @@ def build_weekly_review_contract(
         "active_alerts":        active_alerts,
         "executed_actions":     executed_actions,
         "open_recommendations": open_recommendations,
+        "manual_changes":       manual_changes,
         "source_snapshot_id":       str(snapshot["id"])       if snapshot       else None,
         "source_prior_snapshot_id": str(prior_snapshot["id"]) if prior_snapshot else None,
     }
