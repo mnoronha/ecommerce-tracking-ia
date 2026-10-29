@@ -664,7 +664,7 @@ class TestMeetingsPipeline:
             "processor": "manual",
             "created_at": _TS,
         }
-        db = _sequential_db([meet_row], [sum_row], [])  # meet, insert summary, update meeting
+        db = _sequential_db([meet_row], [], [sum_row], [])  # meet, idempotency check, insert summary, update meeting
         with patch("app.agency_api.v1.router._get_db", return_value=db):
             with TestClient(_app_as(_PLATFORM)) as c:
                 resp = c.post(f"/agency/v1/meetings/{_MEETING_UUID}/process", json={
@@ -695,8 +695,8 @@ class TestMeetingsPipeline:
             "processor": "manual",
             "created_at": _TS,
         }
-        # Sequential: SELECT meeting, INSERT task, INSERT summary, UPDATE meeting
-        db = _sequential_db([meet_row], [task_row], [sum_row], [])
+        # Sequential: SELECT meeting, idempotency check, INSERT task, INSERT summary, UPDATE meeting
+        db = _sequential_db([meet_row], [], [task_row], [sum_row], [])
         with patch("app.agency_api.v1.router._get_db", return_value=db):
             with TestClient(_app_as(_PLATFORM)) as c:
                 resp = c.post(f"/agency/v1/meetings/{_MEETING_UUID}/process", json={
@@ -724,7 +724,7 @@ class TestMeetingsPipeline:
             "tasks_created": json.dumps([{"task_id": task_id, "title": "Tarefa da reunião"}]),
             "processor": "manual", "created_at": _TS,
         }
-        db = _sequential_db([meet_row], [task_row], [sum_row], [])
+        db = _sequential_db([meet_row], [], [task_row], [sum_row], [])
         with patch("app.agency_api.v1.router._get_db", return_value=db):
             with TestClient(_app_as(_PLATFORM)) as c:
                 resp = c.post(f"/agency/v1/meetings/{_MEETING_UUID}/process", json={

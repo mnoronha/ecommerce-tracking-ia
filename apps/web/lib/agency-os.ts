@@ -187,6 +187,7 @@ async function getReport(clientRoute: string, type: 'weekly' | 'monthly', period
     contracts = await agencyApiFetch<CoreReportContractOut[]>(
       `clients/${clientSlug}/report-contracts`,
       { report_type: type.toUpperCase() as 'WEEKLY' | 'MONTHLY' },
+      { next: { revalidate: 3600 } },
     )
   } catch (err) {
     if (err instanceof AgencyApiError) {

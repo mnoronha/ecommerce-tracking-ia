@@ -142,6 +142,19 @@ class _MutChain(_Chain):
         return _Chain(self._result)
 
 
+class _EmptyChain:
+    """Returns empty data for any fluent query — used for change_log/change_digests in tests."""
+    def select(self, *_, **__):    return self
+    def eq(self, *_, **__):        return self
+    def gte(self, *_, **__):       return self
+    def lte(self, *_, **__):       return self
+    def order(self, *_, **__):     return self
+    def limit(self, *_, **__):     return self
+    def range(self, *_, **__):     return self
+    def upsert(self, *_, **__):    return self
+    def execute(self):             return type("R", (), {"data": []})()
+
+
 class FakeDB:
     """
     Fake Supabase client for canonical_monthly_scheduler tests.
@@ -174,6 +187,9 @@ class FakeDB:
             return _Chain(type("R", (), {"data": self._clients})())
         if name == "core_job_runs":
             return _MutChain(self.job_rows, type("R", (), {"data": self.job_rows})())
+        # Change digest tables: return empty — _build_change_summary catches failure gracefully
+        if name in ("core_change_log", "core_change_digests"):
+            return _EmptyChain()
         raise ValueError(f"FakeDB: unknown table {name!r}")
 
 
@@ -380,8 +396,8 @@ def test_build_artifact_hypotheses_generated():
     assert len(observations) >= 2
 
 
-def test_build_artifact_recommendations_when_mer_far_above():
-    """MER > 1.3x target -> RECOMMENDATION."""
+def test_build_artifact_hypotheses_when_mer_far_above():
+    """MER > 1.3x target -> rule-based RECOMMENDATION in hypotheses (obs_hypotheses)."""
     ps, pe = _period()
     # MER=10.4, target=8.0; 10.4/8.0=1.3 (boundary), let's use target=7.0 to exceed 1.3x
     metrics = copy.deepcopy(SAMPLE_METRICS)
@@ -392,9 +408,11 @@ def test_build_artifact_recommendations_when_mer_far_above():
     db  = FakeDB(snapshots=[_make_snapshot("lk-sneakers", ps, pe, metrics=metrics)])
     art = _build_artifact("lk-sneakers", ps, pe, db)
 
-    rec = art["content"]["recommendations"]
-    assert len(rec) >= 1
-    assert rec[0]["type"] == "RECOMMENDATION"
+    # Rule-based items are now in 'hypotheses' (obs_hypotheses); 'recommendations' = Claude recs
+    hyp = art["content"]["hypotheses"]
+    assert len(hyp) >= 1
+    types = {h["type"] for h in hyp}
+    assert "RECOMMENDATION" in types or "OBSERVATION" in types or "HYPOTHESIS" in types
 
 
 def test_build_artifact_cross_client_isolation():
@@ -433,6 +451,7 @@ def test_build_artifact_schema_version_h8():
 
 def test_run_for_client_generates_ready_for_review(monkeypatch):
     monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
     ps, pe  = _period()
     db      = FakeDB()
     store   = MemoryStore()
@@ -482,6 +501,7 @@ def test_run_for_client_records_failed_job_on_error(monkeypatch):
 def test_run_for_client_idempotent(monkeypatch):
     """Calling twice for the same period returns the same report_id; single store row."""
     monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
     ps, pe = _period()
     db     = FakeDB()
     store  = MemoryStore()

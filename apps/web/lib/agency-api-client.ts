@@ -25,10 +25,14 @@ export class AgencyApiError extends Error {
   }
 }
 
+type ExtendedRequestInit = RequestInit & {
+  next?: { revalidate?: number | false; tags?: string[] }
+}
+
 export async function agencyApiFetch<T = unknown>(
   path: string,
   searchParams?: Record<string, string | undefined>,
-  init?: RequestInit,
+  init?: ExtendedRequestInit,
 ): Promise<T> {
   const key = process.env.AGENCY_API_PLATFORM_KEY || ''
   const url = new URL(`/agency/v1/${path}`, _BASE)
@@ -40,13 +44,13 @@ export async function agencyApiFetch<T = unknown>(
   }
 
   const res = await fetch(url.toString(), {
+    cache: 'no-store',  // default; callers can override via init
     ...init,
     headers: {
       Authorization: `Bearer ${key}`,
       'Content-Type': 'application/json',
       ...((init?.headers as Record<string, string>) || {}),
     },
-    cache: 'no-store',
   })
 
   if (!res.ok) {

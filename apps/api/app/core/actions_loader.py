@@ -207,6 +207,71 @@ def load_executed_actions(
     return result
 
 
+def load_manual_changes(
+    sb,
+    client_slug: str,
+    period_start: date,
+    period_end: date,
+) -> list[dict]:
+    """
+    Load manually-recorded change log entries (source=HUMAN) for the period.
+    Uses client_slug (TEXT) because core_change_log.client_id is the pixel/slug, not UUID.
+    """
+    start_iso = datetime(
+        period_start.year, period_start.month, period_start.day,
+        0, 0, 0, tzinfo=timezone.utc,
+    ).isoformat()
+    end_iso = datetime(
+        period_end.year, period_end.month, period_end.day,
+        23, 59, 59, tzinfo=timezone.utc,
+    ).isoformat()
+
+    try:
+        res = (
+            sb.table("core_change_log")
+            .select(
+                "id, occurred_at, channel, entity_type, entity_name_at_time, "
+                "change_type, before_state, after_state, reason, reported_by, "
+                "source, confidence"
+            )
+            .eq("client_id", client_slug)
+            .eq("source", "HUMAN")
+            .gte("occurred_at", start_iso)
+            .lte("occurred_at", end_iso)
+            .order("occurred_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as exc:
+        logger.warning(
+            "actions_loader: load_manual_changes failed client=%s: %s", client_slug, exc
+        )
+        return []
+
+    result = [
+        {
+            "id":                  str(r["id"]),
+            "occurred_at":         r.get("occurred_at"),
+            "channel":             r.get("channel"),
+            "entity_type":         r.get("entity_type"),
+            "entity_name_at_time": r.get("entity_name_at_time"),
+            "change_type":         r.get("change_type"),
+            "before_state":        r.get("before_state"),
+            "after_state":         r.get("after_state"),
+            "reason":              r.get("reason"),
+            "reported_by":         r.get("reported_by"),
+            "confidence":          r.get("confidence"),
+        }
+        for r in rows
+    ]
+    logger.info(
+        "actions_loader: %d manual changes for client=%s period=%s→%s",
+        len(result), client_slug, period_start.isoformat(), period_end.isoformat(),
+    )
+    return result
+
+
 def load_open_recommendations(sb, client_uuid: str) -> list[dict]:
     """
     Load open recommendations (PROPOSED, APPROVED, PENDING_REVIEW).

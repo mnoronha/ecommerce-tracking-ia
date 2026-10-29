@@ -20,7 +20,7 @@ def scoped_request(transport,request):
 
 def contract():
  p=Path(__file__).with_name('meeting-contract.json');raw=p.read_bytes()
- if hashlib.sha256(raw).hexdigest()!=p.with_suffix('.sha256').read_text().strip():raise MeetingReadError('MEETING_CONTRACT_CHANGED')
+ if hashlib.sha256(raw.replace(b'\r\n',b'\n')).hexdigest()!=p.with_suffix('.sha256').read_text().strip():raise MeetingReadError('MEETING_CONTRACT_CHANGED')
  return json.loads(raw)
 
 class MeetingReads:

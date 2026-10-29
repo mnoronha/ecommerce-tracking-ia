@@ -93,7 +93,7 @@ export default function MeetingsPage() {
   const load = () => {
     setLoading(true)
     setError(null)
-    fetch(`/api/v1/clients/${clientId}/meetings`)
+    fetch(`/api/v1/clients/${clientId}/meetings?limit=50`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(data => setMeetings(Array.isArray(data) ? data : (data.meetings ?? [])))
       .catch(e => setError(e instanceof Error ? e.message : 'Erro ao carregar reuniões'))

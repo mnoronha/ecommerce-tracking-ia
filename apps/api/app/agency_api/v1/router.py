@@ -107,6 +107,7 @@ from .schemas import (
     ChangeLogSource,
     ChangeOut,
     ChangeType,
+    ManualChangeCreate,
     ClientOut,
     CoreReportContractOut,
     DataHealthEntry,
@@ -790,18 +791,35 @@ def get_metrics(
         raise HTTPException(503, "database unavailable")
 
     if not snap.data:
-        # No snapshot yet — return empty contract, all NO_DATA
-        return MetricContract(
-            client_id=client_id,
-            business_model=BusinessModel(bm_str),
-            timezone=tz_str,
-            currency=cur_str,
-            period=Period(start=period_start, end=period_end),
-            view=view_str,  # type: ignore[arg-type]
-            truth_versions=TruthVersions(client=1, target=1, conversion_map=1),
-            metrics=[],
-            health={},
-        )
+        # Period had no exact match — fall back to most recent snapshot for this client.
+        # Pipeline computes MTD snapshots; arbitrary period queries won't match unless
+        # the caller uses the pipeline's exact month-to-date range.
+        try:
+            snap = (
+                _get_db().table("core_metric_snapshots")
+                .select("id, metrics, health, client_truth_version, target_truth_version, conversion_map_version, computed_at, view")
+                .eq("client_id", slug)
+                .eq("view", view_str)
+                .order("computed_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+        except Exception as exc:
+            logger.error("get_metrics: fallback DB error for %s: %s", client_id, exc)
+            raise HTTPException(503, "database unavailable")
+
+        if not snap.data:
+            return MetricContract(
+                client_id=client_id,
+                business_model=BusinessModel(bm_str),
+                timezone=tz_str,
+                currency=cur_str,
+                period=Period(start=period_start, end=period_end),
+                view=view_str,  # type: ignore[arg-type]
+                truth_versions=TruthVersions(client=1, target=1, conversion_map=1),
+                metrics=[],
+                health={},
+            )
 
     row = snap.data[0]
     raw_metrics: list[dict] = row.get("metrics") or []
@@ -944,11 +962,51 @@ def get_entity_performance(
 
 # ── GET /clients/{client_id}/changes ─────────────────────────────────────────
 
+_ACTIVE_STATES_INLINE  = {"ativo", "ativa", "ativo em aprendizado", "active", "exibição iniciada"}
+_INACTIVE_STATES_INLINE = {"pausado", "inativo", "desativado", "paused", "inactive", "disabled"}
+
+
+def _derive_change_type(row: dict, current: ChangeType) -> ChangeType:
+    """Promote OTHER rows from PLATFORM_DETECTED to a meaningful ChangeType."""
+    if current != ChangeType.OTHER:
+        return current
+    entity = row.get("entity_type", "")
+    before = row.get("before_state") or {}
+    after  = row.get("after_state")  or {}
+    before_val = before.get("value") if isinstance(before, dict) else None
+    after_val  = after.get("value")  if isinstance(after, dict)  else None
+
+    if entity == "CAMPAIGN_GROUP":
+        if isinstance(after_val, dict) and after_val.get("type") == "payment_amount":
+            return ChangeType.BUDGET
+        if isinstance(after_val, str):
+            al = after_val.lower()
+            if al in _ACTIVE_STATES_INLINE or al in _INACTIVE_STATES_INLINE:
+                return ChangeType.ADSET_STATUS_CHANGE
+
+    elif entity == "CAMPAIGN":
+        if before_val is None and isinstance(after_val, dict) and "name" in after_val:
+            return ChangeType.CAMPAIGN_LAUNCH
+        if isinstance(after_val, str):
+            al = after_val.lower()
+            if al in _ACTIVE_STATES_INLINE:
+                return ChangeType.CAMPAIGN_LAUNCH
+            if al in _INACTIVE_STATES_INLINE:
+                return ChangeType.CAMPAIGN_PAUSE
+
+    elif entity == "ADGROUP":
+        if isinstance(after_val, str):
+            return ChangeType.AD_STATUS_CHANGE
+
+    return current
+
+
 def _change_row_to_out(row: dict) -> ChangeOut:
     try:
         change_type = ChangeType(row.get("change_type", "OTHER"))
     except ValueError:
         change_type = ChangeType.OTHER
+    change_type = _derive_change_type(row, change_type)
     try:
         source = ChangeLogSource(row.get("source", "HUMAN"))
     except ValueError:
@@ -1065,6 +1123,88 @@ def get_changes(
         logger.error("get_changes: DB error for %s: %s", client_id, exc)
         raise HTTPException(503, "database error")
     return [_change_row_to_out(r) for r in (res.data or [])]
+
+
+# ── GET /clients/{client_id}/change-digests ───────────────────────────────────
+
+@router.get(
+    "/clients/{client_id}/change-digests",
+    summary="Latest stored change digests per platform for a client",
+)
+def get_change_digests(
+    client_id: str,
+    platform: Optional[str] = Query(None, description="Filter by platform (meta, google, …)"),
+    limit: int = Query(10, ge=1, le=50, description="Max records to return"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> list[dict]:
+    slug = _resolve_slug(client_id) or client_id
+    db   = _get_db()
+    try:
+        q = (
+            db.table("core_change_digests")
+            .select(
+                "id, client_id, platform, period_start, period_end, "
+                "engine_version, generated_at, total_raw_count, relevant_count, "
+                "noise_count, changes, summary, limitations, updated_at"
+            )
+            .eq("client_id", slug)
+            .order("period_end", desc=True)
+            .limit(limit)
+        )
+        if platform:
+            q = q.eq("platform", platform.lower())
+        res = q.execute()
+    except Exception as exc:
+        logger.error("get_change_digests: DB error for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+    return res.data or []
+
+
+@router.post(
+    "/clients/{client_id}/changes/manual",
+    summary="Register a manual change (human-created, agency admin)",
+    response_model=ChangeOut,
+    status_code=201,
+)
+def create_manual_change(
+    client_id: str,
+    body: ManualChangeCreate,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> ChangeOut:
+    slug = _resolve_slug(client_id) or client_id
+    client = _load_client_meta(client_id)
+    if not client:
+        raise HTTPException(404, f"client not found: {client_id!r}")
+    db = _get_db()
+    try:
+        ins = db.table("core_change_log").insert({
+            "client_id":           slug,
+            "occurred_at":         body.occurred_at.isoformat(),
+            "channel":             body.channel.lower(),
+            "platform_account_id": "manual",
+            "entity_type":         (body.entity_type or "OTHER").upper(),
+            "entity_name_at_time": body.entity_name,
+            "entity_id":           body.entity_id,
+            "change_type":         body.change_type if isinstance(body.change_type, str) else body.change_type.value,
+            "before_state":        body.before,
+            "after_state":         body.after,
+            "reason":              body.reason,
+            "description":         body.description,
+            "reported_by":         body.reported_by,
+            "source":              "HUMAN",
+            "confidence":          "CONFIRMED",
+            "recommendation_id":   body.recommendation_id,
+            "task_id":             body.task_id,
+            "matched_change_id":   body.linked_provider_change_id,
+            "match_status":        "MANUAL_LINK" if body.linked_provider_change_id else None,
+        }).execute()
+    except Exception as exc:
+        logger.error("create_manual_change: insert failed for %s: %s", client_id, exc)
+        raise HTTPException(503, "database error")
+    row = ins.data[0] if (ins and ins.data) else None
+    if not row:
+        raise HTTPException(503, "insert returned no data")
+    return _change_row_to_out(row)
 
 
 @router.get(
@@ -5602,6 +5742,51 @@ def list_fireflies_events(
         )
         for r in rows
     ]
+
+
+@router.post(
+    "/fireflies/events/{event_id}/reprocess",
+    summary="Re-run background processing for an unresolved or failed Fireflies event",
+)
+def reprocess_fireflies_event(
+    event_id: str,
+    background_tasks: BackgroundTasks,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
+) -> dict:
+    """
+    Re-trigger processing for a Fireflies event that previously landed as
+    'unresolved' or 'failed'.  Typical use: add a client mapping first, then
+    call this endpoint — the background task will find the mapping and create
+    core_meeting + transcript.
+
+    Idempotent: if the event is already 'processed', returns current state
+    without re-running.  Zero client sends, zero media writes.
+    """
+    db = _get_db()
+    row = (
+        db.table("core_fireflies_events")
+        .select("id, fireflies_meeting_id, status")
+        .eq("id", event_id)
+        .limit(1)
+        .execute()
+    )
+    if not row.data:
+        raise HTTPException(404, detail=f"event not found: {event_id!r}")
+
+    ev = row.data[0]
+    if ev["status"] == "processed":
+        return {"ok": True, "reprocessed": False, "reason": "already_processed", "event_id": event_id}
+
+    # Reset status to received so _process_event can update it again
+    db.table("core_fireflies_events").update({
+        "status": "received",
+        "error":  None,
+    }).eq("id", event_id).execute()
+
+    from ...routers.fireflies_webhook import _process_event
+    background_tasks.add_task(_process_event, event_id, ev["fireflies_meeting_id"])
+
+    return {"ok": True, "reprocessed": True, "event_id": event_id, "meeting_id": ev["fireflies_meeting_id"]}
 
 
 # ── Phase 7 — Tracking Ingestion ─────────────────────────────────────────────

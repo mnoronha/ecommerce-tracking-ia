@@ -56,6 +56,23 @@ class Delivery(BaseModel):
 class DeliveryExecute(BaseModel):
  recipient:str=Field(min_length=3)
  actor:str=Field(min_length=1)
+class RecipientIn(BaseModel):
+ model_config=ConfigDict(extra='forbid')
+ id:Optional[str]=None
+ name:str=Field(min_length=1,max_length=120)
+ email:str=Field(min_length=3,max_length=254)
+ active:bool=True
+class DeliverySettingsIn(BaseModel):
+ model_config=ConfigDict(extra='forbid')
+ weekly_enabled:bool=False
+ monthly_enabled:bool=False
+ weekly_day_of_week:int=Field(default=0,ge=0,le=6)
+ weekly_hour:int=Field(default=8,ge=0,le=23)
+ monthly_day_of_month:int=Field(default=1,ge=1,le=28)
+ monthly_hour:int=Field(default=8,ge=0,le=23)
+ report_timezone:str='America/Sao_Paulo'
+ recipients:list[RecipientIn]=[]
+_ARTIFACT_HASH_EXCLUDE=frozenset({'report_id','report_type','artifact_hash','idempotency_key','status','approved_at','approved_by','published_at','approval_hash','generated_at','superseded_at','superseded_by_actor','superseded_by_version'})
 
 @router.get('/list',tags=['canonical-reports'])
 def list_canonical_reports(
@@ -82,6 +99,39 @@ def list_canonical_reports(
   out.append(doc)
  out.sort(key=lambda d:(d.get('period_start',''),d.get('version',1)),reverse=True)
  return out[:limit]
+
+@router.get('/delivery-settings',tags=['canonical-reports'])
+def get_delivery_settings(client_id:str=Query(...),auth:AuthContext=Depends(SCOPE_READ_ANY))->dict:
+ from ...database import get_supabase
+ scope(auth,client_id)
+ sb=get_supabase()
+ try:rows=sb.table('core_report_delivery_settings').select('*').eq('client_id',client_id).limit(1).execute().data or []
+ except Exception:raise HTTPException(503,'database error')
+ _timing_defaults={'weekly_day_of_week':0,'weekly_hour':8,'monthly_day_of_month':1,'monthly_hour':8,'report_timezone':'America/Sao_Paulo'}
+ if not rows:return{'client_id':client_id,'weekly_enabled':False,'monthly_enabled':False,'human_approval_required':True,'recipients':[],'updated_at':None,**_timing_defaults}
+ r=rows[0];return{'client_id':r['client_id'],'weekly_enabled':r['weekly_enabled'],'monthly_enabled':r['monthly_enabled'],'human_approval_required':True,'recipients':r.get('recipients') or [],'weekly_day_of_week':r.get('weekly_day_of_week',0),'weekly_hour':r.get('weekly_hour',8),'monthly_day_of_month':r.get('monthly_day_of_month',1),'monthly_hour':r.get('monthly_hour',8),'report_timezone':r.get('report_timezone','America/Sao_Paulo'),'updated_at':r.get('updated_at')}
+
+@router.put('/delivery-settings',tags=['canonical-reports'])
+def put_delivery_settings(client_id:str=Query(...),body:DeliverySettingsIn=...,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE))->dict:
+ import uuid as _uuid
+ from datetime import datetime as _dt,timezone as _tz
+ from ...database import get_supabase
+ scope(auth,client_id)
+ sb=get_supabase()
+ now=_dt.now(_tz.utc).isoformat()
+ try:
+  existing=sb.table('core_report_delivery_settings').select('id,recipients').eq('client_id',client_id).limit(1).execute().data or []
+  old_by_id={r['id']:r for r in(existing[0].get('recipients') or [])}if existing else{}
+  recs=[]
+  for ri in body.recipients:
+   rid=ri.id or str(_uuid.uuid4())
+   old=old_by_id.get(rid,{})
+   recs.append({'id':rid,'name':ri.name.strip(),'email':ri.email.strip().lower(),'active':ri.active,'created_at':old.get('created_at',now),'updated_at':now})
+  payload={'weekly_enabled':body.weekly_enabled,'monthly_enabled':body.monthly_enabled,'human_approval_required':True,'recipients':recs,'weekly_day_of_week':body.weekly_day_of_week,'weekly_hour':body.weekly_hour,'monthly_day_of_month':body.monthly_day_of_month,'monthly_hour':body.monthly_hour,'report_timezone':body.report_timezone,'updated_at':now}
+  if existing:sb.table('core_report_delivery_settings').update(payload).eq('client_id',client_id).execute()
+  else:sb.table('core_report_delivery_settings').insert({**payload,'client_id':client_id}).execute()
+ except Exception as exc:raise HTTPException(503,f'database error:{str(exc)[:80]}')
+ return{'client_id':client_id,**payload}
 
 @router.post('/versions',response_model=ReportVersion)
 def generate(body:Generate,auth:AuthContext=Depends(SCOPE_HERMES_WRITE)):
@@ -112,6 +162,39 @@ def transition(report_id:str,version:int,body:Transition,auth:AuthContext=Depend
   return s.transition(report_id,version,body.target,actor=auth.subject or body.actor,at=datetime.now(timezone.utc).isoformat(),expected_hash=body.artifact_hash)
  except ReportError as e:fail(e)
 
+@router.get('/{report_id}/deliveries',tags=['canonical-reports'])
+def list_report_deliveries(
+ report_id:str,
+ auth:AuthContext=Depends(SCOPE_READ_ANY),
+)->list[dict]:
+ from ...database import get_supabase
+ sb=get_supabase()
+ try:
+  rows=sb.table('core_canonical_report_records').select('entity_key,document').like('entity_key','delivery:%').contains('document',{'report_id':report_id}).execute().data or []
+ except Exception:
+  raise HTTPException(503,'database error')
+ out=[]
+ for r in rows:
+  doc=r.get('document') or {}
+  try:scope(auth,doc.get('client_id',''))
+  except HTTPException:continue
+  # Never expose recipient plaintext; hash is already stored
+  out.append({k:v for k,v in doc.items() if k!='recipient'})
+ out.sort(key=lambda d:d.get('requested_at',''),reverse=True)
+ return out
+
+@router.get('/{report_id}/artifact',tags=['canonical-reports'])
+def get_artifact(report_id:str,version:int=Query(1,ge=1),auth:AuthContext=Depends(SCOPE_READ_ANY))->dict:
+ flags=Flags.environment()
+ if not any(getattr(flags,k) for k in('CANONICAL_WEEKLY_REVIEW_ENABLED','CANONICAL_MONTHLY_REVIEW_ENABLED','REPORT_PUBLISH_ENABLED','REPORT_DELIVERY_ENABLED')):raise HTTPException(404,'CANONICAL_REPORTS_DISABLED')
+ try:doc=service().get(report_id,version)
+ except ReportError as e:fail(e)
+ scope(auth,doc['client_id'])
+ from ...core.canonical_reports import digest as _digest
+ check={k:v for k,v in doc.items() if k not in _ARTIFACT_HASH_EXCLUDE}
+ if _digest(check)!=doc.get('artifact_hash'):raise HTTPException(409,'ARTIFACT_INTEGRITY_ERROR')
+ return{'report':doc,'integrity':'VERIFIED','download_note':'SUPERSEDED' if doc.get('status')=='SUPERSEDED' else None}
+
 @router.post('/delivery-receipts')
 def prepare_delivery(body:Delivery,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):
  if not Flags.environment().REPORT_DELIVERY_ENABLED:raise HTTPException(409,'DELIVERY_DISABLED')
@@ -120,6 +203,45 @@ def prepare_delivery(body:Delivery,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE
   scope(auth,s.get(body.report_id,body.report_version)['client_id'])
   return s.prepare_delivery(body.delivery_id,body.report_id,body.report_version,channel=body.channel,recipient_hash=body.recipient_hash,actor=auth.subject or body.actor,at=datetime.now(timezone.utc).isoformat())
  except ReportError as e:fail(e)
+
+@router.post('/pilot-run',tags=['canonical-reports'],summary='Manual H7/H8 generation — bypasses env flags, agency admin only')
+def pilot_run(
+ client_id:str=Query(...,description='Client slug'),
+ report_type:str=Query(...,pattern='^(weekly|monthly)$'),
+ period_start:Optional[str]=Query(None,description='YYYY-MM-DD override'),
+ period_end:Optional[str]=Query(None,description='YYYY-MM-DD override'),
+ auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE),
+)->dict:
+ from ...database import get_supabase
+ from ...core.canonical_reports import CoreStore,Flags,Reports,ReportError
+ from datetime import date,timedelta as _td
+ scope(auth,client_id)
+ sb=get_supabase()
+ today=date.today()
+ if period_start and period_end:
+  ps=date.fromisoformat(period_start);pe=date.fromisoformat(period_end)
+ elif report_type=='weekly':
+  pe=today-_td(days=today.weekday()+1);ps=pe-_td(days=6)
+ else:
+  first=date(today.year,today.month,1);pe=first-_td(days=1);ps=date(pe.year,pe.month,1)
+ if report_type=='weekly':
+  from ...core.canonical_weekly_scheduler import _build_artifact as _ba
+ else:
+  from ...core.canonical_monthly_scheduler import _build_artifact as _ba
+ artifact=_ba(client_id,ps,pe,sb)
+ pilot_flags=Flags(CANONICAL_WEEKLY_REVIEW_ENABLED=True,CANONICAL_MONTHLY_REVIEW_ENABLED=True,REPORT_PUBLISH_ENABLED=False,REPORT_DELIVERY_ENABLED=False)
+ rpts=Reports(CoreStore(sb),flags=pilot_flags)
+ try:
+  doc=rpts.generate(artifact)
+ except ReportError as exc:
+  s=str(exc)
+  if 'IMMUTABLE_VERSION_CONFLICT' in s:return{'status':'ALREADY_EXISTS','client_id':client_id,'report_type':report_type,'period_start':str(ps),'period_end':str(pe)}
+  raise HTTPException(409,s)
+ if doc['status']=='DRAFT':
+  try:
+   doc=rpts.transition(doc['report_id'],1,'READY_FOR_REVIEW',actor='canonical_pilot_run',at=datetime.now(timezone.utc).isoformat(),expected_hash=doc['artifact_hash'])
+  except ReportError:pass
+ return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'status':doc['status'],'period_start':str(ps),'period_end':str(pe)}
 
 @router.post('/delivery-receipts/{delivery_id}/send')
 def send_delivery(delivery_id:str,body:DeliveryExecute,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):

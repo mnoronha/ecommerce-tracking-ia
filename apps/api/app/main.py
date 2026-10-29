@@ -617,6 +617,8 @@ app.include_router(agency_v1_router)
 # New canonical API has no startup work and never invokes the legacy publisher.
 from .agency_api.v1.canonical_reports import router as canonical_reports_router
 app.include_router(canonical_reports_router)
+from .agency_api.v1.change_digest import router as change_digest_router
+app.include_router(change_digest_router)
 app.include_router(agency_v1_admin_router)
 
 # ── Noro Platform Public REST API (v1) ────────────────────────────────────────

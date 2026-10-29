@@ -20,6 +20,7 @@ export interface ClientChannels {
   searchConsole:  boolean
   merchantCenter: boolean
   shopify:        boolean
+  tracking:       boolean  // Noro pixel/CNAME tracking installed and active
 }
 
 export interface ClientConfig {
@@ -29,13 +30,13 @@ export interface ClientConfig {
 
 const NONE: ClientChannels = {
   meta: false, googleAds: false, tiktok: false, ga4: false,
-  searchConsole: false, merchantCenter: false, shopify: false,
+  searchConsole: false, merchantCenter: false, shopify: false, tracking: false,
 }
 
 // Usado se a leitura falhar: melhor mostrar tudo do que esconder um canal ativo.
 const ALL: ClientChannels = {
   meta: true, googleAds: true, tiktok: true, ga4: true,
-  searchConsole: true, merchantCenter: true, shopify: true,
+  searchConsole: true, merchantCenter: true, shopify: true, tracking: true,
 }
 
 const _cache = new Map<string, { config: ClientConfig; fetchedAt: number }>()
@@ -53,6 +54,7 @@ export function channelsFromRow(row: Record<string, unknown> | null | undefined)
     searchConsole:  filled(row.search_console_site_url),
     merchantCenter: filled(row.merchant_center_id),
     shopify:        row.ecommerce_platform === 'shopify' && filled(row.shopify_domain),
+    tracking:       filled(row.tracking_cname),
   }
 }
 
@@ -80,7 +82,7 @@ export function useClientConfig(pixelId?: string): { config: ClientConfig; ready
       .from('clients')
       .select(
         'name, ecommerce_platform, shopify_domain, meta_ad_account_id, google_ads_customer_id, ' +
-        'tiktok_advertiser_id, ga4_property_id, search_console_site_url, merchant_center_id',
+        'tiktok_advertiser_id, ga4_property_id, search_console_site_url, merchant_center_id, tracking_cname',
       )
       .eq('pixel_id', pixelId)
       .limit(1)

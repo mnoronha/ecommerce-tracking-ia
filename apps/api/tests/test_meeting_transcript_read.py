@@ -80,3 +80,4 @@ def test_stable_repeated_read_no_persistence():
 
 def test_unlabelled_line_has_unknown_speaker():
  db=DB();db.rows['core_meeting_transcripts'][0]['raw_text']='Discussão ainda sem decisão.';d=app(db).get(url()).json();assert d['segments'][0]['speaker'] is None and d['segments'][0]['text']=='Discussão ainda sem decisão.'
+
