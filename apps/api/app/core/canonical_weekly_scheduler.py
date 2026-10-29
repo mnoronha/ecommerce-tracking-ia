@@ -40,6 +40,7 @@ from typing import Optional
 from .canonical_reports import CoreStore, Flags, ReportError, Reports
 from .analysis_layer import (
     build_analysis_layer,
+    build_hermes_handoff_from_artifact,
     check_quality_gate,
     compute_quality_scores,
     detect_anomalies,
@@ -537,7 +538,35 @@ def run_canonical_weekly_for_client(
             raise
 
         if doc["status"] == "DRAFT":
-            # Quality gate: only skip transition when analysis is enabled but incomplete.
+            analysis_status = doc.get("content", {}).get("analysis_layer", {}).get("status")
+
+            # Async Hermes handoff: write contract and return, do not transition yet.
+            if analysis_status == "WAITING_FOR_HERMES_ANALYSIS":
+                analysis_request_id = str(uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"analysis-request:{doc['report_id']}:v{version}",
+                ))
+                handoff = build_hermes_handoff_from_artifact(
+                    analysis_request_id=analysis_request_id,
+                    report_id=doc["report_id"],
+                    report_version=version,
+                    artifact=doc,
+                    period_type="weekly",
+                )
+                reports.write_analysis_request(analysis_request_id, handoff)
+                _finish_job(sb, job_id, "SUCCEEDED")
+                logger.info(
+                    "canonical_weekly: %s v%d → WAITING_FOR_HERMES_ANALYSIS (request=%s)",
+                    client_id, version, analysis_request_id,
+                )
+                return {
+                    "client_id":           client_id,
+                    "status":              "WAITING_FOR_HERMES_ANALYSIS",
+                    "report_id":           doc["report_id"],
+                    "analysis_request_id": analysis_request_id,
+                }
+
+            # Quality gate: only transition when analysis is complete.
             gate_passes, violations = check_quality_gate(
                 doc.get("content", {}), analysis_enabled=analysis_enabled
             )

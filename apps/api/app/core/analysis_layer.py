@@ -1,29 +1,33 @@
 """
 Hermes Analysis Layer for canonical H7/H8 reports.
 
-Receives artifact data (metrics, change_summary, anomalies, previous week snapshot)
-and generates structured analysis via OpenAI (Hermes runtime). Includes:
-  - Anomaly detection (pure logic, no external deps)
-  - WoW comparison builder (pure logic)
-  - Hermes prompt construction + OpenAI API call
-  - Quality gate (pure logic)
+Architecture: ASYNC HERMES HANDOFF.
+Core builds a context manifest (metrics, WoW, anomalies, change digest) and
+writes it as an analysis-request contract in the CAS store.
+Hermes reads the contract, calls its own LLM, and posts structured analysis
+back via POST /agency/v1/canonical-reports/{report_id}/analysis.
+
+Core does NOT call any LLM.
+Core does NOT depend on ANTHROPIC_API_KEY or OPENAI_API_KEY.
+Core does NOT know which model Hermes uses.
 
 Design rules:
 - Never makes media writes, platform API calls, or client sends.
-- OpenAI call is the only external dependency (gated by CANONICAL_ANALYSIS_ENABLED env var).
-- On OpenAI failure: returns structured fallback with status=ANALYSIS_UNAVAILABLE; never raises.
-- No Anthropic fallback. Quality gate is pure logic; no LLM dependency.
+- No LLM SDK dependency (no anthropic, no openai imports).
+- build_analysis_layer() returns WAITING_FOR_HERMES_ANALYSIS placeholder.
+- apply_hermes_analysis() merges Hermes response into the internal format.
+- Quality gate is pure logic; no LLM dependency.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_ENGINE_VERSION  = "1"
+ANALYSIS_ENGINE_VERSION  = "2"          # bumped: handoff architecture
 FLAG_CANONICAL_ANALYSIS  = "CANONICAL_ANALYSIS_ENABLED"
 
 # Recommendations containing any of these phrases (case-insensitive) are blocked.
@@ -181,9 +185,9 @@ _WOW_KEYS = (
 
 
 def build_wow(current_metrics: dict, prev_snapshot: Optional[dict]) -> dict:
-    """Build WoW comparison dict. Pure logic, no network."""
+    """Build WoW/MoM comparison dict. Pure logic, no network."""
     if not prev_snapshot:
-        return {"available": False, "note": "Snapshot da semana anterior não encontrado"}
+        return {"available": False, "note": "Snapshot do período anterior não encontrado"}
 
     prev_raw = prev_snapshot.get("metrics") or []
     if isinstance(prev_raw, dict):
@@ -444,35 +448,163 @@ FORMATO DE SAIDA — JSON ESTRITO (sem texto antes ou depois do JSON):
 }}"""
 
 
-# ── LLM Calls ─────────────────────────────────────────────────────────────────
+# ── Handoff Helpers ───────────────────────────────────────────────────────────
 
-def _strip_fences(raw: str) -> str:
-    """Remove markdown code fences if present."""
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```", 2)[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.rsplit("```", 1)[0]
-    return raw.strip()
+def _facts_to_dict(facts: list) -> dict:
+    """Convert facts list back to metrics_dict format."""
+    return {
+        f["metric_key"]: f
+        for f in facts
+        if isinstance(f, dict) and "metric_key" in f
+    }
 
 
-def _call_hermes(prompt: str) -> tuple[dict, str]:
-    """Hermes analysis via OpenAI. Returns (parsed_dict, model_name) or raises."""
-    from openai import OpenAI  # lazy import
+def _required_sections(period_type: str) -> list[str]:
+    base = [
+        "executive_summary",
+        "channel_analysis",
+        "diagnosis",
+        "recommendations",
+        "priorities",
+        "limitations",
+    ]
+    if period_type == "monthly":
+        base += ["monthly_comparison", "trends", "next_month_priorities"]
+    return base
 
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set — Hermes analysis unavailable")
 
-    model  = os.getenv("OPENAI_MODEL", "gpt-4o")
-    client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=model, max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+def build_hermes_handoff_from_artifact(
+    analysis_request_id: str,
+    report_id: str,
+    report_version: int,
+    artifact: dict,
+    period_type: str = "weekly",
+) -> dict:
+    """
+    Build the Hermes handoff contract from an already-built canonical artifact.
+
+    Called after generate() so the artifact is already in the CAS.
+    The handoff is stored separately — the artifact hash is stable and unchanged.
+    """
+    content        = artifact.get("content") or {}
+    facts          = content.get("facts") or []
+    metrics_dict   = _facts_to_dict(facts)
+    channels       = content.get("channels") or {}
+    business_truth = content.get("business_truth") or ""
+    change_summary = content.get("change_summary") or {}
+    limitations    = content.get("limitations") or []
+    base_analysis  = content.get("analysis_layer") or {}
+    anomalies      = base_analysis.get("anomalies_detected") or []
+    wow            = base_analysis.get("wow_comparison") or {}
+
+    prompt = _build_prompt(
+        client_id      = artifact.get("client_id", ""),
+        period_start   = artifact.get("period_start", ""),
+        period_end     = artifact.get("period_end", ""),
+        metrics_dict   = metrics_dict,
+        channels       = channels,
+        business_truth = business_truth,
+        change_summary = change_summary,
+        anomalies      = anomalies,
+        wow            = wow,
+        context        = {},
+        period_type    = period_type,
     )
-    return json.loads(response.choices[0].message.content), model
+
+    return {
+        "schema_version":              "hermes-analysis-request-v1",
+        "analysis_request_id":         analysis_request_id,
+        "report_id":                   report_id,
+        "report_version":              report_version,
+        "client_id":                   artifact.get("client_id"),
+        "report_type":                 artifact.get("report_type", period_type),
+        "period_start":                artifact.get("period_start"),
+        "period_end":                  artifact.get("period_end"),
+        "requested_at":                datetime.now(timezone.utc).isoformat(),
+        "status":                      "PENDING",
+        "context_manifest": {
+            "metrics":        metrics_dict,
+            "channels":       channels,
+            "business_truth": business_truth,
+            "change_summary": change_summary,
+            "limitations":    limitations,
+            "anomalies":      anomalies,
+            "wow_comparison": wow,
+            "facts":          facts,
+            "observations":   content.get("observations") or [],
+        },
+        "hermes_prompt":               prompt,
+        "requested_analysis_sections": _required_sections(period_type),
+    }
+
+
+def apply_hermes_analysis(base_analysis_layer: dict, hermes_payload: dict) -> dict:
+    """
+    Merge Hermes analysis response into the internal analysis_layer format.
+
+    Hermes uses: channel_analysis.{google,meta}, priorities
+    Core uses:   google_analysis, meta_analysis, priorities_next_week
+
+    Preserves pure-logic fields (anomalies, wow) from the base placeholder.
+    """
+    ch       = hermes_payload.get("channel_analysis") or {}
+    metadata = hermes_payload.get("analysis_engine_metadata") or {}
+
+    return {
+        "status":               "ANALYSIS_COMPLETE",
+        "anomalies_detected":   base_analysis_layer.get("anomalies_detected", []),
+        "wow_comparison":       base_analysis_layer.get("wow_comparison", {}),
+        "executive_summary":    hermes_payload.get("executive_summary", {}),
+        "google_analysis":      ch.get("google"),
+        "meta_analysis":        ch.get("meta"),
+        "performance_drilldown": hermes_payload.get("performance_drilldown"),
+        "diagnosis":            hermes_payload.get("diagnosis", []),
+        "recommendations":      hermes_payload.get("recommendations", []),
+        "change_digest_section": hermes_payload.get("change_digest_section"),
+        "priorities_next_week": hermes_payload.get("priorities", []),
+        "analysis_notes":       hermes_payload.get("limitations") or "",
+        "monthly_comparison":   hermes_payload.get("monthly_comparison"),
+        "trends":               hermes_payload.get("trends"),
+        "actions":              hermes_payload.get("actions"),
+        "outcomes":             hermes_payload.get("outcomes"),
+        "learnings":            hermes_payload.get("learnings"),
+        "next_month_priorities": hermes_payload.get("next_month_priorities"),
+        "analysis_engine":      metadata,
+        "engine_version":       ANALYSIS_ENGINE_VERSION,
+        "analysis_quality":     hermes_payload.get("analysis_quality"),
+    }
+
+
+def validate_hermes_response(payload: dict) -> None:
+    """
+    Validate raw Hermes callback payload before applying to artifact.
+    Raises ValueError if structurally invalid.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("payload is not a dict")
+
+    es      = payload.get("executive_summary") or {}
+    bullets = es.get("bullets") or []
+    if not isinstance(bullets, list) or len(bullets) < 2:
+        raise ValueError(f"executive_summary.bullets has {len(bullets)} items (min 2)")
+
+    diag = payload.get("diagnosis") or []
+    if not isinstance(diag, list) or len(diag) < 1:
+        raise ValueError("diagnosis list is empty")
+
+    recs = payload.get("recommendations") or []
+    if not isinstance(recs, list) or len(recs) < 1:
+        raise ValueError("recommendations list is empty")
+
+    for r in recs:
+        action_text = (r.get("action") or "").lower()
+        for phrase in _GENERIC_PHRASES:
+            if phrase in action_text:
+                raise ValueError(f"generic recommendation blocked: '{phrase}'")
+
+    ch = payload.get("channel_analysis")
+    if ch is not None and not isinstance(ch, dict):
+        raise ValueError("channel_analysis must be a dict")
 
 
 def _fallback(reason: str, limitations: list[str]) -> dict:
@@ -505,13 +637,13 @@ def build_analysis_layer(
     period_type: str = "weekly",
 ) -> dict:
     """
-    Build analysis layer. Returns structured dict — never raises.
+    Build analysis layer placeholder. Returns WAITING_FOR_HERMES_ANALYSIS.
 
-    When CANONICAL_ANALYSIS_ENABLED=false: returns fallback with status=ANALYSIS_DISABLED.
-    Default is true — set CANONICAL_ANALYSIS_ENABLED=false explicitly for dry-runs/tests.
+    No LLM call. No SDK dependency.
+    Core pre-computes anomalies and WoW for the handoff context;
+    Hermes completes the analysis and posts it back via the callback endpoint.
 
-    When CANONICAL_ANALYSIS_ENABLED=true: calls Hermes (OpenAI) and validates output.
-    On any failure: returns fallback with status=ANALYSIS_UNAVAILABLE. No Anthropic fallback.
+    When CANONICAL_ANALYSIS_ENABLED=false: returns ANALYSIS_DISABLED.
     """
     enabled = os.getenv(FLAG_CANONICAL_ANALYSIS, "true").strip().lower() == "true"
     if not enabled:
@@ -520,67 +652,27 @@ def build_analysis_layer(
     anomalies = detect_anomalies(metrics_dict, channels)
     wow       = build_wow(metrics_dict, prev_snapshot)
 
-    try:
-        prompt = _build_prompt(
-            client_id, period_start, period_end,
-            metrics_dict, channels, business_truth,
-            change_summary, anomalies, wow,
-            context=context, period_type=period_type,
-        )
-        raw, model_used = _call_hermes(prompt)
-    except Exception as exc:
-        logger.warning("analysis_layer: LLM call failed for %s: %s", client_id, exc)
-        return _fallback(
-            f"LLM_CALL_FAILED: {str(exc)[:200]}",
-            [f"analysis: {str(exc)[:120]}"],
-        )
-
-    # Validate minimum required fields
-    try:
-        _validate_analysis(raw)
-    except ValueError as exc:
-        logger.warning("analysis_layer: validation failed for %s: %s", client_id, exc)
-        return _fallback(
-            f"ANALYSIS_VALIDATION_FAILED: {str(exc)[:200]}",
-            [f"analysis validation: {str(exc)[:120]}"],
-        )
-
-    raw["anomalies_detected"] = anomalies
-    raw["wow_comparison"]     = wow
-    raw["analysis_engine"]    = model_used
-    raw["engine_version"]     = ANALYSIS_ENGINE_VERSION
-    raw["status"]             = "ANALYSIS_COMPLETE"
-    return raw
+    return {
+        "status":               "WAITING_FOR_HERMES_ANALYSIS",
+        "anomalies_detected":   anomalies,
+        "wow_comparison":       wow,
+        "executive_summary":    {"bullets": [], "key_win": None, "key_risk": None},
+        "google_analysis":      None,
+        "meta_analysis":        None,
+        "diagnosis":            [],
+        "recommendations":      [],
+        "change_digest_section": None,
+        "priorities_next_week": [],
+        "analysis_notes":       "Awaiting Hermes analysis",
+        "engine_version":       ANALYSIS_ENGINE_VERSION,
+    }
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
 def _validate_analysis(raw: dict) -> None:
-    """Raise ValueError if analysis is structurally invalid."""
-    if not isinstance(raw, dict):
-        raise ValueError("response is not a dict")
-
-    es = raw.get("executive_summary") or {}
-    bullets = es.get("bullets") or []
-    if not isinstance(bullets, list) or len(bullets) < 2:
-        raise ValueError(f"executive_summary.bullets has {len(bullets)} items (min 2)")
-
-    recs = raw.get("recommendations") or []
-    if not isinstance(recs, list) or len(recs) < 1:
-        raise ValueError("recommendations list is empty")
-
-    diag = raw.get("diagnosis") or []
-    if not isinstance(diag, list) or len(diag) < 1:
-        raise ValueError("diagnosis list is empty")
-
-    # Block generic recommendations
-    for r in recs:
-        action_text = (r.get("action") or "").lower()
-        for phrase in _GENERIC_PHRASES:
-            if phrase in action_text:
-                raise ValueError(
-                    f"generic recommendation blocked: '{phrase}' in '{action_text[:80]}'"
-                )
+    """Internal alias — delegates to validate_hermes_response for backward compat."""
+    validate_hermes_response(raw)
 
 
 # ── Quality Scores ────────────────────────────────────────────────────────────
@@ -763,9 +855,9 @@ def check_quality_gate(content: dict, analysis_enabled: bool = True) -> tuple[bo
     if has_relevant_changes and not analysis.get("change_digest_section"):
         violations.append("change_digest applicable but change_digest_section absent")
 
-    # Analysis status must not be UNAVAILABLE or DISABLED
+    # Analysis must be fully complete — WAITING_FOR_HERMES_ANALYSIS keeps report DRAFT
     status = analysis.get("status", "")
-    if status in ("ANALYSIS_UNAVAILABLE", "ANALYSIS_DISABLED", ""):
-        violations.append(f"analysis_layer.status={status!r} — analysis did not complete")
+    if status != "ANALYSIS_COMPLETE":
+        violations.append(f"analysis_layer.status={status!r} — analysis not complete")
 
     return len(violations) == 0, violations

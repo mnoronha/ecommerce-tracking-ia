@@ -72,6 +72,25 @@ class DeliverySettingsIn(BaseModel):
  monthly_hour:int=Field(default=8,ge=0,le=23)
  report_timezone:str='America/Sao_Paulo'
  recipients:list[RecipientIn]=[]
+class HermesAnalysis(BaseModel):
+ model_config=ConfigDict(extra='forbid')
+ analysis_request_id:str=Field(min_length=1)
+ report_version:int=Field(ge=1)
+ executive_summary:dict
+ channel_analysis:dict
+ performance_drilldown:Optional[dict]=None
+ diagnosis:list[dict]
+ recommendations:list[dict]
+ priorities:list[dict]
+ limitations:Optional[str]=None
+ monthly_comparison:Optional[dict]=None
+ trends:Optional[dict]=None
+ actions:Optional[dict]=None
+ outcomes:Optional[dict]=None
+ learnings:Optional[dict]=None
+ next_month_priorities:Optional[list]=None
+ analysis_quality:Optional[float]=Field(None,ge=0.0,le=10.0)
+ analysis_engine_metadata:Optional[dict]=None
 _ARTIFACT_HASH_EXCLUDE=frozenset({'report_id','report_type','artifact_hash','idempotency_key','status','approved_at','approved_by','published_at','approval_hash','generated_at','superseded_at','superseded_by_actor','superseded_by_version'})
 
 @router.get('/list',tags=['canonical-reports'])
@@ -243,12 +262,58 @@ def pilot_run(
     if version is not None or v==max_v:return{'status':'ALREADY_EXISTS','client_id':client_id,'report_type':report_type,'period_start':str(ps),'period_end':str(pe),'version':v}
     continue
    raise HTTPException(409,s)
+ import uuid as _uuid
+ from ...core.analysis_layer import build_hermes_handoff_from_artifact as _build_handoff
  ver=doc['version']
  if doc['status']=='DRAFT':
+  analysis_status=doc.get('content',{}).get('analysis_layer',{}).get('status')
+  if analysis_status=='WAITING_FOR_HERMES_ANALYSIS':
+   analysis_request_id=str(_uuid.uuid5(_uuid.NAMESPACE_URL,f'analysis-request:{doc["report_id"]}:v{ver}'))
+   handoff=_build_handoff(analysis_request_id,doc['report_id'],ver,doc,period_type=report_type)
+   rpts.write_analysis_request(analysis_request_id,handoff)
+   return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'version':ver,'status':'WAITING_FOR_HERMES_ANALYSIS','analysis_request_id':analysis_request_id,'period_start':str(ps),'period_end':str(pe)}
   try:
    doc=rpts.transition(doc['report_id'],ver,'READY_FOR_REVIEW',actor='canonical_pilot_run',at=datetime.now(timezone.utc).isoformat(),expected_hash=doc['artifact_hash'])
   except ReportError:pass
  return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'version':ver,'status':doc['status'],'period_start':str(ps),'period_end':str(pe)}
+
+@router.post('/{report_id}/analysis',tags=['canonical-reports'],summary='Hermes analysis callback — posts structured analysis for a WAITING report')
+def post_analysis(report_id:str,body:HermesAnalysis,auth:AuthContext=Depends(SCOPE_HERMES_WRITE))->dict:
+ import uuid as _uuid
+ from ...core.analysis_layer import validate_hermes_response
+ s=service()
+ try:
+  base=s.get(report_id,body.report_version)
+ except ReportError as e:fail(e)
+ scope(auth,base['client_id'])
+ analysis_status=base.get('content',{}).get('analysis_layer',{}).get('status')
+ if analysis_status not in ('WAITING_FOR_HERMES_ANALYSIS',):
+  raise HTTPException(409,f'REPORT_NOT_WAITING_FOR_ANALYSIS:{analysis_status}')
+ try:
+  validate_hermes_response(body.model_dump())
+ except ValueError as e:
+  raise HTTPException(422,f'INVALID_HERMES_PAYLOAD:{str(e)[:200]}')
+ try:
+  doc=s.apply_analysis(
+   report_id,body.report_version,body.model_dump(),body.analysis_request_id,
+   actor='canonical_analysis_callback',at=datetime.now(timezone.utc).isoformat(),
+  )
+ except ReportError as e:fail(e)
+ return{'report_id':report_id,'version':doc['version'],'status':doc['status'],'analysis_request_id':body.analysis_request_id}
+
+@router.get('/{report_id}/analysis-request',tags=['canonical-reports'],summary='Get pending Hermes handoff contract for a report')
+def get_analysis_request(report_id:str,version:int=Query(1,ge=1),auth:AuthContext=Depends(SCOPE_READ_ANY))->dict:
+ import uuid as _uuid
+ s=service()
+ try:
+  base=s.get(report_id,version)
+ except ReportError as e:fail(e)
+ scope(auth,base['client_id'])
+ analysis_request_id=str(_uuid.uuid5(_uuid.NAMESPACE_URL,f'analysis-request:{report_id}:v{version}'))
+ try:
+  return s.get_analysis_request(analysis_request_id)
+ except ReportError as e:
+  raise HTTPException(404,str(e))
 
 @router.post('/delivery-receipts/{delivery_id}/send')
 def send_delivery(delivery_id:str,body:DeliveryExecute,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):

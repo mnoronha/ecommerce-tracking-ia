@@ -1,4 +1,4 @@
-"""Tests for analysis_layer.py — pure logic paths only (no Hermes/OpenAI network call)."""
+"""Tests for analysis_layer.py — pure logic paths only (no LLM network call)."""
 import os
 import pytest
 from unittest.mock import patch
@@ -8,6 +8,9 @@ from app.core.analysis_layer import (
     build_wow,
     check_quality_gate,
     build_analysis_layer,
+    build_hermes_handoff_from_artifact,
+    apply_hermes_analysis,
+    validate_hermes_response,
     _GENERIC_PHRASES,
 )
 
@@ -269,6 +272,13 @@ class TestCheckQualityGate:
         passes, violations = check_quality_gate(self._content(a), analysis_enabled=True)
         assert not passes
 
+    def test_fail_waiting_for_hermes_status(self):
+        a = _good_analysis()
+        a["status"] = "WAITING_FOR_HERMES_ANALYSIS"
+        passes, violations = check_quality_gate(self._content(a), analysis_enabled=True)
+        assert not passes
+        assert any("WAITING_FOR_HERMES_ANALYSIS" in v for v in violations)
+
     def test_fail_change_digest_present_not_consumed(self):
         a = _good_analysis(has_changes=False)
         a["change_digest_section"] = None
@@ -301,47 +311,195 @@ class TestBuildAnalysisLayer:
         change_summary={}, limitations=[], prev_snapshot=None,
     )
 
-    def test_disabled_flag_returns_fallback(self):
+    def test_disabled_flag_returns_unavailable(self):
         with patch.dict(os.environ, {"CANONICAL_ANALYSIS_ENABLED": "false"}):
             result = build_analysis_layer(**self._BASE)
         assert result["status"] == "ANALYSIS_UNAVAILABLE"
         assert result["reason"] == "ANALYSIS_DISABLED"
         assert result["executive_summary"]["bullets"] == []
 
-    def test_enabled_no_api_key_returns_fallback(self):
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true"}
-        with patch.dict(os.environ, env, clear=False):
-            if "OPENAI_API_KEY" in os.environ:
-                del os.environ["OPENAI_API_KEY"]
+    def test_enabled_returns_waiting(self):
+        with patch.dict(os.environ, {"CANONICAL_ANALYSIS_ENABLED": "true"}):
             result = build_analysis_layer(**self._BASE)
-        assert result["status"] == "ANALYSIS_UNAVAILABLE"
-        # Locally openai may not be installed; on Railway it raises the key error
-        reason = result.get("reason", "")
-        assert "OPENAI_API_KEY" in reason or "openai" in reason.lower()
-
-    def test_enabled_hermes_raises_returns_fallback(self):
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "OPENAI_API_KEY": "sk-test"}
-        with patch.dict(os.environ, env):
-            with patch("app.core.analysis_layer._call_hermes", side_effect=RuntimeError("api down")):
-                result = build_analysis_layer(**self._BASE)
-        assert result["status"] == "ANALYSIS_UNAVAILABLE"
-        assert "api down" in result["reason"]
-
-    def test_enabled_hermes_invalid_structure_returns_fallback(self):
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "OPENAI_API_KEY": "sk-test"}
-        with patch.dict(os.environ, env):
-            with patch("app.core.analysis_layer._call_hermes", return_value=({"executive_summary": {"bullets": []}}, "gpt-4o")):
-                result = build_analysis_layer(**self._BASE)
-        assert result["status"] == "ANALYSIS_UNAVAILABLE"
-        assert "VALIDATION" in result["reason"] or "bullets" in result["reason"]
-
-    def test_enabled_hermes_success(self):
-        good = _good_analysis()
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "OPENAI_API_KEY": "sk-test"}
-        with patch.dict(os.environ, env):
-            with patch("app.core.analysis_layer._call_hermes", return_value=(good, "gpt-4o")):
-                result = build_analysis_layer(**self._BASE)
-        assert result["status"] == "ANALYSIS_COMPLETE"
+        assert result["status"] == "WAITING_FOR_HERMES_ANALYSIS"
+        assert result["executive_summary"]["bullets"] == []
         assert result["anomalies_detected"] is not None
         assert result["wow_comparison"] is not None
-        assert result["analysis_engine"] == "gpt-4o"
+
+    def test_enabled_no_api_key_still_returns_waiting(self):
+        env = {"CANONICAL_ANALYSIS_ENABLED": "true"}
+        with patch.dict(os.environ, env, clear=False):
+            result = build_analysis_layer(**self._BASE)
+        # No LLM call — no key required — still returns WAITING
+        assert result["status"] == "WAITING_FOR_HERMES_ANALYSIS"
+
+    def test_waiting_computes_anomalies(self):
+        m = dict(
+            client_id="c", period_start="2026-10-19", period_end="2026-10-25",
+            metrics_dict={"ga4_sessions": {"value": 600000}, "ga4_purchases": {"value": 52}},
+            channels={}, business_truth="BT", change_summary={}, limitations=[], prev_snapshot=None,
+        )
+        with patch.dict(os.environ, {"CANONICAL_ANALYSIS_ENABLED": "true"}):
+            result = build_analysis_layer(**m)
+        assert result["status"] == "WAITING_FOR_HERMES_ANALYSIS"
+        types = [a["type"] for a in result["anomalies_detected"]]
+        assert "GA4_LOW_CVR" in types
+
+    def test_waiting_computes_wow(self):
+        prev = {"metrics": [{"metric_key": "meta_spend", "value": 10000}]}
+        m = dict(
+            client_id="c", period_start="2026-10-19", period_end="2026-10-25",
+            metrics_dict={"meta_spend": {"value": 11000}},
+            channels={}, business_truth="BT", change_summary={}, limitations=[], prev_snapshot=prev,
+        )
+        with patch.dict(os.environ, {"CANONICAL_ANALYSIS_ENABLED": "true"}):
+            result = build_analysis_layer(**m)
+        assert result["wow_comparison"]["available"] is True
+
+
+# ── build_hermes_handoff_from_artifact ────────────────────────────────────────
+
+class TestBuildHermesHandoff:
+    def _artifact(self, client_id="lk", period_start="2026-10-19", period_end="2026-10-25"):
+        return {
+            "client_id":     client_id,
+            "report_type":   "weekly",
+            "period_start":  period_start,
+            "period_end":    period_end,
+            "content": {
+                "facts":          [{"metric_key": "meta_spend", "value": 10000}],
+                "channels":       {"meta": {}, "google": {}},
+                "business_truth": "BT R$50K",
+                "change_summary": {},
+                "limitations":    [],
+                "analysis_layer": {
+                    "status":             "WAITING_FOR_HERMES_ANALYSIS",
+                    "anomalies_detected": [],
+                    "wow_comparison":     {"available": False},
+                },
+                "observations": [],
+            },
+        }
+
+    def test_contract_schema(self):
+        artifact = self._artifact()
+        contract = build_hermes_handoff_from_artifact("req-001", "report-001", 1, artifact, "weekly")
+        assert contract["schema_version"] == "hermes-analysis-request-v1"
+        assert contract["analysis_request_id"] == "req-001"
+        assert contract["report_id"] == "report-001"
+        assert contract["report_version"] == 1
+        assert contract["client_id"] == "lk"
+        assert contract["status"] == "PENDING"
+        assert "hermes_prompt" in contract
+        assert "context_manifest" in contract
+
+    def test_prompt_contains_client_period(self):
+        artifact = self._artifact()
+        contract = build_hermes_handoff_from_artifact("req-001", "report-001", 1, artifact)
+        prompt = contract["hermes_prompt"]
+        assert "lk" in prompt
+        assert "2026-10-19" in prompt
+
+    def test_required_sections_weekly(self):
+        artifact = self._artifact()
+        contract = build_hermes_handoff_from_artifact("req-001", "report-001", 1, artifact, "weekly")
+        secs = contract["requested_analysis_sections"]
+        assert "executive_summary" in secs
+        assert "monthly_comparison" not in secs
+
+    def test_required_sections_monthly(self):
+        artifact = self._artifact()
+        contract = build_hermes_handoff_from_artifact("req-001", "report-001", 1, artifact, "monthly")
+        secs = contract["requested_analysis_sections"]
+        assert "monthly_comparison" in secs
+        assert "next_month_priorities" in secs
+
+
+# ── apply_hermes_analysis ─────────────────────────────────────────────────────
+
+class TestApplyHermesAnalysis:
+    def _hermes(self):
+        return {
+            "analysis_request_id":  "req-001",
+            "report_version":       1,
+            "executive_summary":    {"bullets": ["B1", "B2"], "key_win": "W", "key_risk": "R"},
+            "channel_analysis":     {
+                "google": {"spend_context": "G ok"},
+                "meta":   {"spend_context": "M ok"},
+            },
+            "diagnosis":        [{"observation": "obs", "diagnosis": "diag", "recommended_action": "act", "impact": "high", "confidence": "HIGH"}],
+            "recommendations":  [{"problem_or_opportunity": "P", "evidence": "E", "action": "Criar filtro X", "priority": "P0", "expected_effect": "F", "risk": "R", "confidence": "HIGH"}],
+            "priorities":       [{"action": "A", "owner": "Media", "deadline_suggestion": "Mon", "rationale": "BF"}],
+            "limitations":      "none",
+            "analysis_quality": 8.5,
+        }
+
+    def test_maps_channel_analysis(self):
+        base = {"status": "WAITING_FOR_HERMES_ANALYSIS", "anomalies_detected": [], "wow_comparison": {"available": False}}
+        result = apply_hermes_analysis(base, self._hermes())
+        assert result["status"] == "ANALYSIS_COMPLETE"
+        assert result["google_analysis"] == {"spend_context": "G ok"}
+        assert result["meta_analysis"] == {"spend_context": "M ok"}
+
+    def test_preserves_pure_logic_fields(self):
+        anomalies = [{"type": "GA4_LOW_CVR", "severity": "HIGH"}]
+        wow = {"available": True, "deltas": {}}
+        base = {"status": "WAITING_FOR_HERMES_ANALYSIS", "anomalies_detected": anomalies, "wow_comparison": wow}
+        result = apply_hermes_analysis(base, self._hermes())
+        assert result["anomalies_detected"] is anomalies
+        assert result["wow_comparison"] is wow
+
+    def test_maps_priorities(self):
+        base = {"status": "WAITING_FOR_HERMES_ANALYSIS", "anomalies_detected": [], "wow_comparison": {}}
+        result = apply_hermes_analysis(base, self._hermes())
+        assert len(result["priorities_next_week"]) == 1
+
+    def test_quality_score_preserved(self):
+        base = {"status": "WAITING_FOR_HERMES_ANALYSIS", "anomalies_detected": [], "wow_comparison": {}}
+        result = apply_hermes_analysis(base, self._hermes())
+        assert result["analysis_quality"] == 8.5
+
+
+# ── validate_hermes_response ──────────────────────────────────────────────────
+
+class TestValidateHermesResponse:
+    def _good(self):
+        return {
+            "executive_summary": {"bullets": ["B1", "B2"], "key_win": "W", "key_risk": "R"},
+            "channel_analysis":  {"google": {}, "meta": {}},
+            "diagnosis":         [{"observation": "X"}],
+            "recommendations":   [{"action": "Criar segmento Y específico no GA4"}],
+        }
+
+    def test_valid_passes(self):
+        validate_hermes_response(self._good())  # no raise
+
+    def test_empty_bullets_raises(self):
+        p = self._good(); p["executive_summary"]["bullets"] = []
+        with pytest.raises(ValueError, match="bullets"):
+            validate_hermes_response(p)
+
+    def test_one_bullet_raises(self):
+        p = self._good(); p["executive_summary"]["bullets"] = ["only"]
+        with pytest.raises(ValueError):
+            validate_hermes_response(p)
+
+    def test_empty_diagnosis_raises(self):
+        p = self._good(); p["diagnosis"] = []
+        with pytest.raises(ValueError, match="diagnosis"):
+            validate_hermes_response(p)
+
+    def test_empty_recommendations_raises(self):
+        p = self._good(); p["recommendations"] = []
+        with pytest.raises(ValueError, match="recommendations"):
+            validate_hermes_response(p)
+
+    def test_generic_action_raises(self):
+        p = self._good(); p["recommendations"] = [{"action": "otimizar campanhas para mais ROAS"}]
+        with pytest.raises(ValueError, match="generic"):
+            validate_hermes_response(p)
+
+    def test_invalid_channel_analysis_raises(self):
+        p = self._good(); p["channel_analysis"] = "not a dict"
+        with pytest.raises(ValueError, match="channel_analysis"):
+            validate_hermes_response(p)
