@@ -1,12 +1,9 @@
-"""Direct endpoint unit tests with an in-memory Core storage double; not live HTTP evidence.
-ASGI TestClient was unavailable in this Windows session; no network bypass used.
-"""
+"""Handler contract tests with memory-only storage; runtime auth is tested separately."""
 import importlib.util,sys,uuid,hashlib
 from pathlib import Path
 from types import SimpleNamespace
 from fastapi import FastAPI,APIRouter,HTTPException
 from urllib.parse import urlsplit,parse_qs
-import inspect
 import pytest
 P=Path(__file__).parent
 sp=importlib.util.spec_from_file_location('canonical_meeting_transcript',P.parents[0]/'app/agency_api/v1/meeting_transcript.py');mod=importlib.util.module_from_spec(sp);sys.modules[sp.name]=mod;sp.loader.exec_module(mod)
@@ -83,6 +80,4 @@ def test_stable_repeated_read_no_persistence():
 
 def test_unlabelled_line_has_unknown_speaker():
  db=DB();db.rows['core_meeting_transcripts'][0]['raw_text']='Discussão ainda sem decisão.';d=app(db).get(url()).json();assert d['segments'][0]['speaker'] is None and d['segments'][0]['text']=='Discussão ainda sem decisão.'
-
-
 

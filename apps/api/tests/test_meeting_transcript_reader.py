@@ -30,7 +30,7 @@ def test_foreign_or_invalid_binding_denied(case):
  elif case=='missing_version':t['version']=''
  else:t['raw_text']=m['title'];t['transcript_hash']=hashlib.sha256(t['raw_text'].encode()).hexdigest()
  r,_=reader(m,t)
- with pytest.raises(Exception):r.transcript(MID)
+ with pytest.raises(io.MeetingReadError):r.transcript(MID)
 @pytest.mark.parametrize('status',[401,403,404,503])
 def test_http_error_has_no_fallback(status):
  r,t=reader(status=status)
