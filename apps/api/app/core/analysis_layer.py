@@ -2,17 +2,17 @@
 Hermes Analysis Layer for canonical H7/H8 reports.
 
 Receives artifact data (metrics, change_summary, anomalies, previous week snapshot)
-and generates structured analysis via Claude. Includes:
+and generates structured analysis via OpenAI (Hermes runtime). Includes:
   - Anomaly detection (pure logic, no external deps)
   - WoW comparison builder (pure logic)
-  - Claude prompt construction + API call
+  - Hermes prompt construction + OpenAI API call
   - Quality gate (pure logic)
 
 Design rules:
 - Never makes media writes, platform API calls, or client sends.
-- Claude call is the only external dependency (gated by CANONICAL_ANALYSIS_ENABLED env var).
-- On Claude failure: returns structured fallback with limitations; never raises.
-- Quality gate is pure logic; no Claude dependency.
+- OpenAI call is the only external dependency (gated by CANONICAL_ANALYSIS_ENABLED env var).
+- On OpenAI failure: returns structured fallback with status=ANALYSIS_UNAVAILABLE; never raises.
+- No Anthropic fallback. Quality gate is pure logic; no LLM dependency.
 """
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 ANALYSIS_ENGINE_VERSION  = "1"
 FLAG_CANONICAL_ANALYSIS  = "CANONICAL_ANALYSIS_ENABLED"
-FLAG_ANALYSIS_PROVIDER   = "ANALYSIS_PROVIDER"   # "anthropic" (default) | "openai"
 
 # Recommendations containing any of these phrases (case-insensitive) are blocked.
 _GENERIC_PHRASES = frozenset({
@@ -458,30 +457,13 @@ def _strip_fences(raw: str) -> str:
     return raw.strip()
 
 
-def _call_claude(prompt: str) -> tuple[dict, str]:
-    """Anthropic API call. Returns (parsed_dict, model_name) or raises."""
-    import anthropic  # lazy import
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-
-    model    = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-    client   = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model=model, max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return json.loads(_strip_fences(response.content[0].text)), model
-
-
-def _call_openai(prompt: str) -> tuple[dict, str]:
-    """OpenAI API call. Returns (parsed_dict, model_name) or raises."""
+def _call_hermes(prompt: str) -> tuple[dict, str]:
+    """Hermes analysis via OpenAI. Returns (parsed_dict, model_name) or raises."""
     from openai import OpenAI  # lazy import
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY not set")
+        raise RuntimeError("OPENAI_API_KEY not set — Hermes analysis unavailable")
 
     model  = os.getenv("OPENAI_MODEL", "gpt-4o")
     client = OpenAI(api_key=api_key)
@@ -491,14 +473,6 @@ def _call_openai(prompt: str) -> tuple[dict, str]:
         response_format={"type": "json_object"},
     )
     return json.loads(response.choices[0].message.content), model
-
-
-def _call_llm(prompt: str) -> tuple[dict, str]:
-    """Dispatch to the configured provider. Returns (parsed_dict, model_name)."""
-    provider = os.getenv(FLAG_ANALYSIS_PROVIDER, "anthropic").strip().lower()
-    if provider == "openai":
-        return _call_openai(prompt)
-    return _call_claude(prompt)
 
 
 def _fallback(reason: str, limitations: list[str]) -> dict:
@@ -536,8 +510,8 @@ def build_analysis_layer(
     When CANONICAL_ANALYSIS_ENABLED=false: returns fallback with status=ANALYSIS_DISABLED.
     Default is true — set CANONICAL_ANALYSIS_ENABLED=false explicitly for dry-runs/tests.
 
-    When CANONICAL_ANALYSIS_ENABLED=true: calls Claude and validates output.
-    On any failure: returns fallback with status=ANALYSIS_UNAVAILABLE.
+    When CANONICAL_ANALYSIS_ENABLED=true: calls Hermes (OpenAI) and validates output.
+    On any failure: returns fallback with status=ANALYSIS_UNAVAILABLE. No Anthropic fallback.
     """
     enabled = os.getenv(FLAG_CANONICAL_ANALYSIS, "true").strip().lower() == "true"
     if not enabled:
@@ -553,7 +527,7 @@ def build_analysis_layer(
             change_summary, anomalies, wow,
             context=context, period_type=period_type,
         )
-        raw, model_used = _call_llm(prompt)
+        raw, model_used = _call_hermes(prompt)
     except Exception as exc:
         logger.warning("analysis_layer: LLM call failed for %s: %s", client_id, exc)
         return _fallback(

@@ -1,4 +1,4 @@
-"""Tests for analysis_layer.py — pure logic paths only (no Claude, no network)."""
+"""Tests for analysis_layer.py — pure logic paths only (no Hermes/OpenAI network call)."""
 import os
 import pytest
 from unittest.mock import patch
@@ -201,6 +201,7 @@ class TestCheckQualityGate:
             "analysis_layer": analysis,
             "channels": channels or _channels(),
             "change_summary": change_summary or {},
+            "facts": [{"metric_key": "meta_spend", "value": 10000}],
         }
 
     def test_pass_with_complete_analysis(self):
@@ -310,35 +311,37 @@ class TestBuildAnalysisLayer:
     def test_enabled_no_api_key_returns_fallback(self):
         env = {"CANONICAL_ANALYSIS_ENABLED": "true"}
         with patch.dict(os.environ, env, clear=False):
-            if "ANTHROPIC_API_KEY" in os.environ:
-                del os.environ["ANTHROPIC_API_KEY"]
+            if "OPENAI_API_KEY" in os.environ:
+                del os.environ["OPENAI_API_KEY"]
             result = build_analysis_layer(**self._BASE)
         assert result["status"] == "ANALYSIS_UNAVAILABLE"
-        assert "ANTHROPIC_API_KEY" in result.get("reason", "") or "CLAUDE_CALL_FAILED" in result.get("reason", "")
+        # Locally openai may not be installed; on Railway it raises the key error
+        reason = result.get("reason", "")
+        assert "OPENAI_API_KEY" in reason or "openai" in reason.lower()
 
-    def test_enabled_claude_raises_returns_fallback(self):
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "ANTHROPIC_API_KEY": "sk-test"}
+    def test_enabled_hermes_raises_returns_fallback(self):
+        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env):
-            with patch("app.core.analysis_layer._call_claude", side_effect=RuntimeError("api down")):
+            with patch("app.core.analysis_layer._call_hermes", side_effect=RuntimeError("api down")):
                 result = build_analysis_layer(**self._BASE)
         assert result["status"] == "ANALYSIS_UNAVAILABLE"
         assert "api down" in result["reason"]
 
-    def test_enabled_claude_invalid_json_returns_fallback(self):
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "ANTHROPIC_API_KEY": "sk-test"}
+    def test_enabled_hermes_invalid_structure_returns_fallback(self):
+        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env):
-            with patch("app.core.analysis_layer._call_claude", return_value={"executive_summary": {"bullets": []}}):
+            with patch("app.core.analysis_layer._call_hermes", return_value=({"executive_summary": {"bullets": []}}, "gpt-4o")):
                 result = build_analysis_layer(**self._BASE)
         assert result["status"] == "ANALYSIS_UNAVAILABLE"
         assert "VALIDATION" in result["reason"] or "bullets" in result["reason"]
 
-    def test_enabled_claude_success(self):
+    def test_enabled_hermes_success(self):
         good = _good_analysis()
-        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "ANTHROPIC_API_KEY": "sk-test"}
+        env = {"CANONICAL_ANALYSIS_ENABLED": "true", "OPENAI_API_KEY": "sk-test"}
         with patch.dict(os.environ, env):
-            with patch("app.core.analysis_layer._call_claude", return_value=good):
+            with patch("app.core.analysis_layer._call_hermes", return_value=(good, "gpt-4o")):
                 result = build_analysis_layer(**self._BASE)
         assert result["status"] == "ANALYSIS_COMPLETE"
         assert result["anomalies_detected"] is not None
         assert result["wow_comparison"] is not None
-        assert result["analysis_engine"] == "claude-sonnet-4-6"
+        assert result["analysis_engine"] == "gpt-4o"
