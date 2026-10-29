@@ -1687,9 +1687,29 @@ export default function DashboardPage() {
           new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
 
         const CHANGE_LABEL: Record<string, string> = {
-          BUDGET_CHANGE: 'Budget', STATUS_CHANGE: 'Status',
-          BID_CHANGE: 'Lance', CREATIVE_CHANGE: 'Criativo',
-          TARGETING_CHANGE: 'Segmentação', OTHER: 'Outro',
+          // digest types
+          BUDGET_CHANGE:             'Orçamento',
+          CAMPAIGN_ACTIVATION:       'Campanha ativada',
+          CAMPAIGN_PAUSE:            'Campanha pausada',
+          CAMPAIGN_GROUP_ACTIVATION: 'Conjunto ativado',
+          CAMPAIGN_GROUP_PAUSE:      'Conjunto pausado',
+          AD_ACTIVATION:             'Anúncio ativado',
+          AD_PAUSE:                  'Anúncio pausado',
+          AUDIENCE_CHANGE:           'Público',
+          BALANCE_RECHARGE:          'Recarga de saldo',
+          // ChangeType enum values
+          BUDGET:               'Orçamento',
+          CAMPAIGN_LAUNCH:      'Campanha ativada',
+          ADSET_STATUS_CHANGE:  'Status do conjunto',
+          AD_STATUS_CHANGE:     'Status do anúncio',
+          BID_STRATEGY:         'Estratégia de lance',
+          TARGET_ROAS:          'Meta de ROAS',
+          TARGET_CPA:           'Meta de CPA',
+          AUDIENCE:             'Público',
+          CREATIVE_LAUNCH:      'Criativo ativado',
+          CREATIVE_PAUSE:       'Criativo pausado',
+          ASSET_CHANGE:         'Produto / Feed',
+          OTHER:                'Outro',
         }
         const PRIORITY_CLS: Record<string, string> = {
           P0: 'bg-red-500/15 text-red-400 border border-red-500/25',

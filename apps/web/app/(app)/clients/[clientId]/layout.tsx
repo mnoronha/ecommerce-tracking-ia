@@ -28,6 +28,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `${base}/performance`,       label: 'Performance',  icon: TrendingUp, match: ['performance'] },
     { href: `${base}/meta-ads`,          label: 'Meta Ads',     icon: Share2,     match: ['meta-ads'] },
     { href: `${base}/google-ads`,        label: 'Google Ads',   icon: Search,     match: ['google-ads', 'merchant-center', 'ga4', 'search-console'] },
+    { href: `${base}/creatives`,         label: 'Criativos',    icon: BarChart2,  match: ['creatives'] },
     { href: `${base}/canonical-reports`, label: 'Relatórios',   icon: FileText,   match: ['canonical-reports'] },
     { href: `${base}/actions`,           label: 'Ações',        icon: Target,     match: ['actions'] },
     { href: `${base}/changes`,           label: 'Mudanças',     icon: History,    match: ['changes'] },

@@ -82,28 +82,73 @@ const IMPACT_LABEL: Record<string, string> = {
 }
 
 const CHANGE_TYPE_LABEL: Record<string, string> = {
-  BUDGET_CHANGE:          'Budget',
-  CAMPAIGN_ACTIVATION:    'Campanha ativada',
-  CAMPAIGN_PAUSE:         'Campanha pausada',
+  // digest classifier types (core_change_digests)
+  BUDGET_CHANGE:             'Orçamento',
+  CAMPAIGN_ACTIVATION:       'Campanha ativada',
+  CAMPAIGN_PAUSE:            'Campanha pausada',
   CAMPAIGN_GROUP_ACTIVATION: 'Conjunto ativado',
-  CAMPAIGN_GROUP_PAUSE:   'Conjunto pausado',
-  AD_ACTIVATION:          'Anúncio ativado',
-  AD_PAUSE:               'Anúncio pausado',
-  NEW_ENTITY_CREATED:     'Entidade criada',
-  SCHEDULE_CHANGE:        'Agendamento',
-  AUDIENCE_CHANGE:        'Público',
-  BALANCE_RECHARGE:       'Recarga de saldo',
+  CAMPAIGN_GROUP_PAUSE:      'Conjunto pausado',
+  AD_ACTIVATION:             'Anúncio ativado',
+  AD_PAUSE:                  'Anúncio pausado',
+  NEW_ENTITY_CREATED:        'Entidade criada',
+  SCHEDULE_CHANGE:           'Agendamento',
+  AUDIENCE_CHANGE:           'Público',
+  BALANCE_RECHARGE:          'Recarga de saldo',
+  // ChangeType enum values (core_change_log / history tab)
+  BUDGET:                    'Orçamento',
+  BID_STRATEGY:              'Estratégia de lance',
+  TARGET_ROAS:               'Meta de ROAS',
+  TARGET_CPA:                'Meta de CPA',
+  CAMPAIGN_LAUNCH:           'Campanha ativada',
+  ADSET_STATUS_CHANGE:       'Status do conjunto',
+  AD_STATUS_CHANGE:          'Status do anúncio',
+  CREATIVE_LAUNCH:           'Criativo ativado',
+  CREATIVE_PAUSE:            'Criativo pausado',
+  CREATIVE_ADDED:            'Criativo adicionado',
+  CREATIVE_REPLACED:         'Criativo substituído',
+  ASSET_CHANGE:              'Produto / Feed',
+  KEYWORD_ADDED:             'Keyword adicionada',
+  KEYWORD_REMOVED:           'Keyword removida',
+  NEGATIVE_KEYWORD_ADDED:    'Keyword negativa',
+  MATCH_TYPE_CHANGE:         'Tipo de correspondência',
+  CONVERSION_ACTION_CHANGE:  'Ação de conversão',
+  AUDIENCE:                  'Público',
+  TRACKING:                  'Tracking',
+  OTHER:                     'Outro',
 }
 
 const CHANGE_TYPE_BADGE: Record<string, string> = {
-  BUDGET_CHANGE:    'bg-yellow-500/15 text-yellow-400',
-  STATUS_CHANGE:    'bg-sky-500/15 text-sky-400',
-  BID_CHANGE:       'bg-purple-500/15 text-purple-400',
-  CREATIVE_CHANGE:  'bg-pink-500/15 text-pink-400',
-  TARGETING_CHANGE: 'bg-orange-500/15 text-orange-400',
-  CAMPAIGN_ACTIVATION:   'bg-emerald-500/15 text-emerald-400',
-  CAMPAIGN_PAUSE:        'bg-red-500/15 text-red-400',
-  OTHER:            'bg-slate-500/15 text-slate-400',
+  // budget
+  BUDGET_CHANGE:             'bg-yellow-500/15 text-yellow-400',
+  BUDGET:                    'bg-yellow-500/15 text-yellow-400',
+  // campaign status
+  CAMPAIGN_ACTIVATION:       'bg-emerald-500/15 text-emerald-400',
+  CAMPAIGN_LAUNCH:           'bg-emerald-500/15 text-emerald-400',
+  CAMPAIGN_GROUP_ACTIVATION: 'bg-emerald-500/15 text-emerald-400',
+  CAMPAIGN_PAUSE:            'bg-red-500/15 text-red-400',
+  CAMPAIGN_GROUP_PAUSE:      'bg-red-500/15 text-red-400',
+  // adset / ad status
+  ADSET_STATUS_CHANGE:       'bg-sky-500/15 text-sky-400',
+  AD_STATUS_CHANGE:          'bg-sky-500/15 text-sky-400',
+  AD_ACTIVATION:             'bg-emerald-500/15 text-emerald-400',
+  AD_PAUSE:                  'bg-red-500/15 text-red-400',
+  // bid / targeting
+  BID_STRATEGY:              'bg-purple-500/15 text-purple-400',
+  TARGET_ROAS:               'bg-purple-500/15 text-purple-400',
+  TARGET_CPA:                'bg-purple-500/15 text-purple-400',
+  AUDIENCE_CHANGE:           'bg-orange-500/15 text-orange-400',
+  AUDIENCE:                  'bg-orange-500/15 text-orange-400',
+  // creatives
+  CREATIVE_LAUNCH:           'bg-pink-500/15 text-pink-400',
+  CREATIVE_PAUSE:            'bg-pink-500/15 text-pink-400',
+  CREATIVE_ADDED:            'bg-pink-500/15 text-pink-400',
+  CREATIVE_REPLACED:         'bg-pink-500/15 text-pink-400',
+  ASSET_CHANGE:              'bg-pink-500/15 text-pink-400',
+  // other
+  BALANCE_RECHARGE:          'bg-indigo-500/15 text-indigo-400',
+  NEW_ENTITY_CREATED:        'bg-teal-500/15 text-teal-400',
+  SCHEDULE_CHANGE:           'bg-slate-500/15 text-slate-400',
+  OTHER:                     'bg-slate-500/15 text-slate-400',
 }
 
 const PLATFORM_ACCENT: Record<string, string> = {

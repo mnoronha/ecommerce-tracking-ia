@@ -38,6 +38,7 @@ interface Totals {
 
 interface CoreSnap {
   business_model: string
+  period?: { start: string; end: string }
   metrics: Array<{ metric_key: string; value: number | null }>
 }
 
@@ -89,6 +90,13 @@ interface OverviewData {
 function toCoreApiPeriod(period: Period, from: string, to: string): string {
   const { start, end } = periodToRange(period, from, to)
   const f = (d: Date) => d.toISOString().split('T')[0]
+  // Preset periods (7d/30d/90d): Core pipeline generates period_end=yesterday.
+  // Align so the exact-match query hits the right snapshot.
+  if (period !== 'custom' && period !== '1d') {
+    const yesterday = new Date(end)
+    yesterday.setDate(yesterday.getDate() - 1)
+    return `${f(start)}:${f(yesterday)}`
+  }
   return `${f(start)}:${f(end)}`
 }
 
@@ -361,6 +369,11 @@ export default function GoogleAdsPage() {
             <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 border border-yellow-500/20 rounded-lg text-xs text-yellow-300">
               <AlertTriangle size={12} />
               Ação de conversão PURCHASE não mapeada — Compras, ROAS e CPA indisponíveis. Configure em Configurações → Google Ads → Conversion Action ID.
+            </div>
+          )}
+          {isEcommerce && coreSnap?.period && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-500/10 border border-slate-500/20 rounded-lg text-[10px] text-slate-500">
+              Dados Core: {fmtDt(coreSnap.period.start)} → {fmtDt(coreSnap.period.end)}
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">

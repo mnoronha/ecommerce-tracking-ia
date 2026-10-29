@@ -23,7 +23,7 @@ DIGEST_ENGINE_VERSION = "1"
 
 # ── Status sets ───────────────────────────────────────────────────────────────
 
-_ACTIVE = {"ativo", "ativa", "ativo em aprendizado", "active"}
+_ACTIVE = {"ativo", "ativa", "ativo em aprendizado", "active", "exibição iniciada"}
 _INACTIVE = {"pausado", "inativo", "desativado", "paused", "inactive", "disabled"}
 # Internal Meta review queue states — transitions between these are noise
 _QUEUE_STATES = {"processo pendente", "em processamento", "análise pendente", "em análise", "em revisão"}

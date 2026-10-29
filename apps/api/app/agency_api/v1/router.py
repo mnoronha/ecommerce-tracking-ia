@@ -962,11 +962,51 @@ def get_entity_performance(
 
 # ── GET /clients/{client_id}/changes ─────────────────────────────────────────
 
+_ACTIVE_STATES_INLINE  = {"ativo", "ativa", "ativo em aprendizado", "active", "exibição iniciada"}
+_INACTIVE_STATES_INLINE = {"pausado", "inativo", "desativado", "paused", "inactive", "disabled"}
+
+
+def _derive_change_type(row: dict, current: ChangeType) -> ChangeType:
+    """Promote OTHER rows from PLATFORM_DETECTED to a meaningful ChangeType."""
+    if current != ChangeType.OTHER:
+        return current
+    entity = row.get("entity_type", "")
+    before = row.get("before_state") or {}
+    after  = row.get("after_state")  or {}
+    before_val = before.get("value") if isinstance(before, dict) else None
+    after_val  = after.get("value")  if isinstance(after, dict)  else None
+
+    if entity == "CAMPAIGN_GROUP":
+        if isinstance(after_val, dict) and after_val.get("type") == "payment_amount":
+            return ChangeType.BUDGET
+        if isinstance(after_val, str):
+            al = after_val.lower()
+            if al in _ACTIVE_STATES_INLINE or al in _INACTIVE_STATES_INLINE:
+                return ChangeType.ADSET_STATUS_CHANGE
+
+    elif entity == "CAMPAIGN":
+        if before_val is None and isinstance(after_val, dict) and "name" in after_val:
+            return ChangeType.CAMPAIGN_LAUNCH
+        if isinstance(after_val, str):
+            al = after_val.lower()
+            if al in _ACTIVE_STATES_INLINE:
+                return ChangeType.CAMPAIGN_LAUNCH
+            if al in _INACTIVE_STATES_INLINE:
+                return ChangeType.CAMPAIGN_PAUSE
+
+    elif entity == "ADGROUP":
+        if isinstance(after_val, str):
+            return ChangeType.AD_STATUS_CHANGE
+
+    return current
+
+
 def _change_row_to_out(row: dict) -> ChangeOut:
     try:
         change_type = ChangeType(row.get("change_type", "OTHER"))
     except ValueError:
         change_type = ChangeType.OTHER
+    change_type = _derive_change_type(row, change_type)
     try:
         source = ChangeLogSource(row.get("source", "HUMAN"))
     except ValueError:
