@@ -117,6 +117,19 @@ class _MutChain(_Chain):
         return _Chain(self._result)
 
 
+class _EmptyChain:
+    """Returns empty data for any fluent query — used for change_log/change_digests in tests."""
+    def select(self, *_, **__):    return self
+    def eq(self, *_, **__):        return self
+    def gte(self, *_, **__):       return self
+    def lte(self, *_, **__):       return self
+    def order(self, *_, **__):     return self
+    def limit(self, *_, **__):     return self
+    def range(self, *_, **__):     return self
+    def upsert(self, *_, **__):    return self
+    def execute(self):             return type("R", (), {"data": []})()
+
+
 class FakeDB:
     """
     Fake Supabase client covering the tables accessed by canonical_weekly_scheduler.
@@ -141,6 +154,9 @@ class FakeDB:
             return _Chain(type("R", (), {"data": self._clients})())
         if name == "core_job_runs":
             return _MutChain(self.job_rows, type("R", (), {"data": self.job_rows})())
+        # Change digest tables: return empty — _build_change_summary catches failure gracefully
+        if name in ("core_change_log", "core_change_digests"):
+            return _EmptyChain()
         raise ValueError(f"FakeDB: unknown table {name!r}")
 
     # Snapshot table method chain (self implements chain for snapshots)
@@ -274,6 +290,7 @@ def test_build_artifact_null_absent_not_zero():
 
 def test_run_for_client_generates_ready_for_review(monkeypatch):
     monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
     ps, pe  = _period_dates()
     db      = FakeDB()
     store   = MemoryStore()
@@ -323,6 +340,7 @@ def test_run_for_client_records_failed_job_on_error(monkeypatch):
 def test_run_for_client_idempotent(monkeypatch):
     """Calling twice for the same period returns the same report_id, single row in store."""
     monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
     ps, pe = _period_dates()
     db     = FakeDB()
     store  = MemoryStore()
@@ -580,3 +598,162 @@ def test_scheduler_code_only_calls_ready_for_review():
     assert '"READY_FOR_REVIEW"' in source
     for forbidden in ('"APPROVED"', '"PUBLISHED"', "'APPROVED'", "'PUBLISHED'"):
         assert forbidden not in source, f"Scheduler must not reference transition target {forbidden}"
+
+
+# ── H7.3 Analysis Layer integration ───────────────────────────────────────────
+
+def test_build_artifact_has_analysis_layer_field(monkeypatch):
+    """Artifact content must include analysis_layer key (disabled fallback when flag=false)."""
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+    ps, pe = _period_dates()
+    db     = FakeDB()
+    art    = _build_artifact("lk-sneakers", ps, pe, db)
+    assert "analysis_layer" in art["content"]
+    al = art["content"]["analysis_layer"]
+    assert "status" in al
+    # Flag explicitly false → ANALYSIS_DISABLED
+    assert al["status"] == "ANALYSIS_UNAVAILABLE"
+    assert al.get("reason") == "ANALYSIS_DISABLED"
+
+
+def test_build_artifact_has_anomalies_detected_field():
+    """Artifact content must include anomalies_detected (pure logic, always runs)."""
+    ps, pe = _period_dates()
+    db     = FakeDB()
+    art    = _build_artifact("lk-sneakers", ps, pe, db)
+    assert "anomalies_detected" in art["content"]
+    assert isinstance(art["content"]["anomalies_detected"], list)
+
+
+def test_build_artifact_schema_version_h74():
+    ps, pe = _period_dates()
+    art    = _build_artifact("lk-sneakers", ps, pe, FakeDB())
+    assert art["content"]["schema_version"] == "h7.4-core-scheduler"
+
+
+def test_version_param_creates_separate_cas_key(monkeypatch):
+    """version=2 must create a distinct CAS key from version=1."""
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+    ps, pe = _period_dates()
+    db     = FakeDB()
+    store  = MemoryStore()
+
+    r1 = run_canonical_weekly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store, version=1)
+    r2 = run_canonical_weekly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store, version=2)
+
+    assert r1["status"] == "READY_FOR_REVIEW"
+    assert r2["status"] == "READY_FOR_REVIEW"
+    # v1 and v2 are different CAS keys → two distinct store rows
+    assert len(store.rows) == 2
+    # report_ids come from UUID5 of the same args → same rid, but different keys
+    assert r1["report_id"] == r2["report_id"]  # rid is the same UUID5
+    v1_key = f"report:{r1['report_id']}:v1"
+    v2_key = f"report:{r2['report_id']}:v2"
+    assert v1_key in store.rows
+    assert v2_key in store.rows
+
+
+def test_quality_gate_blocks_ready_for_review_when_analysis_enabled(monkeypatch):
+    """
+    When CANONICAL_ANALYSIS_ENABLED=true and Claude returns UNAVAILABLE (e.g. no API key),
+    the quality gate fails → report stays DRAFT, returns DRAFT_QUALITY_GATE_FAILED.
+    """
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "true")
+    # No ANTHROPIC_API_KEY → build_analysis_layer returns ANALYSIS_UNAVAILABLE fallback
+
+    ps, pe = _period_dates()
+    db     = FakeDB()
+    store  = MemoryStore()
+
+    result = run_canonical_weekly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
+
+    assert result["status"] == "DRAFT_QUALITY_GATE_FAILED"
+    assert "violations" in result
+    assert len(result["violations"]) >= 1
+    # Report must remain in store as DRAFT, not READY_FOR_REVIEW
+    assert len(store.rows) == 1
+    doc = list(store.rows.values())[0]["document"]
+    assert doc["status"] == "DRAFT"
+
+
+def test_quality_gate_passes_when_analysis_disabled(monkeypatch):
+    """When CANONICAL_ANALYSIS_ENABLED=false, gate bypassed → READY_FOR_REVIEW."""
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+
+    ps, pe = _period_dates()
+    result = run_canonical_weekly_for_client(
+        "lk-sneakers", ps, pe, sb=FakeDB(), _store_override=MemoryStore()
+    )
+    assert result["status"] == "READY_FOR_REVIEW"
+
+
+def test_immutable_version_conflict_skipped_when_analysis_enabled(monkeypatch):
+    """
+    When analysis is enabled and v1 is already locked with a different hash,
+    the scheduler returns IMMUTABLE_VERSION_CONFLICT_SKIPPED (not FAILED).
+    """
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "true")
+
+    ps, pe = _period_dates()
+    db     = FakeDB()
+    store  = MemoryStore()
+
+    # Pre-populate the expected CAS key with a document using a fake hash.
+    # When generate() runs, it computes the real artifact hash which differs → IMMUTABLE_VERSION_CONFLICT.
+    import json as _json, uuid as _uuid
+    rid = str(_uuid.uuid5(
+        _uuid.NAMESPACE_URL,
+        _json.dumps(["lk-sneakers", "weekly", str(ps), str(pe)]),
+    ))
+    locked_doc = {
+        "report_id":      rid,
+        "status":         "READY_FOR_REVIEW",
+        "client_id":      "lk-sneakers",
+        "artifact_hash":  "STALE_HASH_FROM_PREVIOUS_RUN_abc123",
+        "idempotency_key":"STALE_IDEMPOTENCY_KEY_different",
+        "canonical_engine": "H7",
+    }
+    store.rows[f"report:{rid}:v1"] = {"revision": 1, "document": copy.deepcopy(locked_doc)}
+
+    result = run_canonical_weekly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
+
+    assert result["status"] == "IMMUTABLE_VERSION_CONFLICT_SKIPPED"
+    assert result["report_id"] == rid
+
+
+def test_immutable_version_conflict_raises_when_analysis_disabled(monkeypatch):
+    """
+    When analysis is disabled (flag=false), IMMUTABLE_VERSION_CONFLICT is NOT caught
+    by the analysis handler → propagates → FAILED (same as before h7.3).
+    """
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+
+    ps, pe = _period_dates()
+    db     = FakeDB()
+    store  = MemoryStore()
+
+    import json as _json, uuid as _uuid
+    rid = str(_uuid.uuid5(
+        _uuid.NAMESPACE_URL,
+        _json.dumps(["lk-sneakers", "weekly", str(ps), str(pe)]),
+    ))
+    locked_doc = {
+        "report_id":      rid,
+        "status":         "READY_FOR_REVIEW",
+        "client_id":      "lk-sneakers",
+        "artifact_hash":  "STALE_HASH_abc123",
+        "idempotency_key":"STALE_IDEMPOTENCY_KEY",
+        "canonical_engine": "H7",
+    }
+    store.rows[f"report:{rid}:v1"] = {"revision": 1, "document": copy.deepcopy(locked_doc)}
+
+    result = run_canonical_weekly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
+
+    # Without analysis enabled, conflict is not handled → FAILED
+    assert result["status"] == "FAILED"
+    assert "IMMUTABLE_VERSION_CONFLICT" in result.get("error", "")
