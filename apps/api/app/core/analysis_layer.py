@@ -23,8 +23,9 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_ENGINE_VERSION = "1"
+ANALYSIS_ENGINE_VERSION  = "1"
 FLAG_CANONICAL_ANALYSIS  = "CANONICAL_ANALYSIS_ENABLED"
+FLAG_ANALYSIS_PROVIDER   = "ANALYSIS_PROVIDER"   # "anthropic" (default) | "openai"
 
 # Recommendations containing any of these phrases (case-insensitive) are blocked.
 _GENERIC_PHRASES = frozenset({
@@ -444,32 +445,60 @@ FORMATO DE SAIDA — JSON ESTRITO (sem texto antes ou depois do JSON):
 }}"""
 
 
-# ── Claude Call ───────────────────────────────────────────────────────────────
+# ── LLM Calls ─────────────────────────────────────────────────────────────────
 
-def _call_claude(prompt: str) -> dict:
-    """Make the Anthropic API call. Returns parsed JSON dict or raises."""
-    import anthropic  # lazy import — only needed when analysis enabled
-
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY not set")
-
-    client   = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model      = "claude-sonnet-4-6",
-        max_tokens = 4096,
-        messages   = [{"role": "user", "content": prompt}],
-    )
-    raw = response.content[0].text.strip()
-
-    # Strip markdown fences if present
+def _strip_fences(raw: str) -> str:
+    """Remove markdown code fences if present."""
+    raw = raw.strip()
     if raw.startswith("```"):
         raw = raw.split("```", 2)[1]
         if raw.startswith("json"):
             raw = raw[4:]
         raw = raw.rsplit("```", 1)[0]
+    return raw.strip()
 
-    return json.loads(raw)
+
+def _call_claude(prompt: str) -> tuple[dict, str]:
+    """Anthropic API call. Returns (parsed_dict, model_name) or raises."""
+    import anthropic  # lazy import
+
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set")
+
+    model    = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    client   = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model=model, max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return json.loads(_strip_fences(response.content[0].text)), model
+
+
+def _call_openai(prompt: str) -> tuple[dict, str]:
+    """OpenAI API call. Returns (parsed_dict, model_name) or raises."""
+    from openai import OpenAI  # lazy import
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+
+    model  = os.getenv("OPENAI_MODEL", "gpt-4o")
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model=model, max_tokens=4096,
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+    )
+    return json.loads(response.choices[0].message.content), model
+
+
+def _call_llm(prompt: str) -> tuple[dict, str]:
+    """Dispatch to the configured provider. Returns (parsed_dict, model_name)."""
+    provider = os.getenv(FLAG_ANALYSIS_PROVIDER, "anthropic").strip().lower()
+    if provider == "openai":
+        return _call_openai(prompt)
+    return _call_claude(prompt)
 
 
 def _fallback(reason: str, limitations: list[str]) -> dict:
@@ -524,11 +553,11 @@ def build_analysis_layer(
             change_summary, anomalies, wow,
             context=context, period_type=period_type,
         )
-        raw = _call_claude(prompt)
+        raw, model_used = _call_llm(prompt)
     except Exception as exc:
-        logger.warning("analysis_layer: Claude call failed for %s: %s", client_id, exc)
+        logger.warning("analysis_layer: LLM call failed for %s: %s", client_id, exc)
         return _fallback(
-            f"CLAUDE_CALL_FAILED: {str(exc)[:200]}",
+            f"LLM_CALL_FAILED: {str(exc)[:200]}",
             [f"analysis: {str(exc)[:120]}"],
         )
 
@@ -544,7 +573,7 @@ def build_analysis_layer(
 
     raw["anomalies_detected"] = anomalies
     raw["wow_comparison"]     = wow
-    raw["analysis_engine"]    = "claude-sonnet-4-6"
+    raw["analysis_engine"]    = model_used
     raw["engine_version"]     = ANALYSIS_ENGINE_VERSION
     raw["status"]             = "ANALYSIS_COMPLETE"
     return raw
