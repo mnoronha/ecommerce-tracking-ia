@@ -215,6 +215,67 @@ interface PacingData {
   revenue_source?:          'orders' | 'ga4'
 }
 
+// ── Cockpit types ─────────────────────────────────────────────────────────────
+
+interface CockpitChange {
+  id: string
+  entity_name_at_time: string
+  change_type: string
+  channel: string
+  occurred_at: string
+  reason?: string
+  before?: { value?: unknown } | null
+  after?: { value?: unknown } | null
+}
+
+interface CockpitRec {
+  id: string
+  title: string
+  priority?: string | null
+  status: string
+  suggested_action?: string | null
+  owner?: string | null
+  due_date?: string | null
+  created_at: string
+}
+
+interface CockpitAlert {
+  id: string
+  alert_type: string
+  severity: string
+  title: string
+  message: string
+  platform?: string | null
+  detected_at: string
+}
+
+interface CockpitTask {
+  id: string
+  title: string
+  status: string
+  priority?: string | null
+  owner?: string | null
+  due_date?: string | null
+  source_type?: string | null
+  created_at: string
+}
+
+interface CockpitHealthEntry {
+  source_state: string
+  domain: string
+  source_system: string
+  source_key?: string
+}
+
+interface CockpitReport {
+  report_id: string
+  report_type: string
+  period_start?: string
+  period_end?: string
+  status: string
+  version?: number
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) =>
@@ -826,6 +887,19 @@ export default function DashboardPage() {
   }, [allOrdersRaw, country])
   const [productSort, setProductSort]         = useState<'purchases' | 'views'>('purchases')
 
+  // ── Operational Cockpit state ─────────────────────────────────────────────
+  const [cockpitLoading,        setCockpitLoading]        = useState(true)
+  const [cockpitTruth,          setCockpitTruth]          = useState<Record<string, unknown> | null>(null)
+  const [cockpitTargets,        setCockpitTargets]        = useState<Record<string, unknown> | null>(null)
+  const [cockpitHealth,         setCockpitHealth]         = useState<CockpitHealthEntry[]>([])
+  const [cockpitChanges,        setCockpitChanges]        = useState<CockpitChange[]>([])
+  const [cockpitRecs,           setCockpitRecs]           = useState<CockpitRec[]>([])
+  const [cockpitApprovedRecs,   setCockpitApprovedRecs]   = useState<CockpitRec[]>([])
+  const [cockpitAlerts,         setCockpitAlerts]         = useState<CockpitAlert[]>([])
+  const [cockpitTasks,          setCockpitTasks]          = useState<CockpitTask[]>([])
+  const [cockpitReport,         setCockpitReport]         = useState<CockpitReport | null>(null)
+  const [cockpitMonthlyReport,  setCockpitMonthlyReport]  = useState<CockpitReport | null>(null)
+
   const params = useParams()
   // Memoized so loadData's useCallback dep array stays stable across unrelated renders
   const CLIENT_PIXEL_ID = useMemo(
@@ -1163,7 +1237,7 @@ export default function DashboardPage() {
 
     setLastUpdate(new Date())
     setLoading(false)
-  }, [country, device, CLIENT_PIXEL_ID, period, from, to])
+  }, [CLIENT_PIXEL_ID, period, from, to])
 
   const loadInsights = useCallback(async () => {
     setInsLoading(true)
@@ -1218,6 +1292,7 @@ export default function DashboardPage() {
       .eq('financial_status', 'paid')
       .gt('total_price', 0)
       .gte('created_at', start90.toISOString())
+      .limit(1000)
 
     if (!allOrders90) return
 
@@ -1354,15 +1429,10 @@ export default function DashboardPage() {
     if (!CLIENT_PIXEL_ID) return
     if (!channelsReady || !ch.ga4) return
     const qs = periodToQuery(period, from, to)
-    const [funnelRes, pagesRes, sourcesRes] = await Promise.all([
-      fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/funnel?${qs}`).catch(() => null),
+    const [pagesRes, sourcesRes] = await Promise.all([
       fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/top-pages?${qs}`).catch(() => null),
       fetch(`${API_URL}/ga4/${CLIENT_PIXEL_ID}/sources?${qs}&limit=30`).catch(() => null),
     ])
-    if (funnelRes?.ok) {
-      const data = await funnelRes.json()
-      setGa4Funnel(data?.summary ?? null)
-    }
     if (pagesRes?.ok) {
       const data = await pagesRes.json()
       setGa4TopPages(Array.isArray(data) ? data : (data.pages || []))
@@ -1395,7 +1465,7 @@ export default function DashboardPage() {
       .gt('total_price', 0)
       .not('email_hash', 'is', null)
       .order('created_at', { ascending: false })
-      .limit(10000)
+      .limit(2000)
     if (!allOrders) return
     // Clientes identificados por email_hash (LGPD); exibidos com email mascarado.
     const custMap: Record<string, { total: number; orders: number; lastOrder: string; masked: string }> = {}
@@ -1419,6 +1489,76 @@ export default function DashboardPage() {
     setLoadedTabs(prev => new Set([...prev, tab]))
   }, [])
 
+  // When channels load, redirect away from tabs that are now hidden
+  useEffect(() => {
+    if (!channelsReady) return
+    if (activeTab === 'traffic'  && !ch.ga4)    setActiveTab('overview')
+    if (activeTab === 'clients'  && !ch.shopify) setActiveTab('overview')
+  }, [channelsReady, ch.ga4, ch.shopify, activeTab])
+
+  const loadCockpit = useCallback(async () => {
+    if (!CLIENT_PIXEL_ID) return
+    setCockpitLoading(true)
+    try {
+      const [
+        truthRes, healthRes, changesRes,
+        proposedRes, approvedRes, alertsRes, tasksRes,
+        weeklyRes, monthlyRes,
+      ] = await Promise.all([
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/truth`).catch(() => null),
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/health`).catch(() => null),
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/changes?limit=5`).catch(() => null),
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/recommendations?status=PROPOSED&limit=5`).catch(() => null),
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/recommendations?status=APPROVED&limit=5`).catch(() => null),
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/alerts?status=open&limit=10`).catch(() => null),
+        fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/tasks?status=OPEN&limit=10`).catch(() => null),
+        fetch(`/api/v1/canonical-reports/list?client_id=${CLIENT_PIXEL_ID}&report_type=weekly&limit=1`).catch(() => null),
+        fetch(`/api/v1/canonical-reports/list?client_id=${CLIENT_PIXEL_ID}&report_type=monthly&limit=1`).catch(() => null),
+      ])
+      if (truthRes?.ok) {
+        const d = await truthRes.json()
+        setCockpitTruth(typeof d?.client_truth === 'object' ? d.client_truth : null)
+        setCockpitTargets(typeof d?.target_truth === 'object' ? d.target_truth : null)
+      }
+      if (healthRes?.ok) {
+        const d = await healthRes.json()
+        setCockpitHealth(Array.isArray(d?.health) ? d.health : [])
+      }
+      if (changesRes?.ok) {
+        const d = await changesRes.json()
+        setCockpitChanges(Array.isArray(d) ? d.slice(0, 5) : [])
+      }
+      if (proposedRes?.ok) {
+        const d = await proposedRes.json()
+        setCockpitRecs(Array.isArray(d) ? d.slice(0, 5) : [])
+      }
+      if (approvedRes?.ok) {
+        const d = await approvedRes.json()
+        setCockpitApprovedRecs(Array.isArray(d) ? d.slice(0, 5) : [])
+      }
+      if (alertsRes?.ok) {
+        const d = await alertsRes.json()
+        setCockpitAlerts(Array.isArray(d) ? d.slice(0, 10) : [])
+      }
+      if (tasksRes?.ok) {
+        const d = await tasksRes.json()
+        setCockpitTasks(Array.isArray(d) ? d.slice(0, 10) : [])
+      }
+      if (weeklyRes?.ok) {
+        const d = await weeklyRes.json()
+        const list = Array.isArray(d) ? d : []
+        setCockpitReport(list[0] ?? null)
+      }
+      if (monthlyRes?.ok) {
+        const d = await monthlyRes.json()
+        const list = Array.isArray(d) ? d : []
+        setCockpitMonthlyReport(list[0] ?? null)
+      }
+    } finally {
+      setCockpitLoading(false)
+    }
+  }, [CLIENT_PIXEL_ID])
+
   async function addAnnotation() {
     if (!annoDate || !annoLabel.trim()) return
     await fetch(`${API_URL}/annotations/${CLIENT_PIXEL_ID}`, {
@@ -1435,6 +1575,7 @@ export default function DashboardPage() {
   }
 
   useEffect(() => { loadData() }, [loadData])
+  useEffect(() => { loadCockpit() }, [loadCockpit])
   useEffect(() => { loadInsights() }, [loadInsights])
   useEffect(() => { loadCohort() }, [loadCohort])
   useEffect(() => { loadPacing() }, [loadPacing])
@@ -1499,15 +1640,548 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── Operational Cockpit ──────────────────────────────────────────────── */}
+      {/* LEGACY_CLEANUP_PLAN (not executed yet):
+          IntegrationsHealth  → HIDE_FROM_OVERVIEW (cockpit has Data Health)
+          canonicalMetrics strip → HIDE_FROM_OVERVIEW (cockpit has Business Result)
+          Ads Summary (Meta/Google/TikTok) → MOVE_TO_PERFORMANCE
+          GA4 summary → MOVE_TO_PERFORMANCE
+          Channel Revenue → MOVE_TO_PERFORMANCE
+          Attribution quality → MOVE_TO_PERFORMANCE
+          PacingWidget → KEEP_BELOW (MTD detail)
+          KPI cards → KEEP_BELOW (live period KPIs)
+          Revenue chart → KEEP_BELOW
+          Recent orders → KEEP_BELOW
+          Funnel → KEEP_BELOW
+          Product Performance → KEEP_BELOW
+          Cohort analysis → KEEP_BELOW
+          AI Insights → KEEP_BELOW
+          Sales Heatmap → KEEP_BELOW
+      */}
+      {(() => {
+        // ── Health rule (deterministic, documented) ─────────────────────────
+        // CRITICAL:  any source_state ∈ {ERROR, UNAVAILABLE}  OR  any open HIGH alert
+        // ATTENTION: any source_state ∈ {DEGRADED, STALE}     OR  any open MEDIUM alert
+        // HEALTHY:   all sources OK, no HIGH/MEDIUM alerts
+        const states  = cockpitHealth.map(h => h.source_state)
+        const hasP0Alert = cockpitAlerts.some(a => a.severity === 'HIGH')
+        const hasP1Alert = cockpitAlerts.some(a => a.severity === 'MEDIUM')
+        const cockpitStatus: 'HEALTHY' | 'ATTENTION' | 'CRITICAL' =
+          states.some(s => s === 'ERROR' || s === 'UNAVAILABLE') || hasP0Alert
+            ? 'CRITICAL'
+            : states.some(s => s === 'DEGRADED' || s === 'STALE') || hasP1Alert
+            ? 'ATTENTION'
+            : cockpitHealth.length === 0 && !cockpitLoading
+            ? 'ATTENTION'
+            : 'HEALTHY'
+
+        const statusCls = {
+          HEALTHY:   'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+          ATTENTION: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25',
+          CRITICAL:  'bg-red-500/15 text-red-400 border-red-500/25',
+        }[cockpitStatus]
+
+        const fmtBRL = (n: number) =>
+          new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(n)
+        const fmtShort = (iso: string) =>
+          new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+
+        const CHANGE_LABEL: Record<string, string> = {
+          BUDGET_CHANGE: 'Budget', STATUS_CHANGE: 'Status',
+          BID_CHANGE: 'Lance', CREATIVE_CHANGE: 'Criativo',
+          TARGETING_CHANGE: 'Segmentação', OTHER: 'Outro',
+        }
+        const PRIORITY_CLS: Record<string, string> = {
+          P0: 'bg-red-500/15 text-red-400 border border-red-500/25',
+          P1: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/25',
+          P2: 'bg-blue-500/15 text-blue-400 border border-blue-500/25',
+        }
+        const SOURCE_CLS: Record<string, string> = {
+          ALERT:          'bg-red-500/10 text-red-400',
+          RECOMMENDATION: 'bg-indigo-500/10 text-indigo-400',
+          TASK:           'bg-sky-500/10 text-sky-400',
+          DATA_HEALTH:    'bg-orange-500/10 text-orange-400',
+        }
+        const REPORT_STATUS_CLS: Record<string, string> = {
+          PUBLISHED:        'bg-indigo-500/15 text-indigo-400 border-indigo-500/25',
+          APPROVED:         'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+          READY_FOR_REVIEW: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25',
+          DRAFT:            'bg-slate-500/15 text-slate-500 border-slate-500/25',
+        }
+
+        // ── Canonical metrics lookup ────────────────────────────────────────
+        const cMetric = (key: string) =>
+          canonicalMetrics.find(m => m.metric_key === key) ?? null
+        const cVal = (key: string): number | null => cMetric(key)?.value ?? null
+
+        const revBusiness  = cVal('revenue_business')
+        const ordersCount  = cVal('orders_count')
+        const totalSpend   = cVal('total_spend')
+        const merVal       = cVal('mer')
+        const bt           = cockpitTruth
+        const tgt          = cockpitTargets
+        const hasBizMetrics = revBusiness != null || ordersCount != null || totalSpend != null
+
+        // Pacing % (from existing pacing state)
+        const pacingPct = pacing?.pct_done ?? null
+
+        // ── Build unified priority queue ────────────────────────────────────
+        // Severity → priority normalisation
+        const sevToPriority = (sev: string): string =>
+          sev === 'HIGH' ? 'P0' : sev === 'MEDIUM' ? 'P1' : 'P2'
+        const priorityRank = (p: string | null | undefined): number =>
+          p === 'P0' ? 0 : p === 'P1' ? 1 : p === 'P2' ? 2 : 3
+
+        type PriorityItem = {
+          id: string; source: string; priority: string | null
+          title: string; subtitle?: string; created_at: string
+        }
+        const allItems: PriorityItem[] = [
+          ...cockpitAlerts.map(a => ({
+            id: a.id, source: 'ALERT',
+            priority: sevToPriority(a.severity),
+            title: a.title,
+            subtitle: a.platform ? `${a.platform.toUpperCase()}` : undefined,
+            created_at: a.detected_at,
+          })),
+          ...cockpitRecs.map(r => ({
+            id: r.id, source: 'RECOMMENDATION',
+            priority: r.priority ?? 'P2',
+            title: r.title,
+            subtitle: r.suggested_action ?? undefined,
+            created_at: r.created_at,
+          })),
+          ...cockpitTasks
+            .filter(t => t.priority === 'P0' || t.priority === 'P1')
+            .map(t => ({
+              id: t.id, source: 'TASK',
+              priority: t.priority ?? 'P2',
+              title: t.title,
+              subtitle: t.owner ?? undefined,
+              created_at: t.created_at,
+            })),
+          ...cockpitHealth
+            .filter(h => h.source_state === 'ERROR' || h.source_state === 'UNAVAILABLE')
+            .map(h => ({
+              id: `health-${h.source_key ?? h.source_system}`,
+              source: 'DATA_HEALTH',
+              priority: 'P0',
+              title: `Fonte indisponível: ${h.domain || h.source_system}`,
+              subtitle: h.source_state,
+              created_at: new Date().toISOString(),
+            })),
+        ]
+        const priorityQueue = allItems
+          .sort((a, b) => {
+            const pr = priorityRank(a.priority) - priorityRank(b.priority)
+            if (pr !== 0) return pr
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          })
+          .slice(0, 5)
+
+        return (
+          <div className="border-b border-[#2a2f3e] bg-[#0d1018] px-6 py-5 space-y-5">
+
+            {/* Row 0 — Status bar */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusCls}`}>
+                  {cockpitStatus}
+                </span>
+                <span className="text-xs text-slate-500">Visão Operacional</span>
+                {cockpitLoading && <Loader2 size={12} className="animate-spin text-slate-600" />}
+              </div>
+              <button
+                onClick={loadCockpit}
+                disabled={cockpitLoading}
+                className="text-[10px] text-slate-600 hover:text-slate-400 transition-colors flex items-center gap-1"
+              >
+                <RefreshCw size={10} className={cockpitLoading ? 'animate-spin' : ''} />
+                Atualizar
+              </button>
+            </div>
+
+            {/* Row 1 — Business Result + Channels + Reports */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+              {/* Business Result */}
+              <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Resultado do Negócio</p>
+                {!hasBizMetrics && !cockpitLoading ? (
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle size={13} className="text-yellow-500 shrink-0" />
+                    <span className="text-xs text-yellow-500 font-medium">MISSING</span>
+                    <span className="text-[10px] text-slate-500">— pipeline não executou</span>
+                  </div>
+                ) : cockpitLoading && !hasBizMetrics ? (
+                  <div className="space-y-2">
+                    <div className="h-5 bg-[#252a3a] rounded animate-pulse w-3/4" />
+                    <div className="h-4 bg-[#252a3a] rounded animate-pulse w-1/2" />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {revBusiness != null && (
+                      <div>
+                        <p className="text-[10px] text-slate-500">Receita</p>
+                        <p className="text-base font-bold text-white">{fmtBRL(revBusiness)}</p>
+                      </div>
+                    )}
+                    <div className="flex gap-4">
+                      {ordersCount != null && (
+                        <div>
+                          <p className="text-[10px] text-slate-500">Pedidos</p>
+                          <p className="text-sm font-semibold text-slate-200">{ordersCount.toLocaleString('pt-BR')}</p>
+                        </div>
+                      )}
+                      {totalSpend != null && (
+                        <div>
+                          <p className="text-[10px] text-slate-500">Investimento</p>
+                          <p className="text-sm font-semibold text-slate-200">{fmtBRL(totalSpend)}</p>
+                        </div>
+                      )}
+                      {merVal != null && (
+                        <div>
+                          <p className="text-[10px] text-slate-500">MER</p>
+                          <p className={`text-sm font-semibold ${merVal >= 3 ? 'text-emerald-400' : merVal >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                            {merVal.toFixed(2)}x
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    {/* Pacing & target */}
+                    {(pacingPct != null || (tgt && typeof tgt.monthly_revenue_target === 'number')) && (
+                      <div className="pt-2 mt-1 border-t border-[#2a2f3e] flex items-center gap-4">
+                        {tgt && typeof tgt.monthly_revenue_target === 'number' && (
+                          <div>
+                            <p className="text-[10px] text-slate-500">Meta mensal</p>
+                            <p className="text-xs font-medium text-slate-300">{fmtBRL(tgt.monthly_revenue_target as number)}</p>
+                          </div>
+                        )}
+                        {pacingPct != null && (
+                          <div>
+                            <p className="text-[10px] text-slate-500">Pacing</p>
+                            <p className={`text-xs font-medium ${pacingPct >= 95 ? 'text-emerald-400' : pacingPct >= 80 ? 'text-yellow-400' : 'text-red-400'}`}>
+                              {pacingPct.toFixed(0)}%
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* BT description as secondary */}
+                    {bt && typeof bt.business_objective === 'string' && (
+                      <p className="text-[10px] text-slate-600 leading-relaxed pt-1 line-clamp-2 italic">{bt.business_objective as string}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Channels compact */}
+              <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Canais (período selecionado)</p>
+                {(!metaSummary && !googleSummary && !ga4Summary) ? (
+                  <p className="text-xs text-slate-600 italic">
+                    {loading ? 'Carregando...' : 'Sem dados de canais no período'}
+                  </p>
+                ) : (
+                  <div className="space-y-2.5">
+                    {metaSummary && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400 w-20">Meta Ads</span>
+                        <div className="flex items-center gap-3 text-right">
+                          <span className="text-[11px] text-slate-300">{fmtBRL(metaSummary.spend)}</span>
+                          {metaSummary.roas != null && (
+                            <span className={`text-[11px] font-bold w-12 text-right ${metaSummary.roas >= 3 ? 'text-emerald-400' : metaSummary.roas >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                              {metaSummary.roas.toFixed(2)}x
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {googleSummary && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400 w-20">Google Ads</span>
+                        <div className="flex items-center gap-3 text-right">
+                          <span className="text-[11px] text-slate-300">{fmtBRL(googleSummary.spend)}</span>
+                          {googleSummary.roas != null && (
+                            <span className={`text-[11px] font-bold w-12 text-right ${googleSummary.roas >= 3 ? 'text-emerald-400' : googleSummary.roas >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                              {googleSummary.roas.toFixed(2)}x
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {ga4Summary && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-slate-400 w-20">GA4</span>
+                        <span className="text-[11px] text-slate-300">
+                          {ga4Summary.sessions.toLocaleString('pt-BR')} sess.
+                          {ga4Summary.purchases > 0 ? ` · ${ga4Summary.purchases} compras` : ''}
+                        </span>
+                      </div>
+                    )}
+                    {revBusiness != null && totalSpend != null && totalSpend > 0 && (
+                      <div className="pt-2 border-t border-[#2a2f3e] flex items-center justify-between">
+                        <span className="text-[10px] text-slate-500">MER blended</span>
+                        <span className={`text-[11px] font-bold ${(revBusiness/totalSpend) >= 3 ? 'text-emerald-400' : (revBusiness/totalSpend) >= 1.5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                          {(revBusiness / totalSpend).toFixed(2)}x
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Reports — weekly + monthly */}
+              <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Relatórios</p>
+                  <Link href={`/clients/${CLIENT_PIXEL_ID}/canonical-reports`}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Ver todos →
+                  </Link>
+                </div>
+                {cockpitLoading && !cockpitReport && !cockpitMonthlyReport ? (
+                  <div className="space-y-2">
+                    <div className="h-4 bg-[#252a3a] rounded animate-pulse" />
+                    <div className="h-4 bg-[#252a3a] rounded animate-pulse w-3/4" />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {[
+                      { label: 'Semanal', rep: cockpitReport },
+                      { label: 'Mensal',  rep: cockpitMonthlyReport },
+                    ].map(({ label, rep }) => (
+                      <div key={label}>
+                        <p className="text-[10px] text-slate-600 mb-0.5">{label}</p>
+                        {rep ? (
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${REPORT_STATUS_CLS[rep.status] ?? REPORT_STATUS_CLS.DRAFT}`}>
+                              {rep.status}
+                            </span>
+                            {rep.period_start && rep.period_end && (
+                              <span className="text-[10px] text-slate-400">
+                                {fmtShort(rep.period_start)}–{fmtShort(rep.period_end)}
+                              </span>
+                            )}
+                            {rep.version && (
+                              <span className="text-[10px] text-slate-600">v{rep.version}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] text-slate-600 italic">Não gerado</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Row 2 — Change Digest + Priorities + Next Actions */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+              {/* Change Digest */}
+              <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Mudanças Recentes</p>
+                  <Link href={`/clients/${CLIENT_PIXEL_ID}/changes`} className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Ver todas →
+                  </Link>
+                </div>
+                {cockpitChanges.length === 0 ? (
+                  <p className="text-xs text-slate-600 italic">
+                    {cockpitLoading ? 'Carregando...' : 'Sem mudanças registradas'}
+                  </p>
+                ) : (
+                  <ul className="space-y-2.5">
+                    {cockpitChanges.map(c => {
+                      // Format before→after for budget/bid changes
+                      const bVal = (c.before as {value?: unknown} | null | undefined)?.value
+                      const aVal = (c.after  as {value?: unknown} | null | undefined)?.value
+                      const hasDelta = bVal != null && aVal != null
+                      const fmtVal = (v: unknown) => typeof v === 'number' ? fmtBRL(v / 100) : String(v)
+                      const deltaPct = hasDelta && typeof bVal === 'number' && typeof aVal === 'number' && bVal > 0
+                        ? ((aVal - bVal) / bVal * 100)
+                        : null
+                      return (
+                        <li key={c.id}>
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            {c.channel && (
+                              <span className="text-[9px] font-bold text-slate-500 uppercase">{c.channel}</span>
+                            )}
+                            <span className="text-[9px] text-slate-600">·</span>
+                            <span className="text-[9px] font-medium text-slate-500 uppercase">
+                              {CHANGE_LABEL[c.change_type] ?? c.change_type}
+                            </span>
+                            <span className="text-[9px] text-slate-600 ml-auto">{fmtShort(c.occurred_at)}</span>
+                          </div>
+                          <p className="text-xs text-slate-300 truncate">{c.entity_name_at_time}</p>
+                          {hasDelta ? (
+                            <p className="text-[10px] text-slate-500 mt-0.5">
+                              {fmtVal(bVal)} → {fmtVal(aVal)}
+                              {deltaPct != null && (
+                                <span className={`ml-1 font-medium ${deltaPct > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                  {deltaPct > 0 ? '+' : ''}{deltaPct.toFixed(0)}%
+                                </span>
+                              )}
+                            </p>
+                          ) : c.reason ? (
+                            <p className="text-[10px] text-slate-500 mt-0.5 truncate">{c.reason}</p>
+                          ) : null}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              {/* Priorities — alerts + recs + tasks + health */}
+              <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Prioridades</p>
+                  <Link href={`/clients/${CLIENT_PIXEL_ID}/actions`} className="text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors">
+                    Ver ações →
+                  </Link>
+                </div>
+                {cockpitLoading && priorityQueue.length === 0 ? (
+                  <div className="space-y-2">
+                    {[1,2,3].map(i => <div key={i} className="h-4 bg-[#252a3a] rounded animate-pulse" />)}
+                  </div>
+                ) : priorityQueue.length === 0 ? (
+                  <div className="flex items-center gap-2">
+                    <CheckCircle size={13} className="text-emerald-500 shrink-0" />
+                    <span className="text-xs text-slate-500">Nenhuma prioridade aberta</span>
+                  </div>
+                ) : (
+                  <ul className="space-y-2.5">
+                    {priorityQueue.map(item => (
+                      <li key={item.id} className="flex items-start gap-2">
+                        <div className="shrink-0 flex flex-col items-center gap-0.5 mt-0.5">
+                          {item.priority && PRIORITY_CLS[item.priority] ? (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${PRIORITY_CLS[item.priority]}`}>
+                              {item.priority}
+                            </span>
+                          ) : null}
+                          <span className={`text-[8px] font-medium px-1 py-0.5 rounded ${SOURCE_CLS[item.source] ?? 'bg-slate-500/10 text-slate-500'}`}>
+                            {item.source.replace('_', ' ')}
+                          </span>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs text-slate-300 leading-tight line-clamp-2">{item.title}</p>
+                          {item.subtitle && (
+                            <p className="text-[10px] text-slate-500 mt-0.5 truncate">{item.subtitle}</p>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              {/* Next Actions — approved recs + open tasks */}
+              <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-[10px] text-slate-500 uppercase tracking-wider">Próximas Ações</p>
+                </div>
+                {(() => {
+                  const nextItems = [
+                    ...cockpitApprovedRecs.map(r => ({
+                      id: r.id, source: 'RECOMMENDATION' as const,
+                      title: r.title, owner: r.owner, status: 'APROVADO',
+                      due_date: r.due_date, created_at: r.created_at,
+                    })),
+                    ...cockpitTasks.map(t => ({
+                      id: t.id, source: 'TASK' as const,
+                      title: t.title, owner: t.owner, status: t.status,
+                      due_date: t.due_date, created_at: t.created_at,
+                    })),
+                  ].slice(0, 5)
+
+                  if (cockpitLoading && nextItems.length === 0) {
+                    return (
+                      <div className="space-y-2">
+                        {[1,2].map(i => <div key={i} className="h-4 bg-[#252a3a] rounded animate-pulse" />)}
+                      </div>
+                    )
+                  }
+                  if (nextItems.length === 0) {
+                    return (
+                      <div className="flex items-center gap-2">
+                        <CheckCircle size={13} className="text-emerald-500 shrink-0" />
+                        <span className="text-xs text-slate-500">Nenhuma ação pendente</span>
+                      </div>
+                    )
+                  }
+                  return (
+                    <ul className="space-y-2.5">
+                      {nextItems.map(item => (
+                        <li key={`${item.source}-${item.id}`} className="flex items-start gap-2">
+                          <span className={`shrink-0 mt-0.5 text-[8px] font-medium px-1 py-0.5 rounded ${SOURCE_CLS[item.source]}`}>
+                            {item.source === 'TASK' ? 'TASK' : 'REC'}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs text-slate-300 leading-tight line-clamp-1">{item.title}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              {item.owner && (
+                                <span className="text-[10px] text-slate-500 truncate">{item.owner}</span>
+                              )}
+                              {item.due_date && (
+                                <span className="text-[10px] text-slate-600 shrink-0">
+                                  até {fmtShort(item.due_date)}
+                                </span>
+                              )}
+                              <span className="text-[9px] text-slate-600 shrink-0 ml-auto">{item.status}</span>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                })()}
+              </div>
+            </div>
+
+            {/* Row 3 — Data Health compact */}
+            <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4">
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Saúde dos Dados</p>
+              {cockpitHealth.length === 0 ? (
+                <p className="text-xs text-slate-600 italic">
+                  {cockpitLoading ? 'Carregando...' : 'Sem fontes configuradas'}
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-x-6 gap-y-1.5">
+                  {cockpitHealth.map(h => {
+                    const dotCls =
+                      h.source_state === 'OK'          ? 'bg-emerald-400' :
+                      h.source_state === 'DEGRADED'    ? 'bg-yellow-400'  :
+                      h.source_state === 'STALE'       ? 'bg-yellow-400'  :
+                      h.source_state === 'ERROR'       ? 'bg-red-400'     :
+                      h.source_state === 'UNAVAILABLE' ? 'bg-red-400'     :
+                      'bg-slate-500'
+                    return (
+                      <div key={h.source_key ?? h.source_system} className="flex items-center gap-1.5">
+                        <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${dotCls}`} />
+                        <span className="text-[10px] text-slate-400 capitalize">{h.domain || h.source_system}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+          </div>
+        )
+      })()}
+
       {/* Tab Navigation */}
       <div className="border-b border-[#2a2f3e] px-6">
         <nav className="flex gap-1">
           {([
-            { id: 'overview' as Tab, label: 'Visão Geral' },
-            { id: 'traffic'   as Tab, label: 'Tráfego & SEO' },
-            { id: 'campaigns' as Tab, label: 'Campanhas' },
-            { id: 'clients'   as Tab, label: 'Clientes' },
-          ]).map(tab => (
+            { id: 'overview' as Tab,  label: 'Visão Geral',   show: true },
+            { id: 'traffic'  as Tab,  label: 'Tráfego & SEO', show: !channelsReady || ch.ga4 },
+            { id: 'campaigns' as Tab, label: 'Campanhas',      show: true },
+            { id: 'clients'  as Tab,  label: 'Clientes',       show: !channelsReady || ch.shopify },
+          ]).filter(tab => tab.show).map(tab => (
             <button
               key={tab.id}
               onClick={() => handleTabChange(tab.id)}
@@ -1610,7 +2284,7 @@ export default function DashboardPage() {
             hint={
               kpis?.totalVisitors === 0 && ga4Summary
                 ? 'via Google Analytics 4'
-                : kpis?.totalVisitors === 0
+                : kpis?.totalVisitors === 0 && ch.tracking
                 ? '⚠ Pixel sem dados · verificar tracking'
                 : undefined
             }
@@ -1641,7 +2315,7 @@ export default function DashboardPage() {
             hint={
               ga4Summary && ga4Summary.sessions > 0
                 ? 'pedidos ÷ sessões GA4'
-                : kpis?.totalVisitors === 0
+                : kpis?.totalVisitors === 0 && ch.tracking
                 ? 'Sem dados de sessões — verificar pixel'
                 : undefined
             }
@@ -2508,7 +3182,11 @@ export default function DashboardPage() {
                 <EmptyState
                   type="neutral"
                   title="Sem movimentação de produtos no período"
-                  description="Nenhum evento de visualização ou compra de produto registrado. Tente expandir o período ou verificar se o pixel está capturando eventos de produto."
+                  description={
+                    ch.tracking
+                      ? 'Nenhum evento de visualização ou compra de produto registrado. Tente expandir o período ou verificar se o pixel está capturando eventos de produto.'
+                      : 'Nenhum evento de visualização ou compra de produto registrado. Tente expandir o período.'
+                  }
                   compact
                 />
               </div>

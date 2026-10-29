@@ -285,7 +285,7 @@ export default function MetaAdsPage() {
   const load = useCallback(async (q: string) => {
     setLoading(true)
     try {
-      const res  = await fetch(`${API_URL}/meta-ads/${pixelId}/overview?${q}`)
+      const res  = await fetch(`${API_URL}/meta-ads/${pixelId}/overview?${q}&limit=50`)
       if (res.ok) setData(await res.json())
     } catch (_) {}
     setLoading(false)
@@ -293,7 +293,7 @@ export default function MetaAdsPage() {
 
   const loadAdProducts = useCallback(async (q: string) => {
     try {
-      const res  = await fetch(`${API_URL}/journey/${pixelId}/by-ad?${q}&top_products=5`)
+      const res  = await fetch(`${API_URL}/journey/${pixelId}/by-ad?${q}&top_products=5&limit=20`)
       if (res.ok) setAdData((await res.json()).ads || [])
     } catch (_) {}
   }, [pixelId])
