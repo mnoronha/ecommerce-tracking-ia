@@ -27,7 +27,6 @@ from .core.scheduler_registry import register as _register_scheduler
 from .core.weekly_review import run_weekly_review_all_clients
 from .core.canonical_weekly_scheduler import run_canonical_weekly_all_clients as _run_canonical_weekly
 from .core.canonical_monthly_scheduler import run_canonical_monthly_all_clients as _run_canonical_monthly
-from .core.hermes_worker import run_hermes_worker_all as _run_hermes_worker
 from .core.monthly_review import run_monthly_review_all_clients
 from .core.balance_monitor import run_balance_check_all_prepaid
 from .core.change_history_scheduler import run_change_history_all_clients as _run_change_history
@@ -276,15 +275,6 @@ _scheduler.add_job(
     id="core_pipeline_daily",
 )
 import os as _os
-if _os.getenv("CANONICAL_HERMES_WORKER_ENABLED", "false").strip().lower() == "true":
-    # Hermes analysis worker — polls pending handoff contracts and calls Anthropic.
-    # Runs every 15 min; flag-gated; replayed via POST /canonical-reports/hermes-worker/run.
-    _scheduler.add_job(
-        _run_hermes_worker,
-        "interval",
-        minutes=15,
-        id="canonical_hermes_worker",
-    )
 if _os.getenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "false").strip().lower() == "true":
     # Canonical path: H7 scheduler writes to core_canonical_report_records.
     # Legacy weekly_review is NOT registered to prevent duplicate contract generation.
