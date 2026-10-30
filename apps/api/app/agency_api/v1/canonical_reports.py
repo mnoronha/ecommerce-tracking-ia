@@ -3,7 +3,7 @@ from datetime import datetime,timezone
 from fastapi import APIRouter,Depends,HTTPException,Query
 from pydantic import BaseModel,Field,ConfigDict
 from typing import Literal,Optional
-from .auth import SCOPE_READ_ANY,SCOPE_HERMES_WRITE,SCOPE_PLATFORM_WRITE,AuthContext
+from .auth import SCOPE_READ_ANY,SCOPE_HERMES_WRITE,SCOPE_PLATFORM_WRITE,SCOPE_ADMIN_ONLY,AuthContext
 from ...core.canonical_reports import Reports,CoreStore,Flags,ReportError
 router=APIRouter(prefix='/agency/v1/canonical-reports',tags=['canonical-reports'])
 
@@ -278,6 +278,41 @@ def pilot_run(
    doc=rpts.transition(doc['report_id'],ver,'READY_FOR_REVIEW',actor='canonical_pilot_run',at=datetime.now(timezone.utc).isoformat(),expected_hash=doc['artifact_hash'])
   except ReportError:pass
  return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'version':ver,'status':doc['status'],'period_start':str(ps),'period_end':str(pe)}
+
+@router.get('/analysis-requests/pending',tags=['canonical-reports'],summary='List pending Hermes analysis requests — polled by Hermes worker')
+def list_pending_analysis_requests(
+ client_id:Optional[str]=Query(None),
+ limit:int=Query(50,ge=1,le=200),
+ auth:AuthContext=Depends(SCOPE_HERMES_WRITE),
+)->list[dict]:
+ from ...database import get_supabase
+ sb=get_supabase()
+ try:
+  rows=(sb.table('core_canonical_report_records')
+   .select('entity_key,document')
+   .like('entity_key','analysis-request:%')
+   .contains('document',{'status':'PENDING'})
+   .order('entity_key',desc=False)
+   .limit(limit)
+   .execute()).data or []
+ except Exception as exc:
+  raise HTTPException(503,f'database error:{str(exc)[:80]}')
+ out=[]
+ for row in rows:
+  doc=row.get('document') or {}
+  if client_id and doc.get('client_id')!=client_id:continue
+  if auth.client_ids is not None and doc.get('client_id') not in auth.client_ids:continue
+  out.append({'analysis_request_id':doc.get('analysis_request_id'),'report_id':doc.get('report_id'),'client_id':doc.get('client_id'),'report_type':doc.get('report_type'),'report_version':doc.get('report_version'),'period_start':doc.get('period_start'),'period_end':doc.get('period_end'),'created_at':doc.get('requested_at')})
+ return out
+
+@router.post('/hermes-worker/run',tags=['canonical-reports'],summary='Manually trigger Hermes worker — processes all pending analysis requests')
+def trigger_hermes_worker(auth:AuthContext=Depends(SCOPE_ADMIN_ONLY))->dict:
+ import os as _os
+ if _os.getenv('CANONICAL_HERMES_WORKER_ENABLED','false').strip().lower()!='true':
+  raise HTTPException(409,'CANONICAL_HERMES_WORKER_ENABLED=false')
+ from ...core.hermes_worker import run_hermes_worker_all
+ result=run_hermes_worker_all()
+ return result
 
 @router.post('/{report_id}/analysis',tags=['canonical-reports'],summary='Hermes analysis callback — posts structured analysis for a WAITING report')
 def post_analysis(report_id:str,body:HermesAnalysis,auth:AuthContext=Depends(SCOPE_HERMES_WRITE))->dict:

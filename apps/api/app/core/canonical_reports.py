@@ -169,6 +169,13 @@ class Reports:
   passes,_=check_quality_gate(new_doc.get('content',{}),analysis_enabled=True)
   if passes:
    new_doc=self.transition(report_id,next_version,'READY_FOR_REVIEW',actor=actor,at=at,expected_hash=ah)
+  # Mark handoff contract COMPLETED — removes it from the pending list.
+  req_key=f'analysis-request:{analysis_request_id}'
+  def mark_complete(old):
+   if old is None:return old
+   return{**old,'status':'COMPLETED','completed_at':at}
+  try:self.mutate(req_key,mark_complete)
+  except Exception:pass
   return new_doc
 
 class CoreStore:
