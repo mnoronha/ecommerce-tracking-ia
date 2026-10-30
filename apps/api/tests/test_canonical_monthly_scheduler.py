@@ -548,8 +548,10 @@ def test_six_client_fanout(monkeypatch):
 
     run_canonical_monthly_all_clients()
 
-    assert len(store.rows) == 6
-    client_ids = [v["document"]["client_id"] for v in store.rows.values()]
+    # Each client produces 1 report record + 1 analysis-request record (async handoff).
+    report_rows = {k: v for k, v in store.rows.items() if k.startswith("report:")}
+    assert len(report_rows) == 6
+    client_ids = [v["document"]["client_id"] for v in report_rows.values()]
     for cid in SIX_CLIENT_IDS:
         assert cid in client_ids
 
@@ -570,12 +572,15 @@ def test_partial_clients_included_in_fanout(monkeypatch):
 
     run_canonical_monthly_all_clients()
 
-    assert len(store.rows) == 6
+    report_rows = {k: v for k, v in store.rows.items() if k.startswith("report:")}
+    assert len(report_rows) == 6
     lk_doc = next(
-        v["document"] for v in store.rows.values()
+        v["document"] for v in report_rows.values()
         if v["document"]["client_id"] == "lk-sneakers"
     )
-    assert lk_doc["content"]["status"] == "READY_FOR_REVIEW"
+    # lk has a full-month snapshot → review_status=READY; stays DRAFT waiting for Hermes.
+    assert lk_doc["review_status"] == "READY"
+    assert lk_doc["status"] == "DRAFT"
 
 
 def test_one_client_exception_isolation(monkeypatch):
@@ -603,7 +608,8 @@ def test_one_client_exception_isolation(monkeypatch):
     run_canonical_monthly_all_clients()
 
     assert call_count["n"] == 6
-    assert len(store.rows) == 5  # enutri raised before generate()
+    report_rows = {k for k in store.rows if k.startswith("report:")}
+    assert len(report_rows) == 5  # enutri raised before generate()
 
 
 # -- Flag=false guard ----------------------------------------------------------

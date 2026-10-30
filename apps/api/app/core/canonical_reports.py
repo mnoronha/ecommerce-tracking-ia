@@ -132,6 +132,45 @@ class Reports:
    return old
   return self.mutate('delivery:'+delivery_id,reset)
  def dispatch(self,*args,**kwargs):raise ReportError('NO_DELIVERY_TRANSPORT_INSTALLED')
+ def write_analysis_request(self,analysis_request_id,document):
+  """Store a Hermes handoff contract in CAS. Idempotent — returns existing if same id."""
+  key=f'analysis-request:{analysis_request_id}'
+  def create(old):
+   if old:return old
+   return document
+  return self.mutate(key,create)
+ def get_analysis_request(self,analysis_request_id):
+  row=self.store.get(f'analysis-request:{analysis_request_id}')
+  if row is None:raise ReportError('ANALYSIS_REQUEST_NOT_FOUND')
+  return deepcopy(row['document'])
+ def apply_analysis(self,report_id,base_version,hermes_payload,analysis_request_id,*,actor,at):
+  """Create v(N+1) with Hermes analysis merged. Transitions to READY_FOR_REVIEW if gate passes."""
+  from .analysis_layer import apply_hermes_analysis,validate_hermes_response,check_quality_gate
+  validate_hermes_response(hermes_payload)
+  next_version=base_version+1
+  key=f'report:{report_id}:v{next_version}'
+  # Idempotency check — if v(N+1) already exists with same analysis_request_id, return it.
+  existing=self.store.get(key)
+  if existing and existing['document'].get('analysis_request_id')==analysis_request_id:
+   return deepcopy(existing['document'])
+  base=self.get(report_id,base_version)
+  if base.get('content',{}).get('analysis_layer',{}).get('status') not in ('WAITING_FOR_HERMES_ANALYSIS',):
+   raise ReportError('BASE_VERSION_NOT_WAITING_FOR_ANALYSIS')
+  new_analysis=apply_hermes_analysis(base.get('analysis_layer',{}),hermes_payload)
+  doc={**base,'version':next_version,'analysis_request_id':analysis_request_id,
+   'content':{**base.get('content',{}),'analysis_layer':new_analysis},
+   'analysis_layer':new_analysis}
+  ah=digest({k:v for k,v in doc.items() if k not in ('generated_at','status','approved_at','approved_by','published_at')})
+  doc['artifact_hash']=ah
+  def create(old):
+   if old and old['document'].get('analysis_request_id')==analysis_request_id:return old['document']
+   if old:raise ReportError('VERSION_ALREADY_EXISTS')
+   return doc
+  new_doc=self.mutate(key,create)
+  passes,_=check_quality_gate(new_doc.get('content',{}),analysis_enabled=True)
+  if passes:
+   new_doc=self.transition(report_id,next_version,'READY_FOR_REVIEW',actor=actor,at=at,expected_hash=ah)
+  return new_doc
 
 class CoreStore:
  """Used only in Core process; atomic CAS RPC, never exposed directly to Hermes."""

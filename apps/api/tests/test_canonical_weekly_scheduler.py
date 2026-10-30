@@ -388,8 +388,10 @@ def test_six_client_fanout(monkeypatch):
 
     run_canonical_weekly_all_clients()
 
-    assert len(store.rows) == 6
-    client_ids = [v["document"]["client_id"] for v in store.rows.values()]
+    # Each client produces 1 report record + 1 analysis-request record (async handoff).
+    report_rows = {k: v for k, v in store.rows.items() if k.startswith("report:")}
+    assert len(report_rows) == 6
+    client_ids = [v["document"]["client_id"] for v in report_rows.values()]
     for cid in SIX_CLIENT_IDS:
         assert cid in client_ids
 
@@ -412,8 +414,10 @@ def test_one_client_failure_isolation(monkeypatch):
 
     run_canonical_weekly_all_clients()
 
-    # All 6 clients should have canonical rows (dipua gets PARTIAL artifact)
-    assert len(store.rows) == 6
+    # All 6 clients should have report records (dipua gets PARTIAL artifact).
+    # Plus analysis-request records for each (async handoff).
+    report_rows = {k for k in store.rows if k.startswith("report:")}
+    assert len(report_rows) == 6
 
 
 def test_failure_isolation_exception_in_build(monkeypatch):
@@ -441,9 +445,11 @@ def test_failure_isolation_exception_in_build(monkeypatch):
 
     run_canonical_weekly_all_clients()
 
-    # 5 succeeded, 1 failed — but all 6 were attempted
+    # 5 succeeded, 1 failed — but all 6 were attempted.
+    # 5 report records + 5 analysis-request records = 10 total.
     assert call_count["n"] == 6
-    assert len(store.rows) == 5  # enutri raised before generate()
+    report_rows = {k for k in store.rows if k.startswith("report:")}
+    assert len(report_rows) == 5  # enutri raised before generate()
 
 
 # ── Flag=false guard ──────────────────────────────────────────────────────────
@@ -661,7 +667,6 @@ def test_quality_gate_blocks_ready_for_review_when_analysis_enabled(monkeypatch)
     """
     monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
     monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "true")
-    # No ANTHROPIC_API_KEY → build_analysis_layer returns ANALYSIS_UNAVAILABLE fallback
 
     ps, pe = _period_dates()
     db     = FakeDB()
@@ -669,13 +674,15 @@ def test_quality_gate_blocks_ready_for_review_when_analysis_enabled(monkeypatch)
 
     result = run_canonical_weekly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
 
-    assert result["status"] == "DRAFT_QUALITY_GATE_FAILED"
-    assert "violations" in result
-    assert len(result["violations"]) >= 1
-    # Report must remain in store as DRAFT, not READY_FOR_REVIEW
-    assert len(store.rows) == 1
-    doc = list(store.rows.values())[0]["document"]
-    assert doc["status"] == "DRAFT"
+    # With analysis enabled, build_analysis_layer() returns WAITING_FOR_HERMES_ANALYSIS.
+    # Scheduler writes handoff contract and returns WAITING status (not DRAFT_QUALITY_GATE_FAILED).
+    assert result["status"] == "WAITING_FOR_HERMES_ANALYSIS"
+    assert "analysis_request_id" in result
+    # 1 report record + 1 analysis-request record in store
+    report_rows = {k: v for k, v in store.rows.items() if k.startswith("report:")}
+    assert len(report_rows) == 1
+    doc = list(report_rows.values())[0]["document"]
+    assert doc["status"] == "DRAFT"  # stays DRAFT until Hermes posts
 
 
 def test_quality_gate_passes_when_analysis_disabled(monkeypatch):
