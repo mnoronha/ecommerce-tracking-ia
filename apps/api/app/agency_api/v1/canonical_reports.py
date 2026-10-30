@@ -40,6 +40,7 @@ class ReportVersion(Artifact):
  approved_by:str|None=None
  published_at:str|None=None
  approval_hash:str|None=None
+ analysis_request_id:str|None=None
 class Generate(BaseModel):
  artifact:Artifact
 class Transition(BaseModel):
@@ -83,6 +84,7 @@ class HermesAnalysis(BaseModel):
  recommendations:list[dict]
  priorities:list[dict]
  limitations:Optional[str]=None
+ change_digest_section:Optional[dict]=None
  monthly_comparison:Optional[dict]=None
  trends:Optional[dict]=None
  actions:Optional[dict]=None

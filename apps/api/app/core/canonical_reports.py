@@ -156,10 +156,9 @@ class Reports:
   base=self.get(report_id,base_version)
   if base.get('content',{}).get('analysis_layer',{}).get('status') not in ('WAITING_FOR_HERMES_ANALYSIS',):
    raise ReportError('BASE_VERSION_NOT_WAITING_FOR_ANALYSIS')
-  new_analysis=apply_hermes_analysis(base.get('analysis_layer',{}),hermes_payload)
+  new_analysis=apply_hermes_analysis(base.get('content',{}).get('analysis_layer',{}),hermes_payload)
   doc={**base,'version':next_version,'analysis_request_id':analysis_request_id,
-   'content':{**base.get('content',{}),'analysis_layer':new_analysis},
-   'analysis_layer':new_analysis}
+   'content':{**base.get('content',{}),'analysis_layer':new_analysis}}
   ah=digest({k:v for k,v in doc.items() if k not in ('generated_at','status','approved_at','approved_by','published_at')})
   doc['artifact_hash']=ah
   def create(old):
