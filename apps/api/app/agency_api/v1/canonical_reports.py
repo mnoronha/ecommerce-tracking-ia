@@ -41,6 +41,7 @@ class ReportVersion(Artifact):
  published_at:str|None=None
  approval_hash:str|None=None
  analysis_request_id:str|None=None
+ quality_scores:Optional[dict]=None
 class Generate(BaseModel):
  artifact:Artifact
 class Transition(BaseModel):
