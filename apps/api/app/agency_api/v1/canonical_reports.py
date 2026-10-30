@@ -40,6 +40,7 @@ class ReportVersion(Artifact):
  approved_by:str|None=None
  published_at:str|None=None
  approval_hash:str|None=None
+ analysis_request_id:str|None=None
 class Generate(BaseModel):
  artifact:Artifact
 class Transition(BaseModel):
@@ -83,6 +84,7 @@ class HermesAnalysis(BaseModel):
  recommendations:list[dict]
  priorities:list[dict]
  limitations:Optional[str]=None
+ change_digest_section:Optional[dict]=None
  monthly_comparison:Optional[dict]=None
  trends:Optional[dict]=None
  actions:Optional[dict]=None
@@ -276,6 +278,32 @@ def pilot_run(
    doc=rpts.transition(doc['report_id'],ver,'READY_FOR_REVIEW',actor='canonical_pilot_run',at=datetime.now(timezone.utc).isoformat(),expected_hash=doc['artifact_hash'])
   except ReportError:pass
  return{'client_id':client_id,'report_type':report_type,'report_id':doc['report_id'],'version':ver,'status':doc['status'],'period_start':str(ps),'period_end':str(pe)}
+
+@router.get('/analysis-requests/pending',tags=['canonical-reports'],summary='List pending Hermes analysis requests — polled by Hermes worker')
+def list_pending_analysis_requests(
+ client_id:Optional[str]=Query(None),
+ limit:int=Query(50,ge=1,le=200),
+ auth:AuthContext=Depends(SCOPE_HERMES_WRITE),
+)->list[dict]:
+ from ...database import get_supabase
+ sb=get_supabase()
+ try:
+  rows=(sb.table('core_canonical_report_records')
+   .select('entity_key,document')
+   .like('entity_key','analysis-request:%')
+   .contains('document',{'status':'PENDING'})
+   .order('entity_key',desc=False)
+   .limit(limit)
+   .execute()).data or []
+ except Exception as exc:
+  raise HTTPException(503,f'database error:{str(exc)[:80]}')
+ out=[]
+ for row in rows:
+  doc=row.get('document') or {}
+  if client_id and doc.get('client_id')!=client_id:continue
+  if auth.client_ids is not None and doc.get('client_id') not in auth.client_ids:continue
+  out.append({'analysis_request_id':doc.get('analysis_request_id'),'report_id':doc.get('report_id'),'client_id':doc.get('client_id'),'report_type':doc.get('report_type'),'report_version':doc.get('report_version'),'period_start':doc.get('period_start'),'period_end':doc.get('period_end'),'created_at':doc.get('requested_at')})
+ return out
 
 @router.post('/{report_id}/analysis',tags=['canonical-reports'],summary='Hermes analysis callback — posts structured analysis for a WAITING report')
 def post_analysis(report_id:str,body:HermesAnalysis,auth:AuthContext=Depends(SCOPE_HERMES_WRITE))->dict:
