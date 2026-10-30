@@ -228,7 +228,89 @@ def _load_context(sb, client_id: str, period_start: date, period_end: date) -> d
         except Exception as exc:
             logger.debug("canonical_weekly: actions/changes failed %s: %s", client_id, exc)
 
+    ctx["client_uuid"] = client_uuid
     return ctx
+
+
+def _load_month_pacing_facts(
+    sb,
+    client_uuid: Optional[str],
+    context_targets: dict,
+    period_end: date,
+) -> list[dict]:
+    """
+    Load MTD revenue and spend for the month containing period_end.
+    Source is the same core_client_truth target_truth already loaded in context.
+    Returns fact dicts with `target` field; empty list if targets or data unavailable.
+    Never raises.
+    """
+    rev_target = (context_targets.get("revenue_business") or {}).get("target")
+    if not rev_target or not client_uuid:
+        return []
+
+    first_day = period_end.replace(day=1)
+    next_day  = period_end + timedelta(days=1)
+    pacing_facts: list[dict] = []
+
+    # MTD revenue from orders (same filter as target_pacing_evaluator)
+    mtd_revenue: Optional[float] = None
+    try:
+        res = (
+            sb.table("orders")
+            .select("total_price")
+            .eq("client_id", client_uuid)
+            .in_("financial_status", ["paid", "partially_refunded"])
+            .gte("created_at", first_day.isoformat())
+            .lt("created_at", next_day.isoformat())
+            .execute()
+        )
+        rows = res.data or []
+        if rows:
+            mtd_revenue = sum(float(r.get("total_price") or 0) for r in rows)
+    except Exception as exc:
+        logger.debug("canonical_weekly: mtd_revenue load failed %s: %s", client_uuid, exc)
+
+    if mtd_revenue is not None:
+        pacing_facts.append({
+            "metric_key":           "month_to_date_revenue",
+            "value":                mtd_revenue,
+            "target":               float(rev_target),
+            "value_status":         "COMPUTED",
+            "certification_status": "PROVISIONAL",
+            "unit":                 "BRL",
+        })
+
+    # MTD spend from ad_spend (same filter as target_pacing_evaluator)
+    spend_target = (context_targets.get("total_spend") or {}).get("target")
+    mtd_spend: Optional[float] = None
+    try:
+        res = (
+            sb.table("ad_spend")
+            .select("spend")
+            .eq("client_id", client_uuid)
+            .gte("date", first_day.isoformat())
+            .lte("date", period_end.isoformat())
+            .execute()
+        )
+        rows = res.data or []
+        if rows:
+            mtd_spend = sum(float(r.get("spend") or 0) for r in rows)
+    except Exception as exc:
+        logger.debug("canonical_weekly: mtd_spend load failed %s: %s", client_uuid, exc)
+
+    if mtd_spend is not None:
+        spend_fact: dict = {
+            "metric_key":           "month_to_date_spend",
+            "value":                mtd_spend,
+            "value_status":         "COMPUTED",
+            "certification_status": "PROVISIONAL",
+            "unit":                 "BRL",
+        }
+        if spend_target:
+            spend_fact["target"] = float(spend_target)
+        pacing_facts.append(spend_fact)
+
+    return pacing_facts
 
 
 def _build_artifact(client_id: str, period_start: date, period_end: date, sb, version: int = 1) -> dict:
@@ -356,6 +438,19 @@ def _build_artifact(client_id: str, period_start: date, period_end: date, sb, ve
         "open_recommendations_count": len(context.get("open_recommendations") or []),
         "manual_changes_count":  len(context.get("manual_changes") or []),
     }
+
+    # Month-to-date pacing facts — source: same core_client_truth already loaded above
+    pacing_facts = _load_month_pacing_facts(
+        sb,
+        context.get("client_uuid"),
+        context.get("targets") or {},
+        period_end,
+    )
+    if pacing_facts:
+        facts = facts + pacing_facts
+        context_manifest["month_pacing_available"] = True
+    else:
+        context_manifest["month_pacing_available"] = False
 
     # Analysis layer (Claude) — gated by CANONICAL_ANALYSIS_ENABLED (default: true)
     prev_snapshot = _fetch_prev_week_snapshot(sb, client_id, period_start)
