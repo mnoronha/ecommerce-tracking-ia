@@ -92,6 +92,9 @@ _TEXT_REPLACEMENTS = [
     ("canônica", ""),
     ("Business Truth", "dados de negócio"),
     ("business truth", "dados de negócio"),
+    ("dados PROVISIONAL", "dados disponíveis"),
+    ("PROVISIONAL", ""),
+    ("UNKNOWN", "não verificado"),
     # Specific verbose phrases
     (
         "O CPA blended de R$ 41,51 é dominado por conversões que não devem ser tratadas como vendas.",
@@ -589,15 +592,21 @@ def _insights_monthly(diagnosis: list[dict]) -> str:
     }
     cards_html = ""
     for d in diagnosis[:3]:
-        scope  = d.get("scope", "")
+        scope  = d.get("scope") or ""
         title  = _clean(d.get("finding", d.get("observation", "")))
         interp = _clean(d.get("interpretation", d.get("diagnosis", "")))
+        if not title and not interp:
+            continue
         sc     = scope_colors.get(scope, _C["accent"])
+        scope_div = (
+            f'<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{sc};font-family:Arial,Helvetica,sans-serif;margin-bottom:7px;">{scope}</div>'
+            if scope else ""
+        )
         cards_html += (
             f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px;">'
             f'<tr><td bgcolor="{_C["card_hi"]}" style="background-color:{_C["card_hi"]};border-radius:0 8px 8px 0;'
             f'border-left:3px solid {sc};border-top:1px solid {_C["border"]};border-right:1px solid {_C["border"]};border-bottom:1px solid {_C["border"]};padding:14px 16px;">'
-            f'<div style="font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{sc};font-family:Arial,Helvetica,sans-serif;margin-bottom:7px;">{scope}</div>'
+            f'{scope_div}'
             f'<div style="font-size:13px;font-weight:700;color:{_C["text_1"]};font-family:Arial,Helvetica,sans-serif;margin-bottom:6px;line-height:1.3;">{title}</div>'
             f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;line-height:1.6;">{interp}</div>'
             f'</td></tr></table>'
