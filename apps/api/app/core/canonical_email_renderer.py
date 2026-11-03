@@ -680,6 +680,326 @@ def _monthly_narrative(summary: str, learnings) -> str:
 </tr>"""
 
 
+# ── H8 expanded section helpers ───────────────────────────────────────────────
+
+def _mix_de_canais_table(
+    meta_spend: float, meta_conv: float, meta_value: float,
+    meta_roas: float, meta_cpa: float,
+    goog_spend: float, goog_purch: float, goog_value: float,
+    goog_roas: float, goog_cpa: float,
+    total_spend: float,
+) -> str:
+    ms  = meta_spend  or 0
+    gs  = goog_spend  or 0
+    tot = total_spend or (ms + gs)
+    msh = ms / tot * 100 if tot else 0
+    gsh = gs / tot * 100 if tot else 0
+    th_s  = (f'style="font-size:9px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+             f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;padding:0 4px 8px 0;white-space:nowrap;"')
+    thr_s = (f'style="font-size:9px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+             f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;padding:0 4px 8px;text-align:right;white-space:nowrap;"')
+    header = (
+        f'<tr><td {th_s}>CANAL</td><td {thr_s}>INVEST.</td><td {thr_s}>RECEITA ATRIB.</td>'
+        f'<td {thr_s}>COMPRAS</td><td {thr_s}>ROAS</td><td {thr_s}>CPA</td><td {thr_s}>PART.</td></tr>'
+    )
+
+    def dr(color, name, sp, val, conv, roas, cpa, share):
+        td  = (f'style="font-size:11px;color:{_C["text_1"]};font-family:Arial,Helvetica,sans-serif;'
+               f'padding:8px 4px;border-bottom:1px solid {_C["sep"]};text-align:right;"')
+        td1 = (f'style="font-size:11px;font-weight:700;color:{color};font-family:Arial,Helvetica,sans-serif;'
+               f'padding:8px 4px 8px 0;border-bottom:1px solid {_C["sep"]};white-space:nowrap;"')
+        tdp = (f'style="font-size:11px;font-weight:700;color:{_C["accent"]};font-family:Arial,Helvetica,sans-serif;'
+               f'padding:8px 0 8px 4px;border-bottom:1px solid {_C["sep"]};text-align:right;"')
+        return (
+            f'<tr><td {td1}>{name}</td><td {td}>{_brl(sp)}</td><td {td}>{_brl(val)}</td>'
+            f'<td {td}>{_num_conv(conv)}</td><td {td}>{_x(roas)}</td><td {td}>{_brl(cpa)}</td>'
+            f'<td {tdp}>{share:.0f}%</td></tr>'
+        )
+
+    return f"""<tr>
+  <td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:24px 28px;border-bottom:1px solid {_C['sep']};">
+    {_section_label("MIX DE CANAIS")}
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:16px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          {header}
+          {dr(_C['meta_blue'],  "Meta Ads",   meta_spend, meta_value, meta_conv,  meta_roas, meta_cpa, msh)}
+          {dr(_C['goog_green'], "Google Ads", goog_spend, goog_value, goog_purch, goog_roas, goog_cpa, gsh)}
+        </table>
+      </td></tr>
+    </table>
+  </td>
+</tr>"""
+
+
+def _canal_visao_mensal(
+    channel_name: str,
+    channel_color: str,
+    section_title: str,
+    rows: list,
+    context_note: str = "",
+) -> str:
+    """Monthly channel detail table: metric | current | august | MoM.
+    rows = [(label, cur_str, aug_str, mom_pct, invert_color)]"""
+    th_s  = (f'style="font-size:9px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+             f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;padding:0 6px 8px 0;"')
+    thr_s = (f'style="font-size:9px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+             f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;padding:0 6px 8px;text-align:right;"')
+    header = (
+        f'<tr><td {th_s}>M&#201;TRICA</td><td {thr_s}>SETEMBRO</td>'
+        f'<td {thr_s}>AGOSTO</td><td {thr_s}>MoM</td></tr>'
+    )
+    rows_html = ""
+    for label, cur, aug_v, mom, inv in rows:
+        if mom is not None:
+            mc = _C["neutral"] if "nvestimento" in label else _delta_color(mom, invert=inv)
+            mt = _pct(mom)
+        else:
+            mc, mt = _C["text_3"], "&#8212;"
+        rows_html += (
+            f'<tr>'
+            f'<td style="font-size:11px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;'
+            f'padding:7px 6px 7px 0;border-bottom:1px solid {_C["sep"]};">{label}</td>'
+            f'<td align="right" style="font-size:11px;font-weight:600;color:{_C["text_1"]};'
+            f'font-family:Arial,Helvetica,sans-serif;padding:7px 6px;border-bottom:1px solid {_C["sep"]};">{cur}</td>'
+            f'<td align="right" style="font-size:11px;color:{_C["text_2"]};'
+            f'font-family:Arial,Helvetica,sans-serif;padding:7px 6px;border-bottom:1px solid {_C["sep"]};">{aug_v}</td>'
+            f'<td align="right" style="font-size:11px;font-weight:700;color:{mc};'
+            f'font-family:Arial,Helvetica,sans-serif;padding:7px 0 7px 6px;border-bottom:1px solid {_C["sep"]};">{mt}</td>'
+            f'</tr>'
+        )
+    note_html = (
+        f'<tr><td colspan="4" style="font-size:10px;color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;'
+        f'padding-top:8px;line-height:1.5;">{context_note}</td></tr>'
+    ) if context_note else ""
+    return f"""<tr>
+  <td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:24px 28px;border-bottom:1px solid {_C['sep']};">
+    {_section_label(section_title)}
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:16px;">
+        <div style="font-size:12px;font-weight:700;color:{channel_color};font-family:Arial,Helvetica,sans-serif;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:12px;">{channel_name}</div>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+          {header}
+          {rows_html}
+          {note_html}
+        </table>
+      </td></tr>
+    </table>
+  </td>
+</tr>"""
+
+
+def _canonical_campaign_table(envelope: dict, platform: str) -> str:
+    """Data binding only: reuse DARK_V4 tokens, never rank diagnostic/rolling rows."""
+    from html import escape
+    rows = envelope.get('rows') or []
+    chosen = set((envelope.get('selection') or {}).get('top_spend_campaign_ids') or [])
+    chosen.update((envelope.get('selection') or {}).get('top_efficiency_campaign_ids') or [])
+    if not chosen:
+        return ''
+    color = _C['meta_blue'] if platform == 'meta' else _C['goog_green']
+    td = f'font-size:11px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;padding:8px 4px;border-bottom:1px solid {_C["sep"]};'
+    columns = ('Campanha / status / tipo', 'Invest.', 'Compras', 'Receita atrib.', 'ROAS', 'CPA')
+    header = ''.join(f'<td style="{td}font-weight:700;">{escape(c)}</td>' for c in columns)
+    body = ''
+    for row in rows:
+        if row['campaign_id'] not in chosen:
+            continue
+        label = ' / '.join(str(row.get(k) or 'não disponível') for k in ('campaign_name', 'status', 'campaign_type') if platform == 'google' or k != 'campaign_type')
+        values = (escape(label), _brl(row.get('spend')), _num_conv(row.get('purchases' if platform == 'meta' else 'purchase_conversions')),
+                  _brl(row.get('purchase_value')), _x(row.get('roas' if platform == 'meta' else 'ecommerce_roas')),
+                  _brl(row.get('cpa' if platform == 'meta' else 'ecommerce_cpa')))
+        body += '<tr>' + ''.join(f'<td style="{td}">{v}</td>' for v in values) + '</tr>'
+    label = 'META ADS' if platform == 'meta' else 'GOOGLE ADS'
+    note = 'Maiores investimentos no período. PROVISIONAL. Status atual na coleta; não representa status histórico.'
+    if not (envelope.get('selection') or {}).get('top_efficiency_campaign_ids'):
+        note += ' Eficiência não qualificada para escala: regra de volume suficiente não documentada.'
+    if platform == 'google':
+        note += ' Brand somente quando classificado explicitamente; nomes não comprovam essa segmentação.'
+    return f'''<tr><td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:24px 28px;border-bottom:1px solid {_C['sep']};">
+{_section_label(label + ' &#8212; CAMPANHAS')}
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:16px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>{header}</tr>{body}</table>
+<div style="font-size:10px;color:{_C['text_3']};font-family:Arial,Helvetica,sans-serif;padding-top:8px;line-height:1.5;">{escape(note)}</div>
+</td></tr></table></td></tr>'''
+
+
+def _limitation_card_campaigns(channel: str, channel_color: str, section_title: str) -> str:
+    return f"""<tr>
+  <td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:20px 28px;border-bottom:1px solid {_C['sep']};">
+    {_section_label(section_title)}
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:0 8px 8px 0;border-left:3px solid {_C['neutral']};border-top:1px solid {_C['border']};border-right:1px solid {_C['border']};border-bottom:1px solid {_C['border']};padding:14px 16px;">
+        <div style="font-size:12px;font-weight:700;color:{channel_color};font-family:Arial,Helvetica,sans-serif;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:6px;">{channel}</div>
+        <div style="font-size:12px;color:{_C['text_2']};font-family:Arial,Helvetica,sans-serif;line-height:1.6;">Granularidade de campanha n&#227;o dispon&#237;vel neste per&#237;odo. O drilldown n&#227;o foi acionado: n&#227;o h&#225; ranking de campanha, conjunto ou an&#250;ncio para o ciclo.</div>
+      </td></tr>
+    </table>
+  </td>
+</tr>"""
+
+
+def _change_digest_mensal(change_digest: dict) -> str:
+    if not change_digest:
+        return ""
+    meta_cd   = change_digest.get("meta") or {}
+    goog_cd   = change_digest.get("google") or {}
+    causality = change_digest.get("causality", "")
+    items_html = (
+        f'<div style="font-size:12px;font-weight:700;color:{_C["meta_blue"]};font-family:Arial,Helvetica,sans-serif;'
+        f'text-transform:uppercase;letter-spacing:0.06em;margin-bottom:10px;">Meta Ads</div>'
+    )
+    budgets     = meta_cd.get("budget_changes") or []
+    pauses      = meta_cd.get("campaign_pauses") or []
+    activations = meta_cd.get("campaign_activations") or []
+    interp      = meta_cd.get("interpretation", "")
+    if budgets:
+        items_html += (
+            f'<div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+            f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;margin-bottom:5px;">OR&#199;AMENTO</div>'
+        )
+        for b in budgets:
+            entity = _clean(b.get("entity", ""))
+            items_html += (
+                f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;'
+                f'padding:4px 0;border-bottom:1px solid {_C["sep"]};">{entity}: '
+                f'{b.get("before_display","")} &rarr; {b.get("after_display","")}</div>'
+            )
+    if pauses:
+        items_html += (
+            f'<div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+            f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;margin:10px 0 5px;">CAMPANHAS PAUSADAS</div>'
+        )
+        for p in list(dict.fromkeys(pauses)):
+            items_html += (
+                f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;'
+                f'padding:4px 0;border-bottom:1px solid {_C["sep"]};">{_clean(p)}</div>'
+            )
+    if activations:
+        items_html += (
+            f'<div style="font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
+            f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;margin:10px 0 5px;">CAMPANHAS ATIVADAS</div>'
+        )
+        for a in list(dict.fromkeys(activations)):
+            items_html += (
+                f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;'
+                f'padding:4px 0;border-bottom:1px solid {_C["sep"]};">{_clean(a)}</div>'
+            )
+    if interp:
+        items_html += (
+            f'<div style="font-size:11px;color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;'
+            f'line-height:1.5;margin-top:10px;">{_clean(interp)}</div>'
+        )
+    goog_interp = goog_cd.get("interpretation", "")
+    items_html += (
+        f'<div style="font-size:12px;font-weight:700;color:{_C["goog_green"]};font-family:Arial,Helvetica,sans-serif;'
+        f'text-transform:uppercase;letter-spacing:0.06em;margin:16px 0 6px;">Google Ads</div>'
+        f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;line-height:1.6;">'
+        + _clean(goog_interp or "Nenhum evento registrado no per&#237;odo.")
+        + f'</div>'
+    )
+    if causality:
+        items_html += (
+            f'<div style="font-size:10px;color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;'
+            f'line-height:1.5;margin-top:12px;padding-top:10px;border-top:1px solid {_C["sep"]};">'
+            + _clean(causality) + f'</div>'
+        )
+    return f"""<tr>
+  <td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:24px 28px;border-bottom:1px solid {_C['sep']};">
+    {_section_label("CHANGE DIGEST")}
+    <table width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr><td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:16px;">
+        {items_html}
+      </td></tr>
+    </table>
+  </td>
+</tr>"""
+
+
+def _diagnostico_mensal_v2(diagnosis: list) -> str:
+    if not diagnosis:
+        return ""
+    cards_html = ""
+    for d in diagnosis[:5]:
+        obs    = _clean(d.get("observation", ""))
+        diag   = _clean(d.get("diagnosis", ""))
+        action = _clean(d.get("recommended_action", ""))
+        if not obs and not diag:
+            continue
+        action_html = (
+            f'<div style="font-size:11px;color:{_C["accent"]};font-family:Arial,Helvetica,sans-serif;'
+            f'line-height:1.5;margin-top:8px;padding-top:8px;border-top:1px solid {_C["sep"]};">'
+            f'<span style="font-weight:700;">A&#231;&#227;o:</span> {action}</div>'
+        ) if action else ""
+        cards_html += (
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px;">'
+            f'<tr><td bgcolor="{_C["card_hi"]}" style="background-color:{_C["card_hi"]};border-radius:0 8px 8px 0;'
+            f'border-left:3px solid {_C["accent"]};border-top:1px solid {_C["border"]};'
+            f'border-right:1px solid {_C["border"]};border-bottom:1px solid {_C["border"]};padding:14px 16px;">'
+            f'<div style="font-size:13px;font-weight:700;color:{_C["text_1"]};font-family:Arial,Helvetica,sans-serif;'
+            f'margin-bottom:6px;line-height:1.3;">{obs}</div>'
+            f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;line-height:1.6;">{diag}</div>'
+            f'{action_html}'
+            f'</td></tr></table>'
+        )
+    return f"""<tr>
+  <td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:24px 28px;border-bottom:1px solid {_C['sep']};">
+    {_section_label("DIAGN&#211;STICO DO M&#202;S")}
+    {cards_html}
+  </td>
+</tr>"""
+
+
+def _plano_proximo_mes(priorities: list, fallback: list) -> str:
+    items = (priorities or fallback or [])[:5]
+    if not items:
+        return ""
+    rows_html = ""
+    for i, item in enumerate(items, 1):
+        action   = _clean(item.get("action", item.get("recommendation", "")))
+        priority = item.get("priority", "")
+        canal    = _clean(item.get("canal", item.get("channel", "")))
+        motivo   = _clean(item.get("motivo", item.get("rationale", item.get("evidence", ""))))
+        criterio = _clean(item.get("criterio", item.get("validation_criteria", item.get("decision_gate", ""))))
+        badge_color = _C["accent"] if priority in ("P0", "P1") else _C["text_3"]
+        badge = (
+            f' <span style="font-size:10px;font-weight:700;color:{badge_color};'
+            f'background-color:{_C["card_hi"]};border:1px solid {_C["border"]};'
+            f'border-radius:4px;padding:2px 6px;font-family:Arial,Helvetica,sans-serif;">{priority}</span>'
+        ) if priority else ""
+        sub_parts = [p for p in [
+            f'Canal: {canal}' if canal else None,
+            motivo if motivo else None,
+            f'Crit&#233;rio: {criterio}' if criterio and criterio != action else None,
+        ] if p]
+        sub_html = (
+            f'<div style="font-size:12px;color:{_C["text_2"]};font-family:Arial,Helvetica,sans-serif;'
+            f'line-height:1.55;margin-top:4px;">' + ' &middot; '.join(sub_parts) + '</div>'
+        ) if sub_parts else ""
+        rows_html += (
+            f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;">'
+            f'<tr>'
+            f'<td width="32" valign="top" style="padding-right:14px;padding-top:2px;">'
+            f'<table cellpadding="0" cellspacing="0" border="0"><tr>'
+            f'<td width="28" height="28" bgcolor="{_C["accent"]}" style="background-color:{_C["accent"]};'
+            f'border-radius:50%;width:28px;height:28px;text-align:center;vertical-align:middle;">'
+            f'<div style="font-size:13px;font-weight:700;color:{_C["cta_text"]};font-family:Arial,Helvetica,sans-serif;'
+            f'line-height:28px;">{i}</div>'
+            f'</td></tr></table>'
+            f'</td>'
+            f'<td valign="top">'
+            f'<div style="font-size:13px;font-weight:700;color:{_C["text_1"]};font-family:Arial,Helvetica,sans-serif;'
+            f'line-height:1.4;">{action}{badge}</div>'
+            f'{sub_html}'
+            f'</td></tr></table>'
+        )
+    return f"""<tr>
+  <td bgcolor="{_C['card']}" style="background-color:{_C['card']};padding:24px 28px;border-bottom:1px solid {_C['sep']};">
+    {_section_label("PLANO DO PR&#211;XIMO M&#202;S")}
+    {rows_html}
+  </td>
+</tr>"""
+
+
 def _cta(client_id: str) -> str:
     url = _platform_url(client_id)
     return f"""<tr>
@@ -853,6 +1173,7 @@ def render_weekly_email(artifact: dict) -> tuple[str, dict]:
 def render_monthly_email(artifact: dict) -> tuple[str, dict]:
     """
     Render H8 canonical artifact → (html, validation_result).
+    12-section expanded monthly report.
     """
     content    = artifact.get("content", {})
     facts_list = content.get("facts", [])
@@ -884,60 +1205,133 @@ def render_monthly_email(artifact: dict) -> tuple[str, dict]:
     goog_value  = facts.get("google_purchase_conversion_value")
     goog_roas   = facts.get("google_roas_ecommerce")
     goog_cpa    = facts.get("google_cpa_ecommerce")
+    goog_total  = facts.get("google_conversions")
 
     # MoM from monthly_comparison structured dict {section: {key: {august, september}}}
-    mc = al.get("monthly_comparison") or {}
-    moms = {
+    mc   = al.get("monthly_comparison") or {}
+    moms: dict = {
         "revenue":    _mc_pct(mc, "business",        "revenue_business"),
         "orders":     _mc_pct(mc, "business",        "orders_count"),
         "spend":      _mc_pct(mc, "aggregate_media", "total_spend"),
         "mer":        _mc_pct(mc, "aggregate_media", "mer"),
         "meta_spend": _mc_pct(mc, "meta",            "spend"),
         "meta_conv":  _mc_pct(mc, "meta",            "conversions"),
-        "meta_roas":  None,   # not available in monthly_comparison
-        "meta_cpa":   None,
         "goog_spend": _mc_pct(mc, "google",          "spend"),
         "goog_purch": _mc_pct(mc, "google",          "purchase_conversions"),
         "goog_roas":  _mc_pct(mc, "google",          "roas_ecommerce"),
         "goog_cpa":   _mc_pct(mc, "google",          "cpa_ecommerce"),
     }
 
-    diag     = al.get("diagnosis", [])
-    recs     = al.get("recommendations", [])
-    prios    = al.get("next_month_priorities", al.get("priorities_next_week", []))
-    summary  = al.get("executive_summary", {}).get("summary", "")
-    learnings = al.get("learnings", [])
+    # August context for channel detail tables
+    meta_ctx = (al.get("meta_analysis") or {}).get("monthly_context", {}).get("august", {})
+    goog_ctx = (al.get("google_analysis") or {}).get("monthly_context", {}).get("august", {})
 
-    # H8: closed month — show META DO MÊS (realizado vs target from facts)
-    target_html = _monthly_target_block(facts_list)
+    aug_meta_spend = meta_ctx.get("spend")
+    aug_meta_conv  = meta_ctx.get("conversions")
+    aug_meta_value = meta_ctx.get("conversion_value")
+    aug_meta_roas  = meta_ctx.get("roas")
+    aug_meta_cpa   = meta_ctx.get("cpa")
 
+    aug_goog_spend = goog_ctx.get("spend")
+    aug_goog_purch = goog_ctx.get("purchase_conversions")
+    aug_goog_roas  = goog_ctx.get("roas_ecommerce")
+    aug_goog_cpa   = goog_ctx.get("cpa_ecommerce")
+    aug_goog_total = goog_ctx.get("total_conversions")
+
+    def _mom(cur: Optional[float], aug: Optional[float]) -> Optional[float]:
+        if cur and aug and aug != 0:
+            return (cur - aug) / abs(aug) * 100
+        return None
+
+    moms["meta_roas"] = _mom(meta_roas, aug_meta_roas)
+    moms["meta_cpa"]  = _mom(meta_cpa, aug_meta_cpa)
+
+    aug_goog_value = (aug_goog_roas * aug_goog_spend) if aug_goog_roas and aug_goog_spend else None
+
+    # Channel rows
+    meta_rows = [
+        ("Investimento",           _brl(meta_spend),  _brl(aug_meta_spend),                                       moms.get("meta_spend"), True),
+        ("Compras",                _num_conv(meta_conv), _num_conv(aug_meta_conv) if aug_meta_conv else "&#8212;", moms.get("meta_conv"),  False),
+        ("Receita atribu&#237;da", _brl(meta_value),  _brl(aug_meta_value),                                       _mom(meta_value, aug_meta_value), False),
+        ("ROAS",                   _x(meta_roas),     _x(aug_meta_roas),                                          moms.get("meta_roas"), False),
+        ("CPA",                    _brl(meta_cpa),    _brl(aug_meta_cpa),                                         moms.get("meta_cpa"), True),
+    ]
+    goog_rows = [
+        ("Investimento",             _brl(goog_spend),   _brl(aug_goog_spend),                                        moms.get("goog_spend"), True),
+        ("Compras ecommerce",        _num_conv(goog_purch), _num_conv(aug_goog_purch) if aug_goog_purch else "&#8212;", moms.get("goog_purch"), False),
+        ("Receita ecommerce",        _brl(goog_value),   _brl(aug_goog_value),                                        _mom(goog_value, aug_goog_value), False),
+        ("ROAS ecommerce",           _x(goog_roas),      _x(aug_goog_roas),                                           moms.get("goog_roas"), False),
+        ("CPA ecommerce",            _brl(goog_cpa),     _brl(aug_goog_cpa),                                          moms.get("goog_cpa"), True),
+        ("Convers&#245;es totais*",  _num_conv(goog_total), _num_conv(aug_goog_total) if aug_goog_total else "&#8212;", _mom(goog_total, aug_goog_total), False),
+    ]
+
+    # Campaign availability
+    from .h8_evidence_guard import bound_context,evaluate,campaign_availability
+    evidence_context = bound_context(client_id, {'start':p_start,'end':p_end}, content)
+    h8_gate = evaluate({**al,'priorities':al.get('priorities_next_week') or []}, evidence_context)
+    campaigns = evidence_context['campaign_performance']
+    meta_campaign_html = _canonical_campaign_table(campaigns.get('meta') or {}, 'meta') if campaign_availability(evidence_context,'meta') == 'AVAILABLE' else ''
+    google_campaign_html = _canonical_campaign_table(campaigns.get('google') or {}, 'google') if campaign_availability(evidence_context,'google') == 'AVAILABLE' else ''
+    meta_camp_avail = bool(meta_campaign_html)
+    goog_camp_avail = bool(google_campaign_html)
+
+    diag          = al.get("diagnosis", [])
+    prios         = al.get("next_month_priorities", al.get("priorities_next_week", []))
+    recs          = al.get("recommendations", [])
+    change_digest = al.get("change_digest_section") or {}
+
+    target_html  = _monthly_target_block(facts_list)
     period_label = _fmt_period_monthly(p_start, p_end)
     client_name  = _fmt_client(client_id)
 
     body = "".join([
         _header(client_name, "Performance Mensal", period_label),
-        _hero_monthly(revenue, orders, moms["revenue"]),
-        _kpis_row_monthly(orders, moms["orders"], spend, moms["spend"],
-                          mer, moms["mer"], avg_ticket),
-        _channels(meta_spend, meta_conv, meta_value, meta_roas, meta_cpa,
-                  moms["meta_spend"], moms["meta_conv"],
-                  moms["meta_roas"], moms["meta_cpa"],
-                  goog_spend, goog_purch, goog_value, goog_roas, goog_cpa,
-                  moms["goog_spend"], moms["goog_purch"],
-                  moms["goog_roas"], moms["goog_cpa"],
-                  section_label="PERFORMANCE POR CANAL"),
+        # 1. Visão executiva
+        _hero_monthly(revenue, orders, moms.get("revenue")),
+        _kpis_row_monthly(orders, moms.get("orders"), spend, moms.get("spend"),
+                          mer, moms.get("mer"), avg_ticket),
+        # 2. Meta vs realizado (ritmo / fechamento)
         target_html,
-        _monthly_narrative(summary, learnings),
-        _insights_monthly(diag),
-        _priorities(recs, prios),
+        # 3. Mix de canais
+        _mix_de_canais_table(meta_spend, meta_conv, meta_value, meta_roas, meta_cpa,
+                              goog_spend, goog_purch, goog_value, goog_roas, goog_cpa, spend),
+        # 4. Meta Ads — Visão do mês
+        _canal_visao_mensal(
+            "Meta Ads", _C["meta_blue"], "META ADS &#8212; VIS&#195;O DO M&#202;S", meta_rows,
+            "* Receita e compras atribu&#237;das pela plataforma; n&#227;o somar &#224; receita Shopify.",
+        ),
+        # 5. Meta Ads — Campanhas
+        meta_campaign_html if meta_camp_avail else _limitation_card_campaigns(
+            "Meta Ads", _C["meta_blue"], "META ADS &#8212; CAMPANHAS",
+        ),
+        # 6. Google Ads — Visão do mês
+        _canal_visao_mensal(
+            "Google Ads", _C["goog_green"], "GOOGLE ADS &#8212; VIS&#195;O DO M&#202;S", goog_rows,
+            "* Convers&#245;es totais incluem a&#231;&#245;es al&#233;m de compras; usar KPIs de ecommerce para decis&#245;es.",
+        ),
+        # 7. Google Ads — Campanhas
+        google_campaign_html if goog_camp_avail else _limitation_card_campaigns(
+            "Google Ads", _C["goog_green"], "GOOGLE ADS &#8212; CAMPANHAS",
+        ),
+        # 8. Change Digest
+        _change_digest_mensal(change_digest),
+        # 9. Diagnóstico do mês (up to 5)
+        _diagnostico_mensal_v2(diag),
+        # 10. Plano do próximo mês
+        _plano_proximo_mes(prios, recs),
         _cta(client_id),
         _footer(),
     ])
 
     validation = {
-        "ok":                      ok,
+        "ok":                      ok and h8_gate['H8_CLIENT_READY']=='YES',
+        "h8_evidence_quality_gate": h8_gate,
         "errors":                  errors,
         "kpis_checked":            ["MER", "Meta ROAS", "Meta CPA", "Google ROAS ecom", "Google CPA ecom"],
         "month_pacing_available":  bool(target_html),
+        "meta_campaigns_rendered": meta_camp_avail,
+        "goog_campaigns_rendered": goog_camp_avail,
+        "meta_creatives_rendered": False,
+        "change_digest_rendered":  bool(change_digest),
     }
     return _wrap(body), validation
