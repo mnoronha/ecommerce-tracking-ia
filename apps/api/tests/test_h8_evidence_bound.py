@@ -17,6 +17,10 @@ def test_missing_campaigns_allows_only_limited_investigation():
     assert gate['UNSUPPORTED_RECOMMENDATION_COUNT']==0
     assert gate['H8_CLIENT_READY']=='NO'
 
+def test_null_optional_sections_never_invent_content_or_crash():
+    gate=evaluate({'recommendations':None,'diagnosis':None,'priorities':None,'next_month_priorities':None},context())
+    assert gate['H8_CLIENT_READY']=='NO' and gate['UNSUPPORTED_RECOMMENDATION_COUNT']>0
+
 @pytest.mark.parametrize('action',['Escalar campanhas de maior eficiência','Aumentar orçamento das campanhas','Redistribuir investimento entre campanhas'])
 def test_scale_without_campaign_volume_blocked(action):
     assert evaluate(payload(action,'SCALE_CAMPAIGN'),context())['UNSUPPORTED_RECOMMENDATION_COUNT']>0

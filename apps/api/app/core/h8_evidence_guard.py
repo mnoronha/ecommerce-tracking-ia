@@ -127,8 +127,8 @@ def evaluate(payload,context):
     measurement=confidence if isinstance(confidence,str) else confidence.get('ga4',confidence.get('status'))
     if isinstance(measurement,dict):measurement=measurement.get('status')
     valid_ga4=measurement=='VALID'
-    recs=payload.get('recommendations',[])
-    units=[('recommendation',r) for r in recs]+[('diagnosis',d) for d in payload.get('diagnosis',[])]+[('priority',p) for p in payload.get('priorities',[])]+[('priority',p) for p in payload.get('next_month_priorities',[])]
+    recs=payload.get('recommendations') or []
+    units=[('recommendation',r) for r in recs]+[('diagnosis',d) for d in (payload.get('diagnosis') or [])]+[('priority',p) for p in (payload.get('priorities') or [])]+[('priority',p) for p in (payload.get('next_month_priorities') or [])]
     if not recs:unsupported+=1;issues.append({'code':'RECOMMENDATIONS_MISSING'})
     for kind,unit in units:
         if not isinstance(unit,dict):unsupported+=1;issues.append({'code':'UNSTRUCTURED_CLAIM'});continue

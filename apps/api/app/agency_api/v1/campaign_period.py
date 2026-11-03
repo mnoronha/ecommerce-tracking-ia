@@ -6,7 +6,7 @@ from pydantic import BaseModel,Field,ConfigDict
 
 class PeriodCampaignRow(BaseModel):
     model_config=ConfigDict(allow_inf_nan=False)
-    campaign_id:str
+    campaign_id:str|None=None
     campaign_name:str|None=None
     status:str|None=None
     campaign_type:str|None=None
