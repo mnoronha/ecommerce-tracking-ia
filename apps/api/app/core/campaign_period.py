@@ -7,6 +7,7 @@ from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
+import httpx
 
 PLATFORMS = ('meta', 'google')
 
@@ -98,8 +99,13 @@ def capture(db,client,start,end,snapshot,metrics,credentials,*,collected_at):
         try:
             rows,complete=fetch(credentials,start,end)
             doc=build(client,platform,start,end,snapshot,rows,metrics,collected_at=collected_at,complete=complete)
+        except httpx.HTTPStatusError as exc:
+            status=exc.response.status_code
+            doc=missing(client,platform,start,end,snapshot,'PROVIDER_HTTP_'+str(status))
+            doc['source_state']='PERMISSION_DENIED' if status==403 else 'ACCESS_MISSING' if status==401 else 'ERROR'
         except Exception:
             # No credentials, provider response, or exception string enters evidence/logs.
             doc=missing(client,platform,start,end,snapshot,'PROVIDER_READ_UNAVAILABLE')
+            doc['source_state']='ERROR'
         out[platform]=persist(store,doc)
     return out

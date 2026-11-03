@@ -21,6 +21,19 @@ def test_null_optional_sections_never_invent_content_or_crash():
     gate=evaluate({'recommendations':None,'diagnosis':None,'priorities':None,'next_month_priorities':None},context())
     assert gate['H8_CLIENT_READY']=='NO' and gate['UNSUPPORTED_RECOMMENDATION_COUNT']>0
 
+@pytest.mark.parametrize('status,expected',[(401,'ACCESS_MISSING'),(403,'PERMISSION_DENIED'),(500,'ERROR')])
+def test_provider_failure_is_not_missing_or_zero(monkeypatch,status,expected):
+    import httpx
+    from app.core import canonical_reports,campaign_period
+    from app.core.collectors import campaign_period as provider
+    store=Store();monkeypatch.setattr(canonical_reports,'CoreStore',lambda db:store)
+    def denied(*args):
+        response=httpx.Response(status,request=httpx.Request('GET','https://provider.invalid'))
+        response.raise_for_status()
+    monkeypatch.setattr(provider,'fetch_meta',denied);monkeypatch.setattr(provider,'fetch_google',denied)
+    docs=campaign_period.capture(object(),'lk-sneakers','2026-09-01','2026-09-30','s',{}, {},collected_at='now')
+    assert all(d['source_state']==expected and d['rows']==[] and d['data_validation']=='BLOCKED' for d in docs.values())
+
 @pytest.mark.parametrize('action',['Escalar campanhas de maior eficiência','Aumentar orçamento das campanhas','Redistribuir investimento entre campanhas'])
 def test_scale_without_campaign_volume_blocked(action):
     assert evaluate(payload(action,'SCALE_CAMPAIGN'),context())['UNSUPPORTED_RECOMMENDATION_COUNT']>0
