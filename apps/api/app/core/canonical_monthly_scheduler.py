@@ -305,6 +305,14 @@ def _build_artifact(
     ]
 
     # Channels: per-channel spend + conversion + source health
+    from .campaign_period import read as read_campaign_period,missing as missing_campaign_period
+    from .canonical_reports import CoreStore
+    campaign_performance={}
+    for platform in ('meta','google'):
+        try:
+            campaign_performance[platform]=read_campaign_period(CoreStore(sb),client_id,platform,period_start,period_end,snapshot_id)
+        except Exception:
+            campaign_performance[platform]=missing_campaign_period(client_id,platform,period_start,period_end,snapshot_id,'CANONICAL_CAMPAIGN_READ_UNAVAILABLE')
     channels: dict = {}
     for ch_alias, ch_src in (("meta", "meta_ads"), ("google", "google_ads")):
         sm    = metrics_dict.get(f"{ch_alias}_spend", {})
@@ -455,6 +463,9 @@ def _build_artifact(
         "platform_writes":          False,
         "facts":                    facts,
         "channels":                 channels,
+        "campaign_performance":     campaign_performance,
+        "source_snapshot_id":       snapshot_id,
+        "measurement_confidence":   {"ga4":"UNKNOWN"},
         "business_truth":           bt,
         "change_summary":           change_summary,
         "hermes_monthly_brief":     hermes_brief,
