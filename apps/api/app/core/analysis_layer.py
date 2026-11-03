@@ -532,6 +532,9 @@ def build_hermes_handoff_from_artifact(
             "wow_comparison": wow,
             "facts":          facts,
             "observations":   content.get("observations") or [],
+            "campaign_performance": content.get("campaign_performance") or {},
+            "source_snapshot_id": content.get("source_snapshot_id"),
+            "measurement_confidence": content.get("measurement_confidence") or {},
         },
         "hermes_prompt":               prompt,
         "requested_analysis_sections": _required_sections(period_type),
@@ -860,4 +863,11 @@ def check_quality_gate(content: dict, analysis_enabled: bool = True) -> tuple[bo
     if status != "ANALYSIS_COMPLETE":
         violations.append(f"analysis_layer.status={status!r} — analysis not complete")
 
+    if content.get('origin')=='CANONICAL_MONTHLY_SCHEDULER' or content.get('review_model')=='ECOMMERCE_MONTHLY':
+        from .h8_evidence_guard import bound_context,evaluate
+        context=bound_context(content.get('client_id'),content.get('analysis_period'),content)
+        claims={**analysis,'priorities':analysis.get('priorities_next_week') or []}
+        gate=evaluate(claims,context)
+        if gate['H8_CLIENT_READY']!='YES':
+            violations.append('H8_EVIDENCE_OR_CAMPAIGN_DEPTH_BLOCKED')
     return len(violations) == 0, violations
