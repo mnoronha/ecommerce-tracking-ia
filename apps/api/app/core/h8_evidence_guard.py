@@ -118,8 +118,21 @@ def proposed_numbers(action):
         if n is not None:values.append((n*(1000 if thousand else 1),'BRL' if currency else '%' if unit=='%' else 'x' if unit else None))
     return values
 
+def affirmative_directives(statement, verbs):
+    """Negation applies locally, never to a later contrasting instruction."""
+    for clause in re.split(r'[;.!?]|\b(?:mas|porem|entretanto|contudo)\b', text(statement)):
+        for match in re.finditer(r'\b(?:'+verbs+r')\b', clause):
+            prefix=clause[:match.start()]
+            if re.search(r'\b(?:nao|sem|evitar|impedir|bloquear|proibir)\s+(?:(?:se|deve|devera|pode|recomenda|recomendar|de|ou|ampliar|reduzir)\s+){0,4}$',prefix):
+                continue
+            yield clause[match.start():]
+
 def numeric_proposal(action):
-    return bool(re.search(r'\b(aumentar|reduzir|elevar|destinar|alocar|escalar|exigir|atingir|buscar|manter|meta|limite|objetivo|budget|ter)\b|[<>]',text(action)))
+    # "Meta" names a platform as well as a goal. Historical platform figures
+    # and comparisons with a canonical goal are not proposed numeric targets.
+    return bool(list(affirmative_directives(action,
+        'aumentar|reduzir|elevar|destinar|alocar|escalar|exigir|atingir|buscar|manter|ter|definir|estabelecer|fixar|adotar')) or
+        re.search(r'\b(?:meta|limite|objetivo)\s+(?:propost[oa]|recomendad[oa]|sugerid[oa])\b|[<>]',text(action)))
 
 def evaluate(payload,context):
     c=catalog(context);issues=[];unsupported=numeric_bad=anomalous=business_bad=0
@@ -139,7 +152,9 @@ def evaluate(payload,context):
             unsupported+=1;issues.append({'claim':ref,'code':'UNBOUND_OR_UNKNOWN_EVIDENCE'})
         action=unit.get('action') or unit.get('recommendation') or unit.get('recommended_action') or ''
         combined=text(' '.join(fields(unit)))
-        scaling=purpose in ('SCALE_CAMPAIGN','REALLOCATE_BUDGET') or bool(re.search(r'\b(escalar|ampliar|aumentar|redistribuir|realocar)\b.*\b(campanhas?|investimento|verba|orcamento)\b',text(action)))
+        scaling=purpose in ('SCALE_CAMPAIGN','REALLOCATE_BUDGET') or any(
+            re.search(r'\b(campanhas?|investimento|verba|orcamento)\b',directive)
+            for directive in affirmative_directives(action,'escalar|ampliar|aumentar|redistribuir|realocar'))
         safe_detail=purpose=='INVESTIGATE_CAMPAIGN_DETAIL' and text(action).strip(' .')==text(SAFE_CAMPAIGN_DETAIL).strip(' .')
         if scaling and not safe_detail:
             campaign_refs=[v for v in linked if v['kind']=='CAMPAIGN']
@@ -171,7 +186,7 @@ def evaluate(payload,context):
     for statement in fields({k:v for k,v in payload.items() if k not in ('performance_drilldown','analysis_engine_metadata')}):
         s=text(statement)
         action_texts={text(u.get('action') or u.get('recommendation') or u.get('recommended_action') or '') for _,u in units if isinstance(u,dict)}
-        if s not in action_texts and proposed_numbers(s) and re.search(r'\b(meta|exigir|atingir|aumentar|reduzir|destinar|manter|objetivo|escalar)\b',s):
+        if s not in action_texts and proposed_numbers(s) and numeric_proposal(s):
             numeric_bad+=1;issues.append({'code':'UNSTRUCTURED_NUMERIC_TARGET'})
         if re.search(r'\b(nao ha|sem evidencia|nao permite|nao sustenta|nao inferir|nao se pode)\b',s):continue
         if ('recompra' in s or 'ltv' in s or 'retencao' in s) and re.search(r'\b(alto potencial|alto retorno|elevado retorno|cada cliente|garante|garantido)\b',s):
