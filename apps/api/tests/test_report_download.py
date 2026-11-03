@@ -58,6 +58,12 @@ class MemStore:
             }
             return True
 
+    def max_version(self, report_id):
+        with self._lock:
+            prefix = f"report:{report_id}:v"
+            versions = [int(k[len(prefix):]) for k in self.rows if k.startswith(prefix) and k[len(prefix):].isdigit()]
+            return max(versions) if versions else None
+
 
 _ALL_FLAGS = Flags(
     CANONICAL_WEEKLY_REVIEW_ENABLED=True,

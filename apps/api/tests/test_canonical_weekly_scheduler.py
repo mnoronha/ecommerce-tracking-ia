@@ -154,8 +154,15 @@ class FakeDB:
             return _Chain(type("R", (), {"data": self._clients})())
         if name == "core_job_runs":
             return _MutChain(self.job_rows, type("R", (), {"data": self.job_rows})())
+        # Default: all configured clients have weekly_enabled=true (preserves existing test behaviour)
+        if name == "core_report_delivery_settings":
+            opted = [{"client_id": c["client_id"]} for c in self._clients]
+            return _Chain(type("R", (), {"data": opted})())
         # Change digest tables: return empty — _build_change_summary catches failure gracefully
         if name in ("core_change_log", "core_change_digests"):
+            return _EmptyChain()
+        # Context tables used by _load_context — return empty gracefully
+        if name in ("core_client_truth", "alerts", "action_plans", "actions"):
             return _EmptyChain()
         raise ValueError(f"FakeDB: unknown table {name!r}")
 
@@ -764,3 +771,86 @@ def test_immutable_version_conflict_raises_when_analysis_disabled(monkeypatch):
     # Without analysis enabled, conflict is not handled → FAILED
     assert result["status"] == "FAILED"
     assert "IMMUTABLE_VERSION_CONFLICT" in result.get("error", "")
+
+
+# ── Scheduler client scope guard ───────────────────────────────────────────────
+
+from app.core.canonical_weekly_scheduler import _load_opted_in_clients
+
+
+class FakeDBWithSettings(FakeDB):
+    """Extends FakeDB to serve core_report_delivery_settings."""
+    def __init__(self, settings_rows=None, **kwargs):
+        super().__init__(**kwargs)
+        self._settings_rows = settings_rows or []
+
+    def table(self, name: str):
+        if name == "core_report_delivery_settings":
+            return _Chain(type("R", (), {"data": self._settings_rows})())
+        # core_client_truth, alerts, actions: return empty
+        if name in ("core_client_truth", "alerts", "action_plans", "actions"):
+            return _EmptyChain()
+        return super().table(name)
+
+
+def test_opted_in_client_is_included(monkeypatch):
+    """Client with weekly_enabled=true in delivery_settings is included."""
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    db = FakeDBWithSettings(
+        clients=_make_clients(["lk-sneakers", "other-client"]),
+        settings_rows=[{"client_id": "lk-sneakers"}],
+    )
+    result = _load_opted_in_clients(db)
+    assert len(result) == 1
+    assert result[0]["client_id"] == "lk-sneakers"
+
+
+def test_client_not_in_settings_is_excluded(monkeypatch):
+    """Client without a delivery_settings row is excluded (opt-out by default)."""
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    db = FakeDBWithSettings(
+        clients=_make_clients(["lk-sneakers", "other-client"]),
+        settings_rows=[],  # no one opted in
+    )
+    result = _load_opted_in_clients(db)
+    assert result == []
+
+
+def test_all_clients_flagged_weekly_all_included(monkeypatch):
+    """When all clients opt in, all are returned."""
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    client_ids = ["lk-sneakers", "dipua", "enutri"]
+    db = FakeDBWithSettings(
+        clients=_make_clients(client_ids),
+        settings_rows=[{"client_id": c} for c in client_ids],
+    )
+    result = _load_opted_in_clients(db)
+    assert {r["client_id"] for r in result} == set(client_ids)
+
+
+def test_run_all_clients_only_processes_opted_in(monkeypatch):
+    """run_canonical_weekly_all_clients only runs for opted-in clients."""
+    monkeypatch.setenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+
+    ps, pe = _period_dates()
+    processed: list[str] = []
+
+    def fake_run(client_id, period_start, period_end, sb):
+        processed.append(client_id)
+        return {"client_id": client_id, "status": "READY_FOR_REVIEW"}
+
+    monkeypatch.setattr(
+        "app.core.canonical_weekly_scheduler.run_canonical_weekly_for_client",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "app.core.canonical_weekly_scheduler._get_db",
+        lambda: FakeDBWithSettings(
+            clients=_make_clients(["lk-sneakers", "other-client"]),
+            settings_rows=[{"client_id": "lk-sneakers"}],
+        ),
+    )
+
+    run_canonical_weekly_all_clients()
+    assert processed == ["lk-sneakers"]

@@ -21,6 +21,11 @@ class Memory:
    old=self.rows.get(key)
    if (old['revision'] if old else None)!=revision:return False
    self.rows[key]={'revision':1 if old is None else old['revision']+1,'document':deepcopy(document)};return True
+ def max_version(self,report_id):
+  with self.lock:
+   prefix=f'report:{report_id}:v'
+   versions=[int(k[len(prefix):]) for k in self.rows if k.startswith(prefix) and k[len(prefix):].isdigit()]
+   return max(versions) if versions else None
 
 def artifact(**kw):
  a={'client_id':'fixture','canonical_engine':'H7','engine_version':'code-sha256','version':1,'generated_at':'2026-10-19T12:00:00Z',
@@ -257,3 +262,47 @@ def test_published_read_independent_of_generation_flag(http_api,monkeypatch):
  monkeypatch.setenv('CANONICAL_MONTHLY_REVIEW_ENABLED','false')
  response=c.get(f'/agency/v1/canonical-reports/{r["report_id"]}/versions/1')
  assert response.status_code==200 and response.json()['status']=='PUBLISHED'
+
+
+# ── Approval guard: OLDER_VERSION_APPROVAL_BLOCKED ────────────────────────────
+
+def test_older_version_approval_blocked():
+ """Approving v1 when v2 exists must raise OLDER_VERSION_APPROVAL_BLOCKED."""
+ s=service()
+ # Generate v1, advance to READY_FOR_REVIEW
+ r1=s.generate(artifact(version=1))
+ s.transition(r1['report_id'],1,'READY_FOR_REVIEW',actor='canonical_weekly_review',at='now',expected_hash=r1['artifact_hash'])
+ # Generate v2 (simulates analysis callback creating a new draft)
+ r2=s.generate(artifact(version=2,generated_at='2026-10-19T13:00:00Z'))
+ assert r2['status']=='DRAFT' and s.store.max_version(r1['report_id'])==2
+ # Attempting to approve v1 must be blocked
+ with pytest.raises(m.ReportError,match='OLDER_VERSION_APPROVAL_BLOCKED'):
+  s.transition(r1['report_id'],1,'APPROVED',actor='human',at='now',expected_hash=r1['artifact_hash'])
+
+
+def test_latest_version_approval_allowed():
+ """Approving the highest version must succeed (guard does not block it)."""
+ s=service()
+ r=s.generate(artifact(version=1))
+ s.transition(r['report_id'],1,'READY_FOR_REVIEW',actor='canonical_weekly_review',at='now',expected_hash=r['artifact_hash'])
+ assert s.store.max_version(r['report_id'])==1
+ # Approving v1 when v1 is latest must be allowed
+ doc=s.transition(r['report_id'],1,'APPROVED',actor='human',at='now',expected_hash=r['artifact_hash'])
+ assert doc['status']=='APPROVED'
+
+
+def test_supersede_not_blocked_by_approval_guard():
+ """SUPERSEDED transition must not trigger the approval guard."""
+ s=service()
+ r1=s.generate(artifact(version=1))
+ s.transition(r1['report_id'],1,'READY_FOR_REVIEW',actor='canonical_weekly_review',at='now',expected_hash=r1['artifact_hash'])
+ s.generate(artifact(version=2,generated_at='2026-10-19T13:00:00Z'))
+ # Superseding v1 is always allowed (cleanup operation)
+ doc=s.transition(r1['report_id'],1,'SUPERSEDED',actor='human',at='now',expected_hash=r1['artifact_hash'])
+ assert doc['status']=='SUPERSEDED'
+
+
+def test_max_version_missing_in_store():
+ """max_version returns None when no versions exist — no error raised."""
+ s=service()
+ assert s.store.max_version('nonexistent-report-id') is None

@@ -35,7 +35,7 @@ class ReportVersion(Artifact):
  report_type:Literal['weekly','monthly']
  artifact_hash:str
  idempotency_key:str
- status:Literal['DRAFT','READY_FOR_REVIEW','APPROVED','PUBLISHED']
+ status:Literal['DRAFT','READY_FOR_REVIEW','APPROVED','PUBLISHED','SUPERSEDED']
  approved_at:str|None=None
  approved_by:str|None=None
  published_at:str|None=None
@@ -304,7 +304,23 @@ def list_pending_analysis_requests(
   doc=row.get('document') or {}
   if client_id and doc.get('client_id')!=client_id:continue
   if auth.client_ids is not None and doc.get('client_id') not in auth.client_ids:continue
-  out.append({'analysis_request_id':doc.get('analysis_request_id'),'report_id':doc.get('report_id'),'client_id':doc.get('client_id'),'report_type':doc.get('report_type'),'report_version':doc.get('report_version'),'period_start':doc.get('period_start'),'period_end':doc.get('period_end'),'created_at':doc.get('requested_at')})
+  rid=doc.get('report_id');rver=doc.get('report_version')
+  if not rid or rver is None:continue
+  # SUPERSEDED filter: skip if v(N+1) already exists (analysis was processed or draft superseded).
+  next_key=f'report:{rid}:v{rver+1}'
+  try:
+   next_exists=sb.table('core_canonical_report_records').select('entity_key').eq('entity_key',next_key).limit(1).execute().data
+   if next_exists:continue
+  except Exception:pass
+  # BLOCKED_BY_DATA filter: skip if the base report version has data_label=BLOCKED (no snapshot).
+  base_key=f'report:{rid}:v{rver}'
+  try:
+   base_rows=sb.table('core_canonical_report_records').select('document').eq('entity_key',base_key).limit(1).execute().data or []
+   if base_rows:
+    qs=(base_rows[0].get('document') or {}).get('quality_scores') or {}
+    if qs.get('data_label')=='BLOCKED':continue
+  except Exception:pass
+  out.append({'analysis_request_id':doc.get('analysis_request_id'),'report_id':rid,'client_id':doc.get('client_id'),'report_type':doc.get('report_type'),'report_version':rver,'period_start':doc.get('period_start'),'period_end':doc.get('period_end'),'created_at':doc.get('requested_at')})
  return out
 
 @router.post('/{report_id}/analysis',tags=['canonical-reports'],summary='Hermes analysis callback — posts structured analysis for a WAITING report')

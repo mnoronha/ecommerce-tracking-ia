@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Optional
 
 from .canonical_reports import CoreStore, Flags, ReportError, Reports
+from .monthly_backfill import materialize_closed_month
 from .analysis_layer import (
     build_monthly_analysis_layer,
     build_hermes_handoff_from_artifact,
@@ -105,6 +106,23 @@ def _load_active_clients(sb) -> list[dict]:
     except Exception as exc:
         logger.error("canonical_monthly: client list failed: %s", exc)
         return []
+
+
+def _load_opted_in_clients(sb) -> list[dict]:
+    """Return only clients with monthly_enabled=true in core_report_delivery_settings.
+    Default is opt-out: clients without a settings row are excluded until explicitly enabled."""
+    try:
+        rows = (
+            sb.table("core_report_delivery_settings")
+            .select("client_id")
+            .eq("monthly_enabled", True)
+            .execute()
+        ).data or []
+        opted_in = {r["client_id"] for r in rows}
+    except Exception as exc:
+        logger.error("canonical_monthly: delivery_settings query failed: %s", exc)
+        opted_in = set()
+    return [c for c in _load_active_clients(sb) if c.get("client_id") in opted_in]
 
 
 def _fetch_prev_month_snapshot(sb, client_id: str, period_start: date) -> Optional[dict]:
@@ -577,6 +595,23 @@ def run_canonical_monthly_for_client(
 
     job_id = _insert_running_job(sb, client_id, period_end)
     try:
+        # Ensure a full-month snapshot exists before building the H8 artifact.
+        # persist_campaign_rows=False prevents overwriting daily ad_campaigns facts.
+        try:
+            materialize_closed_month(
+                client_id, period_start.year, period_start.month,
+                timezone="America/Sao_Paulo",
+            )
+        except ValueError as mat_exc:
+            if "MONTH_NOT_CLOSED" in str(mat_exc):
+                _finish_job(sb, job_id, "SUCCEEDED")
+                logger.info("canonical_monthly: %s — MONTH_NOT_CLOSED, skipping", client_id)
+                return {"client_id": client_id, "status": "SKIPPED", "error": "MONTH_NOT_CLOSED"}
+            raise
+        except Exception as mat_exc:
+            # Non-fatal: log and continue — artifact builder handles missing snapshot gracefully.
+            logger.warning("canonical_monthly: materialize failed for %s: %s", client_id, mat_exc)
+
         artifact = _build_artifact(client_id, period_start, period_end, sb, version=version)
 
         try:
@@ -688,10 +723,10 @@ def run_canonical_monthly_all_clients() -> None:
 
     period_start, period_end = _last_completed_month()
     sb      = _get_db()
-    clients = _load_active_clients(sb)
+    clients = _load_opted_in_clients(sb)
 
     logger.info(
-        "canonical_monthly: running for %d clients -- period %s to %s",
+        "canonical_monthly: running for %d opted-in clients -- period %s to %s",
         len(clients), period_start, period_end,
     )
 
