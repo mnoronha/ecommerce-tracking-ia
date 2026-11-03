@@ -63,6 +63,42 @@ def test_factual_metric_in_action_is_not_an_invented_target():
     p=payload('Apresentar investimento de R$ 100 no relatório','OBSERVED_FACT',['metric:total_spend'])
     assert evaluate(p,context())['UNSUPPORTED_NUMERIC_TARGET_COUNT']==0
 
+@pytest.mark.parametrize('statement',[
+    'Meta: alteração de orçamento de R$ 230,00 para R$ 260,00.',
+    '100% das entradas de Meta têm change_type=OTHER.',
+    'A receita foi R$ 1.037.982,69 frente à meta mensal de R$ 1.000.000,00; ambos PROVISIONAL.',
+    'Meta registrou R$ 36.246,61 e ROAS de 13,9147x.',
+])
+def test_observed_platform_figures_are_not_proposed_targets(statement):
+    p=payload();p['executive_summary']={'bullets':[statement]}
+    assert evaluate(p,context())['UNSUPPORTED_NUMERIC_TARGET_COUNT']==0
+
+@pytest.mark.parametrize('statement',[
+    'Aumentar orçamento em 15%.',
+    'Meta proposta: ROAS de 12x.',
+    'Definir meta de R$ 280k para Google.',
+    'Não aumentar orçamento agora; mas destinar R$ 280k ao Google.',
+])
+def test_narrative_numeric_instructions_still_require_evidence(statement):
+    p=payload();p['executive_summary']={'bullets':[statement]}
+    assert evaluate(p,context())['UNSUPPORTED_NUMERIC_TARGET_COUNT']>0
+
+@pytest.mark.parametrize('action',[
+    'Revisar CPA e ROAS sem ampliar ou reduzir verba até existir regra documentada de volume.',
+    'Não escalar campanhas antes de validar volume suficiente.',
+])
+def test_do_not_scale_is_not_a_scaling_instruction(action):
+    p=payload(action,'REVIEW_CAMPAIGN',['gap:meta_campaigns'])
+    assert evaluate(p,context())['UNSUPPORTED_RECOMMENDATION_COUNT']==0
+
+@pytest.mark.parametrize('action',[
+    'Não escalar campanhas agora, mas aumentar o orçamento das campanhas.',
+    'Revisar campanhas sem alterar criativos; ampliar investimento depois.',
+])
+def test_local_negation_cannot_hide_later_scaling_instruction(action):
+    p=payload(action,'REVIEW_CAMPAIGN',['gap:meta_campaigns'])
+    assert evaluate(p,context())['UNSUPPORTED_RECOMMENDATION_COUNT']>0
+
 def test_aov_does_not_prove_repeat_purchase():
     p=payload();p['executive_summary']={'bullets':['Cada cliente adquirido tem alto potencial de retorno via recompra']}
     assert evaluate(p,context())['UNSUPPORTED_BUSINESS_CLAIM_COUNT']>0
