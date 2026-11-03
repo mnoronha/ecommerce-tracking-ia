@@ -60,6 +60,7 @@ def materialize_closed_month(
     *,
     timezone: str,
     today: date | None = None,
+    include_campaigns: bool = False,
 ) -> PipelineResult:
     """Materialize a closed calendar month via the Core pipeline.
 
@@ -77,7 +78,14 @@ def materialize_closed_month(
     # Uses both period_start and period_end to avoid accepting a 7-day rolling
     # window that ends on the last day of the month as a completed monthly snapshot.
     existing = _load_existing_snapshot(client_id, start, end)
-    if existing and not _is_degraded(existing):
+    campaigns_ready = not include_campaigns
+    if include_campaigns and existing:
+        from .campaign_period import read
+        from .canonical_reports import CoreStore
+        from ..database import get_supabase
+        store=CoreStore(get_supabase())
+        campaigns_ready=all(read(store,client_id,ch,start,end,str(existing['id'])).get('data_validation')=='PASS' for ch in ('meta','google'))
+    if existing and not _is_degraded(existing) and campaigns_ready:
         run_id = f"backfill:idempotent:{client_id}:{start.isoformat()}"
         return PipelineResult(
             client_id=client_id,
@@ -87,6 +95,6 @@ def materialize_closed_month(
             snapshot_id=str(existing["id"]),
         )
 
-    return run_pipeline(
-        client_id, start, end, view="live", persist_campaign_rows=False,
-    )
+    kwargs={'view':'live','persist_campaign_rows':False}
+    if include_campaigns:kwargs['capture_campaign_period']=True
+    return run_pipeline(client_id,start,end,**kwargs)

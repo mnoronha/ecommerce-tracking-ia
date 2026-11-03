@@ -41,6 +41,7 @@ class ReportVersion(Artifact):
  published_at:str|None=None
  approval_hash:str|None=None
  analysis_request_id:str|None=None
+ quality_scores:Optional[dict]=None
 class Generate(BaseModel):
  artifact:Artifact
 class Transition(BaseModel):
@@ -109,11 +110,12 @@ def list_canonical_reports(
  scope(auth,slug)
  sb=get_supabase()
  try:
-  rows=sb.table('core_canonical_report_records').select('entity_key,document').contains('document',{'client_id':slug}).execute().data or []
+  rows=sb.table('core_canonical_report_records').select('entity_key,document').like('entity_key','report:%').contains('document',{'client_id':slug}).execute().data or []
  except Exception as exc:
   raise HTTPException(503,'database error')
  out=[]
  for r in rows:
+  if not str(r.get('entity_key') or '').startswith('report:'):continue
   doc=r.get('document') or {}
   if status and doc.get('status')!=status.upper():continue
   if report_type and doc.get('report_type')!=report_type.lower():continue

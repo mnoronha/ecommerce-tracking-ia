@@ -80,6 +80,7 @@ def _sb_mock(rows):
     chain.execute.return_value = result
     chain.contains.return_value = chain
     chain.select.return_value   = chain
+    chain.like.return_value     = chain
     sb = MagicMock()
     sb.table.return_value = chain
     return sb
@@ -95,6 +96,16 @@ def _fetch(app_or_client, params, *, headers=None):
     if headers:
         kw["headers"] = headers
     return client.get("/agency/v1/canonical-reports/list", **kw)
+
+def test_non_report_evidence_namespaces_never_appear_in_report_list():
+    rows=CLIENT_A_ROWS+[
+        {'entity_key':'campaign-period:hash','document':{'client_id':'client-a','period':{},'rows':[]}},
+        {'entity_key':'analysis-request:id','document':{'client_id':'client-a','report_type':'weekly','status':'PENDING'}},
+    ]
+    app=_app_with_auth_override()
+    with patch('app.database.get_supabase',return_value=_sb_mock(rows)),patch('app.agency_api.v1.router._resolve_slug',return_value='client-a'):
+        response=_fetch(app,{'client_id':'client-a'})
+    assert response.status_code==200 and len(response.json())==len(CLIENT_A_ROWS)
 
 
 # ── Auth tests (use real auth layer, patch settings) ─────────────────────────
