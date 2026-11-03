@@ -157,6 +157,14 @@ class Reports:
   if base.get('content',{}).get('analysis_layer',{}).get('status') not in ('WAITING_FOR_HERMES_ANALYSIS',):
    raise ReportError('BASE_VERSION_NOT_WAITING_FOR_ANALYSIS')
   new_analysis=apply_hermes_analysis(base.get('content',{}).get('analysis_layer',{}),hermes_payload)
+  if base.get('canonical_engine')=='H8':
+   from .h8_evidence_guard import bound_context,evaluate
+   context=bound_context(base['client_id'],{'start':base['period_start'],'end':base['period_end']},base.get('content',{}))
+   gate=evaluate(hermes_payload,context)
+   # Missing campaign coverage may produce a limited DRAFT, never client-ready.
+   if any(gate[k] for k in ('UNSUPPORTED_RECOMMENDATION_COUNT','UNSUPPORTED_NUMERIC_TARGET_COUNT','ANOMALOUS_SOURCE_USED_AS_EVIDENCE','UNSUPPORTED_BUSINESS_CLAIM_COUNT')):
+    raise ReportError('H8_UNSUPPORTED_ANALYTICAL_CLAIMS')
+   new_analysis['h8_evidence_quality_gate']=gate
   doc={**base,'version':next_version,'analysis_request_id':analysis_request_id,
    'content':{**base.get('content',{}),'analysis_layer':new_analysis}}
   ah=digest({k:v for k,v in doc.items() if k not in ('generated_at','status','approved_at','approved_by','published_at')})
