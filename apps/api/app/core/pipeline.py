@@ -225,6 +225,7 @@ def run_pipeline(
     period_end: date,
     view: str = "live",
     persist_campaign_rows: bool = True,
+    capture_campaign_period: bool = False,
 ) -> PipelineResult:
     run_id = f"core:{client_id}:{period_start.isoformat()}:{uuid.uuid4().hex[:8]}"
     logger.info("pipeline: starting run %s", run_id)
@@ -518,6 +519,13 @@ def run_pipeline(
             metrics=metric_values, health=health,
             error=f"snapshot write failed: {exc}",
         )
+
+    # Opt-in period evidence is linked to this exact snapshot, never ad_campaigns.
+    if capture_campaign_period:
+        from .campaign_period import capture
+        capture(sb,client_id,period_start,period_end,snap_id,
+                {m['metric_key']:m for m in metric_values},c,
+                collected_at=datetime.now(timezone.utc).isoformat())
 
     # ── Reconcile per source ──────────────────────────────────────────────────
     for sr in sources:
