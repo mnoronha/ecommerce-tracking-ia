@@ -6175,3 +6175,7 @@ _register_transcript_read(
     load_client_meta=lambda client_id: _load_client_meta(client_id),
     auth_dependency=SCOPE_READ_ANY,
 )
+
+from .campaign_period import register_campaign_period_read as _register_campaign_period_read
+_register_campaign_period_read(router,load_db=lambda:_get_db(),
+    load_client_meta=lambda client_id:_load_client_meta(client_id),auth_dependency=SCOPE_READ_ANY)
