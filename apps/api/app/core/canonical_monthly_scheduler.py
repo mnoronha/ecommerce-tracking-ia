@@ -596,11 +596,13 @@ def run_canonical_monthly_for_client(
     job_id = _insert_running_job(sb, client_id, period_end)
     try:
         # Ensure a full-month snapshot exists before building the H8 artifact.
-        # persist_campaign_rows=False prevents overwriting daily ad_campaigns facts.
+        # include_campaigns=True populates campaign_performance (required by H8 quality gate).
+        # persist_campaign_rows=False protects daily ad_campaigns facts from month-aggregate overwrite.
         try:
             materialize_closed_month(
                 client_id, period_start.year, period_start.month,
                 timezone="America/Sao_Paulo",
+                include_campaigns=True,
             )
         except ValueError as mat_exc:
             if "MONTH_NOT_CLOSED" in str(mat_exc):

@@ -799,15 +799,16 @@ def test_run_all_clients_only_processes_opted_in(monkeypatch):
 # -- Monthly materialization in scheduler --------------------------------------
 
 def test_run_for_client_calls_materialize_before_artifact(monkeypatch):
-    """materialize_closed_month is called before _build_artifact."""
+    """materialize_closed_month is called before _build_artifact with include_campaigns=True."""
     monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
     monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
 
     ps, pe = _last_completed_month()
-    materialize_calls: list[tuple] = []
+    materialize_calls: list[dict] = []
 
-    def fake_materialize(client_id, year, month, *, timezone):
-        materialize_calls.append((client_id, year, month, timezone))
+    def fake_materialize(client_id, year, month, *, timezone, include_campaigns=False):
+        materialize_calls.append({"client_id": client_id, "year": year, "month": month,
+                                   "timezone": timezone, "include_campaigns": include_campaigns})
         return "snapshot-id-fake"
 
     monkeypatch.setattr(
@@ -821,10 +822,14 @@ def test_run_for_client_calls_materialize_before_artifact(monkeypatch):
 
     assert len(materialize_calls) == 1
     call = materialize_calls[0]
-    assert call[0] == "lk-sneakers"
-    assert call[1] == ps.year
-    assert call[2] == ps.month
-    assert call[3] == "America/Sao_Paulo"
+    assert call["client_id"] == "lk-sneakers"
+    assert call["year"] == ps.year
+    assert call["month"] == ps.month
+    assert call["timezone"] == "America/Sao_Paulo"
+    assert call["include_campaigns"] is True, (
+        "Scheduler must pass include_campaigns=True so campaign_performance "
+        "is populated and the H8 quality gate can pass."
+    )
 
 
 def test_run_for_client_month_not_closed_returns_skipped(monkeypatch):
