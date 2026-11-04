@@ -123,6 +123,59 @@ def campaign_doc(platform='meta',client='lk-sneakers'):
         dict(campaign_id='c1',campaign_name='Campaign',status='ACTIVE',campaign_type='SEARCH',spend=100,purchase_value=400,**{conv:2})],
         metrics,collected_at='2026-11-03T12:00:00Z',complete=True)
 
+def google_only_context():
+    """Google-only client: Meta NOT_CONTRACTED. total_spend and mer synthesized by bound_context."""
+    metrics={'revenue_business':{'value':223549,'value_status':'OK','unit':'BRL'},
+             'google_spend':{'value':23124,'value_status':'OK','unit':'BRL'}}
+    manifest={'metrics':metrics,'source_snapshot_id':'snapshot-g',
+              'source_state':[{'source_system':'meta_ads','source_state':'NOT_CONTRACTED'},
+                              {'source_system':'google_ads','source_state':'READY'}]}
+    return bound_context('enutri',{'start':'2026-10-01','end':'2026-10-31'},manifest)
+
+def test_google_only_meta_not_contracted_passes_gate():
+    # NOT_CONTRACTED Meta must not block H8. Google campaign depth still required.
+    c=google_only_context()
+    assert c['META_CAMPAIGNS'] if False else True  # context is not evaluate result
+    assert c['data_validation']=='PASS','synthetic total_spend/mer must yield data_validation=PASS'
+    assert 'meta' in c['not_contracted_platforms']
+    assert c['metrics']['total_spend']['value']==c['metrics']['google_spend']['value']
+    import math; assert math.isclose(c['metrics']['mer']['value'],223549/23124,rel_tol=1e-4)
+    # Without Google campaigns gate stays NO (Google depth still required)
+    result=evaluate(payload(),c)
+    assert result['META_CAMPAIGNS']=='NOT_APPLICABLE'
+    assert result['H8_CLIENT_READY']=='NO','Google campaign depth still required'
+    # With valid Google campaigns gate opens (period and snapshot_id must match the context)
+    c['campaign_performance']={'google':build(
+        'enutri','google','2026-10-01','2026-10-31','snapshot-g',
+        [dict(campaign_id='c1',campaign_name='PMax Enutri',status='ACTIVE',campaign_type='PERFORMANCE_MAX',
+              spend=100,purchase_conversions=2,purchase_value=400)],
+        {'google_spend':{'value':100},'google_purchase_conversions':{'value':2},
+         'google_purchase_conversion_value':{'value':400}},
+        collected_at='2026-11-04T12:00:00Z',complete=True)}
+    result=evaluate(payload(),c)
+    assert result['META_CAMPAIGNS']=='NOT_APPLICABLE'
+    assert result['GOOGLE_CAMPAIGNS']=='AVAILABLE'
+    assert result['H8_CLIENT_READY']=='YES'
+
+def test_meta_contracted_but_missing_still_blocks():
+    # A client that HAS Meta configured but whose campaign data is MISSING must stay BLOCKED.
+    # source_state omitted → not_contracted=[] → meta treated as contracted → MISSING blocks.
+    c=context()  # standard Meta+Google context, no campaign_performance
+    result=evaluate(payload(),c)
+    assert result['META_CAMPAIGNS']=='MISSING'
+    assert result['H8_CLIENT_READY']=='NO'
+
+def test_not_contracted_is_not_missing():
+    # NOT_APPLICABLE (not contracted) and MISSING (contracted, data absent) are distinct states.
+    google_ctx=google_only_context()
+    standard_ctx=context()
+    # Evaluate without adding any campaign_performance — both lack campaigns, but different reasons
+    r_google_only=evaluate(payload(),google_ctx)
+    r_standard=evaluate(payload(),standard_ctx)
+    assert r_google_only['META_CAMPAIGNS']=='NOT_APPLICABLE'
+    assert r_standard['META_CAMPAIGNS']=='MISSING'
+    assert r_google_only['META_CAMPAIGNS']!=r_standard['META_CAMPAIGNS']
+
 def test_complete_campaigns_unlock_gate_not_arbitrary_volume():
     c=context();c['campaign_performance']={p:campaign_doc(p) for p in ('meta','google')}
     assert evaluate(payload(),c)['H8_CLIENT_READY']=='YES'

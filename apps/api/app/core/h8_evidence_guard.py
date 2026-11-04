@@ -34,6 +34,9 @@ def fields(value):
     return []
 
 def campaign_availability(context, platform):
+    # NOT_CONTRACTED means the platform was never provisioned for this client — not a data gap.
+    if platform in context.get('not_contracted_platforms', ()):
+        return 'NOT_APPLICABLE'
     envelope=context.get('campaign_performance',{}).get(platform,{})
     period=context.get('period')
     if envelope.get('client_id') != context.get('client_id') or envelope.get('period') != period:
@@ -91,12 +94,25 @@ def catalog(context):
 
 def bound_context(client_id,period,manifest):
     """Only the immutable Core handoff/artifact may authorize numeric evidence."""
-    metrics=manifest.get('metrics') or {m['metric_key']:m for m in manifest.get('facts',[]) if isinstance(m,dict) and m.get('metric_key')}
-    required=('revenue_business','total_spend','mer','meta_spend','google_spend')
+    metrics=dict(manifest.get('metrics') or {m['metric_key']:m for m in manifest.get('facts',[]) if isinstance(m,dict) and m.get('metric_key')})
+    # NOT_CONTRACTED: platform never provisioned for this client (distinct from MISSING = data gap).
+    ss_map={s['source_system']:s['source_state'] for s in (manifest.get('source_state') or []) if isinstance(s,dict) and s.get('source_system')}
+    not_contracted=[p for p,key in (('meta','meta_ads'),('google','google_ads')) if ss_map.get(key)=='NOT_CONTRACTED']
+    # For Google-only clients derive total_spend and mer from contracted data only.
+    if 'meta' in not_contracted:
+        gm=metrics.get('google_spend');rm=metrics.get('revenue_business')
+        if isinstance(gm,dict) and gm.get('value_status') in GOOD:
+            metrics.setdefault('total_spend',{**gm,'metric_key':'total_spend'})
+        if isinstance(gm,dict) and isinstance(rm,dict):
+            g,r=number(gm.get('value')),number(rm.get('value'))
+            if g and g>0 and r is not None:
+                metrics.setdefault('mer',{'metric_key':'mer','value':float(r/g),'unit':'x','value_status':'OK'})
+    required=tuple(k for k in ('revenue_business','total_spend','mer','meta_spend','google_spend') if not(k=='meta_spend' and 'meta' in not_contracted))
     valid=all(isinstance(metrics.get(k),dict) and number(metrics[k].get('value')) is not None and metrics[k].get('value_status') in GOOD for k in required)
     return {'client_id':client_id,'period':period,'metrics':metrics,
             'source_snapshot_id':manifest.get('source_snapshot_id'),
             'data_validation':'PASS' if valid else 'BLOCKED',
+            'not_contracted_platforms':not_contracted,
             'campaign_performance':manifest.get('campaign_performance') or {},
             'measurement_confidence':manifest.get('measurement_confidence') or {'ga4':'UNKNOWN'},
             'historical_baselines':manifest.get('historical_baselines') or {},
@@ -196,7 +212,7 @@ def evaluate(payload,context):
             anomalous+=1;issues.append({'code':'ANOMALOUS_GA4_AUDIENCE_CLAIM'})
     meta,google=(campaign_availability(context,p) for p in ('meta','google'))
     data=context.get('data_validation')
-    ready=(data=='PASS' and meta=='AVAILABLE' and google=='AVAILABLE' and unsupported==numeric_bad==anomalous==business_bad==0)
+    ready=(data=='PASS' and meta in ('AVAILABLE','NOT_APPLICABLE') and google=='AVAILABLE' and unsupported==numeric_bad==anomalous==business_bad==0)
     return {'DATA_VALIDATION':data or 'BLOCKED','META_CAMPAIGNS':meta,'GOOGLE_CAMPAIGNS':google,
         'UNSUPPORTED_RECOMMENDATION_COUNT':unsupported,'UNSUPPORTED_NUMERIC_TARGET_COUNT':numeric_bad,
         'ANOMALOUS_SOURCE_USED_AS_EVIDENCE':anomalous,'UNSUPPORTED_BUSINESS_CLAIM_COUNT':business_bad,
