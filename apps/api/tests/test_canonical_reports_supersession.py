@@ -51,6 +51,12 @@ class MemoryStore:
             self.rows[key] = {"revision": new_rev, "document": copy.deepcopy(document)}
             return True
 
+    def max_version(self, report_id):
+        with self._lock:
+            prefix = f"report:{report_id}:v"
+            versions = [int(k[len(prefix):]) for k in self.rows if k.startswith(prefix) and k[len(prefix):].isdigit()]
+            return max(versions) if versions else None
+
 
 def _flags(monthly=True):
     return Flags(

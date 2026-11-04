@@ -70,6 +70,10 @@ class Reports:
  def transition(self,report_id,version,target,*,actor,at,expected_hash,superseded_by_version=None):
   if not actor or actor.strip().lower() in ('hermes','hermes_service','platform_web','agency_admin','system','scheduler'):raise ReportError('HUMAN_ACTOR_REQUIRED')
   if target=='PUBLISHED' and not self.flags.REPORT_PUBLISH_ENABLED:raise ReportError('PUBLICATION_DISABLED')
+  # Only the highest non-superseded version may be approved. Prevents out-of-order approvals.
+  if target=='APPROVED':
+   max_v=self.store.max_version(report_id)
+   if max_v is not None and max_v>version:raise ReportError('OLDER_VERSION_APPROVAL_BLOCKED')
   def change(old):
    if old is None:raise ReportError('REPORT_NOT_FOUND')
    if old['artifact_hash']!=expected_hash:raise ReportError('APPROVAL_HASH_MISMATCH')
@@ -192,6 +196,11 @@ class CoreStore:
  def get(self,key):
   rows=self.db.table('core_canonical_report_records').select('revision,document').eq('entity_key',key).limit(1).execute().data or []
   return rows[0] if rows else None
+ def max_version(self,report_id):
+  """Return the highest version number for a report_id across all statuses, or None."""
+  rows=self.db.table('core_canonical_report_records').select('entity_key').like('entity_key',f'report:{report_id}:v%').execute().data or []
+  versions=[int(r['entity_key'].rsplit(':v',1)[1]) for r in rows if r.get('entity_key','').rsplit(':v',1)[-1].isdigit()]
+  return max(versions) if versions else None
  def cas(self,key,revision,document):
   value=self.db.rpc('canonical_report_cas',{'p_key':key,'p_revision':revision,'p_document':document}).execute().data
   return value is True

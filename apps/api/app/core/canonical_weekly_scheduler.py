@@ -94,6 +94,23 @@ def _load_active_clients(sb) -> list[dict]:
         return []
 
 
+def _load_opted_in_clients(sb) -> list[dict]:
+    """Return only clients with weekly_enabled=true in core_report_delivery_settings.
+    Default is opt-out: clients without a settings row are excluded until explicitly enabled."""
+    try:
+        rows = (
+            sb.table("core_report_delivery_settings")
+            .select("client_id")
+            .eq("weekly_enabled", True)
+            .execute()
+        ).data or []
+        opted_in = {r["client_id"] for r in rows}
+    except Exception as exc:
+        logger.error("canonical_weekly: delivery_settings query failed: %s", exc)
+        opted_in = set()
+    return [c for c in _load_active_clients(sb) if c.get("client_id") in opted_in]
+
+
 # ── Artifact builder ───────────────────────────────────────────────────────────
 
 _DEGRADED_STATES = frozenset({"ERROR", "ACCESS_MISSING", "PERMISSION_DENIED", "MISSING", "STALE"})
@@ -620,10 +637,10 @@ def run_canonical_weekly_all_clients() -> None:
 
     period_start, period_end = _last_completed_week()
     sb      = _get_db()
-    clients = _load_active_clients(sb)
+    clients = _load_opted_in_clients(sb)
 
     logger.info(
-        "canonical_weekly: running for %d clients — period %s to %s",
+        "canonical_weekly: running for %d opted-in clients — period %s to %s",
         len(clients), period_start, period_end,
     )
 

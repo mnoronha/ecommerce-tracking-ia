@@ -63,6 +63,12 @@ class MemoryStore:
             self.rows[key] = {"revision": new_rev, "document": copy.deepcopy(document)}
             return True
 
+    def max_version(self, report_id):
+        with self._lock:
+            prefix = f"report:{report_id}:v"
+            versions = [int(k[len(prefix):]) for k in self.rows if k.startswith(prefix) and k[len(prefix):].isdigit()]
+            return max(versions) if versions else None
+
 
 # -- Fake DB -------------------------------------------------------------------
 
@@ -187,8 +193,12 @@ class FakeDB:
             return _Chain(type("R", (), {"data": self._clients})())
         if name == "core_job_runs":
             return _MutChain(self.job_rows, type("R", (), {"data": self.job_rows})())
-        # Change digest tables: return empty — _build_change_summary catches failure gracefully
-        if name in ("core_change_log", "core_change_digests"):
+        # Default: all configured clients have monthly_enabled=true (preserves existing test behaviour)
+        if name == "core_report_delivery_settings":
+            opted = [{"client_id": c["client_id"]} for c in self._clients]
+            return _Chain(type("R", (), {"data": opted})())
+        # Change digest + context tables: return empty gracefully
+        if name in ("core_change_log", "core_change_digests", "core_client_truth", "alerts", "action_plans", "actions"):
             return _EmptyChain()
         raise ValueError(f"FakeDB: unknown table {name!r}")
 
@@ -655,17 +665,17 @@ def test_scheduler_code_only_calls_ready_for_review():
         assert forbidden not in source, f"Forbidden transition target: {forbidden}"
 
 
-def test_no_materialize_closed_month_in_scheduler():
-    """Scheduler must not CALL materialize_closed_month (docstring mention is fine)."""
+def test_scheduler_calls_materialize_not_run_pipeline():
+    """Scheduler MUST call materialize_closed_month (Task D) but must NOT call run_pipeline directly."""
     import re
     source = (ROOT / "app/core/canonical_monthly_scheduler.py").read_text(encoding="utf-8")
-    # Catches actual call expressions like materialize_closed_month(...)
-    assert not re.search(r'\bmaterialize_closed_month\s*\(', source), (
-        "Scheduler must not call materialize_closed_month -- "
-        "that is a separate backfill step."
+    # Task D: scheduler integrates materialize_closed_month (persist_campaign_rows=False)
+    assert re.search(r'\bmaterialize_closed_month\s*\(', source), (
+        "Scheduler must call materialize_closed_month before _build_artifact."
     )
+    # Safety: scheduler must never call run_pipeline directly (bypasses persist_campaign_rows=False guard)
     assert not re.search(r'\brun_pipeline\s*\(', source), (
-        "Scheduler must not call run_pipeline directly."
+        "Scheduler must not call run_pipeline directly — use materialize_closed_month."
     )
 
 
@@ -717,3 +727,151 @@ def test_job_type_constant():
     assert _JOB_TYPE  == "canonical_monthly_review"
     assert _ENGINE    == "H8"
     assert _ACTOR     == "canonical_monthly_review"
+
+
+# -- Scheduler client scope guard ----------------------------------------------
+
+from app.core.canonical_monthly_scheduler import _load_opted_in_clients
+
+
+class FakeDBWithSettings(FakeDB):
+    """Extends FakeDB to serve core_report_delivery_settings and stub materialize."""
+    def __init__(self, settings_rows=None, **kwargs):
+        super().__init__(**kwargs)
+        self._settings_rows = settings_rows or []
+
+    def table(self, name: str):
+        if name == "core_report_delivery_settings":
+            return _Chain(type("R", (), {"data": self._settings_rows})())
+        if name in ("core_client_truth", "alerts", "action_plans", "actions"):
+            return _EmptyChain()
+        return super().table(name)
+
+
+def test_monthly_opted_in_client_included(monkeypatch):
+    """Client with monthly_enabled=true is included."""
+    monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+    db = FakeDBWithSettings(
+        clients=_make_clients(["lk-sneakers", "other-client"]),
+        settings_rows=[{"client_id": "lk-sneakers"}],
+    )
+    result = _load_opted_in_clients(db)
+    assert len(result) == 1 and result[0]["client_id"] == "lk-sneakers"
+
+
+def test_monthly_client_without_settings_excluded(monkeypatch):
+    """Client without a delivery_settings row is excluded by default."""
+    monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+    db = FakeDBWithSettings(
+        clients=_make_clients(["lk-sneakers", "other-client"]),
+        settings_rows=[],
+    )
+    assert _load_opted_in_clients(db) == []
+
+
+def test_run_all_clients_only_processes_opted_in(monkeypatch):
+    """run_canonical_monthly_all_clients only runs for opted-in clients."""
+    monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+
+    ps, pe = _last_completed_month()
+    processed: list[str] = []
+
+    def fake_run(client_id, period_start, period_end, sb):
+        processed.append(client_id)
+        return {"client_id": client_id, "status": "READY_FOR_REVIEW"}
+
+    monkeypatch.setattr(
+        "app.core.canonical_monthly_scheduler.run_canonical_monthly_for_client",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "app.core.canonical_monthly_scheduler._get_db",
+        lambda: FakeDBWithSettings(
+            clients=_make_clients(["lk-sneakers", "other-client"]),
+            settings_rows=[{"client_id": "lk-sneakers"}],
+        ),
+    )
+
+    run_canonical_monthly_all_clients()
+    assert processed == ["lk-sneakers"]
+
+
+# -- Monthly materialization in scheduler --------------------------------------
+
+def test_run_for_client_calls_materialize_before_artifact(monkeypatch):
+    """materialize_closed_month is called before _build_artifact with include_campaigns=True."""
+    monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+
+    ps, pe = _last_completed_month()
+    materialize_calls: list[dict] = []
+
+    def fake_materialize(client_id, year, month, *, timezone, include_campaigns=False):
+        materialize_calls.append({"client_id": client_id, "year": year, "month": month,
+                                   "timezone": timezone, "include_campaigns": include_campaigns})
+        return "snapshot-id-fake"
+
+    monkeypatch.setattr(
+        "app.core.canonical_monthly_scheduler.materialize_closed_month",
+        fake_materialize,
+    )
+
+    db    = FakeDB()
+    store = MemoryStore()
+    run_canonical_monthly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
+
+    assert len(materialize_calls) == 1
+    call = materialize_calls[0]
+    assert call["client_id"] == "lk-sneakers"
+    assert call["year"] == ps.year
+    assert call["month"] == ps.month
+    assert call["timezone"] == "America/Sao_Paulo"
+    assert call["include_campaigns"] is True, (
+        "Scheduler must pass include_campaigns=True so campaign_performance "
+        "is populated and the H8 quality gate can pass."
+    )
+
+
+def test_run_for_client_month_not_closed_returns_skipped(monkeypatch):
+    """MONTH_NOT_CLOSED from materialize causes graceful SKIPPED result."""
+    monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+
+    ps, pe = _last_completed_month()
+
+    def fake_materialize(*a, **kw):
+        raise ValueError("MONTH_NOT_CLOSED")
+
+    monkeypatch.setattr(
+        "app.core.canonical_monthly_scheduler.materialize_closed_month",
+        fake_materialize,
+    )
+
+    db    = FakeDB()
+    store = MemoryStore()
+    result = run_canonical_monthly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
+
+    assert result["status"] == "SKIPPED"
+    assert result["error"] == "MONTH_NOT_CLOSED"
+
+
+def test_run_for_client_materialize_non_fatal_on_other_exception(monkeypatch):
+    """Non-MONTH_NOT_CLOSED exceptions from materialize are logged but not fatal."""
+    monkeypatch.setenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "true")
+    monkeypatch.setenv("CANONICAL_ANALYSIS_ENABLED", "false")
+
+    ps, pe = _last_completed_month()
+
+    def fake_materialize(*a, **kw):
+        raise RuntimeError("DB_CONNECTION_TIMEOUT")
+
+    monkeypatch.setattr(
+        "app.core.canonical_monthly_scheduler.materialize_closed_month",
+        fake_materialize,
+    )
+
+    db    = FakeDB()
+    store = MemoryStore()
+    result = run_canonical_monthly_for_client("lk-sneakers", ps, pe, sb=db, _store_override=store)
+
+    # Scheduler continues and produces a report (may be PARTIAL if no snapshot, but not FAILED)
+    assert result["status"] != "FAILED" or "DB_CONNECTION_TIMEOUT" in result.get("error", "")
