@@ -165,6 +165,20 @@ def test_meta_contracted_but_missing_still_blocks():
     assert result['META_CAMPAIGNS']=='MISSING'
     assert result['H8_CLIENT_READY']=='NO'
 
+def test_google_only_via_observations_field():
+    # Production artifacts store source_state inside 'observations' (not 'source_state').
+    # bound_context must fall back to observations when source_state is absent.
+    metrics={'revenue_business':{'value':223549,'value_status':'OK','unit':'BRL'},
+             'google_spend':{'value':23124,'value_status':'OK','unit':'BRL'}}
+    manifest={'facts':[{'metric_key':k,**v} for k,v in metrics.items()],
+              'source_snapshot_id':'snapshot-obs',
+              'observations':[{'source_system':'meta_ads','source_state':'NOT_CONTRACTED'},
+                              {'source_system':'google_ads','source_state':'READY'},
+                              {'source_system':'business','source_state':'READY'}]}
+    c=bound_context('enutri',{'start':'2026-10-01','end':'2026-10-31'},manifest)
+    assert 'meta' in c['not_contracted_platforms'],'observations fallback must detect meta NOT_CONTRACTED'
+    assert c['data_validation']=='PASS','synthetic total_spend/mer from observations path'
+
 def test_not_contracted_is_not_missing():
     # NOT_APPLICABLE (not contracted) and MISSING (contracted, data absent) are distinct states.
     google_ctx=google_only_context()

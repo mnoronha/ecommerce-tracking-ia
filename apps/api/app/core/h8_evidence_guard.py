@@ -96,7 +96,8 @@ def bound_context(client_id,period,manifest):
     """Only the immutable Core handoff/artifact may authorize numeric evidence."""
     metrics=dict(manifest.get('metrics') or {m['metric_key']:m for m in manifest.get('facts',[]) if isinstance(m,dict) and m.get('metric_key')})
     # NOT_CONTRACTED: platform never provisioned for this client (distinct from MISSING = data gap).
-    ss_map={s['source_system']:s['source_state'] for s in (manifest.get('source_state') or []) if isinstance(s,dict) and s.get('source_system')}
+    # Artifacts store source state either as 'source_state' (test/handoff) or 'observations' (content).
+    ss_map={s['source_system']:s['source_state'] for s in (manifest.get('source_state') or manifest.get('observations') or []) if isinstance(s,dict) and s.get('source_system')}
     not_contracted=[p for p,key in (('meta','meta_ads'),('google','google_ads')) if ss_map.get(key)=='NOT_CONTRACTED']
     # For Google-only clients derive total_spend and mer from contracted data only.
     if 'meta' in not_contracted:
