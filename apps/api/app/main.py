@@ -30,6 +30,7 @@ from .core.canonical_monthly_scheduler import run_canonical_monthly_all_clients 
 from .core.monthly_review import run_monthly_review_all_clients
 from .core.balance_monitor import run_balance_check_all_prepaid
 from .core.change_history_scheduler import run_change_history_all_clients as _run_change_history
+from .core.weekly_deep_review import run_weekly_deep_review_all_clients as _run_weekly_deep_review
 from .core.outcome_evaluator import evaluate_pending_outcomes as _evaluate_pending_outcomes
 from .core.notion_adapter import NotionTaskAdapter as _NotionAdapter
 from .database import get_supabase as _get_supabase_for_notion
@@ -297,6 +298,14 @@ else:
         minute=0,   # 08:00 UTC = 05:00 BRT segunda — após core_pipeline (07:15) fechar domingo
         id="weekly_review",
     )
+_scheduler.add_job(
+    _run_weekly_deep_review,
+    "cron",
+    day_of_week="mon",
+    hour=8,
+    minute=15,  # 08:15 UTC — 15 min after weekly_review (08:00), before daily alert check
+    id="weekly_deep_review",
+)
 if _os.getenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "false").strip().lower() == "true":
     # Canonical path: H8 scheduler writes to core_canonical_report_records.
     # Legacy monthly_review is NOT registered to prevent duplicate contract generation.
