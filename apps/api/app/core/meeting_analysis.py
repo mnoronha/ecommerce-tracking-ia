@@ -29,7 +29,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-PROCESSOR_ID = "claude-meeting-v1"
+PROCESSOR_ID = "claude"
 
 _SYSTEM_PROMPT = """\
 Você é um assistente especializado em análise de reuniões de agência de marketing.
