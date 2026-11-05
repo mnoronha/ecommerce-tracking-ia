@@ -61,6 +61,7 @@ Route inventory (48 routes):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid as _uuid_mod
 from datetime import date, datetime, timedelta, timezone
@@ -1176,6 +1177,43 @@ def create_manual_change(
     if not client:
         raise HTTPException(404, f"client not found: {client_id!r}")
     db = _get_db()
+
+    # Idempotency fingerprint: prevents accidental duplicate submissions.
+    change_type_val = body.change_type if isinstance(body.change_type, str) else body.change_type.value
+    fp_raw = ":".join([
+        slug,
+        body.channel.lower(),
+        (body.entity_name or "").strip(),
+        change_type_val,
+        body.occurred_at.isoformat()[:16],  # minute-level granularity
+        (body.description or "").strip(),
+    ])
+    fingerprint = hashlib.sha256(fp_raw.encode("utf-8")).hexdigest()
+
+    try:
+        existing = (
+            db.table("core_change_log")
+            .select("id")
+            .eq("client_id", slug)
+            .eq("external_change_id", fingerprint)
+            .maybe_single()
+            .execute()
+        )
+        if existing and existing.data:
+            raise HTTPException(409, "DUPLICATE_MANUAL_CHANGE")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("create_manual_change: fingerprint check failed %s: %s", client_id, exc)
+
+    # Normalize before/after: plain strings become {"value": str} for classifier compatibility.
+    def _normalize_state(v):
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip():
+            return {"value": v.strip()}
+        return v
+
     try:
         ins = db.table("core_change_log").insert({
             "client_id":           slug,
@@ -1185,14 +1223,15 @@ def create_manual_change(
             "entity_type":         (body.entity_type or "OTHER").upper(),
             "entity_name_at_time": body.entity_name,
             "entity_id":           body.entity_id,
-            "change_type":         body.change_type if isinstance(body.change_type, str) else body.change_type.value,
-            "before_state":        body.before,
-            "after_state":         body.after,
+            "change_type":         change_type_val,
+            "before_state":        _normalize_state(body.before),
+            "after_state":         _normalize_state(body.after),
             "reason":              body.reason,
             "description":         body.description,
             "reported_by":         body.reported_by,
-            "source":              "HUMAN",
+            "source":              "MANUAL",
             "confidence":          "CONFIRMED",
+            "external_change_id":  fingerprint,
             "recommendation_id":   body.recommendation_id,
             "task_id":             body.task_id,
             "matched_change_id":   body.linked_provider_change_id,

@@ -166,6 +166,12 @@ const PLATFORM_ACCENT: Record<string, string> = {
   ga4:    'border-orange-500/20 bg-orange-500/5',
 }
 
+const SOURCE_BADGE: Record<string, string> = {
+  MANUAL:            'bg-violet-500/15 text-violet-300 border border-violet-500/25',
+  PLATFORM_DETECTED: 'bg-slate-500/10 text-slate-500',
+  HUMAN:             'bg-slate-500/10 text-slate-500',
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(iso?: string | null, short = false) {
@@ -440,6 +446,11 @@ function HistoricoTab({ clientId }: { clientId: string }) {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${CHANGE_TYPE_BADGE[ch.change_type] ?? CHANGE_TYPE_BADGE.OTHER}`}>
                         {CHANGE_TYPE_LABEL[ch.change_type] ?? ch.change_type.replace(/_/g, ' ')}
                       </span>
+                      {ch.source === 'MANUAL' && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${SOURCE_BADGE.MANUAL}`}>
+                          MANUAL
+                        </span>
+                      )}
                       {ch.channel && (
                         <span className="text-[10px] font-semibold text-slate-400 uppercase">{PLATFORM_LABEL[ch.channel] ?? ch.channel}</span>
                       )}

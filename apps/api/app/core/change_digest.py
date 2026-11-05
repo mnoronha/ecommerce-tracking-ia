@@ -78,11 +78,37 @@ def _fmt_brl(centavos: int) -> str:
 # ── Classifier ────────────────────────────────────────────────────────────────
 
 
+_MANUAL_CHANGE_TYPE_IMPACT: dict[str, str] = {
+    "BUDGET":         "high",   "TARGET_ROAS":    "high",  "TARGET_CPA":     "high",
+    "BID_STRATEGY":   "high",   "CAMPAIGN_LAUNCH": "high", "CAMPAIGN_PAUSE": "high",
+    "CREATIVE_LAUNCH": "medium", "CREATIVE_PAUSE": "medium", "AUDIENCE":    "medium",
+    "LANDING_PAGE":   "medium", "OFFER":          "medium", "TRACKING":     "low",
+    "OTHER":          "low",
+}
+
+
 def _classify(row: dict) -> Optional[tuple[str, str, dict]]:
     """
     Return (change_type, impact, extra) or None if noise.
     impact: 'high' | 'medium' | 'low'
     """
+    # MANUAL source: pass through using change_type as the classifier key.
+    if row.get("source") == "MANUAL":
+        ct = row.get("change_type") or "OTHER"
+        impact = _MANUAL_CHANGE_TYPE_IMPACT.get(ct, "low")
+        extra: dict = {}
+        before_str = _str_val(row.get("before_state"))
+        after_str  = _str_val(row.get("after_state"))
+        if before_str:
+            extra["before_display"] = before_str
+        if after_str:
+            extra["after_display"] = after_str
+        if row.get("reason"):
+            extra["reason"] = row["reason"]
+        if row.get("reported_by"):
+            extra["reported_by"] = row["reported_by"]
+        return (ct, impact, extra)
+
     entity = row.get("entity_type", "")
     before = row.get("before_state")
     after = row.get("after_state")

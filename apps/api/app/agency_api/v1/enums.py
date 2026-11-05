@@ -65,6 +65,7 @@ class ChangeLogSource(str, Enum):
     HERMES_RECOMMENDATION = "HERMES_RECOMMENDATION"
     AUTOMATION            = "AUTOMATION"
     PLATFORM_DETECTED     = "PLATFORM_DETECTED"
+    MANUAL                = "MANUAL"
 
 
 class MatchStatus(str, Enum):
