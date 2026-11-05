@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 from datetime import datetime, timezone
@@ -88,22 +89,37 @@ _scheduler = BackgroundScheduler()
 _register_scheduler(_scheduler, _JOB_RUNS)
 _scheduler.add_listener(_record_job_run, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 _scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
-_scheduler.add_job(
-    reports.send_weekly_reports,  # LEGACY_WEEKLY: retained; canonical path is separately flagged.
-    "cron",
-    day_of_week="mon",
-    hour=11,  # 11 UTC = 08:00 BRT
-    minute=0,
-    id="weekly_reports",
-)
-_scheduler.add_job(
-    reports.send_monthly_reports,  # LEGACY_MONTHLY: retained; canonical path is separately flagged.
-    "cron",
-    day=1,
-    hour=11,  # 11 UTC = 08:00 BRT — 1º dia do mês, sobre o mês anterior fechado
-    minute=0,
-    id="monthly_reports",
-)
+_canonical_delivery_enabled = os.getenv("REPORT_DELIVERY_ENABLED", "").strip().lower() == "true"
+if _canonical_delivery_enabled:
+    # Canonical delivery bridge: polls PUBLISHED reports every 30 min.
+    # Legacy email jobs are NOT registered — canonical bridge handles all delivery.
+    # Rollback: set REPORT_DELIVERY_ENABLED=false + redeploy → legacy re-registers.
+    from .core.canonical_delivery_scheduler import run_pending_deliveries as _run_canonical_delivery
+    _scheduler.add_job(
+        _run_canonical_delivery,
+        "interval",
+        minutes=30,
+        id="canonical_delivery",
+        max_instances=1,
+        misfire_grace_time=1800,
+    )
+else:
+    _scheduler.add_job(
+        reports.send_weekly_reports,  # LEGACY_WEEKLY: active only when REPORT_DELIVERY_ENABLED=false.
+        "cron",
+        day_of_week="mon",
+        hour=11,  # 11 UTC = 08:00 BRT
+        minute=0,
+        id="weekly_reports",
+    )
+    _scheduler.add_job(
+        reports.send_monthly_reports,  # LEGACY_MONTHLY: active only when REPORT_DELIVERY_ENABLED=false.
+        "cron",
+        day=1,
+        hour=11,  # 11 UTC = 08:00 BRT — 1º dia do mês, sobre o mês anterior fechado
+        minute=0,
+        id="monthly_reports",
+    )
 _scheduler.add_job(
     meta_audiences.run_audience_sync_all_clients,
     "interval",
