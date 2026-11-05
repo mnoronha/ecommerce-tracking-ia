@@ -17,6 +17,7 @@ const TABS: { seg: string; label: string }[] = [
   { seg: 'data-health',         label: 'Saúde dos Dados' },
   { seg: 'recommendations',     label: 'Recomendações' },
   { seg: 'learning-candidates', label: 'Aprendizados' },
+  { seg: 'weekly-review',       label: 'Revisão Interna' },
 ]
 
 export default function AgencyOsLayout({ children }: { children: React.ReactNode }) {

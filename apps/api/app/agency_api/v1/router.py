@@ -6179,3 +6179,102 @@ _register_transcript_read(
 from .campaign_period import register_campaign_period_read as _register_campaign_period_read
 _register_campaign_period_read(router,load_db=lambda:_get_db(),
     load_client_meta=lambda client_id:_load_client_meta(client_id),auth_dependency=SCOPE_READ_ANY)
+
+
+# ── POST /clients/{client_id}/weekly-deep-review/replay ───────────────────────
+#
+# Trigger a fresh Weekly Deep Review (internal agency analysis) for a client.
+# Defaults to the most recently completed Mon-Sun week.
+# Optional period_end param forces a specific week (useful for pilots / testing).
+#
+# Scope: agency_admin or platform_web.
+# Returns: QUEUED job record; execution runs in BackgroundTasks.
+# Idempotency: contract write is delete+insert on (client_slug, "weekly_deep_review", period_end).
+#
+# IMPORTANT: Weekly Deep Review is NOT client-facing. Never triggers delivery.
+
+@router.post(
+    "/clients/{client_id}/weekly-deep-review/replay",
+    summary="Trigger (or replay) a Weekly Deep Review for a client",
+    response_model=JobOut,
+    status_code=202,
+)
+def replay_weekly_deep_review(
+    client_id:        str,
+    background_tasks: BackgroundTasks,
+    period_end_str:   Optional[str] = Query(
+        None,
+        alias="period_end",
+        description="ISO date for period_end (Sunday). Defaults to last completed Sunday.",
+    ),
+    _auth: Annotated[AuthContext, Depends(require_scopes("agency_admin", "platform_web"))] = None,
+) -> JobOut:
+    from ...core.weekly_deep_review import (
+        execute_weekly_deep_review_replay,
+        queue_weekly_deep_review_replay,
+    )
+    from ...core.weekly_review import _last_completed_week
+
+    if period_end_str:
+        try:
+            period_end = date.fromisoformat(period_end_str)
+        except ValueError:
+            raise HTTPException(400, detail=f"invalid period_end: {period_end_str!r} — expected YYYY-MM-DD")
+        # Snap to Sunday
+        if period_end.weekday() != 6:
+            period_end = period_end - timedelta(days=(period_end.weekday() + 1) % 7)
+    else:
+        _, period_end = _last_completed_week()
+
+    period_start = period_end - timedelta(days=6)
+
+    slug = client_id
+    try:
+        res = _get_db().table("clients").select("client_id").eq("client_id", slug).eq("is_active", True).maybe_single().execute()
+        if not (res and res.data):
+            raise HTTPException(404, detail=f"client not found: {slug!r}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail=f"client lookup failed: {exc}")
+
+    # Find prior job for replay_of linkage
+    replay_of: Optional[str] = None
+    try:
+        prior = (
+            _get_db()
+            .table("core_job_runs")
+            .select("id")
+            .eq("job_type", "weekly_deep_review")
+            .like("run_key", f"weekly_deep_review:{slug}:{period_end.isoformat()}%")
+            .order("started_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if prior and prior.data:
+            replay_of = prior.data[0]["id"]
+    except Exception as exc:
+        logger.warning("replay_weekly_deep_review: prior-job lookup failed for %s: %s", slug, exc)
+
+    db = _get_db()
+    try:
+        new_job_id = queue_weekly_deep_review_replay(db, slug, period_end, replay_of)
+    except Exception as exc:
+        logger.error("replay_weekly_deep_review: job insert failed for %s: %s", slug, exc)
+        raise HTTPException(503, detail=f"failed to queue weekly deep review job: {exc}")
+
+    background_tasks.add_task(execute_weekly_deep_review_replay, new_job_id, slug, period_end)
+
+    run_key = f"weekly_deep_review:{slug}:{period_end.isoformat()}:replay:{new_job_id[:8]}"
+    logger.info(
+        "replay_weekly_deep_review: queued %s for %s (%s→%s, replay_of=%s)",
+        new_job_id, slug, period_start, period_end, replay_of,
+    )
+    return JobOut(
+        id=new_job_id,
+        job_type="weekly_deep_review",
+        run_key=run_key,
+        status=JobStatus.QUEUED,
+        attempt=1,
+        replay_of=replay_of,
+    )
