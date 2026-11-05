@@ -196,6 +196,12 @@ def _ingest_platform(sb, client_row: dict, platform: str, now: datetime) -> dict
 
     if since_dt.tzinfo is None:
         since_dt = since_dt.replace(tzinfo=timezone.utc)
+    # Google change_event API enforces a ~30-day lookback hard limit; cap at BACKFILL_DAYS.
+    max_since = now - timedelta(days=BACKFILL_DAYS)
+    if max_since.tzinfo is None:
+        max_since = max_since.replace(tzinfo=timezone.utc)
+    if since_dt < max_since:
+        since_dt = max_since
     until_dt = now
 
     # Fetch

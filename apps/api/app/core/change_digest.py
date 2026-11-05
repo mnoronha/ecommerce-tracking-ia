@@ -19,7 +19,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DIGEST_ENGINE_VERSION = "1"
+DIGEST_ENGINE_VERSION = "2"
 
 # ── Status sets ───────────────────────────────────────────────────────────────
 
@@ -116,6 +116,16 @@ def _classify(row: dict) -> Optional[tuple[str, str, dict]]:
 
     # ── CAMPAIGN ──────────────────────────────────────────────────────────────
     elif entity == "CAMPAIGN":
+        # Google: status stored directly as before_state.status (not before_state.value)
+        g_before_status = (before or {}).get("status") if isinstance(before, dict) else None
+        g_after_status  = (after  or {}).get("status") if isinstance(after,  dict) else None
+        if g_after_status and not before_str and not after_str:
+            # Pure Google campaign status change
+            if g_after_status == "ENABLED":
+                return ("CAMPAIGN_ACTIVATION", "high", {})
+            if g_after_status in ("PAUSED", "REMOVED"):
+                return ("CAMPAIGN_PAUSE", "high", {})
+
         # New entity (before=null, after has name/type)
         if before is None and after_dict and "name" in after_dict:
             return ("NEW_ENTITY_CREATED", "medium", {"name": after_dict.get("name", "")})
@@ -151,6 +161,41 @@ def _classify(row: dict) -> Optional[tuple[str, str, dict]]:
             "before": before,
             "after": after,
         })
+
+    # ── Google: budget ────────────────────────────────────────────────────────
+    elif entity == "BUDGET":
+        # before/after = {"amountMicros": "50000000"}  (micros → BRL / 1,000,000)
+        after_micros  = (after  or {}).get("amountMicros") if isinstance(after,  dict) else None
+        before_micros = (before or {}).get("amountMicros") if isinstance(before, dict) else None
+        if after_micros is not None:
+            extra: dict = {}
+            try:
+                if before_micros is not None:
+                    extra["before_brl"] = f"R$ {int(before_micros) / 1_000_000:,.2f}"
+                extra["after_brl"] = f"R$ {int(after_micros) / 1_000_000:,.2f}"
+            except (ValueError, TypeError):
+                pass
+            return ("BUDGET_CHANGE", "high", extra)
+        return None
+
+    # ── Google: asset (creative text/image changes) ────────────────────────────
+    elif entity in ("ASSET", "ASSET_GROUP"):
+        after_obj = after if isinstance(after, dict) else {}
+        text_node = after_obj.get("textAsset") or {}
+        extra = {"text": text_node["text"]} if text_node.get("text") else {}
+        if before is None:
+            return ("ASSET_CREATED", "low", extra)
+        return ("ASSET_CHANGE", "low", extra)
+
+    # ── Google: ad creative ────────────────────────────────────────────────────
+    elif entity == "AD":
+        return ("AD_CREATIVE_CHANGE", "medium", {})
+
+    # ── Google: campaign criterion / keywords / targeting ──────────────────────
+    elif entity in ("CAMPAIGN_CRITERION", "KEYWORD", "AD_GROUP"):
+        if before is None:
+            return ("TARGETING_ADDED", "medium", {})
+        return ("TARGETING_CHANGE", "medium", {})
 
     return None
 
@@ -255,6 +300,16 @@ def _build_summary(changes: list[dict]) -> dict:
             main_changes.append(f"Entidade criada: {c.get('name') or entity}")
         elif ct == "BALANCE_RECHARGE":
             main_changes.append("Recarga de saldo Google Ads")
+        elif ct == "ASSET_CREATED":
+            main_changes.append(f"Asset criado{': ' + c.get('text','') if c.get('text') else ''}")
+        elif ct == "ASSET_CHANGE":
+            main_changes.append(f"Asset atualizado{': ' + c.get('text','') if c.get('text') else ''}")
+        elif ct == "AD_CREATIVE_CHANGE":
+            main_changes.append(f"Criativo de anúncio atualizado: {entity or 'Google Ads'}")
+        elif ct == "TARGETING_ADDED":
+            main_changes.append(f"Novo critério de segmentação adicionado")
+        elif ct == "TARGETING_CHANGE":
+            main_changes.append(f"Segmentação atualizada: {entity}")
         if len(main_changes) >= 10:
             break
 
@@ -290,9 +345,11 @@ def _detect_limitations(rows: list[dict], platform: str, client_id: str) -> list
             f"{platform}: 100% das entradas têm change_type=OTHER; "
             "classificação por heurística de transição de estado"
         )
-    # Check for budget-relevant changes in Google (only Meta has payment_amount today)
+    # Google: note that entity_name_at_time is often empty (Google API does not always return name)
     if platform == "google":
-        lims.append("google: dados limitados a GOOGLE_BALANCE_RECHARGE no momento; budget/bid changes não disponíveis via change_history")
+        unnamed = [r for r in rows if not r.get("entity_name_at_time")]
+        if len(unnamed) > len(rows) // 2:
+            lims.append("google: nome da entidade não disponível na maioria dos eventos (limitação da API change_event)")
     return lims
 
 

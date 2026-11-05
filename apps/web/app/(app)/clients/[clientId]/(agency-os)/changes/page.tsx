@@ -106,7 +106,11 @@ const CHANGE_TYPE_LABEL: Record<string, string> = {
   CREATIVE_PAUSE:            'Criativo pausado',
   CREATIVE_ADDED:            'Criativo adicionado',
   CREATIVE_REPLACED:         'Criativo substituído',
-  ASSET_CHANGE:              'Produto / Feed',
+  ASSET_CREATED:             'Asset criado',
+  ASSET_CHANGE:              'Asset / Feed',
+  AD_CREATIVE_CHANGE:        'Criativo atualizado',
+  TARGETING_ADDED:           'Segmentação adicionada',
+  TARGETING_CHANGE:          'Segmentação atualizada',
   KEYWORD_ADDED:             'Keyword adicionada',
   KEYWORD_REMOVED:           'Keyword removida',
   NEGATIVE_KEYWORD_ADDED:    'Keyword negativa',
@@ -138,12 +142,17 @@ const CHANGE_TYPE_BADGE: Record<string, string> = {
   TARGET_CPA:                'bg-purple-500/15 text-purple-400',
   AUDIENCE_CHANGE:           'bg-orange-500/15 text-orange-400',
   AUDIENCE:                  'bg-orange-500/15 text-orange-400',
-  // creatives
+  // creatives / assets
   CREATIVE_LAUNCH:           'bg-pink-500/15 text-pink-400',
   CREATIVE_PAUSE:            'bg-pink-500/15 text-pink-400',
   CREATIVE_ADDED:            'bg-pink-500/15 text-pink-400',
   CREATIVE_REPLACED:         'bg-pink-500/15 text-pink-400',
+  ASSET_CREATED:             'bg-pink-500/15 text-pink-400',
   ASSET_CHANGE:              'bg-pink-500/15 text-pink-400',
+  AD_CREATIVE_CHANGE:        'bg-pink-500/15 text-pink-400',
+  // targeting
+  TARGETING_ADDED:           'bg-orange-500/15 text-orange-400',
+  TARGETING_CHANGE:          'bg-orange-500/15 text-orange-400',
   // other
   BALANCE_RECHARGE:          'bg-indigo-500/15 text-indigo-400',
   NEW_ENTITY_CREATED:        'bg-teal-500/15 text-teal-400',
