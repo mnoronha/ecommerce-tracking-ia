@@ -150,8 +150,8 @@ else:
 
 # ── 4. Weekly Review compatibility — query core_change_log directly ───────────
 print("\n[4] Weekly review compatibility — MANUAL CAMPAIGN in change log...")
-enc_start = PERIOD_START + "T00:00:00+00:00"
-enc_end   = PERIOD_END   + "T23:59:59+00:00"
+enc_start = (PERIOD_START + "T00:00:00+00:00").replace("+", "%2B")
+enc_end   = (PERIOD_END   + "T23:59:59+00:00").replace("+", "%2B")
 s4, rows = sb("GET", "core_change_log",
     params=f"client_id=eq.lk-sneakers&entity_type=in.(CAMPAIGN,BUDGET)&occurred_at=gte.{enc_start}&occurred_at=lte.{enc_end}&source=eq.MANUAL&select=id,entity_type,change_type,source,occurred_at&limit=10")
 print(f"    core_change_log MANUAL CAMPAIGN: {s4} — {len(rows) if isinstance(rows, list) else '?'} rows")
