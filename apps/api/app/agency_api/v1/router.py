@@ -5385,6 +5385,23 @@ def get_meeting_context(
     return load_meeting_context(meta["client_id"], limit=limit)
 
 
+@router.get(
+    "/clients/{client_id}/knowledge-context",
+    summary="Load approved knowledge context for Hermes (client + shared learnings)",
+)
+def get_knowledge_context(
+    client_id: str,
+    platform: Optional[str] = Query(None, description="Filter by platform (google, meta, …)"),
+    limit: int = Query(10, ge=1, le=50),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> dict:
+    from ...core.knowledge_retrieval import load_knowledge_context
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    return load_knowledge_context(meta["client_id"], platform=platform, limit=limit)
+
+
 @router.post(
     "/clients/{client_id}/meetings",
     response_model=MeetingOut,
