@@ -1183,6 +1183,12 @@ class MeetingFollowUp(_Base):
     due_date:  Optional[date] = None
 
 
+class MeetingRisk(_Base):
+    risk:                 str
+    severity:             str = "MEDIUM"   # HIGH | MEDIUM | LOW
+    mitigation_suggested: Optional[str] = None
+
+
 class MeetingProcessCreate(_Base):
     """Human or AI-produced structured summary. Processor is caller's identity."""
     summary:         Optional[str]                    = None
@@ -1190,6 +1196,7 @@ class MeetingProcessCreate(_Base):
     open_questions:  list[str]                        = Field(default_factory=list)
     commitments:     list[MeetingCommitment]          = Field(default_factory=list)
     follow_ups:      list[MeetingFollowUp]            = Field(default_factory=list)
+    risks:           list[MeetingRisk]                = Field(default_factory=list)
     create_tasks:    bool                             = False  # if True: auto-create Tasks from commitments
     processor:       str                              = "manual"
 
@@ -1202,6 +1209,7 @@ class MeetingSummaryOut(_Base):
     open_questions:          list[str]       = Field(default_factory=list)
     commitments:             list[dict]      = Field(default_factory=list)
     follow_ups:              list[dict]      = Field(default_factory=list)
+    risks:                   list[dict]      = Field(default_factory=list)
     tasks_created:           list[dict]      = Field(default_factory=list)
     processor:               str
     processor_manual_status: str             = "AVAILABLE"

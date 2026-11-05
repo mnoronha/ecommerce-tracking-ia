@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import {
   Calendar, Loader2, AlertCircle, ChevronDown, ChevronUp,
-  Users, RefreshCw, CheckSquare, Link2,
+  Users, RefreshCw, CheckSquare, Link2, Zap, AlertTriangle,
 } from 'lucide-react'
 
 interface Participant {
@@ -16,6 +16,12 @@ interface Participant {
 interface Decision {
   decision: string
   owner?: string | null
+}
+
+interface Risk {
+  risk: string
+  severity?: string | null
+  mitigation_suggested?: string | null
 }
 
 interface FollowUp {
@@ -45,6 +51,7 @@ interface MeetingSummary {
   follow_ups: FollowUp[]
   commitments: Commitment[]
   open_questions: string[]
+  risks: Risk[]
   tasks_created: TaskEntry[]
   processor: string
   processor_manual_status?: string
@@ -85,10 +92,12 @@ export default function MeetingsPage() {
   const params   = useParams()
   const clientId = params.clientId as string
 
-  const [meetings, setMeetings] = useState<Meeting[]>([])
-  const [loading,  setLoading]  = useState(true)
-  const [error,    setError]    = useState<string | null>(null)
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [meetings,  setMeetings]  = useState<Meeting[]>([])
+  const [loading,   setLoading]   = useState(true)
+  const [error,     setError]     = useState<string | null>(null)
+  const [expanded,  setExpanded]  = useState<string | null>(null)
+  const [analyzing, setAnalyzing] = useState<string | null>(null)
+  const [analyzeErr, setAnalyzeErr] = useState<Record<string, string>>({})
 
   const load = () => {
     setLoading(true)
@@ -98,6 +107,16 @@ export default function MeetingsPage() {
       .then(data => setMeetings(Array.isArray(data) ? data : (data.meetings ?? [])))
       .catch(e => setError(e instanceof Error ? e.message : 'Erro ao carregar reuniões'))
       .finally(() => setLoading(false))
+  }
+
+  const triggerAnalyze = (meetingId: string) => {
+    setAnalyzing(meetingId)
+    setAnalyzeErr(prev => { const n = {...prev}; delete n[meetingId]; return n })
+    fetch(`/api/v1/meetings/${meetingId}/analyze`, { method: 'POST' })
+      .then(r => { if (!r.ok) return r.json().then(j => { throw new Error(j?.detail || `HTTP ${r.status}`) }); return r.json() })
+      .then(() => load())
+      .catch(e => setAnalyzeErr(prev => ({ ...prev, [meetingId]: e instanceof Error ? e.message : 'Erro ao analisar' })))
+      .finally(() => setAnalyzing(null))
   }
 
   useEffect(load, [clientId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -301,8 +320,45 @@ export default function MeetingsPage() {
                       </div>
                     )}
 
+                    {(meeting.summary?.risks?.length ?? 0) > 0 && (
+                      <div>
+                        <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Riscos</p>
+                        <ul className="space-y-1.5">
+                          {meeting.summary!.risks.map((r, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm">
+                              <AlertTriangle size={12} className={`shrink-0 mt-0.5 ${r.severity === 'HIGH' ? 'text-red-400' : r.severity === 'MEDIUM' ? 'text-amber-400' : 'text-slate-500'}`} />
+                              <span className="text-slate-300">
+                                {r.risk}
+                                {r.mitigation_suggested && (
+                                  <span className="text-slate-500 ml-1.5">→ {r.mitigation_suggested}</span>
+                                )}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
                     {!meeting.summary && (
-                      <p className="text-xs text-slate-600 italic">Reunião ainda não processada.</p>
+                      <div className="space-y-2">
+                        <p className="text-xs text-slate-600 italic">Reunião ainda não processada.</p>
+                        {meeting.transcript_status === 'complete' && (
+                          <button
+                            onClick={() => triggerAnalyze(meeting.id)}
+                            disabled={analyzing === meeting.id}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/20 text-indigo-400 text-xs hover:bg-indigo-600/30 disabled:opacity-50 transition-colors"
+                          >
+                            {analyzing === meeting.id
+                              ? <Loader2 size={11} className="animate-spin" />
+                              : <Zap size={11} />
+                            }
+                            Analisar com Claude
+                          </button>
+                        )}
+                        {analyzeErr[meeting.id] && (
+                          <p className="text-xs text-red-400">{analyzeErr[meeting.id]}</p>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}

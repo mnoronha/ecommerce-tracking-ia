@@ -5338,6 +5338,7 @@ def _summary_row_to_out(row: dict) -> MeetingSummaryOut:
         open_questions=_parse_jsonb(row.get("open_questions")),
         commitments=_parse_jsonb(row.get("commitments")),
         follow_ups=_parse_jsonb(row.get("follow_ups")),
+        risks=_parse_jsonb(row.get("risks")),
         tasks_created=_parse_jsonb(row.get("tasks_created")),
         processor=row.get("processor", "manual"),
         created_at=row["created_at"],
@@ -5366,6 +5367,22 @@ def list_meetings(
         .execute().data or []
     )
     return [_meeting_row_to_out(r) for r in rows]
+
+
+@router.get(
+    "/clients/{client_id}/meeting-context",
+    summary="Load meeting context for Hermes (recent decisions, action items, open questions)",
+)
+def get_meeting_context(
+    client_id: str,
+    limit: int = Query(5, ge=1, le=20),
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)] = None,
+) -> dict:
+    from ...core.meeting_context import load_meeting_context
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    return load_meeting_context(meta["client_id"], limit=limit)
 
 
 @router.post(
@@ -5559,6 +5576,7 @@ def process_meeting(
         "open_questions": _json.dumps(body.open_questions or []),
         "commitments":    _json.dumps([c if isinstance(c, dict) else c.model_dump(mode='json', exclude_none=True) for c in (body.commitments or [])]),
         "follow_ups":     _json.dumps([f if isinstance(f, dict) else f.model_dump(mode='json', exclude_none=True) for f in (body.follow_ups or [])]),
+        "risks":          _json.dumps([r if isinstance(r, dict) else r.model_dump(mode='json', exclude_none=True) for r in (body.risks or [])]),
         "tasks_created":  _json.dumps(tasks_created_entries),
         "processor":      body.processor or "manual",
         "created_at":     now,
@@ -5567,8 +5585,123 @@ def process_meeting(
         sum_res = db.table("core_meeting_summaries").insert(sum_row).execute()
         created_sum = sum_res.data[0]
     except Exception as exc:
-        logger.error("process_meeting: summary insert failed for %s: %s", meeting_id, exc)
-        raise HTTPException(503, detail="meeting process failed")
+        err_str = str(exc).lower()
+        # Migration 080 not yet applied: risks column missing — retry without it
+        if "risks" in err_str and ("column" in err_str or "42703" in err_str):
+            logger.warning("process_meeting: risks column missing (migration 080 pending); retrying without risks")
+            sum_row.pop("risks", None)
+            try:
+                sum_res = db.table("core_meeting_summaries").insert(sum_row).execute()
+                created_sum = sum_res.data[0]
+            except Exception as exc2:
+                logger.error("process_meeting: summary insert failed for %s: %s", meeting_id, exc2)
+                raise HTTPException(503, detail="meeting process failed")
+        else:
+            logger.error("process_meeting: summary insert failed for %s: %s", meeting_id, exc)
+            raise HTTPException(503, detail="meeting process failed")
+
+    db.table("core_meetings").update({
+        "processing_status": "done",
+        "updated_at":        now,
+    }).eq("id", meeting_id).execute()
+
+    out = _summary_row_to_out(created_sum)
+    out.processor_manual_status = "AVAILABLE"
+    out.processor_claude_status = _claude_processor_status()
+    return out
+
+
+@router.post(
+    "/meetings/{meeting_id}/analyze",
+    response_model=MeetingSummaryOut,
+    status_code=201,
+    summary="Auto-analyze meeting transcript via Claude",
+)
+def analyze_meeting(
+    meeting_id: str,
+    response: Response,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> MeetingSummaryOut:
+    """Load meeting transcript, call Claude, persist structured summary.
+
+    Idempotent: if summary already exists, returns it with replayed=True.
+    Requires ANTHROPIC_CREDITS_OK=true env var; otherwise returns 503.
+    """
+    from ...core import meeting_analysis as _ma
+    db = _get_db()
+    import json as _json
+
+    meet_res = db.table("core_meetings").select("id, client_id, title, started_at").eq("id", meeting_id).limit(1).execute()
+    if not (meet_res and meet_res.data):
+        raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
+    meeting = meet_res.data[0]
+
+    existing_res = (
+        db.table("core_meeting_summaries").select("*")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if existing_res.data:
+        out = _summary_row_to_out(existing_res.data[0])
+        out.replayed = True
+        out.processor_manual_status = "AVAILABLE"
+        out.processor_claude_status = _claude_processor_status()
+        response.status_code = 200
+        return out
+
+    tr_res = (
+        db.table("core_meeting_transcripts").select("raw_text")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if not (tr_res and tr_res.data):
+        raise HTTPException(422, detail="no transcript found for this meeting; ingest transcript first")
+
+    raw_text = tr_res.data[0]["raw_text"]
+    if not raw_text or not raw_text.strip():
+        raise HTTPException(422, detail="transcript is empty")
+
+    meeting_date = str(meeting.get("started_at", ""))[:10] if meeting.get("started_at") else None
+    try:
+        analysis = _ma.analyze_transcript(
+            transcript_text=raw_text,
+            meeting_title=meeting.get("title", "Reunião"),
+            meeting_date=meeting_date,
+        )
+    except _ma.MeetingAnalysisUnavailable as exc:
+        raise HTTPException(503, detail=f"Claude unavailable: {exc.reason}")
+
+    payload = _ma.to_process_payload(analysis)
+    now = datetime.now(timezone.utc).isoformat()
+    sum_row = {
+        "meeting_id":     meeting_id,
+        "summary":        payload["summary"],
+        "decisions":      _json.dumps(payload["decisions"]),
+        "open_questions": _json.dumps(payload["open_questions"]),
+        "commitments":    _json.dumps(payload["commitments"]),
+        "follow_ups":     _json.dumps(payload["follow_ups"]),
+        "risks":          _json.dumps(payload["risks"]),
+        "tasks_created":  _json.dumps([]),
+        "processor":      payload["processor"],
+        "created_at":     now,
+    }
+    try:
+        sum_res = db.table("core_meeting_summaries").insert(sum_row).execute()
+        created_sum = sum_res.data[0]
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "risks" in err_str and ("column" in err_str or "42703" in err_str):
+            logger.warning("analyze_meeting: risks column missing (migration 080 pending); retrying without risks")
+            sum_row.pop("risks", None)
+            try:
+                sum_res = db.table("core_meeting_summaries").insert(sum_row).execute()
+                created_sum = sum_res.data[0]
+            except Exception as exc2:
+                logger.error("analyze_meeting: summary insert failed for %s: %s", meeting_id, exc2)
+                raise HTTPException(503, detail="meeting analysis persist failed")
+        else:
+            logger.error("analyze_meeting: summary insert failed for %s: %s", meeting_id, exc)
+            raise HTTPException(503, detail="meeting analysis persist failed")
 
     db.table("core_meetings").update({
         "processing_status": "done",
