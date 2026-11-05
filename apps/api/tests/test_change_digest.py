@@ -296,7 +296,7 @@ def test_build_digest_with_mixed_rows():
     assert digest["total_raw_count"] == 3
     assert digest["noise_count"] == 1
     assert digest["relevant_count"] == 2
-    assert digest["engine_version"] == "1"
+    assert digest["engine_version"] == "2"
     assert len(digest["changes"]) == 2
 
 
