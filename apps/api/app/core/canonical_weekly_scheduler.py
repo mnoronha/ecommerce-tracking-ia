@@ -117,47 +117,9 @@ _DEGRADED_STATES = frozenset({"ERROR", "ACCESS_MISSING", "PERMISSION_DENIED", "M
 
 
 def _build_change_summary(sb, client_id: str, period_start: date, period_end: date) -> dict:
-    """
-    Build per-platform change_summary from Change Digest.
+    from .change_digest import build_report_change_summary
 
-    Context assembly priority:
-        Business Truth > metrics > Change Digest > raw change_history > Outcomes > Learnings
-
-    Always returns a dict (never raises). If digest unavailable, returns
-    limitation entry so Hermes knows to fall back to raw change_history.
-    Saves digest to core_change_digests for hash stability on re-runs.
-    """
-    from .change_digest import build_digest, save_digest, get_digest
-
-    result: dict = {}
-    for platform in ("meta", "google"):
-        try:
-            stored = get_digest(sb, client_id, platform, str(period_start), str(period_end))
-            if stored is None:
-                digest = build_digest(sb, client_id, platform, str(period_start), str(period_end))
-                save_digest(sb, digest)
-                stored = digest
-            summary = stored.get("summary") or {}
-            result[platform] = {
-                "main_changes":         summary.get("main_changes", []),
-                "budget_changes":       summary.get("budget_changes", []),
-                "campaign_activations": summary.get("campaign_activations", []),
-                "campaign_pauses":      summary.get("campaign_pauses", []),
-                "unknown_reason_count": summary.get("unknown_reason_count", 0),
-                "total_changes_in_log": stored.get("total_raw_count", 0),
-                "relevant_changes":     stored.get("relevant_count", 0),
-                "limitations":          stored.get("limitations", []),
-                # digest_generated_at excluded: timestamp makes artifact hash non-deterministic
-            }
-        except Exception as exc:
-            result[platform] = {
-                "error":            f"DIGEST_UNAVAILABLE: {str(exc)[:120]}",
-                "limitations":      [f"{platform}: change digest indisponível — usar core_change_log diretamente"],
-                "main_changes":     [],
-                "budget_changes":   [],
-                "unknown_reason_count": 0,
-            }
-    return result
+    return build_report_change_summary(sb, client_id, period_start.isoformat(), period_end.isoformat())
 
 
 def _fetch_prev_week_snapshot(sb, client_id: str, period_start: date) -> Optional[dict]:

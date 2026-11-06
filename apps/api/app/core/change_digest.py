@@ -14,7 +14,8 @@ Design rules:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,21 @@ def _classify(row: dict) -> Optional[tuple[str, str, dict]]:
         if row.get("reported_by"):
             extra["reported_by"] = row["reported_by"]
         return (ct, impact, extra)
+
+    if row.get("channel") == "google":
+        typed = row.get("change_type")
+        if typed in ("TARGET_ROAS", "SHOPPING_PRODUCT_SCOPE_CHANGE", "AD_STATUS_CHANGE", "CAMPAIGN_LAUNCH", "BUDGET", "CAMPAIGN_PAUSE", "ASSET_CHANGE"):
+            classification = {
+                "TARGET_ROAS": ("GOOGLE_TARGET_ROAS_CHANGE", "high"),
+                "SHOPPING_PRODUCT_SCOPE_CHANGE": ("SHOPPING_PRODUCT_SCOPE_CHANGE", "medium"),
+                "AD_STATUS_CHANGE": ("GOOGLE_AD_STATUS_CHANGE", "medium"),
+                "CAMPAIGN_LAUNCH": ("CAMPAIGN_ACTIVATION", "high"),
+                "BUDGET": ("GOOGLE_BUDGET_CHANGE", "high"),
+                "CAMPAIGN_PAUSE": ("CAMPAIGN_PAUSE", "high"),
+                "ASSET_CHANGE": ("ASSET_CHANGE", "low"),
+            }
+            label, impact = classification[typed]
+            return label, impact, {"before": row.get("before_state"), "after": row.get("after_state")}
 
     entity = row.get("entity_type", "")
     before = row.get("before_state")
@@ -247,6 +263,7 @@ def _group_changes(classified: list[tuple[dict, tuple]]) -> list[dict]:
         source = row.get("source") or "PLATFORM_DETECTED"
 
         base = {
+            "event_ids": [str(row["id"])] if row.get("id") else [],
             "change_type": change_type,
             "impact": impact,
             "entity_type": row.get("entity_type"),
@@ -272,6 +289,7 @@ def _group_changes(classified: list[tuple[dict, tuple]]) -> list[dict]:
                     current_dt = datetime.fromisoformat(occurred.replace("Z", "+00:00"))
                     diff_minutes = abs((current_dt - existing_dt).total_seconds()) / 60
                     if diff_minutes <= _GROUP_WINDOW_MINUTES:
+                        existing["event_ids"].extend(base["event_ids"])
                         existing["count"] = existing.get("count", 1) + 1
                         existing["entity"] = f"{existing['count']} anúncios"
                         existing["changed_at"] = occurred  # update to latest
@@ -336,6 +354,14 @@ def _build_summary(changes: list[dict]) -> dict:
             main_changes.append(f"Novo critério de segmentação adicionado")
         elif ct == "TARGETING_CHANGE":
             main_changes.append(f"Segmentação atualizada: {entity}")
+        elif ct in ("GOOGLE_BUDGET_CHANGE", "GOOGLE_TARGET_ROAS_CHANGE", "SHOPPING_PRODUCT_SCOPE_CHANGE", "GOOGLE_AD_STATUS_CHANGE"):
+            labels = {
+                "GOOGLE_BUDGET_CHANGE": "Orçamento alterado",
+                "GOOGLE_TARGET_ROAS_CHANGE": "Meta de ROAS alterada",
+                "SHOPPING_PRODUCT_SCOPE_CHANGE": "Escopo de produtos alterado",
+                "GOOGLE_AD_STATUS_CHANGE": "Status do anúncio alterado",
+            }
+            main_changes.append(f"{labels[ct]}: {entity or 'entidade sem nome no registro'}")
         if len(main_changes) >= 10:
             break
 
@@ -382,24 +408,33 @@ def _detect_limitations(rows: list[dict], platform: str, client_id: str) -> list
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 
 
-def _fetch_raw(db, client_id: str, platform: str, period_start: str, period_end: str) -> list[dict]:
+def report_change_window(period_start: str, period_end: str) -> dict:
+    tz = ZoneInfo("America/Sao_Paulo")
+    start = datetime.combine(date.fromisoformat(period_start), time.min, tzinfo=tz)
+    end = datetime.combine(date.fromisoformat(period_end) + timedelta(days=1), time.min, tzinfo=tz)
+    return {"start": start.isoformat(), "end_exclusive": end.isoformat(), "timezone": tz.key}
+
+
+def _fetch_raw(db, client_id: str, platform: str, period_start: str, period_end: str, *, window: dict | None = None) -> list[dict]:
     """Read core_change_log for the period. Uses .range() to avoid PostgREST cap."""
     all_rows: list[dict] = []
     page_size = 1000
     offset = 0
     while True:
-        res = (
+        query = (
             db.table("core_change_log")
             .select("*")
             .eq("client_id", client_id)
             .eq("channel", platform)
-            .gte("occurred_at", period_start)
-            .lte("occurred_at", period_end + "T23:59:59+00:00")
-            .order("occurred_at", desc=False)
-            .range(offset, offset + page_size - 1)
-            .execute()
         )
-        batch = res.data or []
+        if window is None:
+            query = query.gte("occurred_at", period_start).lte("occurred_at", period_end + "T23:59:59+00:00")
+        else:
+            query = query.gte("occurred_at", window["start"]).lt("occurred_at", window["end_exclusive"])
+        res = query.order("occurred_at", desc=False).order("id", desc=False).range(offset, offset + page_size - 1).execute()
+        if res.data is None:
+            raise ValueError("Change Log response has no data envelope")
+        batch = res.data
         all_rows.extend(batch)
         if len(batch) < page_size:
             break
@@ -410,12 +445,12 @@ def _fetch_raw(db, client_id: str, platform: str, period_start: str, period_end:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def build_digest(db, client_id: str, platform: str, period_start: str, period_end: str) -> dict:
+def build_digest(db, client_id: str, platform: str, period_start: str, period_end: str, *, window: dict | None = None) -> dict:
     """
     Build and return a change digest dict (not persisted).
     Call save_digest() to upsert into core_change_digests.
     """
-    rows = _fetch_raw(db, client_id, platform, period_start, period_end)
+    rows = _fetch_raw(db, client_id, platform, period_start, period_end, **({"window": window} if window else {}))
     total_raw = len(rows)
 
     classified: list[tuple[dict, tuple]] = []
@@ -532,3 +567,56 @@ def build_report_change_section(db, client_id: str, platform: str, period_start:
         "limitations": digest.get("limitations", []),
         "digest_generated_at": digest.get("generated_at"),
     }
+
+def build_report_change_summary(db, client_id: str, period_start: str, period_end: str, *, complete_platforms: frozenset[str] = frozenset()) -> dict:
+    """Build from the current log for each new artifact. A digest is a derived record."""
+    window = report_change_window(period_start, period_end)
+    result = {}
+    for platform in ("meta", "google"):
+        try:
+            digest = build_digest(db, client_id, platform, period_start, period_end, window=window)
+        except Exception:
+            logger.exception("Change digest read failed for %s/%s", client_id, platform)
+            result[platform] = {
+                "change_context_status": "UNKNOWN",
+                "change_window": window,
+                "total_changes_in_log": None,
+                "relevant_changes": None,
+                "error": "DIGEST_UNAVAILABLE",
+                "limitations": ["Leitura do histórico indisponível."],
+            }
+            continue
+
+        try:
+            save_digest(db, digest)
+        except Exception:
+            logger.exception("Change digest persistence failed for %s/%s", client_id, platform)
+        raw_count = digest["total_raw_count"]
+        relevant_count = digest["relevant_count"]
+        summary = digest["summary"]
+        limitations = list(digest["limitations"])
+        # A complete query against the log is not proof of complete upstream ingestion.
+        limitations.append("Contagens refletem os eventos registrados no Core na leitura.")
+        if not raw_count and platform not in complete_platforms:
+            limitations.append("Cobertura de ingestão não confirmada para a janela.")
+        unclassified = digest["noise_count"] if platform == "google" else 0
+        if unclassified:
+            limitations.append(f"{unclassified} eventos Google sem classificação no digest.")
+        projected = sorted(digest["changes"], key=lambda row: (row["impact"] != "high", row["changed_at"]))[:10]
+        result[platform] = {
+            "change_context_status": "PARTIAL" if unclassified else "COMPLETE" if platform in complete_platforms else "READY" if raw_count else "PARTIAL",
+            "change_window": window,
+            "main_changes": summary["main_changes"],
+            "budget_changes": summary["budget_changes"],
+            "campaign_activations": summary["campaign_activations"],
+            "campaign_pauses": summary["campaign_pauses"],
+            "unknown_reason_count": summary["unknown_reason_count"],
+            "total_changes_in_log": raw_count,
+            "relevant_changes": relevant_count,
+            "event_examples": [
+                {key: row.get(key) for key in ("event_ids", "change_type", "entity", "changed_at", "source")}
+                for row in projected
+            ],
+            "limitations": limitations,
+        }
+    return result
