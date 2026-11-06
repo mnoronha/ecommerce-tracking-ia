@@ -260,7 +260,13 @@ def _build_prompt(
     # Change digest section
     change_lines: list[str] = []
     for platform, cs in change_summary.items():
-        if not isinstance(cs, dict) or cs.get("error"):
+        if not isinstance(cs, dict):
+            continue
+        status = cs.get("change_context_status", "UNKNOWN")
+        count = cs.get("total_changes_in_log") if status != "UNKNOWN" else None
+        if status != "READY":
+            change_lines.append(f"  [{platform.upper()}] Cobertura {status}. Eventos observados no Core: {count if count is not None else 'indisponível'}.")
+        if cs.get("error"):
             continue
         for chg in (cs.get("main_changes") or [])[:5]:
             change_lines.append(f"  [{platform.upper()}] {chg}")
@@ -272,7 +278,7 @@ def _build_prompt(
     change_text = (
         "\n".join(change_lines)
         if change_lines
-        else "  Nenhuma mudança relevante detectada via Change Digest."
+        else "  Sem evidência de mudanças disponível no handoff."
     )
 
     # Anomaly section
@@ -527,6 +533,24 @@ def build_hermes_handoff_from_artifact(
             "channels":       channels,
             "business_truth": business_truth,
             "change_summary": change_summary,
+            "change_context_status": (
+                "COMPLETE" if change_summary and all(
+                    item.get("change_context_status") == "COMPLETE" for item in change_summary.values()
+                ) else "PARTIAL" if any(
+                    item.get("change_context_status") in {"READY", "PARTIAL", "COMPLETE"} for item in change_summary.values()
+                ) else "UNKNOWN"
+            ),
+            "change_window": next(
+                (item["change_window"] for item in change_summary.values() if item.get("change_window")), None
+            ),
+            "platform_counts": {
+                platform: {
+                    "raw": item.get("total_changes_in_log") if item.get("change_context_status") else None,
+                    "relevant": item.get("relevant_changes") if item.get("change_context_status") else None,
+                    "status": item.get("change_context_status", "UNKNOWN"),
+                }
+                for platform, item in change_summary.items()
+            },
             "limitations":    limitations,
             "anomalies":      anomalies,
             "wow_comparison": wow,
@@ -852,7 +876,7 @@ def check_quality_gate(content: dict, analysis_enabled: bool = True) -> tuple[bo
     # Change digest consumed
     change_summary = content.get("change_summary") or {}
     has_relevant_changes = any(
-        isinstance(cs, dict) and cs.get("relevant_changes", 0) > 0
+        isinstance(cs, dict) and (cs.get("relevant_changes") or 0) > 0
         for cs in change_summary.values()
     )
     if has_relevant_changes and not analysis.get("change_digest_section"):
