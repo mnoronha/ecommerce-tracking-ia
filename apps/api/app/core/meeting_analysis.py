@@ -165,13 +165,26 @@ def analyze_transcript(
     )
 
     client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY, max_retries=0)
-    message = client.messages.create(
-        model=settings.ANTHROPIC_MODEL,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-        system=_SYSTEM_PROMPT,
-        timeout=120.0,
-    )
+    try:
+        message = client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+            system=_SYSTEM_PROMPT,
+            timeout=120.0,
+        )
+    except anthropic.BadRequestError as exc:
+        body = getattr(exc, "body", {}) or {}
+        err_msg = (body.get("error") or {}).get("message", "") if isinstance(body, dict) else ""
+        if "credit balance" in err_msg.lower() or "too low" in err_msg.lower():
+            raise MeetingAnalysisUnavailable("DEGRADED_INSUFFICIENT_CREDITS") from exc
+        raise MeetingAnalysisUnavailable(f"ANTHROPIC_BAD_REQUEST: {err_msg[:120]}") from exc
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
+        raise MeetingAnalysisUnavailable(f"ANTHROPIC_AUTH_ERROR: {type(exc).__name__}") from exc
+    except anthropic.RateLimitError as exc:
+        raise MeetingAnalysisUnavailable("ANTHROPIC_RATE_LIMIT") from exc
+    except anthropic.APITimeoutError as exc:
+        raise MeetingAnalysisUnavailable("ANTHROPIC_TIMEOUT") from exc
 
     raw = _strip_fences(message.content[0].text)
 
