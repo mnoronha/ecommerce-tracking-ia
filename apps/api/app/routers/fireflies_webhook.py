@@ -7,10 +7,15 @@ If secret not configured → accept all (lock down by IP at reverse proxy).
 
 Background task:
   1. fetch transcript from Fireflies API
-  2. resolve client_id (explicit mapping → UNRESOLVED)
+  2. resolve client_id — priority chain:
+       P1. core_fireflies_client_mapping (explicit meeting-id override)
+       P2. core_fireflies_mapping_rules match_type=participant_domain
+       P3. core_fireflies_mapping_rules match_type=title_pattern
+       fallback → UNRESOLVED (never guesses)
   3. idempotent upsert core_meetings + core_meeting_transcripts
-  4. update core_fireflies_events status
-  5. leave processing_status=pending (human or auto-processes via /meetings/{id}/process)
+  4. auto-analyze via Claude if FIREFLIES_AUTO_ANALYZE=1 (requires ANTHROPIC_CREDITS_OK=1)
+  5. update core_fireflies_events status
+  6. set processing_status=done (analyzed) or pending (transcript only)
 
 Zero client sends. Zero media writes.
 """
@@ -43,12 +48,19 @@ def _verify_payload(payload: dict) -> bool:
 
 # ── Client resolution ─────────────────────────────────────────────────────────
 
-def _resolve_client(fireflies_meeting_id: str, db) -> tuple[Optional[str], str]:
+def _resolve_client(
+    fireflies_meeting_id: str,
+    db,
+    transcript: Optional[dict] = None,
+) -> tuple[Optional[str], str]:
     """
-    Return (client_id, method). Priority:
-      1. core_fireflies_client_mapping (explicit)
-      2. UNRESOLVED (never guess)
+    Return (client_id, method). Priority chain:
+      P1. core_fireflies_client_mapping  — explicit meeting-id override (highest priority)
+      P2. participant_domain rule         — non-noro domain in participants emails
+      P3. title_pattern rule              — regex match on meeting title
+      fallback → (None, "unresolved")    — never guesses
     """
+    # P1: explicit per-meeting mapping
     res = (
         db.table("core_fireflies_client_mapping")
         .select("client_id")
@@ -58,7 +70,137 @@ def _resolve_client(fireflies_meeting_id: str, db) -> tuple[Optional[str], str]:
     )
     if res.data:
         return res.data[0]["client_id"], "explicit"
+
+    # P2 + P3: rule-based (requires transcript data)
+    if transcript:
+        try:
+            rules = (
+                db.table("core_fireflies_mapping_rules")
+                .select("client_id, match_type, match_value")
+                .eq("enabled", True)
+                .order("priority")
+                .execute()
+                .data or []
+            )
+        except Exception:
+            # table may not exist yet (migration 084 pending)
+            rules = []
+
+        if rules:
+            from ..core import fireflies_adapter as _ff
+            ps = _ff.build_participants(transcript)
+            # Participant domains, excluding the Noro organizer domain
+            participant_domains = {
+                e.split("@")[1].lower()
+                for p in ps
+                for e in [p.get("email", "")]
+                if "@" in e and not e.lower().endswith("@norolabs.com.br")
+            }
+            title = transcript.get("title") or ""
+
+            for rule in rules:
+                match_type  = rule.get("match_type", "")
+                match_value = rule.get("match_value", "")
+                client_id   = rule.get("client_id", "")
+                if not (match_type and match_value and client_id):
+                    continue
+                if match_type == "participant_domain":
+                    if match_value.lower() in participant_domains:
+                        return client_id, "participant_domain"
+                elif match_type == "title_pattern":
+                    import re as _re
+                    try:
+                        if _re.search(match_value, title, _re.IGNORECASE):
+                            return client_id, "title_pattern"
+                    except _re.error:
+                        continue
+
     return None, "unresolved"
+
+
+# ── Auto-analysis ─────────────────────────────────────────────────────────────
+
+def _auto_analyze_meeting(
+    meeting_id: str,
+    transcript: dict,
+    raw_text: str,
+    db,
+    now: str,
+) -> None:
+    """
+    Analyze meeting transcript via Claude and persist to core_meeting_summaries.
+    Idempotent: no-op if summary already exists.
+    Gated by FIREFLIES_AUTO_ANALYZE=1 (caller's responsibility) and
+    ANTHROPIC_CREDITS_OK=1 (enforced inside meeting_analysis.analyze_transcript).
+    """
+    existing = (
+        db.table("core_meeting_summaries")
+        .select("id")
+        .eq("meeting_id", meeting_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        logger.info("fireflies: auto-analyze skipped for %s (summary exists)", meeting_id)
+        return
+
+    from ..core import meeting_analysis
+    try:
+        meeting_date = None
+        date_ms = transcript.get("date")
+        if date_ms:
+            try:
+                meeting_date = datetime.fromtimestamp(int(date_ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        result = meeting_analysis.analyze_transcript(
+            transcript_text=raw_text,
+            meeting_title=transcript.get("title") or "",
+            meeting_date=meeting_date,
+        )
+        payload = meeting_analysis.to_process_payload(result)  # create_tasks=False
+
+        import json as _json
+        sum_row = {
+            "meeting_id":     meeting_id,
+            "summary":        payload.get("summary"),
+            "decisions":      _json.dumps(payload.get("decisions") or []),
+            "open_questions": _json.dumps(payload.get("open_questions") or []),
+            "commitments":    _json.dumps(payload.get("commitments") or []),
+            "follow_ups":     _json.dumps(payload.get("follow_ups") or []),
+            "risks":          _json.dumps(payload.get("risks") or []),
+            "tasks_created":  _json.dumps([]),
+            "processor":      payload.get("processor", "claude"),
+            "created_at":     now,
+        }
+        try:
+            db.table("core_meeting_summaries").insert(sum_row).execute()
+        except Exception as exc:
+            # Migration 080 not applied: risks column missing — retry without it
+            if "risks" in str(exc).lower() and ("column" in str(exc).lower() or "42703" in str(exc)):
+                sum_row.pop("risks", None)
+                db.table("core_meeting_summaries").insert(sum_row).execute()
+            else:
+                raise
+
+        db.table("core_meetings").update({
+            "processing_status": "done",
+            "updated_at": now,
+        }).eq("id", meeting_id).execute()
+
+        logger.info(
+            "fireflies: auto-analyzed %s — summary=%s decisions=%d action_items=%d",
+            meeting_id,
+            "PRESENT" if result.get("summary") else "NONE",
+            len(result.get("decisions") or []),
+            len(result.get("action_items") or []),
+        )
+
+    except meeting_analysis.MeetingAnalysisUnavailable as exc:
+        logger.info("fireflies: auto-analyze unavailable for %s: %s", meeting_id, exc.reason)
+    except Exception as exc:
+        logger.warning("fireflies: auto-analyze failed for %s: %s", meeting_id, exc)
 
 
 # ── Background processing ─────────────────────────────────────────────────────
@@ -76,8 +218,8 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
         participants = _ff.build_participants(transcript)
         raw_text = _ff.build_raw_text(transcript)
 
-        # Resolve client
-        client_id, method = _resolve_client(fireflies_meeting_id, db)
+        # Resolve client via 3-tier priority chain
+        client_id, method = _resolve_client(fireflies_meeting_id, db, transcript=transcript)
         if not client_id:
             db.table("core_fireflies_events").update({
                 "status": "unresolved",
@@ -98,8 +240,10 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
         )
         if existing.data:
             meeting_id = str(existing.data[0]["id"])
+            meeting_created = False
         else:
             meeting_id = _create_meeting(transcript, participants, client_id, fireflies_meeting_id, db, now)
+            meeting_created = True
 
         # Idempotency: transcript
         existing_t = (
@@ -109,6 +253,7 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
             .limit(1)
             .execute()
         )
+        transcript_created = False
         if not existing_t.data and raw_text:
             db.table("core_meeting_transcripts").insert({
                 "meeting_id": meeting_id,
@@ -121,19 +266,34 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
                 "transcript_status": "ready",
                 "updated_at": now,
             }).eq("id", meeting_id).execute()
+            transcript_created = True
 
-        # Mark event processed
-        db.table("core_fireflies_events").update({
+        # Auto-analyze via Claude (gated by env var + ANTHROPIC_CREDITS_OK)
+        if os.getenv("FIREFLIES_AUTO_ANALYZE", "").lower() in ("1", "true"):
+            _auto_analyze_meeting(meeting_id, transcript, raw_text, db, now)
+
+        # Enrich event log with Fireflies metadata (organizer, meeting URL)
+        event_update: dict = {
             "status":            "processed",
             "client_id":         client_id,
             "resolution_method": method,
             "meeting_id":        meeting_id,
             "processed_at":      now,
-        }).eq("id", event_id).execute()
+        }
+        organizer_email = transcript.get("organizer_email")
+        meeting_link    = transcript.get("meeting_link")
+        if organizer_email:
+            event_update["organizer_email"] = organizer_email
+        if meeting_link:
+            event_update["meeting_link"] = meeting_link
+
+        db.table("core_fireflies_events").update(event_update).eq("id", event_id).execute()
 
         logger.info(
-            "fireflies: processed meeting %s → client=%s meeting_id=%s",
-            fireflies_meeting_id, client_id, meeting_id,
+            "fireflies: processed meeting %s → client=%s method=%s meeting_id=%s"
+            " new_meeting=%s new_transcript=%s",
+            fireflies_meeting_id, client_id, method, meeting_id,
+            meeting_created, transcript_created,
         )
 
     except Exception as exc:

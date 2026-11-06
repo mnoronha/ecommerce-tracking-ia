@@ -71,6 +71,8 @@ query GetTranscript($id: String!) {
     title
     date
     duration
+    organizer_email
+    meeting_link
     participants
     sentences {
       index
@@ -79,6 +81,20 @@ query GetTranscript($id: String!) {
       start_time
       end_time
     }
+  }
+}
+"""
+
+_LIST_TRANSCRIPTS_QUERY = """
+query ListTranscripts($limit: Int!) {
+  transcripts(limit: $limit) {
+    id
+    title
+    date
+    duration
+    organizer_email
+    meeting_link
+    participants
   }
 }
 """
@@ -106,6 +122,15 @@ def build_raw_text(transcript: dict) -> str:
         if text:
             lines.append(f"{speaker}: {text}")
     return "\n".join(lines) if lines else (transcript.get("title") or "")
+
+
+def list_transcripts(limit: int = 20) -> list[dict]:
+    """List recent transcripts (metadata only, no sentences). Returns list of transcript dicts."""
+    result = _gql(_LIST_TRANSCRIPTS_QUERY, {"limit": limit})
+    errors = result.get("errors")
+    if errors:
+        raise RuntimeError(f"Fireflies GQL error: {errors[0].get('message', 'unknown')}")
+    return (result.get("data") or {}).get("transcripts") or []
 
 
 def build_participants(transcript: dict) -> list[dict]:
