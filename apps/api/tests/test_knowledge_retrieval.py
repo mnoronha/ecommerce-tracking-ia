@@ -717,3 +717,42 @@ class TestLKSneakersPilot:
             )
         assert result["status"] == "FAILED"
         assert "PENDING" in (result.get("error") or "")
+
+@pytest.mark.parametrize("identifier", [_CLIENT_SLUG, _CLIENT_UUID])
+def test_candidate_creation_normalizes_client_before_dedup_and_insert(identifier):
+    from importlib import import_module
+    from app.agency_api.v1.schemas import LearningCandidateCreate
+
+    db = MagicMock()
+    registry = db.table.return_value
+    registry.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"id": _CLIENT_UUID}
+    ]
+    candidate_table = MagicMock()
+    db.table.side_effect = {"clients": registry, "core_learning_candidates": candidate_table}.__getitem__
+    lookup = candidate_table.select.return_value
+    lookup.eq.return_value = lookup
+    lookup.is_.return_value = lookup
+    lookup.limit.return_value.execute.return_value.data = []
+    candidate_table.insert.return_value.execute.return_value.data = [{
+        "id": "aabbccdd-0000-0000-0000-000000000003",
+        "client_id": _CLIENT_UUID,
+        "scope": "CLIENT_ONLY",
+        "status": "PENDING",
+    }]
+    body = LearningCandidateCreate(
+        statement="Review evidence",
+        scope="CLIENT_ONLY",
+        evidence_level="OBSERVATION",
+        client_id=identifier,
+        source_action_id="aabbccdd-0000-0000-0000-000000000004",
+    )
+
+    router = import_module("app.agency_api.v1.router")
+    with patch.object(router, "_get_db", return_value=db):
+        result = router.create_learning_candidate(body)
+
+    lookup.eq.assert_any_call("client_id", _CLIENT_UUID)
+    assert candidate_table.insert.call_args.args[0]["client_id"] == _CLIENT_UUID
+    assert result.client_id == _CLIENT_UUID
+    assert result.status == "PENDING"
