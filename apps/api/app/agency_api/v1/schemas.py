@@ -1269,8 +1269,30 @@ class FireflyEventOut(_Base):
     meeting_id:           Optional[str] = None
     status:               str
     error:                Optional[str] = None
+    organizer_email:      Optional[str] = None
+    meeting_link:         Optional[str] = None
     received_at:          datetime
     processed_at:         Optional[datetime] = None
+
+
+class MappingRuleCreate(_Base):
+    client_id:   str
+    match_type:  str   # 'title_pattern' | 'participant_domain'
+    match_value: str
+    priority:    int   = 10
+    notes:       Optional[str] = None
+
+
+class MappingRuleOut(_Base):
+    id:          str
+    client_id:   str
+    match_type:  str
+    match_value: str
+    priority:    int
+    enabled:     bool
+    notes:       Optional[str] = None
+    created_by:  Optional[str] = None
+    created_at:  datetime
 
 
 # ── 18. Tracking Ingestion (Phase 7) ─────────────────────────────────────────

@@ -208,6 +208,8 @@ from .schemas import (
     FireflyMappingCreate,
     FireflyMappingOut,
     FireflyEventOut,
+    MappingRuleCreate,
+    MappingRuleOut,
 )
 
 router = APIRouter(prefix="/agency/v1", tags=["agency-v1"])
@@ -5856,8 +5858,8 @@ def create_fireflies_mapping(
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
 ) -> FireflyMappingOut:
     db = _get_db()
-    # Validate client exists
-    cl = db.table("clients").select("id").eq("id", body.client_id).limit(1).execute()
+    # Validate client exists — look up by slug (client_id column) not UUID
+    cl = db.table("clients").select("id").eq("client_id", body.client_id).limit(1).execute()
     if not cl.data:
         raise HTTPException(404, detail=f"client not found: {body.client_id!r}")
     # Idempotent upsert
@@ -5937,6 +5939,8 @@ def list_fireflies_events(
             meeting_id=str(r["meeting_id"]) if r.get("meeting_id") else None,
             status=r["status"],
             error=r.get("error"),
+            organizer_email=r.get("organizer_email"),
+            meeting_link=r.get("meeting_link"),
             received_at=r["received_at"],
             processed_at=r.get("processed_at"),
         )
@@ -5987,6 +5991,121 @@ def reprocess_fireflies_event(
     background_tasks.add_task(_process_event, event_id, ev["fireflies_meeting_id"])
 
     return {"ok": True, "reprocessed": True, "event_id": event_id, "meeting_id": ev["fireflies_meeting_id"]}
+
+
+@router.get(
+    "/fireflies/mapping-rules",
+    response_model=list[MappingRuleOut],
+    summary="List Fireflies smart client mapping rules (title_pattern + participant_domain)",
+)
+def list_mapping_rules(
+    _auth: Annotated[AuthContext, Depends(SCOPE_READ_ANY)],
+    client_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+) -> list[MappingRuleOut]:
+    db = _get_db()
+    try:
+        q = db.table("core_fireflies_mapping_rules").select("*")
+        if client_id:
+            q = q.eq("client_id", client_id)
+        rows = q.order("priority").order("created_at").limit(limit).execute().data or []
+    except Exception as exc:
+        if "42P01" in str(exc) or "does not exist" in str(exc).lower():
+            return []  # migration 083 not yet applied
+        raise
+    return [
+        MappingRuleOut(
+            id=str(r["id"]),
+            client_id=r["client_id"],
+            match_type=r["match_type"],
+            match_value=r["match_value"],
+            priority=r["priority"],
+            enabled=r["enabled"],
+            notes=r.get("notes"),
+            created_by=r.get("created_by"),
+            created_at=r["created_at"],
+        )
+        for r in rows
+    ]
+
+
+@router.post(
+    "/fireflies/mapping-rules",
+    response_model=MappingRuleOut,
+    summary="Create Fireflies smart mapping rule",
+)
+def create_mapping_rule(
+    body: MappingRuleCreate,
+    response: Response,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
+) -> MappingRuleOut:
+    if body.match_type not in ("title_pattern", "participant_domain"):
+        raise HTTPException(422, detail="match_type must be 'title_pattern' or 'participant_domain'")
+    db = _get_db()
+    try:
+        db.table("core_fireflies_mapping_rules").select("id").limit(1).execute()
+    except Exception as exc:
+        if "42P01" in str(exc) or "does not exist" in str(exc).lower():
+            raise HTTPException(503, detail="MIGRATION_083_PENDING: apply migrations/083_fireflies_mapping_rules.sql in Supabase SQL Editor first")
+        raise
+    # Idempotent upsert on (client_id, match_type, match_value)
+    existing = (
+        db.table("core_fireflies_mapping_rules")
+        .select("*")
+        .eq("client_id", body.client_id)
+        .eq("match_type", body.match_type)
+        .eq("match_value", body.match_value)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        r = existing.data[0]
+        response.status_code = 200
+    else:
+        res = db.table("core_fireflies_mapping_rules").insert({
+            "client_id":   body.client_id,
+            "match_type":  body.match_type,
+            "match_value": body.match_value,
+            "priority":    body.priority,
+            "enabled":     True,
+            "notes":       body.notes,
+            "created_by":  _auth.scope,
+        }).execute()
+        r = res.data[0]
+        response.status_code = 201
+    return MappingRuleOut(
+        id=str(r["id"]),
+        client_id=r["client_id"],
+        match_type=r["match_type"],
+        match_value=r["match_value"],
+        priority=r["priority"],
+        enabled=r["enabled"],
+        notes=r.get("notes"),
+        created_by=r.get("created_by"),
+        created_at=r["created_at"],
+    )
+
+
+@router.delete(
+    "/fireflies/mapping-rules/{rule_id}",
+    status_code=204,
+    summary="Delete Fireflies smart mapping rule",
+)
+def delete_mapping_rule(
+    rule_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)],
+) -> None:
+    db = _get_db()
+    existing = (
+        db.table("core_fireflies_mapping_rules")
+        .select("id")
+        .eq("id", rule_id)
+        .limit(1)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(404, detail=f"rule not found: {rule_id!r}")
+    db.table("core_fireflies_mapping_rules").delete().eq("id", rule_id).execute()
 
 
 # ── Phase 7 — Tracking Ingestion ─────────────────────────────────────────────
