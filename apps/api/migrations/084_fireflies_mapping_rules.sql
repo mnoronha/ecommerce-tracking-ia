@@ -1,4 +1,4 @@
--- Migration 083 — Fireflies smart client mapping rules
+-- Migration 084 — Fireflies smart client mapping rules
 -- Applied: pending
 
 -- 1. Rule-based client resolution (title_pattern + participant_domain)

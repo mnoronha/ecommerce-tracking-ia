@@ -1,10 +1,10 @@
 """
-Apply migration 083 (core_fireflies_mapping_rules) via Supabase REST API.
+Apply migration 084 (core_fireflies_mapping_rules) via Supabase REST API.
 Uses service-role key for DDL execution via the SQL endpoint.
 
 Usage:
   cd apps/api
-  railway run -- python -u scripts/_apply_migration_083.py
+  railway run -- python -u scripts/_apply_migration_084.py
 """
 import os, sys, json, urllib.request, urllib.error
 sys.stdout.reconfigure(encoding="utf-8")
@@ -21,14 +21,14 @@ if not SUPABASE_URL or not SERVICE_KEY:
     sys.exit(1)
 
 # Read migration SQL
-sql_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "083_fireflies_mapping_rules.sql")
+sql_path = os.path.join(os.path.dirname(__file__), "..", "migrations", "084_fireflies_mapping_rules.sql")
 with open(sql_path) as f:
     sql = f.read()
 
 # Supabase exposes a /rest/v1/rpc/exec_sql endpoint (only on Pro/Enterprise)
 # For free/starter: use the pg connection string instead
 # Try the query endpoint
-print("Applying migration 083...")
+print("Applying migration 084...")
 print(f"  Supabase URL: {SUPABASE_URL[:40]}…")
 
 # Check if the table already exists first

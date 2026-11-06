@@ -132,7 +132,7 @@ if not CORE_MEETING_ID:
     print("  Possible causes:")
     print("  - Mapping not configured before webhook fired")
     print("  - Fireflies API key expired")
-    print("  - Migration 083 not applied yet (mapping-rules table missing)")
+    print("  - Migration 084 not applied yet (mapping-rules table missing)")
     sys.exit(1)
 
 p("Meeting ingested to core_meetings", PASS, f"core_meeting_id={CORE_MEETING_ID[:20]}…")

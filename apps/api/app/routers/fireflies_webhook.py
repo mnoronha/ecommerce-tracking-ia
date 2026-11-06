@@ -83,7 +83,7 @@ def _resolve_client(
                 .data or []
             )
         except Exception:
-            # table may not exist yet (migration 083 pending)
+            # table may not exist yet (migration 084 pending)
             rules = []
 
         if rules:

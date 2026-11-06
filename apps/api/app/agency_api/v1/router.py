@@ -6011,7 +6011,7 @@ def list_mapping_rules(
         rows = q.order("priority").order("created_at").limit(limit).execute().data or []
     except Exception as exc:
         if "42P01" in str(exc) or "does not exist" in str(exc).lower():
-            return []  # migration 083 not yet applied
+            return []  # migration 084 not yet applied
         raise
     return [
         MappingRuleOut(
@@ -6046,7 +6046,7 @@ def create_mapping_rule(
         db.table("core_fireflies_mapping_rules").select("id").limit(1).execute()
     except Exception as exc:
         if "42P01" in str(exc) or "does not exist" in str(exc).lower():
-            raise HTTPException(503, detail="MIGRATION_083_PENDING: apply migrations/083_fireflies_mapping_rules.sql in Supabase SQL Editor first")
+            raise HTTPException(503, detail="MIGRATION_084_PENDING: apply migrations/084_fireflies_mapping_rules.sql in Supabase SQL Editor first")
         raise
     # Idempotent upsert on (client_id, match_type, match_value)
     existing = (
