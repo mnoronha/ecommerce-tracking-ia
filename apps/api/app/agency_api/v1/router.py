@@ -3794,6 +3794,17 @@ def create_learning_candidate(
     db = _get_db()
     scope_str = str(body.scope)
 
+    canonical_client_id = None
+    if body.client_id is not None:
+        if _is_valid_uuid(body.client_id):
+            result = db.table("clients").select("id").eq("id", body.client_id).limit(1).execute()
+            client = result.data[0] if result.data else None
+        else:
+            client = _load_client_meta(body.client_id)
+        if not client:
+            raise HTTPException(404, "client not found")
+        canonical_client_id = str(client["id"])
+
     def _lc_lookup(sa_id, sr_id, out_id):
         """SELECT-before-INSERT using the canonical 060 index key."""
         try:
@@ -3808,8 +3819,8 @@ def create_learning_candidate(
                     q = q.eq("outcome_id", out_id)
                 else:
                     q = q.is_("outcome_id", "null")
-                if body.client_id:
-                    q = q.eq("client_id", body.client_id)
+                if canonical_client_id:
+                    q = q.eq("client_id", canonical_client_id)
                 res = q.limit(1).execute()
             elif sr_id:
                 q = (
@@ -3823,8 +3834,8 @@ def create_learning_candidate(
                     q = q.eq("outcome_id", out_id)
                 else:
                     q = q.is_("outcome_id", "null")
-                if body.client_id:
-                    q = q.eq("client_id", body.client_id)
+                if canonical_client_id:
+                    q = q.eq("client_id", canonical_client_id)
                 res = q.limit(1).execute()
             else:
                 return None
@@ -3842,7 +3853,7 @@ def create_learning_candidate(
         "evidence_level":           str(body.evidence_level),
         "evidence_refs":            body.evidence_refs,
         "context":                  body.context,
-        "client_id":                body.client_id,
+        "client_id":                canonical_client_id,
         "visibility_scope":         str(body.visibility_scope),
         "source_action_id":         body.source_action_id,
         "source_recommendation_id": body.source_recommendation_id,
