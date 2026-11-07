@@ -5476,23 +5476,17 @@ def ingest_transcript(
     }
 
 
-@router.post(
-    "/meetings/{meeting_id}/process",
-    response_model=MeetingSummaryOut,
-    status_code=201,
-    summary="Submit structured summary and decisions for a meeting",
-)
-def process_meeting(
+def _do_process_meeting(
+    db,
     meeting_id: str,
     body: MeetingProcessCreate,
-    response: Response,
-    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+    response: Optional[Response] = None,
 ) -> MeetingSummaryOut:
-    """Accept structured processor output (summary, decisions, commitments).
-    Idempotent: if a summary already exists, returns it unchanged (replayed=True).
-    If create_tasks=True, creates canonical Task entries from commitments;
-    each entry in tasks_created carries status=created|failed and reason on failure."""
-    db = _get_db()
+    """Shared core logic for /process and /analyze endpoints.
+
+    Idempotent: returns existing summary (replayed=True) if already processed.
+    When response is provided, sets status_code=200 on idempotent return.
+    """
     import json as _json
 
     meet_res = db.table("core_meetings").select("id, client_id").eq("id", meeting_id).limit(1).execute()
@@ -5500,7 +5494,6 @@ def process_meeting(
         raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
     client_slug = meet_res.data[0]["client_id"]
 
-    # Idempotency guard — return existing summary without touching tasks.
     existing_res = (
         db.table("core_meeting_summaries").select("*")
         .eq("meeting_id", meeting_id)
@@ -5511,7 +5504,8 @@ def process_meeting(
         out.replayed = True
         out.processor_manual_status = "AVAILABLE"
         out.processor_claude_status = _claude_processor_status()
-        response.status_code = 200
+        if response is not None:
+            response.status_code = 200
         return out
 
     now = datetime.now(timezone.utc).isoformat()
@@ -5543,7 +5537,7 @@ def process_meeting(
                 entry["task_id"] = str(tid)
             except Exception as exc:
                 err_msg = str(exc).lower()
-                logger.warning("process_meeting: task creation failed for %r: %s", task_title, exc)
+                logger.warning("_do_process_meeting: task creation failed for %r: %s", task_title, exc)
                 entry["status"] = "failed"
                 entry["reason"] = (
                     "UNIQUE_VIOLATION"
@@ -5567,7 +5561,7 @@ def process_meeting(
         sum_res = db.table("core_meeting_summaries").insert(sum_row).execute()
         created_sum = sum_res.data[0]
     except Exception as exc:
-        logger.error("process_meeting: summary insert failed for %s: %s", meeting_id, exc)
+        logger.error("_do_process_meeting: summary insert failed for %s: %s", meeting_id, exc)
         raise HTTPException(503, detail="meeting process failed")
 
     db.table("core_meetings").update({
@@ -5579,6 +5573,96 @@ def process_meeting(
     out.processor_manual_status = "AVAILABLE"
     out.processor_claude_status = _claude_processor_status()
     return out
+
+
+@router.post(
+    "/meetings/{meeting_id}/process",
+    response_model=MeetingSummaryOut,
+    status_code=201,
+    summary="Submit structured summary and decisions for a meeting",
+)
+def process_meeting(
+    meeting_id: str,
+    body: MeetingProcessCreate,
+    response: Response,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> MeetingSummaryOut:
+    """Accept structured processor output (summary, decisions, commitments).
+    Idempotent: if a summary already exists, returns it unchanged (replayed=True).
+    If create_tasks=True, creates canonical Task entries from commitments;
+    each entry in tasks_created carries status=created|failed and reason on failure."""
+    return _do_process_meeting(_get_db(), meeting_id, body, response)
+
+
+@router.post(
+    "/meetings/{meeting_id}/analyze",
+    response_model=MeetingSummaryOut,
+    status_code=201,
+    summary="Auto-analyze a meeting transcript with Claude",
+)
+def analyze_meeting(
+    meeting_id: str,
+    response: Response,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> MeetingSummaryOut:
+    """Fetch stored transcript and analyze it with Claude.
+
+    Idempotent: if a summary already exists, returns it unchanged (replayed=True).
+    Returns 503 if Claude is not available (missing key or credits exhausted).
+    Returns 404 if meeting or transcript not found.
+    """
+    db = _get_db()
+
+    status = _claude_processor_status()
+    if status != "LIVE":
+        raise HTTPException(503, detail=f"Claude processor unavailable: {status}")
+
+    meet_res = db.table("core_meetings").select("id, client_id, title").eq("id", meeting_id).limit(1).execute()
+    if not (meet_res and meet_res.data):
+        raise HTTPException(404, detail=f"meeting not found: {meeting_id!r}")
+    meeting_row = meet_res.data[0]
+
+    # Idempotency guard before calling Claude
+    existing_res = (
+        db.table("core_meeting_summaries").select("*")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if existing_res.data:
+        out = _summary_row_to_out(existing_res.data[0])
+        out.replayed = True
+        out.processor_manual_status = "AVAILABLE"
+        out.processor_claude_status = status
+        response.status_code = 200
+        return out
+
+    tr_res = (
+        db.table("core_meeting_transcripts")
+        .select("raw_text")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if not (tr_res and tr_res.data):
+        raise HTTPException(404, detail="transcript not found for meeting")
+    raw_text = (tr_res.data[0].get("raw_text") or "").strip()
+    if not raw_text:
+        raise HTTPException(400, detail="transcript is empty")
+
+    from ...core.meeting_analysis import analyze_transcript
+    try:
+        payload = analyze_transcript(
+            transcript_text=raw_text,
+            meeting_title=meeting_row.get("title") or "",
+            client_id=meeting_row["client_id"],
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(503, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, detail=str(exc))
+
+    payload.create_tasks = True
+    return _do_process_meeting(db, meeting_id, payload, response)
 
 
 # ── Fireflies Admin ───────────────────────────────────────────────────────────

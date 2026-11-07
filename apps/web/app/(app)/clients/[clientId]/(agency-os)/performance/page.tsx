@@ -211,6 +211,7 @@ const ERROR_COPY: Record<ReportErrorCode, { title: string; body: string }> = {
 
 function ErrorState({ code, clientId }: { code: ReportErrorCode; clientId: string }) {
   const copy = ERROR_COPY[code] ?? ERROR_COPY.unavailable
+  const isError = code === 'unavailable'
   return (
     <div className="p-8 max-w-2xl">
       <Link href={`/clients/${clientId}/dashboard`} className="inline-flex items-center gap-1.5 text-slate-500 hover:text-white text-xs mb-8 transition-colors">
@@ -220,13 +221,20 @@ function ErrorState({ code, clientId }: { code: ReportErrorCode; clientId: strin
         <Link href={`/clients/${clientId}/performance?type=weekly`}>Semanal</Link>
         <Link href={`/clients/${clientId}/performance?type=monthly`}>Mensal</Link>
       </nav>
-      <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6">
-        <div className="flex items-center gap-2 mb-3">
-          <AlertTriangle size={16} className="text-red-400" />
-          <span className="font-semibold text-red-300">{copy.title}</span>
+      {isError ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-6">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle size={16} className="text-red-400" />
+            <span className="font-semibold text-red-300">{copy.title}</span>
+          </div>
+          <p className="text-sm text-slate-400">{copy.body}</p>
         </div>
-        <p className="text-sm text-slate-400">{copy.body}</p>
-      </div>
+      ) : (
+        <div className="rounded-xl border border-[#2a2f3e] bg-[#1a1f2e] p-6">
+          <span className="font-semibold text-slate-300">{copy.title}</span>
+          <p className="text-sm text-slate-500 mt-1">{copy.body}</p>
+        </div>
+      )}
     </div>
   )
 }

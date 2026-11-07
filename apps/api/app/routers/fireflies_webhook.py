@@ -136,6 +136,22 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
             fireflies_meeting_id, client_id, meeting_id,
         )
 
+        if (
+            os.getenv("FIREFLIES_AUTO_ANALYZE", "").lower() in ("1", "true", "yes")
+            and os.getenv("ANTHROPIC_CREDITS_OK", "").lower() in ("1", "true", "yes")
+        ):
+            try:
+                _auto_analyze_meeting(
+                    meeting_id=meeting_id,
+                    client_id=client_id,
+                    meeting_title=transcript.get("title") or f"Reunião {fireflies_meeting_id[:8]}",
+                    db=db,
+                )
+            except Exception as _ae:
+                logger.warning(
+                    "fireflies: auto-analyze failed for %s: %s", meeting_id, _ae
+                )
+
     except Exception as exc:
         logger.error("fireflies: failed processing event %s: %s", event_id, exc)
         try:
@@ -146,6 +162,69 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
             }).eq("id", event_id).execute()
         except Exception:
             pass
+
+
+def _auto_analyze_meeting(
+    meeting_id: str,
+    client_id: str,
+    meeting_title: str,
+    db,
+) -> None:
+    """Analyze a stored transcript with Claude and persist the summary.
+
+    No-op if a summary already exists (idempotent).
+    Does NOT create tasks — the resulting summary can be processed later.
+    """
+    import json as _json
+    from ..core.meeting_analysis import analyze_transcript
+
+    existing = (
+        db.table("core_meeting_summaries")
+        .select("id").eq("meeting_id", meeting_id).limit(1).execute()
+    )
+    if existing.data:
+        logger.info("fireflies: auto-analyze noop (summary exists) for %s", meeting_id)
+        return
+
+    tr_res = (
+        db.table("core_meeting_transcripts")
+        .select("raw_text")
+        .eq("meeting_id", meeting_id)
+        .order("created_at", desc=True).limit(1).execute()
+    )
+    if not (tr_res and tr_res.data):
+        logger.warning("fireflies: auto-analyze noop (no transcript) for %s", meeting_id)
+        return
+    raw_text = (tr_res.data[0].get("raw_text") or "").strip()
+    if not raw_text:
+        return
+
+    payload = analyze_transcript(
+        transcript_text=raw_text,
+        meeting_title=meeting_title,
+        client_id=client_id,
+        db=db,
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    sum_row = {
+        "meeting_id":     meeting_id,
+        "summary":        payload.summary,
+        "decisions":      _json.dumps([d.model_dump(mode="json", exclude_none=True) for d in payload.decisions]),
+        "open_questions": _json.dumps(payload.open_questions),
+        "commitments":    _json.dumps([c.model_dump(mode="json", exclude_none=True) for c in payload.commitments]),
+        "follow_ups":     _json.dumps([f.model_dump(mode="json", exclude_none=True) for f in payload.follow_ups]),
+        "tasks_created":  _json.dumps([]),
+        "processor":      "claude",
+        "created_at":     now,
+    }
+    db.table("core_meeting_summaries").insert(sum_row).execute()
+    db.table("core_meetings").update({
+        "processing_status": "done",
+        "updated_at":        now,
+    }).eq("id", meeting_id).execute()
+
+    logger.info("fireflies: auto-analyze complete for meeting %s", meeting_id)
 
 
 def _create_meeting(
