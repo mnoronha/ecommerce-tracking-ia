@@ -180,12 +180,24 @@ export default function MeetingsPage() {
                         {createdTasks.length > 0 && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-500/20 text-indigo-400 flex items-center gap-1">
                             <CheckSquare size={9} />
-                            {createdTasks.length} task{createdTasks.length !== 1 ? 's' : ''}
+                            {createdTasks.length} tarefa{createdTasks.length !== 1 ? 's' : ''}
                           </span>
                         )}
                         <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-500/10 text-slate-500 capitalize">
                           {meeting.provider.toLowerCase()}
                         </span>
+                        {meeting.transcript_status === 'complete'
+                          ? <span className="px-2 py-0.5 rounded-full text-[10px] bg-green-500/15 text-green-400">transcrição</span>
+                          : meeting.transcript_status === 'processing'
+                          ? <span className="px-2 py-0.5 rounded-full text-[10px] bg-yellow-500/15 text-yellow-400">transcrevendo</span>
+                          : null
+                        }
+                        {meeting.processing_status === 'done'
+                          ? <span className="px-2 py-0.5 rounded-full text-[10px] bg-indigo-500/15 text-indigo-400">analisada</span>
+                          : meeting.processing_status === 'processing'
+                          ? <span className="px-2 py-0.5 rounded-full text-[10px] bg-yellow-500/15 text-yellow-400">analisando</span>
+                          : null
+                        }
                       </div>
                       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
                         <span>{fmtDate(meeting.started_at)}</span>
@@ -303,7 +315,7 @@ export default function MeetingsPage() {
 
                     {tasks.length > 0 && (
                       <div>
-                        <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Tasks geradas</p>
+                        <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Tarefas geradas</p>
                         <ul className="space-y-1.5">
                           {tasks.map((t, i) => (
                             <li key={i} className="flex items-start gap-2 text-sm">

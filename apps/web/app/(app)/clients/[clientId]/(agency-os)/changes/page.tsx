@@ -168,8 +168,18 @@ const PLATFORM_ACCENT: Record<string, string> = {
 
 const SOURCE_BADGE: Record<string, string> = {
   MANUAL:            'bg-violet-500/15 text-violet-300 border border-violet-500/25',
-  PLATFORM_DETECTED: 'bg-slate-500/10 text-slate-500',
-  HUMAN:             'bg-slate-500/10 text-slate-500',
+  PLATFORM_DETECTED: 'bg-slate-500/10 text-slate-400',
+  HUMAN:             'bg-slate-500/10 text-slate-400',
+  HERMES:            'bg-indigo-500/10 text-indigo-400',
+  AUTOMATION:        'bg-sky-500/10 text-sky-400',
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  MANUAL:            'Manual',
+  PLATFORM_DETECTED: 'Detectada',
+  HUMAN:             'Detectada',
+  HERMES:            'Hermes',
+  AUTOMATION:        'Automação',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -446,9 +456,9 @@ function HistoricoTab({ clientId }: { clientId: string }) {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${CHANGE_TYPE_BADGE[ch.change_type] ?? CHANGE_TYPE_BADGE.OTHER}`}>
                         {CHANGE_TYPE_LABEL[ch.change_type] ?? ch.change_type.replace(/_/g, ' ')}
                       </span>
-                      {ch.source === 'MANUAL' && (
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${SOURCE_BADGE.MANUAL}`}>
-                          MANUAL
+                      {ch.source && SOURCE_BADGE[ch.source] && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${SOURCE_BADGE[ch.source]}`}>
+                          {SOURCE_LABEL[ch.source] ?? ch.source}
                         </span>
                       )}
                       {ch.channel && (
@@ -484,7 +494,7 @@ function HistoricoTab({ clientId }: { clientId: string }) {
                       </div>
                       <div>
                         <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Fonte</p>
-                        <p className="text-slate-300">{ch.source}</p>
+                        <p className="text-slate-300">{SOURCE_LABEL[ch.source] ?? ch.source}</p>
                       </div>
                       <div>
                         <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-0.5">Confiança</p>
