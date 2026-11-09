@@ -6,7 +6,7 @@ import { useClientConfig } from '@/lib/use-client-config'
 import { CriticalAlertsBar } from '@/components/alerts/critical-alerts-bar'
 import {
   LayoutDashboard, TrendingUp, FileText, Target, History, Calendar, Settings,
-  ArrowLeft, BarChart2, Share2, Search,
+  ArrowLeft, BarChart2, Share2, Search, Lightbulb, BookOpen,
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -31,8 +31,10 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
     { href: `${base}/creatives`,         label: 'Criativos',    icon: BarChart2,  match: ['creatives'] },
     { href: `${base}/canonical-reports`, label: 'Relatórios',   icon: FileText,   match: ['canonical-reports'] },
     { href: `${base}/actions`,           label: 'Ações',        icon: Target,     match: ['actions'] },
-    { href: `${base}/changes`,           label: 'Mudanças',     icon: History,    match: ['changes'] },
-    { href: `${base}/meetings`,          label: 'Reuniões',     icon: Calendar,   match: ['meetings'] },
+    { href: `${base}/changes`,             label: 'Mudanças',       icon: History,    match: ['changes'] },
+    { href: `${base}/meetings`,           label: 'Reuniões',       icon: Calendar,   match: ['meetings'] },
+    { href: `${base}/recommendations`,    label: 'Recomendações',  icon: Lightbulb,  match: ['recommendations'] },
+    { href: `${base}/learning-candidates`, label: 'Aprendizados',  icon: BookOpen,   match: ['learning-candidates'] },
     {
       href: `${base}/settings`,
       label: 'Configurações',
