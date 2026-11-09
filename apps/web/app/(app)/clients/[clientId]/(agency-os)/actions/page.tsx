@@ -62,7 +62,7 @@ type PendingDecision = {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const PRIORITY_ORDER: Record<string, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 }
-const PRIORITY_LABEL: Record<string, string>  = { HIGH: 'P0', MEDIUM: 'P1', LOW: 'P2' }
+const PRIORITY_LABEL: Record<string, string>  = { HIGH: 'Alta', MEDIUM: 'Média', LOW: 'Baixa' }
 const PRIORITY_BADGE: Record<string, string>  = {
   HIGH:   'bg-red-500/15 text-red-400 border border-red-500/30',
   MEDIUM: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/30',
@@ -75,6 +75,11 @@ const STATUS_BADGE: Record<string, string> = {
   REJECTED: 'bg-red-500/15 text-red-400',
   DEFERRED: 'bg-amber-500/15 text-amber-400',
   EXECUTED: 'bg-sky-500/15 text-sky-400',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  PROPOSED: 'Proposta', APPROVED: 'Aprovada', REJECTED: 'Rejeitada',
+  DEFERRED: 'Adiada',  EXECUTED: 'Executada',
 }
 
 const TASK_STATUS_BADGE: Record<string, string> = {
@@ -213,7 +218,7 @@ function RecomendacoesTab({ recs, onUpdated }: { recs: Recommendation[]; onUpdat
                     {PRIORITY_LABEL[rec.priority] ?? rec.priority}
                   </span>
                   <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${STATUS_BADGE[rec.status] ?? 'bg-slate-500/15 text-slate-400'}`}>
-                    {rec.status}
+                    {STATUS_LABEL[rec.status] ?? rec.status}
                   </span>
                 </div>
                 <p className="text-sm font-medium text-white leading-snug">{rec.title}</p>
@@ -454,14 +459,14 @@ function OutcomesTab({ events, recs }: { events: ActionEvent[]; recs: Recommenda
   if (executed.length === 0) return (
     <EmptyState
       icon={<BarChart2 size={28} />}
-      message="Nenhum outcome registrado. Outcomes são gerados automaticamente após execução e janela de avaliação."
+      message="Nenhum resultado registrado. Resultados são gerados automaticamente após execução e janela de avaliação."
     />
   )
 
   return (
     <div className="space-y-3">
       <p className="text-[10px] text-slate-500">
-        {executed.length} ação(ões) executada(s) · outcomes pendentes de avaliação automática
+        {executed.length} ação(ões) executada(s) · resultados pendentes de avaliação automática
       </p>
       <div className="space-y-1.5">
         {executed.map(ev => {
@@ -472,7 +477,7 @@ function OutcomesTab({ events, recs }: { events: ActionEvent[]; recs: Recommenda
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 mb-1">
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700/40 text-slate-400 font-medium">
-                      PENDING
+                      Pendente
                     </span>
                   </div>
                   {rec ? (
@@ -502,7 +507,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'recomendacoes', label: 'Recomendações', icon: <Lightbulb size={12} /> },
   { id: 'tarefas',       label: 'Tarefas',        icon: <ClipboardList size={12} /> },
   { id: 'executadas',    label: 'Executadas',      icon: <CheckCircle2 size={12} /> },
-  { id: 'outcomes',      label: 'Outcomes',        icon: <BarChart2 size={12} /> },
+  { id: 'outcomes',      label: 'Resultados',       icon: <BarChart2 size={12} /> },
 ]
 
 export default function ActionsPage() {

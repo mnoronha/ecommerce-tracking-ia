@@ -154,8 +154,33 @@ export default function ClientSettingsPage() {
     setDsLoading(true)
     try {
       const res = await fetch(`/api/v1/canonical-reports/delivery-settings?client_id=${clientId}`)
-      if (res.ok) setDsSettings(await res.json())
-    } catch {}
+      if (res.ok) {
+        setDsSettings(await res.json())
+      } else {
+        // No settings row yet — show UI with defaults so user can configure
+        setDsSettings({
+          weekly_enabled: false,
+          monthly_enabled: false,
+          weekly_day_of_week: 1,
+          weekly_hour: 8,
+          monthly_day_of_month: 5,
+          monthly_hour: 8,
+          report_timezone: 'America/Sao_Paulo',
+          recipients: [],
+        })
+      }
+    } catch {
+      setDsSettings({
+        weekly_enabled: false,
+        monthly_enabled: false,
+        weekly_day_of_week: 1,
+        weekly_hour: 8,
+        monthly_day_of_month: 5,
+        monthly_hour: 8,
+        report_timezone: 'America/Sao_Paulo',
+        recipients: [],
+      })
+    }
     finally { setDsLoading(false) }
   }, [clientId])
 

@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import {
   FileText, CheckCircle, XCircle, Clock, Send, Download,
   RefreshCw, AlertTriangle, X, Eye, Loader2, History,
   TrendingUp, Target, Info, BarChart2, Lightbulb, ChevronDown,
-  ChevronRight, Calendar,
+  ChevronRight, Calendar, Settings,
 } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -1099,10 +1100,18 @@ export default function CanonicalReportsPage() {
             <p className="text-xs text-slate-500">Relatórios canônicos — lifecycle completo</p>
           </div>
         </div>
-        <button onClick={loadReports} disabled={loading} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-white transition-colors">
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
-          Atualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/clients/${clientId}/settings`}
+            className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white border border-[#2a2f3e] rounded-lg px-3 py-1.5 transition-colors"
+          >
+            <Settings size={12} /> Configurar envio
+          </Link>
+          <button onClick={loadReports} disabled={loading} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-white transition-colors">
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+            Atualizar
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
