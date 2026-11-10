@@ -798,6 +798,153 @@ def _write_contract(
         return None
 
 
+# ── Recommendation materialisation ────────────────────────────────────────────
+
+def _load_client_uuid(sb, client_id: str) -> Optional[str]:
+    """Return the UUID (`id`) for a client slug, or None if not found."""
+    try:
+        res = (
+            sb.table("clients")
+            .select("id")
+            .eq("client_id", client_id)
+            .single()
+            .execute()
+        )
+        row = res.data or {}
+        return str(row["id"]) if row.get("id") else None
+    except Exception:
+        return None
+
+
+def _materialize_dr_recommendations(
+    sb,
+    client_id:   str,
+    client_uuid: Optional[str],
+    period_end:  date,
+    contract:    dict,
+    contract_id: str,
+) -> int:
+    """
+    Materialise weekly DR actions → core_diagnoses + core_recommendations.
+
+    Idempotency key: dr:{client_id}:{period_end}:{code}
+    Uses contract_id as synthetic alert_id on core_diagnoses (no FK enforcement).
+    Never touches recommendations that are already APPROVED / REJECTED / DEFERRED.
+    """
+    diagnoses_json = contract.get("section_f_diagnoses") or []
+    actions_json   = contract.get("section_g_recommended_actions") or []
+    if not actions_json:
+        return 0
+
+    code_to_diag = {d.get("code"): d for d in diagnoses_json if d.get("code")}
+    materialized = 0
+
+    for action in actions_json:
+        code = action.get("code")
+        if not code:
+            continue
+
+        rec_fp  = f"dr:{client_id}:{period_end.isoformat()}:{code}"
+        diag_fp = f"dr-diag:{client_id}:{period_end.isoformat()}:{code}"
+
+        # Idempotency: skip if recommendation already exists (any status)
+        try:
+            dup = (
+                sb.table("core_recommendations")
+                .select("id, status")
+                .eq("fingerprint", rec_fp)
+                .limit(1)
+                .execute()
+            )
+            if dup and dup.data:
+                continue
+        except Exception:
+            pass
+
+        # Ensure core_diagnoses row exists
+        diagnosis_id: Optional[str] = None
+        try:
+            dup_diag = (
+                sb.table("core_diagnoses")
+                .select("id")
+                .eq("fingerprint", diag_fp)
+                .limit(1)
+                .execute()
+            )
+            if dup_diag and dup_diag.data:
+                diagnosis_id = str(dup_diag.data[0]["id"])
+        except Exception:
+            pass
+
+        if not diagnosis_id:
+            diag_data = code_to_diag.get(code, {})
+            summary   = (
+                diag_data.get("finding")
+                or diag_data.get("summary")
+                or action.get("action", "")
+            )[:500]
+            confidence = (
+                "HIGH"
+                if diag_data.get("severity") in ("critical", "high")
+                else "MEDIUM"
+            )
+            try:
+                diag_ins = sb.table("core_diagnoses").insert({
+                    "alert_id":              contract_id,
+                    "client_id":             client_uuid,
+                    "status":                "OPEN",
+                    "summary":               summary,
+                    "root_cause_hypotheses": [],
+                    "evidence":              {"contract_id": contract_id, "code": code},
+                    "confidence":            confidence,
+                    "limitations":           None,
+                    "fingerprint":           diag_fp,
+                    "created_by":            "weekly_deep_review",
+                }).execute()
+                diag_row = diag_ins.data[0] if (diag_ins and diag_ins.data) else None
+                diagnosis_id = str(diag_row["id"]) if diag_row else None
+            except Exception as exc:
+                logger.warning(
+                    "weekly_deep_review: diag materialisation failed %s %s: %s",
+                    client_id, code, exc,
+                )
+                continue
+
+        if not diagnosis_id:
+            continue
+
+        # Insert recommendation
+        diag_data = code_to_diag.get(code, {})
+        try:
+            sb.table("core_recommendations").insert({
+                "diagnosis_id":            diagnosis_id,
+                "alert_id":                contract_id,
+                "client_id":               client_uuid,
+                "title":                   action.get("action", "")[:200],
+                "action":                  action.get("action", ""),
+                "rationale":               (diag_data.get("finding") or "")[:500],
+                "priority":                action.get("priority", "MEDIUM"),
+                "risk":                    action.get("risk", "LOW"),
+                "expected_impact":         action.get("expected_effect"),
+                "requires_human_approval": True,
+                "status":                  "PROPOSED",
+                "fingerprint":             rec_fp,
+                "created_by":              "weekly_deep_review",
+            }).execute()
+            materialized += 1
+        except Exception as exc:
+            logger.warning(
+                "weekly_deep_review: rec materialisation failed %s %s: %s",
+                client_id, code, exc,
+            )
+
+    logger.info(
+        "weekly_deep_review: materialised %d/%d recommendations for %s %s",
+        materialized, len(actions_json), client_id, period_end,
+    )
+    return materialized
+
+
 # ── Job tracking ───────────────────────────────────────────────────────────────
 
 def _insert_running_job(sb, client_id: str, period_end: date) -> Optional[str]:
@@ -854,7 +1001,12 @@ def run_weekly_deep_review_for_client(
     run_id = f"{_JOB_TYPE}:{client_id}:{period_end.isoformat()}"
     try:
         contract    = build_weekly_deep_review(client_id, period_start, period_end)
-        _write_contract(sb, client_id, period_start, period_end, contract, source_run_id=run_id)
+        contract_id = _write_contract(sb, client_id, period_start, period_end, contract, source_run_id=run_id)
+        if contract_id and contract.get("review_status") not in ("BLOCKED",):
+            client_uuid = _load_client_uuid(sb, client_id)
+            _materialize_dr_recommendations(
+                sb, client_id, client_uuid, period_end, contract, contract_id
+            )
         status = "SUCCEEDED"
         error  = None
         logger.info(

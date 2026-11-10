@@ -35,6 +35,8 @@ from app.core.weekly_deep_review import (
     _build_section_d,
     _build_watchlist,
     _build_section_c,
+    _load_client_uuid,
+    _materialize_dr_recommendations,
     _MAX_ACTIONS,
     _MAX_DIAGNOSES,
     build_weekly_deep_review,
@@ -516,3 +518,226 @@ class TestBuildWeeklyDeepReview:
         ]
         for s in required_sections:
             assert s in result, f"section {s!r} missing from contract"
+
+
+# ── Materialisation tests ──────────────────────────────────────────────────────
+
+CONTRACT_ID  = str(uuid.uuid4())
+LK_UUID_FAKE = str(uuid.uuid4())
+
+_SAMPLE_CONTRACT = {
+    "section_f_diagnoses": [
+        {"id": str(uuid.uuid4()), "code": "SPEND_DROP",      "finding": "Gasto caiu 20%", "severity": "high"},
+        {"id": str(uuid.uuid4()), "code": "CAMPAIGN_PAUSED", "finding": "2 campanhas pausadas"},
+    ],
+    "section_g_recommended_actions": [
+        {
+            "id": str(uuid.uuid4()), "code": "SPEND_DROP", "action": "Verificar campanhas pausadas",
+            "priority": "HIGH", "risk": "LOW", "expected_effect": "Restaurar spend",
+            "status": "PROPOSED", "requires_human_approval": True,
+        },
+        {
+            "id": str(uuid.uuid4()), "code": "CAMPAIGN_PAUSED", "action": "Confirmar pausas intencionais",
+            "priority": "MEDIUM", "risk": "LOW", "expected_effect": "Clareza operacional",
+            "status": "PROPOSED", "requires_human_approval": True,
+        },
+    ],
+}
+
+
+def _make_sb_materialise(
+    rec_dup_data=None,
+    diag_dup_data=None,
+    client_uuid_data=None,
+) -> MagicMock:
+    """
+    Build a Supabase mock for materialisation tests.
+
+    Call sequence per action:
+      1. core_recommendations.select.eq(fingerprint).limit.execute  → rec dup check
+      2. core_diagnoses.select.eq(fingerprint).limit.execute        → diag dup check
+      3. core_diagnoses.insert.execute                              → diag insert
+      4. core_recommendations.insert.execute                        → rec insert
+    """
+    sb = MagicMock()
+
+    # --- core_recommendations fingerprint dup check ---
+    rec_dup_res = MagicMock()
+    rec_dup_res.data = rec_dup_data  # None or [] → not duplicate; list with item → duplicate
+
+    # --- core_diagnoses fingerprint dup check ---
+    diag_dup_res = MagicMock()
+    diag_dup_res.data = diag_dup_data  # None or [] → not found; list with item → found
+
+    # --- core_diagnoses insert ---
+    diag_insert_res = MagicMock()
+    diag_insert_res.data = [{"id": str(uuid.uuid4())}]
+
+    # --- core_recommendations insert ---
+    rec_insert_res = MagicMock()
+    rec_insert_res.data = [{"id": str(uuid.uuid4())}]
+
+    # Wire: table("core_recommendations").select().eq().limit().execute()
+    rec_sel_chain = MagicMock()
+    rec_sel_chain.execute.return_value = rec_dup_res
+    rec_insert_chain = MagicMock()
+    rec_insert_chain.execute.return_value = rec_insert_res
+
+    # Wire: table("core_diagnoses").select().eq().limit().execute()
+    diag_sel_chain = MagicMock()
+    diag_sel_chain.execute.return_value = diag_dup_res
+    diag_insert_chain = MagicMock()
+    diag_insert_chain.execute.return_value = diag_insert_res
+
+    def _table_side_effect(name):
+        t = MagicMock()
+        if name == "core_recommendations":
+            t.select.return_value.eq.return_value.limit.return_value = rec_sel_chain
+            t.insert.return_value = rec_insert_chain
+        elif name == "core_diagnoses":
+            t.select.return_value.eq.return_value.limit.return_value = diag_sel_chain
+            t.insert.return_value = diag_insert_chain
+        elif name == "clients":
+            client_res = MagicMock()
+            client_res.data = client_uuid_data or {"id": LK_UUID_FAKE}
+            t.select.return_value.eq.return_value.single.return_value.execute.return_value = client_res
+        return t
+
+    sb.table.side_effect = _table_side_effect
+    return sb
+
+
+class TestMaterializeDRRecommendations:
+    def test_materialises_all_actions(self):
+        """Happy path: 2 actions → 2 diagnoses + 2 recommendations inserted."""
+        sb = _make_sb_materialise(rec_dup_data=None, diag_dup_data=None)
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, _SAMPLE_CONTRACT, CONTRACT_ID
+        )
+        assert count == 2
+
+    def test_returns_zero_when_no_actions(self):
+        """Contract with empty section_g returns 0 immediately."""
+        contract = {**_SAMPLE_CONTRACT, "section_g_recommended_actions": []}
+        sb = _make_sb_materialise()
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, contract, CONTRACT_ID
+        )
+        assert count == 0
+
+    def test_idempotent_second_run_skips_existing(self):
+        """Fingerprint already in core_recommendations → action skipped, count=0."""
+        existing = [{"id": str(uuid.uuid4()), "status": "PROPOSED"}]
+        sb = _make_sb_materialise(rec_dup_data=existing)
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, _SAMPLE_CONTRACT, CONTRACT_ID
+        )
+        assert count == 0
+
+    def test_approved_recommendation_skipped(self):
+        """APPROVED status → action is skipped (no overwrite)."""
+        existing = [{"id": str(uuid.uuid4()), "status": "APPROVED"}]
+        sb = _make_sb_materialise(rec_dup_data=existing)
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, _SAMPLE_CONTRACT, CONTRACT_ID
+        )
+        assert count == 0
+
+    def test_reuses_existing_diagnosis(self):
+        """Diagnosis already in core_diagnoses → no second insert."""
+        existing_diag = [{"id": str(uuid.uuid4())}]
+        sb = _make_sb_materialise(rec_dup_data=None, diag_dup_data=existing_diag)
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, _SAMPLE_CONTRACT, CONTRACT_ID
+        )
+        assert count == 2
+
+    def test_skips_action_without_code(self):
+        """Action missing 'code' field is silently skipped."""
+        contract = {
+            **_SAMPLE_CONTRACT,
+            "section_g_recommended_actions": [
+                {"id": str(uuid.uuid4()), "action": "No code here", "priority": "LOW"},
+            ],
+        }
+        sb = _make_sb_materialise()
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, contract, CONTRACT_ID
+        )
+        assert count == 0
+
+    def test_fingerprint_format(self):
+        """Fingerprint on recommendation must be dr:{client}:{period_end}:{code}."""
+        inserted_fp: list[str] = []
+
+        def _table_side_effect(name):
+            t = MagicMock()
+            if name == "core_recommendations":
+                t.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = None
+                def _insert(payload):
+                    inserted_fp.append(payload.get("fingerprint", ""))
+                    r = MagicMock()
+                    r.execute.return_value = MagicMock(data=[{"id": str(uuid.uuid4())}])
+                    return r
+                t.insert.side_effect = _insert
+            elif name == "core_diagnoses":
+                t.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = None
+                t.insert.return_value.execute.return_value.data = [{"id": str(uuid.uuid4())}]
+            return t
+
+        sb = MagicMock()
+        sb.table.side_effect = _table_side_effect
+
+        # single action with known code
+        contract = {
+            "section_f_diagnoses": [{"code": "SPEND_DROP", "finding": "spend fell"}],
+            "section_g_recommended_actions": [
+                {"code": "SPEND_DROP", "action": "Check spend", "priority": "HIGH", "risk": "LOW"},
+            ],
+        }
+        _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, date(2026, 11, 8), contract, CONTRACT_ID
+        )
+        assert inserted_fp == ["dr:lk-sneakers:2026-11-08:SPEND_DROP"]
+
+    def test_diag_insert_failure_skips_recommendation(self):
+        """DB error on core_diagnoses insert → action skipped, no crash."""
+        def _table_side_effect(name):
+            t = MagicMock()
+            if name == "core_recommendations":
+                t.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = None
+            elif name == "core_diagnoses":
+                t.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = None
+                t.insert.return_value.execute.side_effect = RuntimeError("DB error")
+            return t
+
+        sb = MagicMock()
+        sb.table.side_effect = _table_side_effect
+        count = _materialize_dr_recommendations(
+            sb, "lk-sneakers", LK_UUID_FAKE, PERIOD_END, _SAMPLE_CONTRACT, CONTRACT_ID
+        )
+        assert count == 0  # all skipped due to diag failure
+
+
+class TestLoadClientUuid:
+    def test_returns_uuid_when_found(self):
+        sb = MagicMock()
+        client_res = MagicMock()
+        client_res.data = {"id": LK_UUID_FAKE}
+        sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = client_res
+        result = _load_client_uuid(sb, "lk-sneakers")
+        assert result == LK_UUID_FAKE
+
+    def test_returns_none_on_db_error(self):
+        sb = MagicMock()
+        sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.side_effect = RuntimeError("timeout")
+        result = _load_client_uuid(sb, "lk-sneakers")
+        assert result is None
+
+    def test_returns_none_when_no_data(self):
+        sb = MagicMock()
+        client_res = MagicMock()
+        client_res.data = {}
+        sb.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = client_res
+        result = _load_client_uuid(sb, "lk-sneakers")
+        assert result is None
