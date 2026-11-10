@@ -4,9 +4,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import { ArrowLeft, Loader2, TrendingUp, RefreshCw } from 'lucide-react'
 import Link from 'next/link'
-import { useDatePeriod, periodToQuery, PERIOD_LABEL, periodLabelLong, type Period } from '@/lib/use-date-range'
+import { useDatePeriod, periodToRange, PERIOD_LABEL, periodLabelLong, type Period } from '@/lib/use-date-range'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+
+function toYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 function fmtCurrency(v: number | null): string {
   if (v == null) return '—'
@@ -80,15 +84,12 @@ export default function PerformancePage() {
   const [loading, setLoading]  = useState(true)
   const [loaded,  setLoaded]   = useState(false)
 
-  const periodForApi = useMemo(() => {
-    const now = new Date()
-    if (period === 'custom' && from && to) return `${from}:${to}`
-    const d = period === '1d' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : 90
-    const start = new Date(); start.setDate(start.getDate() - d)
-    return `${start.toISOString().split('T')[0]}:${now.toISOString().split('T')[0]}`
-  }, [period, from, to])
-
-  const qs = useMemo(() => periodToQuery(period, from, to), [period, from, to])
+  // Canonical date window shared by ALL sections — eliminates period mismatch between metrics and ads APIs
+  const range = useMemo(() => periodToRange(period, from, to), [period, from, to])
+  const startStr = useMemo(() => toYMD(range.start), [range])
+  const endStr   = useMemo(() => toYMD(range.end),   [range])
+  const periodForApi = `${startStr}:${endStr}`         // format for metrics API
+  const qs           = `start=${startStr}&end=${endStr}` // format for ads / ga4 APIs
 
   const load = useCallback(async () => {
     if (!clientId) return
@@ -132,7 +133,7 @@ export default function PerformancePage() {
 
     setLoading(false)
     setLoaded(true)
-  }, [clientId, periodForApi, qs])
+  }, [clientId, startStr, endStr])
 
   useEffect(() => { load() }, [load])
 

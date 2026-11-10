@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -729,9 +729,9 @@ function SendModal({
 // ── Delivery History Drawer ──────────────────────────────────────────────────
 
 function HistoryDrawer({
-  report, deliveries, loading, onClose,
+  report, deliveries, versions, loading, onClose,
 }: {
-  report: Report; deliveries: DeliveryReceipt[]; loading: boolean; onClose: () => void
+  report: Report; deliveries: DeliveryReceipt[]; versions: Report[]; loading: boolean; onClose: () => void
 }) {
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
@@ -739,14 +739,33 @@ function HistoryDrawer({
       <div className="relative bg-[#1a1f2e] border-l border-[#2a2f3e] w-full max-w-sm h-full overflow-y-auto flex flex-col shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#2a2f3e]">
           <div>
-            <p className="text-sm font-bold text-white">Histórico de Envios</p>
-            <p className="text-[10px] text-slate-500">{periodLabel(report)} · v{report.version}</p>
+            <p className="text-sm font-bold text-white">Histórico</p>
+            <p className="text-[10px] text-slate-500">{periodLabel(report)} · v{report.version} (atual)</p>
           </div>
           <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
             <X size={16} />
           </button>
         </div>
         <div className="flex-1 p-5">
+          {/* Versões anteriores */}
+          {versions.length > 0 && (
+            <div className="mb-5">
+              <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Versões anteriores</p>
+              <ul className="space-y-2">
+                {versions.map(v => {
+                  const sm = STATUS_META[v.status] || STATUS_META.DRAFT
+                  return (
+                    <li key={v.version} className="p-2.5 bg-[#0f1117] rounded-xl border border-[#2a2f3e] flex items-center gap-2 text-[10px]">
+                      <span className="text-slate-500">v{v.version}</span>
+                      <span className={`font-semibold px-1.5 py-0.5 rounded-full border ${sm.cls}`}>{sm.label}</span>
+                      <span className="text-slate-600 ml-auto">{fmtDateTime(v.generated_at)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
+          <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-2">Envios</p>
           {loading ? (
             <div className="space-y-3">
               {[1, 2].map(i => <div key={i} className="h-16 bg-[#252a3a] rounded-xl animate-pulse" />)}
@@ -916,9 +935,10 @@ export default function CanonicalReportsPage() {
   const [transitioning,   setTransitioning]   = useState(false)
   const [transitionError, setTransitionError] = useState<string | null>(null)
 
-  const [historyReport,  setHistoryReport]  = useState<Report | null>(null)
-  const [deliveries,     setDeliveries]     = useState<DeliveryReceipt[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyReport,   setHistoryReport]   = useState<Report | null>(null)
+  const [deliveries,      setDeliveries]      = useState<DeliveryReceipt[]>([])
+  const [historyVersions, setHistoryVersions] = useState<Report[]>([])
+  const [historyLoading,  setHistoryLoading]  = useState(false)
   const [deliveryCache,  setDeliveryCache]  = useState<Record<string, string>>({})
 
   const [deliverySettings, setDeliverySettings] = useState<DeliverySettings | null>(null)
@@ -946,6 +966,17 @@ export default function CanonicalReportsPage() {
   }, [clientId, filterType, filterStatus])
 
   useEffect(() => { loadReports() }, [loadReports])
+
+  // For each report_id, show only the latest version as the main card; older versions go to Histórico
+  const dedupedReports = useMemo(() => {
+    const groups = new Map<string, Report>()
+    for (const r of reports) {
+      const ex = groups.get(r.report_id)
+      if (!ex || r.version > ex.version) groups.set(r.report_id, r)
+    }
+    return Array.from(groups.values())
+      .sort((a, b) => new Date(b.period_start).getTime() - new Date(a.period_start).getTime())
+  }, [reports])
 
   useEffect(() => {
     fetch(`/api/v1/canonical-reports/delivery-settings?client_id=${clientId}`)
@@ -1066,6 +1097,11 @@ export default function CanonicalReportsPage() {
     setHistoryReport(report)
     setHistoryLoading(true)
     setDeliveries([])
+    setHistoryVersions(
+      reports
+        .filter(r => r.report_id === report.report_id && r.version !== report.version)
+        .sort((a, b) => b.version - a.version)
+    )
     try {
       const res = await fetch(`/api/v1/canonical-reports/${report.report_id}/deliveries`)
       if (res.ok) {
@@ -1077,7 +1113,7 @@ export default function CanonicalReportsPage() {
     } finally {
       setHistoryLoading(false)
     }
-  }, [])
+  }, [reports])
 
   const STATUS_OPTIONS = [
     { value: 'all',              label: 'Todos os status' },
@@ -1176,7 +1212,7 @@ export default function CanonicalReportsPage() {
             </div>
           ) : (
             <div className="space-y-4">
-              {reports.map(r => (
+              {dedupedReports.map(r => (
                 <ReportCard
                   key={`${r.report_id}-${r.version}`}
                   report={r}
@@ -1265,7 +1301,7 @@ export default function CanonicalReportsPage() {
       {/* History drawer */}
       {historyReport && (
         <HistoryDrawer
-          report={historyReport} deliveries={deliveries}
+          report={historyReport} deliveries={deliveries} versions={historyVersions}
           loading={historyLoading} onClose={() => setHistoryReport(null)}
         />
       )}

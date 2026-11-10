@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, CheckCircle2, AlertTriangle, XCircle, Circle, Loader2 } from 'lucide-react'
+import type { ClientChannels } from '@/lib/use-client-config'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -64,7 +65,29 @@ function relativeTime(iso: string | null): string {
   return `${Math.floor(diff / 86400)}d atrás`
 }
 
-export default function IntegrationsHealth({ pixelId }: { pixelId: string }) {
+// Map health response keys → ClientChannels keys (null = platform removed)
+const KEY_TO_CHANNEL: Partial<Record<string, keyof ClientChannels | null>> = {
+  meta:       'meta',
+  google_ads: 'googleAds',
+  ga4:        'ga4',
+  tiktok:     'tiktok',
+  shopify:    'shopify',
+  pinterest:  null,  // removed from platform — always show as not connected
+}
+
+function resolveConfigured(key: string, p: PlatformHealth, channels?: ClientChannels): boolean {
+  const channelMapEntry = KEY_TO_CHANNEL[key]
+  // Explicitly removed platform
+  if (channelMapEntry === null) return false
+  // If we have contracted channels, only show as configured when BOTH contracted AND health says configured
+  if (channels) {
+    const channelKey = channelMapEntry as keyof ClientChannels | undefined
+    if (!channelKey || !channels[channelKey]) return false
+  }
+  return p.configured
+}
+
+export default function IntegrationsHealth({ pixelId, contractedChannels }: { pixelId: string; contractedChannels?: ClientChannels }) {
   const [data, setData]       = useState<HealthResponse | null>(null)
   const [probing, setProbing] = useState(false)
   const [busyOne, setBusyOne] = useState<string | null>(null)
@@ -133,9 +156,10 @@ export default function IntegrationsHealth({ pixelId }: { pixelId: string }) {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 divide-x divide-y md:divide-y-0 divide-[#2a2f3e]">
         {cards.map(({ key, data: p }) => {
-          const badge = statusBadge(p)
+          const effectiveP: PlatformHealth = { ...p, configured: resolveConfigured(key, p, contractedChannels) }
+          const badge = statusBadge(effectiveP)
           const Icon = badge.Icon
-          const inactive = !p.configured
+          const inactive = !effectiveP.configured
           return (
             <div key={key} className="px-4 py-3">
               <div className="flex items-start justify-between gap-2">

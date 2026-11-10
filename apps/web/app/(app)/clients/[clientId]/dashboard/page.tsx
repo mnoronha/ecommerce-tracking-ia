@@ -1785,7 +1785,7 @@ export default function DashboardPage() {
         {/* ── OVERVIEW TAB ─────────────────────────────────────────────────── */}
         {activeTab === 'overview' && <>
 
-        {CLIENT_PIXEL_ID && <IntegrationsHealth pixelId={CLIENT_PIXEL_ID} />}
+        {CLIENT_PIXEL_ID && <IntegrationsHealth pixelId={CLIENT_PIXEL_ID} contractedChannels={channelsReady ? ch : undefined} />}
 
         {pacing && pacing.monthly_revenue_goal && (
           <PacingWidget pacing={pacing} />
