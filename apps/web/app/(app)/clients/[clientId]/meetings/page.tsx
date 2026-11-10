@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams } from 'next/navigation'
 import {
   Calendar, Loader2, AlertCircle, ChevronDown, ChevronUp,
-  Users, RefreshCw, CheckSquare, Link2, Zap, AlertTriangle,
+  Users, RefreshCw, CheckSquare, Link2, Zap, AlertTriangle, FlaskConical,
 } from 'lucide-react'
+
+const TEST_RE = /^E2E[\s_]|TEST_ONLY|\[test\]|\[e2e\]|fixture|pilot/i
 
 interface Participant {
   name?: string | null
@@ -92,12 +94,19 @@ export default function MeetingsPage() {
   const params   = useParams()
   const clientId = params.clientId as string
 
-  const [meetings,  setMeetings]  = useState<Meeting[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState<string | null>(null)
-  const [expanded,  setExpanded]  = useState<string | null>(null)
-  const [analyzing, setAnalyzing] = useState<string | null>(null)
-  const [analyzeErr, setAnalyzeErr] = useState<Record<string, string>>({})
+  const [meetings,       setMeetings]       = useState<Meeting[]>([])
+  const [loading,        setLoading]        = useState(true)
+  const [error,          setError]          = useState<string | null>(null)
+  const [expanded,       setExpanded]       = useState<string | null>(null)
+  const [analyzing,      setAnalyzing]      = useState<string | null>(null)
+  const [analyzeErr,     setAnalyzeErr]     = useState<Record<string, string>>({})
+  const [showTestMeetings, setShowTestMeetings] = useState(false)
+
+  const hasTestMeetings = useMemo(() => meetings.some(m => TEST_RE.test(m.title)), [meetings])
+  const visibleMeetings = useMemo(
+    () => showTestMeetings ? meetings : meetings.filter(m => !TEST_RE.test(m.title)),
+    [meetings, showTestMeetings]
+  )
 
   const load = () => {
     setLoading(true)
@@ -128,12 +137,28 @@ export default function MeetingsPage() {
           <Calendar size={20} className="text-indigo-400" />
           <h1 className="text-xl font-bold text-white">Reuniões</h1>
         </div>
-        <button
-          onClick={load}
-          className="p-1.5 rounded-lg bg-[#1a1f2e] text-slate-500 hover:text-white transition-colors"
-        >
-          <RefreshCw size={13} />
-        </button>
+        <div className="flex items-center gap-2">
+          {hasTestMeetings && (
+            <button
+              onClick={() => setShowTestMeetings(v => !v)}
+              title={showTestMeetings ? 'Ocultar reuniões de teste' : 'Mostrar reuniões de teste'}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs border transition-colors ${
+                showTestMeetings
+                  ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                  : 'bg-[#1a1f2e] text-slate-500 border-[#2a2f3e] hover:text-slate-300'
+              }`}
+            >
+              <FlaskConical size={11} />
+              {showTestMeetings ? 'Ocultar testes' : 'Mostrar testes'}
+            </button>
+          )}
+          <button
+            onClick={load}
+            className="p-1.5 rounded-lg bg-[#1a1f2e] text-slate-500 hover:text-white transition-colors"
+          >
+            <RefreshCw size={13} />
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -150,16 +175,16 @@ export default function MeetingsPage() {
         </div>
       )}
 
-      {!loading && !error && meetings.length === 0 && (
+      {!loading && !error && visibleMeetings.length === 0 && (
         <div className="py-16 text-center text-slate-600">
           <Calendar size={32} className="mx-auto mb-3 opacity-30" />
           <p className="text-sm">Nenhuma reunião registrada</p>
         </div>
       )}
 
-      {!loading && !error && meetings.length > 0 && (
+      {!loading && !error && visibleMeetings.length > 0 && (
         <div className="space-y-3">
-          {meetings.map(meeting => {
+          {visibleMeetings.map(meeting => {
             const open = expanded === meeting.id
             const hasSummary = !!meeting.summary?.summary
             const tasks = meeting.summary?.tasks_created ?? []

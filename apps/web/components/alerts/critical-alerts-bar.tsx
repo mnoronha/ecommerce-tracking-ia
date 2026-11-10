@@ -6,6 +6,28 @@ import { AlertCircle, X, ChevronDown, ChevronUp, Clock, BellOff, Loader2 } from 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 const POLL_MS = 30_000
 
+// Platform health response (same shape as IntegrationsHealth)
+type PHealth = { status: string; configured: boolean }
+type HealthResp = { meta?: PHealth; google_ads?: PHealth; ga4?: PHealth; tiktok?: PHealth; shopify?: PHealth; pinterest?: PHealth }
+
+// Keyword → health key mapping for stale-alert suppression
+const PLATFORM_PATTERNS: Array<{ re: RegExp; key: keyof HealthResp }> = [
+  { re: /\bmeta\b|\bfacebook\b|\binstagram\b/i, key: 'meta' },
+  { re: /\bgoogle[_\s]?ads?\b/i,                key: 'google_ads' },
+  { re: /\bga4\b|\bgoogle[_\s]?analytics\b/i,  key: 'ga4' },
+  { re: /\btiktok\b/i,                           key: 'tiktok' },
+  { re: /\bshopify\b/i,                          key: 'shopify' },
+]
+
+function isStaleIntegrationAlert(a: { title: string; message: string }, health: HealthResp | null): boolean {
+  if (!health) return false
+  const text = `${a.title} ${a.message}`
+  for (const { re, key } of PLATFORM_PATTERNS) {
+    if (re.test(text) && health[key]?.status === 'healthy') return true
+  }
+  return false
+}
+
 type Alert = {
   id: string
   severity: 'critical' | 'warning' | 'info'
@@ -103,11 +125,15 @@ export function CriticalAlertsBar({ clientId }: { clientId: string }) {
 
   const load = useCallback(async (silent = false) => {
     try {
-      const res = await fetch(`${API_URL}/alerts/${clientId}?include_resolved=false&limit=50`)
-      if (!res.ok) return
-      const data = await res.json()
+      const [alertsRes, healthRes] = await Promise.all([
+        fetch(`${API_URL}/alerts/${clientId}?include_resolved=false&limit=50`),
+        fetch(`${API_URL}/integrations/${clientId}/status`).catch(() => null),
+      ])
+      if (!alertsRes.ok) return
+      const data = await alertsRes.json()
+      const health: HealthResp | null = healthRes?.ok ? await healthRes.json().catch(() => null) : null
       const critical = ((data.alerts || []) as Alert[]).filter(
-        a => a.severity === 'critical' && !a.resolved_at && !isSilenced(a)
+        a => a.severity === 'critical' && !a.resolved_at && !isSilenced(a) && !isStaleIntegrationAlert(a, health)
       )
       setAlerts(critical)
       if (!silent) setVisible(critical.length > 0)
