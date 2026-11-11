@@ -1002,6 +1002,27 @@ def run_weekly_deep_review_for_client(
     try:
         contract    = build_weekly_deep_review(client_id, period_start, period_end)
         contract_id = _write_contract(sb, client_id, period_start, period_end, contract, source_run_id=run_id)
+        # _write_contract returns the UUID from the INSERT response.
+        # If the response body was empty (Supabase returning HTTP 201 without data),
+        # fall back to a SELECT so materialisation is never silently skipped.
+        if not contract_id:
+            try:
+                fb = (
+                    sb.table("agency_report_contracts")
+                    .select("id")
+                    .eq("client_slug", client_id)
+                    .eq("report_type", "weekly_deep_review")
+                    .eq("period_end",  period_end.isoformat())
+                    .order("generated_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
+                contract_id = str(fb.data[0]["id"]) if (fb and fb.data) else None
+            except Exception as _fb_exc:
+                logger.warning(
+                    "weekly_deep_review: contract_id fallback query failed %s: %s",
+                    client_id, _fb_exc,
+                )
         if contract_id and contract.get("review_status") not in ("BLOCKED",):
             client_uuid = _load_client_uuid(sb, client_id)
             _materialize_dr_recommendations(
