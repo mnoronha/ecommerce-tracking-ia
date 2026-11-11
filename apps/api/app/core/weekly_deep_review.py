@@ -892,7 +892,7 @@ def _materialize_dr_recommendations(
                 diag_ins = sb.table("core_diagnoses").insert({
                     "alert_id":              contract_id,
                     "client_id":             client_uuid,
-                    "status":                "OPEN",
+                    "status":                "DRAFT",
                     "summary":               summary,
                     "root_cause_hypotheses": [],
                     "evidence":              {"contract_id": contract_id, "code": code},
