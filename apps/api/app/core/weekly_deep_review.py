@@ -903,6 +903,17 @@ def _materialize_dr_recommendations(
                 }).execute()
                 diag_row = diag_ins.data[0] if (diag_ins and diag_ins.data) else None
                 diagnosis_id = str(diag_row["id"]) if diag_row else None
+                # Supabase sometimes returns HTTP 201 with empty body; fall back to SELECT
+                if not diagnosis_id:
+                    fb = (
+                        sb.table("core_diagnoses")
+                        .select("id")
+                        .eq("fingerprint", diag_fp)
+                        .limit(1)
+                        .execute()
+                    )
+                    if fb and fb.data:
+                        diagnosis_id = str(fb.data[0]["id"])
             except Exception as exc:
                 logger.warning(
                     "weekly_deep_review: diag materialisation failed %s %s: %s",
