@@ -23,14 +23,16 @@ POST /learning-candidates/{id}/promote endpoint.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import logging
 import re
 import textwrap
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Optional
-
-import httpx
 
 from ..database import get_supabase
 from ..config import settings
@@ -230,7 +232,6 @@ def _write_to_github(
     if not token or not repo:
         return {"status": "skipped", "reason": "OBSIDIAN_GITHUB_TOKEN or OBSIDIAN_VAULT_REPO not configured"}
 
-    import base64
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
 
     url = f"https://api.github.com/repos/{repo}/contents/{path}"
@@ -243,23 +244,28 @@ def _write_to_github(
         payload["sha"] = existing_sha
 
     try:
-        resp = httpx.put(
+        req = urllib.request.Request(
             url,
-            json=payload,
+            data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
+                "Content-Type": "application/json",
             },
-            timeout=15.0,
+            method="PUT",
         )
-        resp.raise_for_status()
-        data = resp.json()
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
         github_url = data.get("content", {}).get("html_url") or url
         return {"status": "written", "url": github_url, "sha": data.get("content", {}).get("sha")}
-    except httpx.HTTPStatusError as exc:
-        logger.warning("obsidian_writer: GitHub write failed (%s): %s", exc.response.status_code, exc.response.text[:200])
-        return {"status": "failed", "reason": f"HTTP {exc.response.status_code}"}
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode()
+        except Exception:
+            body = ""
+        logger.warning("obsidian_writer: GitHub write failed (%s): %s", exc.code, body[:200])
+        return {"status": "failed", "reason": f"HTTP {exc.code}"}
     except Exception as exc:
         logger.warning("obsidian_writer: GitHub write error: %s", exc)
         return {"status": "failed", "reason": str(exc)}
@@ -273,14 +279,13 @@ def _get_existing_github_sha(path: str) -> Optional[str]:
     if not token or not repo:
         return None
     try:
-        resp = httpx.get(
-            f"https://api.github.com/repos/{repo}/contents/{path}",
-            params={"ref": branch},
+        url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+        req = urllib.request.Request(
+            url,
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-            timeout=10.0,
         )
-        if resp.status_code == 200:
-            return resp.json().get("sha")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("sha")
     except Exception:
         pass
     return None
@@ -655,29 +660,32 @@ def check_obsidian_readiness() -> dict:
 
     # ── Check 1: GitHub API reachable + repo exists + auth valid ──────────────
     try:
-        r = httpx.get(
+        req1 = urllib.request.Request(
             f"https://api.github.com/repos/{repo}",
             headers=headers,
-            timeout=10.0,
         )
-        result["github_api_reachable"] = True
-        if r.status_code == 200:
+        with urllib.request.urlopen(req1, timeout=10) as r:
+            result["github_api_reachable"] = True
+            data = json.loads(r.read())
             result["github_repo_accessible"] = True
-            perms = r.json().get("permissions", {})
+            perms = data.get("permissions", {})
             result["github_write_permission"] = bool(perms.get("push") or perms.get("admin"))
-        elif r.status_code == 401:
+    except urllib.error.HTTPError as exc:
+        result["github_api_reachable"] = True
+        code = exc.code
+        if code == 401:
             result["error"] = "GitHub auth rejected (token invalid or expired)"
             return result
-        elif r.status_code == 403:
+        elif code == 403:
             result["error"] = "GitHub token lacks repo read permission"
             return result
-        elif r.status_code == 404:
+        elif code == 404:
             result["error"] = f"GitHub repo not found: {repo!r}"
             return result
         else:
-            result["error"] = f"GitHub repo check returned HTTP {r.status_code}"
+            result["error"] = f"GitHub repo check returned HTTP {code}"
             return result
-    except httpx.ConnectError:
+    except urllib.error.URLError:
         result["error"] = "GitHub API unreachable (network/DNS)"
         return result
     except Exception as exc:
@@ -686,17 +694,18 @@ def check_obsidian_readiness() -> dict:
 
     # ── Check 2: Branch exists ────────────────────────────────────────────────
     try:
-        r2 = httpx.get(
+        req2 = urllib.request.Request(
             f"https://api.github.com/repos/{repo}/branches/{branch}",
             headers=headers,
-            timeout=10.0,
         )
-        if r2.status_code == 200:
+        with urllib.request.urlopen(req2, timeout=10) as r2:
+            json.loads(r2.read())
             result["github_branch_accessible"] = True
-        elif r2.status_code == 404:
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
             result["error"] = f"Branch {branch!r} not found in repo {repo!r}"
         else:
-            result["error"] = f"Branch check returned HTTP {r2.status_code}"
+            result["error"] = f"Branch check returned HTTP {exc.code}"
     except Exception as exc:
         result["error"] = f"Branch check error: {exc}"
 
