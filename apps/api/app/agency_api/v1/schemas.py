@@ -481,6 +481,19 @@ class RecommendationOut(_Base):
     created_by: str = "hermes"
 
 
+class RecommendationDecisionOut(RecommendationOut):
+    """
+    Response for POST /recommendations/{id}/decision.
+
+    Extends RecommendationOut with the downstream orchestration result when
+    decision=ACCEPTED: task creation and Notion sync happen server-side so
+    the Platform never needs a second call.
+    """
+    task_id: Optional[str] = None
+    task_created: Optional[bool] = None
+    notion_sync_status: Optional[str] = None
+
+
 # ── 9b. Recommendation decision (human-only) ─────────────────────────────────
 
 class RecommendationDecision(_Base):

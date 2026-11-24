@@ -145,6 +145,7 @@ from .schemas import (
     RecommendationApprovalOut,
     RecommendationCreate,
     RecommendationDecision,
+    RecommendationDecisionOut,
     RecommendationOut,
     RecommendationStatus,
     ReportNarrativeCreate,
@@ -2347,6 +2348,86 @@ def get_recommendation(
     return _recommendation_row_to_out(row, _fetch_slug_map([row]))
 
 
+# ── Approval orchestration helper ────────────────────────────────────────────
+
+def _orchestrate_accepted_recommendation(
+    db,
+    rec_row: dict,
+    actor: str,
+    reason: Optional[str],
+) -> dict:
+    """
+    Server-side orchestration triggered when a human decision=ACCEPTED lands.
+
+    Idempotent: safe to call multiple times — returns existing task if already
+    created. Non-fatal callers should catch all exceptions.
+
+    Returns:
+      {"task_id": str, "task_created": bool, "notion_sync_status": str}
+    """
+    recommendation_id = str(rec_row["id"])
+    now_utc = datetime.now(timezone.utc)
+
+    # 1. Idempotency: return existing task without side effects
+    existing = _find_task_for_recommendation(db, recommendation_id)
+    if existing:
+        notion_status = "unknown"
+        try:
+            t = db.table("core_tasks").select("sync_state").eq("id", str(existing["id"])).limit(1).execute()
+            if t and t.data:
+                notion_status = t.data[0].get("sync_state", "none")
+        except Exception:
+            pass
+        return {"task_id": str(existing["id"]), "task_created": False, "notion_sync_status": notion_status}
+
+    # 2. Create task
+    task_row = {
+        "client_id":        rec_row["client_id"],
+        "title":            rec_row["title"],
+        "description":      _build_task_description_from_rec(rec_row),
+        "status":           "OPEN",
+        "priority":         _map_rec_priority_to_task(rec_row.get("priority", "MEDIUM")),
+        "source_type":      "recommendation",
+        "source_id":        recommendation_id,
+        "visibility_scope": "AGENCY_ONLY",
+        "sync_state":       "none",
+        "created_at":       now_utc.isoformat(),
+        "updated_at":       now_utc.isoformat(),
+    }
+    task_res = db.table("core_tasks").insert(task_row).execute()
+    task = task_res.data[0]
+    task_id = str(task["id"])
+
+    # 3. Approval audit record (non-fatal)
+    try:
+        db.table("core_recommendation_approvals").insert({
+            "recommendation_id": recommendation_id,
+            "task_id":           task_id,
+            "actor":             actor,
+            "reason":            reason,
+            "approved_at":       now_utc.isoformat(),
+        }).execute()
+    except Exception as exc:
+        logger.warning("_orchestrate_accepted: approval insert failed (non-fatal) %s: %s", recommendation_id, exc)
+
+    # 4. Notion sync (non-fatal)
+    notion_sync_status = "pending"
+    try:
+        from ...core.notion_adapter import NotionTaskAdapter
+        from ...database import get_supabase
+        adapter = NotionTaskAdapter(supabase=get_supabase())
+        result  = adapter.sync_task_to_notion(task_id)
+        notion_sync_status = result.get("status", "error")
+    except Exception as exc:
+        logger.warning("_orchestrate_accepted: notion sync failed (non-fatal) %s: %s", task_id, exc)
+
+    logger.info(
+        "_orchestrate_accepted: rec=%s task=%s actor=%s notion=%s",
+        recommendation_id, task_id, actor, notion_sync_status,
+    )
+    return {"task_id": task_id, "task_created": True, "notion_sync_status": notion_sync_status}
+
+
 # ── POST /recommendations/{recommendation_id}/decision ───────────────────────
 #
 # Human Decision Contract — Core invariants:
@@ -2357,6 +2438,7 @@ def get_recommendation(
 #   4. Idempotency via Idempotency-Key header: fingerprint stored in decision_fingerprint.
 #   5. Audit trail: every decision writes a core_action_events row with actor + timestamp.
 #   6. Terminal states (APPROVED, REJECTED, EXECUTED) block further decisions (422).
+#   7. When decision=ACCEPTED: downstream orchestration (task + Notion) runs server-side.
 
 _VALID_DECISION_SOURCES: frozenset[str] = frozenset({"PROPOSED", "DEFERRED"})
 
@@ -2376,14 +2458,14 @@ _DECISION_TO_EVENT: dict[str, str] = {
 @router.post(
     "/recommendations/{recommendation_id}/decision",
     summary="Record a human decision on a recommendation (ACCEPTED / REJECTED / DEFERRED)",
-    response_model=RecommendationOut,
+    response_model=RecommendationDecisionOut,
 )
 def decide_recommendation(
     recommendation_id: str,
     body: RecommendationDecision,
     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
     _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
-) -> RecommendationOut:
+) -> RecommendationDecisionOut:
     if not _is_valid_uuid(recommendation_id):
         raise HTTPException(404, f"recommendation not found: {recommendation_id!r}")
     db = _get_db()
@@ -2409,7 +2491,14 @@ def decide_recommendation(
     if idempotency_key:
         fingerprint = f"dec:{recommendation_id}:{idempotency_key}"
         if row.get("decision_fingerprint") == fingerprint:
-            return _recommendation_row_to_out(row, _fetch_slug_map([row]))
+            base = _recommendation_row_to_out(row, _fetch_slug_map([row]))
+            existing_task = _find_task_for_recommendation(db, recommendation_id)
+            return RecommendationDecisionOut(
+                **base.model_dump(),
+                task_id=str(existing_task["id"]) if existing_task else None,
+                task_created=False,
+                notion_sync_status=None,
+            )
 
     # State machine: only PROPOSED and DEFERRED accept a new decision
     current_status = row.get("status", "PROPOSED")
@@ -2462,7 +2551,27 @@ def decide_recommendation(
         recommendation_id, current_status, new_status, body.actor,
         getattr(_auth, "scope", "unknown") if _auth else "unknown",
     )
-    return _recommendation_row_to_out(updated_row, rec_slug_map)
+
+    base = _recommendation_row_to_out(updated_row, rec_slug_map)
+
+    # When ACCEPTED: orchestrate approval record, task creation, and Notion sync
+    # server-side. Non-fatal — the human decision is already persisted above.
+    orch: dict = {}
+    if decision == "ACCEPTED" and updated_row.get("requires_human_approval", True):
+        try:
+            orch = _orchestrate_accepted_recommendation(db, updated_row, body.actor, body.reason)
+        except Exception as exc:
+            logger.error(
+                "decide_recommendation: orchestration failed (non-fatal) %s: %s",
+                recommendation_id, exc,
+            )
+
+    return RecommendationDecisionOut(
+        **base.model_dump(),
+        task_id=orch.get("task_id"),
+        task_created=orch.get("task_created"),
+        notion_sync_status=orch.get("notion_sync_status"),
+    )
 
 
 # ── POST /recommendations/{recommendation_id}/approve ─────────────────────────

@@ -26,6 +26,10 @@ interface Recommendation {
   status:                  string
   created_at:              string
   created_by:              string
+  // Populated on ACCEPTED decision response (server-side orchestration)
+  task_id?:               string | null
+  task_created?:          boolean | null
+  notion_sync_status?:    string | null
 }
 
 interface Action {
@@ -183,14 +187,43 @@ function DecisionForm({
 
 // ── Decision banner (post-decision status) ────────────────────────────────────
 
-function DecisionBanner({ status }: { status: string }) {
+function DecisionBanner({
+  status,
+  taskId,
+  taskCreated,
+  notionSyncStatus,
+}: {
+  status:           string
+  taskId?:          string | null
+  taskCreated?:     boolean | null
+  notionSyncStatus?: string | null
+}) {
   if (status === 'APPROVED') {
     return (
       <div className="flex items-start gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/25 px-4 py-3 mt-4">
         <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-400" />
-        <p className="text-xs text-emerald-300 leading-relaxed">
-          Aprovada para possível execução. Registre uma ação abaixo para fechar o loop.
-        </p>
+        <div className="space-y-1">
+          <p className="text-xs text-emerald-300 leading-relaxed">
+            Aprovada para possível execução. Registre uma ação abaixo para fechar o loop.
+          </p>
+          {taskId && (
+            <div className="flex items-center gap-2 flex-wrap pt-0.5">
+              <span className="text-xs text-emerald-400/70 font-medium">
+                {taskCreated ? 'Task criada' : 'Task existente'}
+              </span>
+              <span className="text-xs text-slate-600 font-mono">{taskId.slice(0, 8)}…</span>
+              {notionSyncStatus === 'synced' && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-400">Notion synced</span>
+              )}
+              {notionSyncStatus === 'pending' && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-400">Notion pendente</span>
+              )}
+              {notionSyncStatus && notionSyncStatus !== 'synced' && notionSyncStatus !== 'pending' && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">Notion: {notionSyncStatus}</span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     )
   }
@@ -611,7 +644,12 @@ export default function RecommendationsPage() {
                     )}
 
                     {/* Decision status banner */}
-                    <DecisionBanner status={rec.status} />
+                    <DecisionBanner
+                      status={rec.status}
+                      taskId={rec.task_id}
+                      taskCreated={rec.task_created}
+                      notionSyncStatus={rec.notion_sync_status}
+                    />
 
                     {/* Decision buttons — only for decidable recommendations */}
                     {isDecidable && !isActiveForm && (
