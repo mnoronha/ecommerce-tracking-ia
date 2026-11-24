@@ -188,10 +188,28 @@ export default function ClientSettingsPage() {
     setDsSettings(next)
     setDsSaving(true); setDsMsg(null)
     try {
+      // Strip to the exact contract of DeliverySettingsIn / RecipientIn (extra='forbid').
+      // The GET response includes human_approval_required, client_id, updated_at at the
+      // top level and created_at/updated_at inside each recipient — all rejected by PUT.
+      const body = {
+        weekly_enabled:       next.weekly_enabled,
+        monthly_enabled:      next.monthly_enabled,
+        weekly_day_of_week:   next.weekly_day_of_week  ?? 0,
+        weekly_hour:          next.weekly_hour          ?? 8,
+        monthly_day_of_month: next.monthly_day_of_month ?? 1,
+        monthly_hour:         next.monthly_hour         ?? 8,
+        report_timezone:      next.report_timezone      ?? 'America/Sao_Paulo',
+        recipients: next.recipients.map(r => ({
+          id:     r.id,
+          name:   r.name,
+          email:  r.email,
+          active: r.active,
+        })),
+      }
       const res = await fetch(`/api/v1/canonical-reports/delivery-settings?client_id=${clientId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(next),
+        body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       setDsSettings(await res.json())

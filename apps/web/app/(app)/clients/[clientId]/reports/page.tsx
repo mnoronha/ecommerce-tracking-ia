@@ -5,10 +5,8 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Sparkles, Loader2, BarChart2, Lightbulb,
-  AlertTriangle, RefreshCw, Download, FileText, Send, CheckCircle,
-  Plus, X,
+  AlertTriangle, RefreshCw, Download, FileText, Settings,
 } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
 
@@ -288,7 +286,6 @@ function CoreNarrativesSection({ clientId }: { clientId: string }) {
 
 type InsightType = 'all' | 'weekly_report' | 'monthly_report' | 'recommendation' | 'anomaly' | 'pattern'
 type Severity    = 'all' | 'info' | 'warning' | 'critical'
-type ReportType  = 'weekly' | 'monthly'
 
 interface Insight {
   id:         string
@@ -357,30 +354,6 @@ function downloadMarkdown(insights: Insight[], clientId: string) {
   URL.revokeObjectURL(url)
 }
 
-function ReportToggleRow({ title, desc, enabled, onToggle }: {
-  title: string; desc: string; enabled: boolean; onToggle: (v: boolean) => void
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-4 py-3">
-      <div className="min-w-0">
-        <p className={`text-sm font-medium ${enabled ? 'text-slate-200' : 'text-slate-500'}`}>{title}</p>
-        <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{desc}</p>
-      </div>
-      <button
-        onClick={() => onToggle(!enabled)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors mt-0.5 ${
-          enabled ? 'bg-indigo-600' : 'bg-slate-700'
-        }`}
-        aria-label={enabled ? `Desativar ${title}` : `Ativar ${title}`}
-      >
-        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
-          enabled ? 'translate-x-4' : 'translate-x-1'
-        }`} />
-      </button>
-    </div>
-  )
-}
-
 export default function ReportsPage() {
   const params   = useParams()
   const clientId = params.clientId as string
@@ -388,17 +361,6 @@ export default function ReportsPage() {
   const [insights,    setInsights]    = useState<Insight[]>([])
   const [loading,     setLoading]     = useState(true)
   const [generating,  setGenerating]  = useState(false)
-  const [sending,     setSending]     = useState<ReportType | null>(null)
-  const [sentTo,      setSentTo]      = useState<string | null>(null)
-  const [sentHeld,    setSentHeld]    = useState(false)
-  const [sendError,   setSendError]   = useState<string | null>(null)
-  const [alertEmails,  setAlertEmails]  = useState<string[]>([])
-  const [newEmailInput, setNewEmailInput] = useState('')
-  const [savingEmails, setSavingEmails] = useState(false)
-  const [emailsSaved,  setEmailsSaved]  = useState(false)
-  const [weeklyEnabled,  setWeeklyEnabled]  = useState(false)
-  const [monthlyEnabled, setMonthlyEnabled] = useState(false)
-  const [reportHistory, setReportHistory] = useState<Array<{ id: string; type: string; period_start: string; period_end: string; status: string; sent_to: string[] | null; sent_at: string }>>([])
   const [typeFilter,  setTypeFilter]  = useState<InsightType>('all')
   const [sevFilter,   setSevFilter]   = useState<Severity>('all')
   const [expanded,    setExpanded]    = useState<Set<string>>(new Set())
@@ -428,24 +390,6 @@ export default function ReportsPage() {
 
   useEffect(() => { load(true) }, [clientId, typeFilter, sevFilter])
 
-  const loadHistory = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_URL}/insights/${clientId}/report-history?limit=20`)
-      if (res.ok) setReportHistory((await res.json()).reports || [])
-    } catch (_) {}
-  }, [clientId])
-  useEffect(() => { loadHistory() }, [loadHistory])
-
-  async function viewReport(id: string) {
-    try {
-      const res = await fetch(`${API_URL}/insights/${clientId}/report-history/${id}`)
-      if (!res.ok) return
-      const d = await res.json()
-      const w = window.open('', '_blank')
-      if (w) { w.document.write(d.html_content || '<p>Sem conteúdo salvo.</p>'); w.document.close() }
-    } catch (_) {}
-  }
-
   async function generate() {
     setGenerating(true)
     try {
@@ -454,34 +398,6 @@ export default function ReportsPage() {
       await load(true)
     } finally {
       setGenerating(false)
-    }
-  }
-
-  async function sendReport(reportType: ReportType, force = false) {
-    setSending(reportType)
-    setSentTo(null)
-    setSentHeld(false)
-    setSendError(null)
-    try {
-      const res  = await fetch(`${API_URL}/insights/${clientId}/report`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ report_type: reportType, force }),
-      })
-      const json = await res.json()
-      if (!res.ok) {
-        setSendError(json.detail || `Erro ${res.status}`)
-      } else if (json.status === 'queued') {
-        // Background send — no held verdict yet
-        setSentTo(json.email)
-      } else {
-        setSentHeld(Boolean(json.held))
-        setSentTo(json.sent_to || json.email)
-      }
-    } catch (e: unknown) {
-      setSendError(e instanceof Error ? e.message : 'Erro ao enviar')
-    } finally {
-      setSending(null)
     }
   }
 
@@ -496,60 +412,6 @@ export default function ReportsPage() {
   async function markRead(id: string) {
     setInsights(prev => prev.map(i => i.id === id ? { ...i, is_read: true } : i))
     await fetch(`${API_URL}/insights/${clientId}/${id}/read`, { method: 'PATCH' })
-  }
-
-  // Load report settings on mount
-  useEffect(() => {
-    supabase.from('clients')
-      .select('alert_email, alert_emails, weekly_report_enabled, monthly_report_enabled')
-      .eq('pixel_id', clientId).single()
-      .then(({ data }) => {
-        const arr: string[] = data?.alert_emails?.length
-          ? data.alert_emails
-          : data?.alert_email ? [data.alert_email] : []
-        setAlertEmails(arr)
-        setWeeklyEnabled(Boolean(data?.weekly_report_enabled))
-        setMonthlyEnabled(Boolean(data?.monthly_report_enabled))
-      })
-  }, [clientId])
-
-  async function toggleReport(kind: ReportType, value: boolean) {
-    // Otimista
-    if (kind === 'weekly') setWeeklyEnabled(value)
-    else                   setMonthlyEnabled(value)
-    const col = kind === 'weekly' ? 'weekly_report_enabled' : 'monthly_report_enabled'
-    const { error } = await supabase.from('clients').update({ [col]: value }).eq('pixel_id', clientId)
-    if (error) {  // reverte
-      if (kind === 'weekly') setWeeklyEnabled(!value)
-      else                   setMonthlyEnabled(!value)
-    }
-  }
-
-  async function addEmail(e: React.FormEvent) {
-    e.preventDefault()
-    const email = newEmailInput.trim().toLowerCase()
-    if (!email || alertEmails.includes(email)) return
-    const updated = [...alertEmails, email]
-    await persistEmails(updated)
-    setNewEmailInput('')
-  }
-
-  async function removeEmail(email: string) {
-    const updated = alertEmails.filter(e => e !== email)
-    await persistEmails(updated)
-  }
-
-  async function persistEmails(list: string[]) {
-    setSavingEmails(true)
-    setEmailsSaved(false)
-    await supabase.from('clients').update({
-      alert_emails: list,
-      alert_email:  list[0] ?? null,
-    }).eq('pixel_id', clientId)
-    setAlertEmails(list)
-    setSavingEmails(false)
-    setEmailsSaved(true)
-    setTimeout(() => setEmailsSaved(false), 3000)
   }
 
   const unread = insights.filter(i => !i.is_read).length
@@ -588,26 +450,6 @@ export default function ReportsPage() {
             </button>
           )}
           <button
-            onClick={() => sendReport('weekly')}
-            disabled={sending !== null || generating}
-            className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252b3b] border border-[#2a2f3e] disabled:opacity-50 text-slate-300 px-3 py-2 rounded-lg font-medium"
-            title="Gera análise IA e envia o resumo semanal por email (usa alert_email do cliente)"
-          >
-            {sending === 'weekly'
-              ? <><Loader2 size={12} className="animate-spin" /> Enviando…</>
-              : <><Send size={12} /> Enviar semanal</>}
-          </button>
-          <button
-            onClick={() => sendReport('monthly')}
-            disabled={sending !== null || generating}
-            className="flex items-center gap-2 text-xs bg-[#1a1f2e] hover:bg-[#252b3b] border border-[#2a2f3e] disabled:opacity-50 text-slate-300 px-3 py-2 rounded-lg font-medium"
-            title="Gera análise mensal completa. Se o mês for muito negativo, o envio é retido e a agência é notificada."
-          >
-            {sending === 'monthly'
-              ? <><Loader2 size={12} className="animate-spin" /> Enviando…</>
-              : <><Send size={12} /> Enviar mensal</>}
-          </button>
-          <button
             onClick={generate}
             disabled={generating}
             className="flex items-center gap-2 text-xs bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg font-medium"
@@ -621,156 +463,31 @@ export default function ReportsPage() {
 
       <div className="p-6 space-y-5 max-w-4xl">
 
-        {/* Report send result */}
-        {sentTo && !sentHeld && (
-          <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs rounded-lg px-4 py-2.5">
-            <CheckCircle size={13} />
-            Relatório enviado para <strong className="font-semibold">{sentTo}</strong>. Pode levar alguns minutos para chegar.
-          </div>
-        )}
-        {sentTo && sentHeld && (
-          <div className="flex items-center gap-2 bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 text-xs rounded-lg px-4 py-2.5">
-            <AlertTriangle size={13} />
-            Mês sinalizado como negativo — <strong className="font-semibold">não enviado ao cliente</strong>. Encaminhado para revisão da agência ({sentTo}).
-          </div>
-        )}
-        {sendError && (
-          <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-lg px-4 py-2.5">
-            <AlertTriangle size={13} />
-            {sendError}
-          </div>
-        )}
-
         {/* Core narratives (Agency API) — canonical source */}
         <CoreNarrativesSection clientId={clientId} />
 
-        {/* ── Seção legada ────────────────────────────────────────────── */}
+        {/* Delivery settings link */}
+        <div className="flex items-center justify-between bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl px-5 py-4">
+          <div>
+            <p className="text-sm font-semibold text-white">Entrega de relatórios</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Configure destinatários, agenda semanal/mensal e aprovação em Configurações do cliente.
+            </p>
+          </div>
+          <Link
+            href={`/clients/${clientId}/settings`}
+            className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 font-medium shrink-0 ml-4"
+          >
+            <Settings size={12} /> Configurar
+          </Link>
+        </div>
+
+        {/* ── Insights IA ─────────────────────────────────────────────── */}
         <div className="flex items-center gap-3">
           <div className="h-px flex-1 bg-[#2a2f3e]" />
-          <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Relatórios e Insights IA · Legado</span>
+          <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider">Insights IA</span>
           <div className="h-px flex-1 bg-[#2a2f3e]" />
         </div>
-
-        {/* Relatórios automáticos — ativar/desativar por cliente */}
-        <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl p-5 space-y-4">
-          <div>
-            <p className="text-sm font-semibold text-white">Relatórios automáticos</p>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Ligue/desligue o envio automático por email — vale só para este cliente.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <ReportToggleRow
-              title="Relatório semanal"
-              desc="Toda segunda-feira às 8h (Brasília) — receita da semana, KPIs essenciais, progresso da meta e alertas."
-              enabled={weeklyEnabled}
-              onToggle={v => toggleReport('weekly', v)}
-            />
-            <ReportToggleRow
-              title="Relatório mensal"
-              desc="Todo dia 1º às 8h — relatório completo do mês anterior (canais Meta/Google, produtos, retenção e análise IA). Mês muito negativo é retido para revisão da agência antes."
-              enabled={monthlyEnabled}
-              onToggle={v => toggleReport('monthly', v)}
-            />
-          </div>
-
-          {!weeklyEnabled && !monthlyEnabled && (
-            <p className="text-xs text-slate-600">
-              Nenhum relatório automático ativo. Você ainda pode enviar manualmente pelos botões acima.
-            </p>
-          )}
-
-          {/* Destinatários */}
-          <div className="border-t border-[#2a2f3e] pt-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-slate-300">Destinatários</p>
-                <p className="text-xs text-slate-500 mt-0.5">Emails que recebem os relatórios ativos acima.</p>
-              </div>
-              {emailsSaved && (
-                <span className="flex items-center gap-1 text-emerald-400 text-xs">
-                  <CheckCircle size={11} /> Salvo
-                </span>
-              )}
-              {savingEmails && <Loader2 size={12} className="animate-spin text-slate-500" />}
-            </div>
-
-            {/* Lista atual */}
-            {alertEmails.length > 0 && (
-              <div className="space-y-1.5">
-                {alertEmails.map((email, idx) => (
-                  <div key={email} className="flex items-center justify-between bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2">
-                    <span className="text-xs text-slate-300 truncate">
-                      {idx === 0 && <span className="text-indigo-400 mr-1.5">principal</span>}
-                      {email}
-                    </span>
-                    <button
-                      onClick={() => removeEmail(email)}
-                      disabled={savingEmails}
-                      className="text-slate-600 hover:text-red-400 disabled:opacity-40 shrink-0 ml-2"
-                      aria-label={`Remover ${email}`}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Adicionar novo */}
-            <form onSubmit={addEmail} className="flex items-center gap-2">
-              <input
-                type="email"
-                value={newEmailInput}
-                onChange={e => setNewEmailInput(e.target.value)}
-                placeholder="novo@email.com"
-                className="flex-1 bg-[#0f1117] border border-[#2a2f3e] rounded-lg px-3 py-2 text-xs text-white placeholder-slate-600 outline-none focus:border-indigo-500"
-              />
-              <button
-                type="submit"
-                disabled={savingEmails || !newEmailInput.trim() || alertEmails.includes(newEmailInput.trim().toLowerCase())}
-                className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors shrink-0"
-              >
-                <Plus size={12} /> Adicionar
-              </button>
-            </form>
-          </div>
-        </div>
-
-        {/* Histórico de envios (versionamento) */}
-        {reportHistory.length > 0 && (
-          <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-[#2a2f3e]">
-              <p className="text-sm font-semibold text-white">Histórico de relatórios enviados</p>
-              <p className="text-xs text-slate-500 mt-0.5">Cada envio é versionado — guardamos o conteúdo enviado e a análise da IA.</p>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <tbody>
-                  {reportHistory.map(r => (
-                    <tr key={r.id} className="border-b border-[#2a2f3e] last:border-0">
-                      <td className="px-5 py-2.5">
-                        <span className="text-xs px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300">{r.type === 'weekly' ? 'Semanal' : 'Mensal'}</span>
-                      </td>
-                      <td className="px-5 py-2.5 text-xs text-slate-400 whitespace-nowrap">{r.period_start} → {r.period_end}</td>
-                      <td className="px-5 py-2.5 text-xs">
-                        {r.status === 'held'
-                          ? <span className="text-yellow-400">retido (revisão)</span>
-                          : <span className="text-emerald-400">enviado</span>}
-                      </td>
-                      <td className="px-5 py-2.5 text-xs text-slate-500 truncate max-w-[180px]">{(r.sent_to || []).join(', ')}</td>
-                      <td className="px-5 py-2.5 text-xs text-slate-500 whitespace-nowrap">{fmtDate(r.sent_at)}</td>
-                      <td className="px-5 py-2.5 text-right">
-                        <button onClick={() => viewReport(r.id)} className="text-xs text-indigo-400 hover:text-indigo-300">Ver</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
 
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-3">
