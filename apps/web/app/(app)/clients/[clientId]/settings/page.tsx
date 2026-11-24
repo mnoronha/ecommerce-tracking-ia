@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { useParams, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -119,6 +119,7 @@ export default function ClientSettingsPage() {
   const [dsMsg,      setDsMsg]      = useState<{ ok: boolean; text: string } | null>(null)
   const [dsNewName,  setDsNewName]  = useState('')
   const [dsNewEmail, setDsNewEmail] = useState('')
+  const [dsDraft,    setDsDraft]    = useState<DSSettings | null>(null)
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -155,10 +156,10 @@ export default function ClientSettingsPage() {
     try {
       const res = await fetch(`/api/v1/canonical-reports/delivery-settings?client_id=${clientId}`)
       if (res.ok) {
-        setDsSettings(await res.json())
+        const data = await res.json()
+        setDsSettings(data); setDsDraft(data)
       } else {
-        // No settings row yet — show UI with defaults so user can configure
-        setDsSettings({
+        const defaults: DSSettings = {
           weekly_enabled: false,
           monthly_enabled: false,
           weekly_day_of_week: 1,
@@ -167,10 +168,11 @@ export default function ClientSettingsPage() {
           monthly_hour: 8,
           report_timezone: 'America/Sao_Paulo',
           recipients: [],
-        })
+        }
+        setDsSettings(defaults); setDsDraft(defaults)
       }
     } catch {
-      setDsSettings({
+      const defaults: DSSettings = {
         weekly_enabled: false,
         monthly_enabled: false,
         weekly_day_of_week: 1,
@@ -179,27 +181,24 @@ export default function ClientSettingsPage() {
         monthly_hour: 8,
         report_timezone: 'America/Sao_Paulo',
         recipients: [],
-      })
+      }
+      setDsSettings(defaults); setDsDraft(defaults)
     }
     finally { setDsLoading(false) }
   }, [clientId])
 
-  const saveDS = useCallback(async (next: DSSettings) => {
-    setDsSettings(next)
+  const saveDS = useCallback(async (draft: DSSettings) => {
     setDsSaving(true); setDsMsg(null)
     try {
-      // Strip to the exact contract of DeliverySettingsIn / RecipientIn (extra='forbid').
-      // The GET response includes human_approval_required, client_id, updated_at at the
-      // top level and created_at/updated_at inside each recipient — all rejected by PUT.
       const body = {
-        weekly_enabled:       next.weekly_enabled,
-        monthly_enabled:      next.monthly_enabled,
-        weekly_day_of_week:   next.weekly_day_of_week  ?? 0,
-        weekly_hour:          next.weekly_hour          ?? 8,
-        monthly_day_of_month: next.monthly_day_of_month ?? 1,
-        monthly_hour:         next.monthly_hour         ?? 8,
-        report_timezone:      next.report_timezone      ?? 'America/Sao_Paulo',
-        recipients: next.recipients.map(r => ({
+        weekly_enabled:       draft.weekly_enabled,
+        monthly_enabled:      draft.monthly_enabled,
+        weekly_day_of_week:   draft.weekly_day_of_week  ?? 0,
+        weekly_hour:          draft.weekly_hour          ?? 8,
+        monthly_day_of_month: draft.monthly_day_of_month ?? 1,
+        monthly_hour:         draft.monthly_hour         ?? 8,
+        report_timezone:      draft.report_timezone      ?? 'America/Sao_Paulo',
+        recipients: draft.recipients.map(r => ({
           id:     r.id,
           name:   r.name,
           email:  r.email,
@@ -211,16 +210,48 @@ export default function ClientSettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!res.ok) throw new Error(`Erro ${res.status}`)
-      setDsSettings(await res.json())
-      setDsMsg({ ok: true, text: 'Salvo' })
-      setTimeout(() => setDsMsg(null), 2500)
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        const detail = errData.detail
+        const msg = typeof detail === 'string'
+          ? detail
+          : Array.isArray(detail)
+            ? detail.map((e: { loc?: unknown[]; msg?: string }) => `${e.loc?.slice(-1)?.[0] ?? '?'}: ${e.msg ?? ''}`).join(' · ')
+            : `Erro ${res.status}`
+        throw new Error(msg)
+      }
+      const saved = await res.json()
+      setDsSettings(saved); setDsDraft(saved)
+      setDsMsg({ ok: true, text: 'Configurações salvas' })
+      setTimeout(() => setDsMsg(null), 3000)
     } catch (e) {
       setDsMsg({ ok: false, text: e instanceof Error ? e.message : String(e) })
     } finally {
       setDsSaving(false)
     }
   }, [clientId])
+
+  const dsDirty = useMemo(() => {
+    if (!dsSettings || !dsDraft) return false
+    const normalize = (s: DSSettings) => JSON.stringify({
+      weekly_enabled: s.weekly_enabled,
+      monthly_enabled: s.monthly_enabled,
+      weekly_day_of_week: s.weekly_day_of_week,
+      weekly_hour: s.weekly_hour,
+      monthly_day_of_month: s.monthly_day_of_month,
+      monthly_hour: s.monthly_hour,
+      report_timezone: s.report_timezone,
+      recipients: s.recipients.map(r => ({ id: r.id, name: r.name, email: r.email, active: r.active })),
+    })
+    return normalize(dsDraft) !== normalize(dsSettings)
+  }, [dsSettings, dsDraft])
+
+  useEffect(() => {
+    if (!dsDirty) return
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [dsDirty])
 
   async function invitePortalUser() {
     const email = portalEmail.trim().toLowerCase()
@@ -1470,15 +1501,15 @@ export default function ClientSettingsPage() {
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Loader2 size={12} className="animate-spin" /> Carregando…
           </div>
-        ) : dsSettings && (
+        ) : dsDraft && (
           <div className="space-y-5">
             {/* Enabled toggles */}
             <div className="flex flex-wrap gap-5">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={dsSettings.weekly_enabled}
-                  onChange={e => saveDS({ ...dsSettings, weekly_enabled: e.target.checked })}
+                  checked={dsDraft.weekly_enabled}
+                  onChange={e => setDsDraft(d => d ? { ...d, weekly_enabled: e.target.checked } : d)}
                   disabled={dsSaving}
                   className="rounded border-slate-600 bg-[#0f1117] text-indigo-500 focus:ring-0"
                 />
@@ -1487,8 +1518,8 @@ export default function ClientSettingsPage() {
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={dsSettings.monthly_enabled}
-                  onChange={e => saveDS({ ...dsSettings, monthly_enabled: e.target.checked })}
+                  checked={dsDraft.monthly_enabled}
+                  onChange={e => setDsDraft(d => d ? { ...d, monthly_enabled: e.target.checked } : d)}
                   disabled={dsSaving}
                   className="rounded border-slate-600 bg-[#0f1117] text-indigo-500 focus:ring-0"
                 />
@@ -1497,22 +1528,22 @@ export default function ClientSettingsPage() {
             </div>
 
             {/* Schedule timing — shown only when at least one is enabled */}
-            {(dsSettings.weekly_enabled || dsSettings.monthly_enabled) && (
+            {(dsDraft.weekly_enabled || dsDraft.monthly_enabled) && (
               <div className="space-y-3 pt-2 border-t border-[#2a2f3e]">
                 <p className="text-[10px] text-slate-500 uppercase tracking-wider">Horário de disparo — horário de Brasília (America/Sao_Paulo, UTC−3)</p>
-                {dsSettings.weekly_enabled && (
+                {dsDraft.weekly_enabled && (
                   <div className="flex flex-wrap gap-2 items-center">
                     <span className="text-xs text-slate-400 w-14 shrink-0">Semanal</span>
-                    <select value={dsSettings.weekly_day_of_week ?? 0}
-                      onChange={e => saveDS({ ...dsSettings, weekly_day_of_week: +e.target.value })}
+                    <select value={dsDraft.weekly_day_of_week ?? 0}
+                      onChange={e => setDsDraft(d => d ? { ...d, weekly_day_of_week: +e.target.value } : d)}
                       disabled={dsSaving}
                       className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
                       {['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'].map((d,i) => (
                         <option key={i} value={i}>{d}</option>
                       ))}
                     </select>
-                    <select value={dsSettings.weekly_hour ?? 8}
-                      onChange={e => saveDS({ ...dsSettings, weekly_hour: +e.target.value })}
+                    <select value={dsDraft.weekly_hour ?? 8}
+                      onChange={e => setDsDraft(d => d ? { ...d, weekly_hour: +e.target.value } : d)}
                       disabled={dsSaving}
                       className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
                       {Array.from({length:24},(_,h) => {
@@ -1522,19 +1553,19 @@ export default function ClientSettingsPage() {
                     </select>
                   </div>
                 )}
-                {dsSettings.monthly_enabled && (
+                {dsDraft.monthly_enabled && (
                   <div className="flex flex-wrap gap-2 items-center">
                     <span className="text-xs text-slate-400 w-14 shrink-0">Mensal</span>
-                    <select value={dsSettings.monthly_day_of_month ?? 1}
-                      onChange={e => saveDS({ ...dsSettings, monthly_day_of_month: +e.target.value })}
+                    <select value={dsDraft.monthly_day_of_month ?? 1}
+                      onChange={e => setDsDraft(d => d ? { ...d, monthly_day_of_month: +e.target.value } : d)}
                       disabled={dsSaving}
                       className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
                       {Array.from({length:28},(_,i) => (
                         <option key={i+1} value={i+1}>Dia {i+1}</option>
                       ))}
                     </select>
-                    <select value={dsSettings.monthly_hour ?? 8}
-                      onChange={e => saveDS({ ...dsSettings, monthly_hour: +e.target.value })}
+                    <select value={dsDraft.monthly_hour ?? 8}
+                      onChange={e => setDsDraft(d => d ? { ...d, monthly_hour: +e.target.value } : d)}
                       disabled={dsSaving}
                       className="bg-[#0f1117] border border-[#2a2f3e] rounded px-2 py-1 text-xs text-white outline-none focus:border-indigo-500">
                       {Array.from({length:24},(_,h) => {
@@ -1557,22 +1588,22 @@ export default function ClientSettingsPage() {
             <div>
               <p className="text-xs font-medium text-slate-300 mb-2">Destinatários</p>
               <div className="space-y-2 mb-3">
-                {dsSettings.recipients.length === 0 ? (
+                {dsDraft.recipients.length === 0 ? (
                   <p className="text-xs text-slate-600">Nenhum destinatário configurado.</p>
-                ) : dsSettings.recipients.map(r => (
+                ) : dsDraft.recipients.map(r => (
                   <div key={r.id} className="flex items-center gap-2 bg-[#0f1117] rounded-lg border border-[#2a2f3e] px-3 py-2">
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.active ? 'bg-emerald-400' : 'bg-slate-600'}`} />
                     <span className="text-xs text-slate-300 font-medium flex-1 min-w-0 truncate">{r.name}</span>
                     <span className="text-[10px] text-slate-500 truncate max-w-[160px]">{r.email}</span>
                     <button
-                      onClick={() => saveDS({ ...dsSettings, recipients: dsSettings.recipients.map(x => x.id === r.id ? { ...x, active: !x.active } : x) })}
+                      onClick={() => setDsDraft(d => d ? { ...d, recipients: d.recipients.map(x => x.id === r.id ? { ...x, active: !x.active } : x) } : d)}
                       disabled={dsSaving}
                       className="text-[10px] text-slate-500 hover:text-slate-300 shrink-0 disabled:opacity-50"
                     >
                       {r.active ? 'Desativar' : 'Ativar'}
                     </button>
                     <button
-                      onClick={() => saveDS({ ...dsSettings, recipients: dsSettings.recipients.filter(x => x.id !== r.id) })}
+                      onClick={() => setDsDraft(d => d ? { ...d, recipients: d.recipients.filter(x => x.id !== r.id) } : d)}
                       disabled={dsSaving}
                       className="text-slate-600 hover:text-red-400 transition-colors shrink-0 disabled:opacity-50"
                     >
@@ -1602,7 +1633,7 @@ export default function ClientSettingsPage() {
                   onClick={() => {
                     if (!dsNewName.trim() || !dsNewEmail.trim()) return
                     const newRec = { id: crypto.randomUUID(), name: dsNewName.trim(), email: dsNewEmail.trim().toLowerCase(), active: true }
-                    saveDS({ ...dsSettings!, recipients: [...dsSettings!.recipients, newRec] })
+                    setDsDraft(d => d ? { ...d, recipients: [...d.recipients, newRec] } : d)
                     setDsNewName(''); setDsNewEmail('')
                   }}
                   disabled={!dsNewName.trim() || !dsNewEmail.trim() || dsSaving}
@@ -1614,10 +1645,22 @@ export default function ClientSettingsPage() {
               </div>
             </div>
 
-            {/* Status feedback */}
-            {dsMsg && (
-              <p className={`text-xs ${dsMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{dsMsg.text}</p>
-            )}
+            {/* Save button */}
+            <div className="pt-3 border-t border-[#2a2f3e] flex items-center gap-4">
+              <button
+                onClick={() => dsDraft && saveDS(dsDraft)}
+                disabled={!dsDirty || dsSaving}
+                className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-lg transition-colors bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white"
+              >
+                {dsSaving
+                  ? <><Loader2 size={11} className="animate-spin" /> Salvando…</>
+                  : <><Save size={11} /> Salvar configurações</>
+                }
+              </button>
+              {dsMsg && (
+                <p className={`text-xs ${dsMsg.ok ? 'text-emerald-400' : 'text-red-400'}`}>{dsMsg.text}</p>
+              )}
+            </div>
           </div>
         )}
       </div>
