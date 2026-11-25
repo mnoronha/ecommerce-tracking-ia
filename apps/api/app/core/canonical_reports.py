@@ -149,7 +149,7 @@ class Reports:
   return deepcopy(row['document'])
  def apply_analysis(self,report_id,base_version,hermes_payload,analysis_request_id,*,actor,at):
   """Create v(N+1) with Hermes analysis merged. Transitions to READY_FOR_REVIEW if gate passes."""
-  from .analysis_layer import apply_hermes_analysis,validate_hermes_response,check_quality_gate
+  from .analysis_layer import apply_hermes_analysis,validate_hermes_response,check_quality_gate,compute_quality_scores
   validate_hermes_response(hermes_payload)
   next_version=base_version+1
   key=f'report:{report_id}:v{next_version}'
@@ -171,6 +171,7 @@ class Reports:
    new_analysis['h8_evidence_quality_gate']=gate
   doc={**base,'version':next_version,'analysis_request_id':analysis_request_id,
    'content':{**base.get('content',{}),'analysis_layer':new_analysis}}
+  doc['quality_scores']=compute_quality_scores(doc.get('content') or {})
   ah=digest({k:v for k,v in doc.items() if k not in ('report_id','report_type','artifact_hash','idempotency_key','status','approved_at','approved_by','published_at','approval_hash','generated_at','superseded_at','superseded_by_actor','superseded_by_version')})
   doc['artifact_hash']=ah
   def create(old):

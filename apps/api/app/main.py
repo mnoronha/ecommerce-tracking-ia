@@ -298,10 +298,8 @@ if _os.getenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "false").strip().lower() == "tr
     # Rollback: set CANONICAL_WEEKLY_REVIEW_ENABLED=false and redeploy — legacy re-registers.
     _scheduler.add_job(
         _run_canonical_weekly,
-        "cron",
-        day_of_week="mon",
-        hour=8,
-        minute=0,   # 08:00 UTC = 05:00 BRT segunda
+        "interval",
+        hours=1,    # checks per-client weekly_day_of_week+weekly_hour in their timezone
         id="canonical_weekly_review",
     )
 else:
@@ -328,10 +326,8 @@ if _os.getenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "false").strip().lower() == "t
     # Rollback: set CANONICAL_MONTHLY_REVIEW_ENABLED=false and redeploy — legacy re-registers.
     _scheduler.add_job(
         _run_canonical_monthly,
-        "cron",
-        day=1,
-        hour=8,
-        minute=30,  # 08:30 UTC = 05:30 BRT — 1º do mês, após core_pipeline (07:15) fechar mês anterior
+        "interval",
+        hours=1,    # checks per-client monthly_day_of_month+monthly_hour in their timezone
         id="canonical_monthly_review",
     )
 else:

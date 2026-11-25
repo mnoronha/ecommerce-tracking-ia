@@ -41,6 +41,7 @@ import logging
 import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from hashlib import sha256
 from pathlib import Path
 from typing import Optional
@@ -109,20 +110,23 @@ def _load_active_clients(sb) -> list[dict]:
 
 
 def _load_opted_in_clients(sb) -> list[dict]:
-    """Return only clients with monthly_enabled=true in core_report_delivery_settings.
-    Default is opt-out: clients without a settings row are excluded until explicitly enabled."""
+    """Return opted-in clients with per-client monthly timing settings attached."""
     try:
         rows = (
             sb.table("core_report_delivery_settings")
-            .select("client_id")
+            .select("client_id,monthly_day_of_month,monthly_hour,report_timezone")
             .eq("monthly_enabled", True)
             .execute()
         ).data or []
-        opted_in = {r["client_id"] for r in rows}
+        timing = {r["client_id"]: r for r in rows}
     except Exception as exc:
         logger.error("canonical_monthly: delivery_settings query failed: %s", exc)
-        opted_in = set()
-    return [c for c in _load_active_clients(sb) if c.get("client_id") in opted_in]
+        return []
+    return [
+        {**c, **timing[c["client_id"]]}
+        for c in _load_active_clients(sb)
+        if c.get("client_id") in timing
+    ]
 
 
 def _fetch_prev_month_snapshot(sb, client_id: str, period_start: date) -> Optional[dict]:
@@ -670,7 +674,7 @@ def run_canonical_monthly_for_client(
 
 def run_canonical_monthly_all_clients() -> None:
     """
-    Scheduler entry point -- 1st of month 08:30 UTC.
+    Scheduler entry point -- hourly interval, fires per client based on monthly_day_of_month+monthly_hour in their timezone.
     Loads active clients from DB, runs H8 generation for the last closed month.
     Per-client failure is isolated; does not abort the remaining clients.
 
@@ -690,13 +694,27 @@ def run_canonical_monthly_all_clients() -> None:
     clients = _load_opted_in_clients(sb)
 
     logger.info(
-        "canonical_monthly: running for %d opted-in clients -- period %s to %s",
+        "canonical_monthly: checking %d opted-in clients -- period %s to %s",
         len(clients), period_start, period_end,
     )
 
     results: list[dict] = []
     for c in clients:
-        cid = c["client_id"]
+        cid          = c["client_id"]
+        tz_name      = c.get("report_timezone") or "America/Sao_Paulo"
+        target_day   = c.get("monthly_day_of_month", 1)
+        target_hour  = c.get("monthly_hour", 8)
+        try:
+            now_local = datetime.now(ZoneInfo(tz_name))
+        except Exception:
+            now_local = datetime.now(timezone.utc)
+        if now_local.day != target_day or now_local.hour != target_hour:
+            logger.debug(
+                "canonical_monthly: %s -- not scheduled (tz=%s day=%d h=%d, now day=%d h=%d)",
+                cid, tz_name, target_day, target_hour, now_local.day, now_local.hour,
+            )
+            results.append({"client_id": cid, "status": "SKIPPED_NOT_SCHEDULED"})
+            continue
         try:
             result = run_canonical_monthly_for_client(cid, period_start, period_end, sb=sb)
             results.append(result)

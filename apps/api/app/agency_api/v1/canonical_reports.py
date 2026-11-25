@@ -126,12 +126,14 @@ def list_canonical_reports(
 @router.get('/delivery-settings',tags=['canonical-reports'])
 def get_delivery_settings(client_id:str=Query(...),auth:AuthContext=Depends(SCOPE_READ_ANY))->dict:
  from ...database import get_supabase
- scope(auth,client_id)
+ from ..v1.router import _resolve_slug
+ slug=_resolve_slug(client_id) or client_id
+ scope(auth,slug)
  sb=get_supabase()
- try:rows=sb.table('core_report_delivery_settings').select('*').eq('client_id',client_id).limit(1).execute().data or []
+ try:rows=sb.table('core_report_delivery_settings').select('*').eq('client_id',slug).limit(1).execute().data or []
  except Exception:raise HTTPException(503,'database error')
  _timing_defaults={'weekly_day_of_week':0,'weekly_hour':8,'monthly_day_of_month':1,'monthly_hour':8,'report_timezone':'America/Sao_Paulo'}
- if not rows:return{'client_id':client_id,'weekly_enabled':False,'monthly_enabled':False,'human_approval_required':True,'recipients':[],'updated_at':None,**_timing_defaults}
+ if not rows:return{'client_id':slug,'weekly_enabled':False,'monthly_enabled':False,'human_approval_required':True,'recipients':[],'updated_at':None,**_timing_defaults}
  r=rows[0];return{'client_id':r['client_id'],'weekly_enabled':r['weekly_enabled'],'monthly_enabled':r['monthly_enabled'],'human_approval_required':True,'recipients':r.get('recipients') or [],'weekly_day_of_week':r.get('weekly_day_of_week',0),'weekly_hour':r.get('weekly_hour',8),'monthly_day_of_month':r.get('monthly_day_of_month',1),'monthly_hour':r.get('monthly_hour',8),'report_timezone':r.get('report_timezone','America/Sao_Paulo'),'updated_at':r.get('updated_at')}
 
 @router.put('/delivery-settings',tags=['canonical-reports'])
@@ -139,11 +141,13 @@ def put_delivery_settings(client_id:str=Query(...),body:DeliverySettingsIn=...,a
  import uuid as _uuid
  from datetime import datetime as _dt,timezone as _tz
  from ...database import get_supabase
- scope(auth,client_id)
+ from ..v1.router import _resolve_slug
+ slug=_resolve_slug(client_id) or client_id
+ scope(auth,slug)
  sb=get_supabase()
  now=_dt.now(_tz.utc).isoformat()
  try:
-  existing=sb.table('core_report_delivery_settings').select('id,recipients').eq('client_id',client_id).limit(1).execute().data or []
+  existing=sb.table('core_report_delivery_settings').select('id,recipients').eq('client_id',slug).limit(1).execute().data or []
   old_by_id={r['id']:r for r in(existing[0].get('recipients') or [])}if existing else{}
   recs=[]
   for ri in body.recipients:
@@ -151,10 +155,10 @@ def put_delivery_settings(client_id:str=Query(...),body:DeliverySettingsIn=...,a
    old=old_by_id.get(rid,{})
    recs.append({'id':rid,'name':ri.name.strip(),'email':ri.email.strip().lower(),'active':ri.active,'created_at':old.get('created_at',now),'updated_at':now})
   payload={'weekly_enabled':body.weekly_enabled,'monthly_enabled':body.monthly_enabled,'human_approval_required':True,'recipients':recs,'weekly_day_of_week':body.weekly_day_of_week,'weekly_hour':body.weekly_hour,'monthly_day_of_month':body.monthly_day_of_month,'monthly_hour':body.monthly_hour,'report_timezone':body.report_timezone,'updated_at':now}
-  if existing:sb.table('core_report_delivery_settings').update(payload).eq('client_id',client_id).execute()
-  else:sb.table('core_report_delivery_settings').insert({**payload,'client_id':client_id}).execute()
+  if existing:sb.table('core_report_delivery_settings').update(payload).eq('client_id',slug).execute()
+  else:sb.table('core_report_delivery_settings').insert({**payload,'client_id':slug}).execute()
  except Exception as exc:raise HTTPException(503,f'database error:{str(exc)[:80]}')
- return{'client_id':client_id,**payload}
+ return{'client_id':slug,**payload}
 
 @router.post('/versions',response_model=ReportVersion)
 def generate(body:Generate,auth:AuthContext=Depends(SCOPE_HERMES_WRITE)):
