@@ -154,9 +154,13 @@ class FakeDB:
             return _Chain(type("R", (), {"data": self._clients})())
         if name == "core_job_runs":
             return _MutChain(self.job_rows, type("R", (), {"data": self.job_rows})())
-        # Default: all configured clients have weekly_enabled=true (preserves existing test behaviour)
+        # Default: all configured clients have weekly_enabled=true (preserves existing test behaviour).
+        # Timing fields are set to "right now" so the per-client schedule check always passes.
         if name == "core_report_delivery_settings":
-            opted = [{"client_id": c["client_id"]} for c in self._clients]
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            _now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+            opted = [{"client_id": c["client_id"], "weekly_day_of_week": _now.weekday(), "weekly_hour": _now.hour, "report_timezone": "America/Sao_Paulo"} for c in self._clients]
             return _Chain(type("R", (), {"data": opted})())
         # Change digest tables: return empty — _build_change_summary catches failure gracefully
         if name in ("core_change_log", "core_change_digests"):
@@ -782,7 +786,11 @@ class FakeDBWithSettings(FakeDB):
     """Extends FakeDB to serve core_report_delivery_settings."""
     def __init__(self, settings_rows=None, **kwargs):
         super().__init__(**kwargs)
-        self._settings_rows = settings_rows or []
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        _now = datetime.now(ZoneInfo("America/Sao_Paulo"))
+        _defaults = {"weekly_day_of_week": _now.weekday(), "weekly_hour": _now.hour, "report_timezone": "America/Sao_Paulo"}
+        self._settings_rows = [{**_defaults, **r} for r in (settings_rows or [])]
 
     def table(self, name: str):
         if name == "core_report_delivery_settings":
