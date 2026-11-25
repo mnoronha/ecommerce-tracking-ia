@@ -253,3 +253,112 @@ class TestArtifactDownload:
                 f"/agency/v1/canonical-reports/{doc['report_id']}/artifact?version=2"
             )
         assert r.status_code == 404
+
+    def test_v2_hermes_analysis_returns_200_integrity_verified(self):
+        """v2 (post-Hermes apply_analysis) must pass integrity check — hash must be
+        computed with the same exclusion set used by get_artifact verification."""
+        _FLAGS_PILOT = Flags(
+            CANONICAL_WEEKLY_REVIEW_ENABLED=True,
+            CANONICAL_MONTHLY_REVIEW_ENABLED=False,
+            REPORT_PUBLISH_ENABLED=False,
+            REPORT_DELIVERY_ENABLED=True,
+        )
+        store = MemStore()
+        reports = Reports(store, _FLAGS_PILOT)
+        artifact = {
+            "client_id": "test-client",
+            "canonical_engine": "H7",
+            "engine_version": "a" * 64,
+            "version": 1,
+            "period_start": "2026-10-12",
+            "period_end": "2026-10-18",
+            "generated_at": "2026-10-19T12:00:00+00:00",
+            "source_state": [{"source": "meta", "source_state": "HEALTHY"}],
+            "certification_status": [{"metric_key": "revenue", "certification_status": "PROVISIONAL"}],
+            "review_status": "READY",
+            "content": {
+                "client_id": "test-client",
+                "analysis_period": {"start": "2026-10-12", "end": "2026-10-18"},
+                "business_truth": "Weekly test.",
+                "facts": [{"metric_key": "revenue_business", "value": 100000, "value_status": "OK"}],
+                "channels": {"meta": {"source_state": "READY"}},
+                "hypotheses": [],
+                "recommendations": [],
+                "limitations": [],
+                "status": "READY",
+                "core_writes": False,
+                "platform_writes": False,
+                "analysis_layer": {
+                    "status": "WAITING_FOR_HERMES_ANALYSIS",
+                    "anomalies_detected": [],
+                    "wow_comparison": {"available": False},
+                    "executive_summary": {"bullets": [], "key_win": None, "key_risk": None},
+                    "google_analysis": None,
+                    "meta_analysis": None,
+                    "diagnosis": [],
+                    "recommendations": [],
+                    "change_digest_section": None,
+                    "priorities_next_week": [],
+                    "analysis_notes": "Awaiting Hermes",
+                    "engine_version": "2",
+                },
+            },
+            "evidence_refs": [{"source": "core_metric_snapshots", "client_id": "test-client",
+                                "period_start": "2026-10-12", "period_end": "2026-10-18",
+                                "metric_count": 1}],
+        }
+        v1 = reports.generate(artifact)
+        import uuid as _uuid
+        ar_id = str(_uuid.uuid4())
+        hermes_payload = {
+            "analysis_request_id": ar_id,
+            "report_version": 1,
+            "executive_summary": {
+                "bullets": ["Receita R$100K estável semana a semana", "Meta ROAS 8x sustentado"],
+                "key_win": "MER acima de 8x pela terceira semana",
+                "key_risk": "GA4 CVR requer investigação",
+            },
+            "channel_analysis": {"meta": {"spend_context": "Meta R$10K, ROAS 8x"}},
+            "diagnosis": [{
+                "observation": "Revenue estável",
+                "diagnosis": "Canal saudável",
+                "recommended_action": "Manter estratégia atual de lances Meta",
+                "impact": "medium",
+                "confidence": "HIGH",
+            }],
+            "recommendations": [{
+                "problem_or_opportunity": "Oportunidade de escalar Meta",
+                "evidence": "ROAS 8x sustentado por 3 semanas",
+                "action": "Aumentar budget Meta em 20% nos próximos 7 dias",
+                "priority": "P1",
+                "expected_effect": "+R$15K receita incremental",
+                "risk": "ROAS pode cair se criativo saturar",
+                "confidence": "HIGH",
+            }],
+            "priorities": [{
+                "action": "Escalar Meta budget 20%",
+                "owner": "Media",
+                "deadline_suggestion": "Seg próxima",
+                "rationale": "ROAS sustentado",
+            }],
+            "limitations": None,
+            "analysis_quality": 8.0,
+            "analysis_engine_metadata": {"model": "claude-sonnet", "provider": "anthropic"},
+        }
+        at = datetime.now(timezone.utc).isoformat()
+        v2 = reports.apply_analysis(v1["report_id"], 1, hermes_payload, ar_id, actor="hermes_worker", at=at)
+        assert v2["version"] == 2
+        assert v2["status"] == "READY_FOR_REVIEW"
+
+        app = _make_app()
+        with patch("app.agency_api.v1.canonical_reports.service", return_value=reports), \
+             patch.dict(os.environ, _ENV_ENABLED):
+            r = TestClient(app).get(
+                f"/agency/v1/canonical-reports/{v1['report_id']}/artifact?version=2"
+            )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["integrity"] == "VERIFIED"
+        assert data["download_note"] is None
+        assert data["report"]["version"] == 2
+        assert data["report"]["analysis_request_id"] == ar_id

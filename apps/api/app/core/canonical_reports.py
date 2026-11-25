@@ -171,7 +171,7 @@ class Reports:
    new_analysis['h8_evidence_quality_gate']=gate
   doc={**base,'version':next_version,'analysis_request_id':analysis_request_id,
    'content':{**base.get('content',{}),'analysis_layer':new_analysis}}
-  ah=digest({k:v for k,v in doc.items() if k not in ('generated_at','status','approved_at','approved_by','published_at')})
+  ah=digest({k:v for k,v in doc.items() if k not in ('report_id','report_type','artifact_hash','idempotency_key','status','approved_at','approved_by','published_at','approval_hash','generated_at','superseded_at','superseded_by_actor','superseded_by_version')})
   doc['artifact_hash']=ah
   def create(old):
    if old and old['document'].get('analysis_request_id')==analysis_request_id:return old['document']
