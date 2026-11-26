@@ -29,11 +29,14 @@ Rollback:
 """
 from __future__ import annotations
 
+import calendar
 import logging
 import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+_SCHEDULE_GRACE_HOURS = 2  # fire within this many hours after target_hour to cover brief downtime
 from hashlib import sha256
 from pathlib import Path
 from typing import Optional
@@ -620,7 +623,11 @@ def run_canonical_weekly_all_clients() -> None:
             now_local = datetime.now(ZoneInfo(tz_name))
         except Exception:
             now_local = datetime.now(timezone.utc)
-        if now_local.weekday() != target_dow or now_local.hour != target_hour:
+        in_window = (
+            now_local.weekday() == target_dow
+            and target_hour <= now_local.hour < min(target_hour + _SCHEDULE_GRACE_HOURS, 24)
+        )
+        if not in_window:
             logger.debug(
                 "canonical_weekly: %s — not scheduled (tz=%s dow=%d h=%d, now dow=%d h=%d)",
                 cid, tz_name, target_dow, target_hour, now_local.weekday(), now_local.hour,

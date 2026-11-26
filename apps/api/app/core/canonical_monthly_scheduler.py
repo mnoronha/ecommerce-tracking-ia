@@ -42,6 +42,8 @@ import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+_SCHEDULE_GRACE_HOURS = 2  # fire within this many hours after target_hour to cover brief downtime
 from hashlib import sha256
 from pathlib import Path
 from typing import Optional
@@ -708,10 +710,16 @@ def run_canonical_monthly_all_clients() -> None:
             now_local = datetime.now(ZoneInfo(tz_name))
         except Exception:
             now_local = datetime.now(timezone.utc)
-        if now_local.day != target_day or now_local.hour != target_hour:
+        last_day_of_month = calendar.monthrange(now_local.year, now_local.month)[1]
+        effective_day = min(target_day, last_day_of_month)
+        in_window = (
+            now_local.day == effective_day
+            and target_hour <= now_local.hour < min(target_hour + _SCHEDULE_GRACE_HOURS, 24)
+        )
+        if not in_window:
             logger.debug(
-                "canonical_monthly: %s -- not scheduled (tz=%s day=%d h=%d, now day=%d h=%d)",
-                cid, tz_name, target_day, target_hour, now_local.day, now_local.hour,
+                "canonical_monthly: %s -- not scheduled (tz=%s day=%d(eff %d) h=%d, now day=%d h=%d)",
+                cid, tz_name, target_day, effective_day, target_hour, now_local.day, now_local.hour,
             )
             results.append({"client_id": cid, "status": "SKIPPED_NOT_SCHEDULED"})
             continue

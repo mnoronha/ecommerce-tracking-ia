@@ -301,6 +301,8 @@ if _os.getenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "false").strip().lower() == "tr
         "interval",
         hours=1,    # checks per-client weekly_day_of_week+weekly_hour in their timezone
         id="canonical_weekly_review",
+        max_instances=1,
+        misfire_grace_time=7200,  # 2h grace — covers brief downtime within the schedule window
     )
 else:
     # Legacy path: builds Hermes handoff contracts in agency_report_contracts.
@@ -329,6 +331,8 @@ if _os.getenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "false").strip().lower() == "t
         "interval",
         hours=1,    # checks per-client monthly_day_of_month+monthly_hour in their timezone
         id="canonical_monthly_review",
+        max_instances=1,
+        misfire_grace_time=7200,  # 2h grace — covers brief downtime within the schedule window
     )
 else:
     # Legacy path: builds Hermes handoff contracts in agency_report_contracts.
