@@ -1,6 +1,6 @@
 """Canonical report API; no calls into legacy publication or transport code."""
 from datetime import datetime,timezone
-from fastapi import APIRouter,Depends,HTTPException,Query
+from fastapi import APIRouter,Depends,Header,HTTPException,Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel,Field,ConfigDict
 from typing import Literal,Optional
@@ -393,6 +393,67 @@ def get_analysis_request(report_id:str,version:int=Query(1,ge=1),auth:AuthContex
   return s.get_analysis_request(analysis_request_id)
  except ReportError as e:
   raise HTTPException(404,str(e))
+
+class TestEmailRequest(BaseModel):
+ model_config=ConfigDict(extra='forbid')
+ client_id:str=Field(min_length=1)
+ actor:str=Field(min_length=1)
+ recipient:Optional[str]=None
+
+def test_audit_store():
+ from ...database import get_supabase
+ from ...core.report_email_transport import SupabaseTestDeliveryAuditStore
+ return SupabaseTestDeliveryAuditStore(get_supabase())
+
+@router.post('/{report_id}/versions/{version}/test-email',summary='Internal test email send — allowlisted to contato@norolabs.com.br, CTA=false, independent of REPORT_DELIVERY_ENABLED')
+def send_test_email(
+ report_id:str,
+ version:int,
+ body:TestEmailRequest,
+ idempotency_key:str=Header(...,alias='Idempotency-Key',min_length=8,max_length=128),
+ auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE),
+)->dict:
+ from ...core.report_email_transport import dispatch_test_email,TEST_DELIVERY_COOLDOWN_SECONDS
+ resolved=body.client_id
+ try:
+  from .router import _resolve_slug
+  resolved=_resolve_slug(body.client_id) or body.client_id
+ except Exception:
+  pass
+ scope(auth,resolved)
+ s=service()
+ try:
+  return dispatch_test_email(
+   report_id=report_id,
+   report_version=version,
+   client_id=resolved,
+   actor=auth.subject or body.actor,
+   idempotency_key=idempotency_key,
+   reports=s,
+   audit_store=test_audit_store(),
+   requested_recipient=body.recipient,
+  )
+ except ReportError as e:
+  err=str(e)
+  if err=='REPORT_NOT_FOUND':raise HTTPException(404,err)
+  if err in ('INTERNAL_TEST_RECIPIENT_ONLY','CLIENT_SCOPE_MISMATCH'):raise HTTPException(403,err)
+  if err=='TEST_DELIVERY_RATE_LIMITED':
+   raise HTTPException(429,err,headers={'Retry-After':str(TEST_DELIVERY_COOLDOWN_SECONDS)})
+  raise HTTPException(409,err)
+
+@router.get('/{report_id}/test-deliveries',summary='List internal TEST_DELIVERY audit entries for a report')
+def list_test_deliveries(
+ report_id:str,
+ version:int=Query(1,ge=1),
+ limit:int=Query(20,ge=1,le=100),
+ auth:AuthContext=Depends(SCOPE_READ_ANY),
+)->list[dict]:
+ s=service()
+ try:
+  doc=s.get(report_id,version)
+ except ReportError as e:fail(e)
+ scope(auth,doc['client_id'])
+ return test_audit_store().list_for_report(report_id,limit=limit)
 
 @router.post('/delivery-receipts/{delivery_id}/send')
 def send_delivery(delivery_id:str,body:DeliveryExecute,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):

@@ -4251,6 +4251,25 @@ def obsidian_readiness(
     return check_obsidian_readiness()
 
 
+@router.post(
+    "/knowledge/{knowledge_id}/retry-obsidian",
+    summary="Safely retry Obsidian GitHub write for an existing knowledge record without duplicating it (R08)",
+)
+def retry_knowledge_obsidian_sync(
+    knowledge_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_PLATFORM_WRITE)] = None,
+) -> dict:
+    if not _is_valid_uuid(knowledge_id):
+        raise HTTPException(404, f"knowledge not found: {knowledge_id!r}")
+    actor = getattr(_auth, "subject", None) or getattr(_auth, "scope", None) or "platform_web"
+    from ...core.obsidian_writer import retry_obsidian_sync
+
+    result = retry_obsidian_sync(knowledge_id, actor=actor)
+    if result.get("status") == "NOT_FOUND":
+        raise HTTPException(404, result.get("error") or "knowledge not found")
+    return result
+
+
 # ── POST /jobs/{job_id}/replay ────────────────────────────────────────────────
 #
 # CCR-001: platform_web ADDED — platform operators may trigger replay from the

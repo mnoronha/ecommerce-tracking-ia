@@ -64,6 +64,31 @@ def validate_auth() -> dict:
     }
 
 
+_TRANSCRIPT_QUERY_WITH_SUMMARY = """
+query GetTranscript($id: String!) {
+  transcript(id: $id) {
+    id
+    title
+    date
+    duration
+    organizer_email
+    meeting_link
+    participants
+    summary {
+      overview
+      action_items
+    }
+    sentences {
+      index
+      speaker_name
+      text
+      start_time
+      end_time
+    }
+  }
+}
+"""
+
 _TRANSCRIPT_QUERY = """
 query GetTranscript($id: String!) {
   transcript(id: $id) {
@@ -101,11 +126,15 @@ query ListTranscripts($limit: Int!) {
 
 
 def fetch_transcript(meeting_id: str) -> dict:
-    """Fetch full transcript. Raises RuntimeError if not found."""
-    result = _gql(_TRANSCRIPT_QUERY, {"id": meeting_id})
+    """Fetch full transcript (with native summary when plan permits). Raises RuntimeError if not found."""
+    result = _gql(_TRANSCRIPT_QUERY_WITH_SUMMARY, {"id": meeting_id})
     errors = result.get("errors")
     if errors:
-        raise RuntimeError(f"Fireflies GQL error: {errors[0].get('message', 'unknown')}")
+        # Fallback for Free plans where `summary` field may be restricted
+        result = _gql(_TRANSCRIPT_QUERY, {"id": meeting_id})
+        errors = result.get("errors")
+        if errors:
+            raise RuntimeError(f"Fireflies GQL error: {errors[0].get('message', 'unknown')}")
     transcript = (result.get("data") or {}).get("transcript")
     if not transcript:
         raise RuntimeError(f"Transcript not found for meeting_id={meeting_id!r}")

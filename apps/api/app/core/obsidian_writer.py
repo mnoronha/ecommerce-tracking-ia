@@ -213,6 +213,82 @@ def _render_markdown(
 
 # ── GitHub writer ──────────────────────────────────────────────────────────────
 
+
+def _classify_github_http_error(code: int) -> tuple[str, bool, str]:
+    """Return (error_code, auth_failed, sanitized_reason) for GitHub HTTP errors."""
+    if code == 401:
+        return (
+            "GITHUB_AUTH_401",
+            True,
+            "GitHub authentication failed (HTTP 401 — OBSIDIAN_GITHUB_TOKEN invalid or expired)",
+        )
+    if code == 403:
+        return (
+            "GITHUB_AUTH_403",
+            True,
+            "GitHub authorization denied (HTTP 403 — token lacks Contents read/write permission or rate limited)",
+        )
+    if code == 404:
+        return ("GITHUB_NOT_FOUND_404", False, "GitHub repo/branch/path not found (HTTP 404)")
+    if code == 409:
+        return ("GITHUB_CONFLICT_409", False, "GitHub SHA conflict (HTTP 409)")
+    if code == 422:
+        return ("GITHUB_UNPROCESSABLE_422", False, "GitHub rejected payload (HTTP 422)")
+    return (f"GITHUB_HTTP_{code}", False, f"GitHub API returned HTTP {code}")
+
+
+def _fetch_github_file_sha(path: str) -> tuple[Optional[str], Optional[dict]]:
+    """
+    Fetch existing file SHA from GitHub for idempotent updates.
+
+    Returns:
+      (sha, None)        — file exists (200)
+      (None, None)       — file does not exist yet (404) or unconfigured
+      (None, error_dict) — explicit auth failure (401/403) so caller fails fast
+    """
+    token: str = getattr(settings, "OBSIDIAN_GITHUB_TOKEN", "") or ""
+    repo:  str = getattr(settings, "OBSIDIAN_VAULT_REPO", "") or ""
+    branch: str = getattr(settings, "OBSIDIAN_VAULT_BRANCH", "") or "main"
+    if not token or not repo:
+        return None, None
+    try:
+        url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get("sha"), None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None, None
+        error_code, auth_failed, reason = _classify_github_http_error(exc.code)
+        if auth_failed:
+            logger.warning("obsidian_writer: GitHub SHA check auth failed (%s)", error_code)
+            return None, {
+                "status": "failed",
+                "http_status": exc.code,
+                "error_code": error_code,
+                "auth_failed": True,
+                "reason": reason,
+            }
+        logger.warning("obsidian_writer: GitHub SHA check HTTP %s for %s", exc.code, path)
+        return None, None
+    except Exception as exc:
+        logger.warning("obsidian_writer: GitHub SHA check error: %s", type(exc).__name__)
+        return None, None
+
+
+def _get_existing_github_sha(path: str) -> Optional[str]:
+    """Get SHA of existing file in GitHub repo (for update rather than create)."""
+    sha, _ = _fetch_github_file_sha(path)
+    return sha
+
+
 def _write_to_github(
     *,
     path: str,
@@ -221,16 +297,29 @@ def _write_to_github(
     existing_sha: Optional[str] = None,
 ) -> dict:
     """
-    Write or update a file in the configured GitHub vault repo.
-    Returns {"status": "written"|"skipped", "url": ...}.
-    Requires: OBSIDIAN_GITHUB_TOKEN, OBSIDIAN_VAULT_REPO (owner/repo).
+    Idempotently write or update a file in the configured GitHub vault repo.
+    Returns dict with status ("written"|"skipped"|"failed"), plus explicit
+    auth_failed/error_code fields on 401/403. Never logs or returns the token.
     """
     token: str = getattr(settings, "OBSIDIAN_GITHUB_TOKEN", "") or ""
     repo:  str = getattr(settings, "OBSIDIAN_VAULT_REPO", "") or ""
     branch: str = getattr(settings, "OBSIDIAN_VAULT_BRANCH", "") or "main"
 
     if not token or not repo:
-        return {"status": "skipped", "reason": "OBSIDIAN_GITHUB_TOKEN or OBSIDIAN_VAULT_REPO not configured"}
+        return {
+            "status": "skipped",
+            "auth_failed": False,
+            "error_code": "OBSIDIAN_NOT_CONFIGURED",
+            "reason": "OBSIDIAN_GITHUB_TOKEN or OBSIDIAN_VAULT_REPO not configured",
+        }
+
+    # Always resolve existing SHA when not supplied so retries update idempotently
+    # without hitting HTTP 422 ("sha wasn't supplied") and fail fast on 401/403.
+    sha_to_use = existing_sha
+    if sha_to_use is None:
+        sha_to_use, sha_err = _fetch_github_file_sha(path)
+        if sha_err is not None:
+            return sha_err
 
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
 
@@ -240,8 +329,8 @@ def _write_to_github(
         "content": encoded,
         "branch":  branch,
     }
-    if existing_sha:
-        payload["sha"] = existing_sha
+    if sha_to_use:
+        payload["sha"] = sha_to_use
 
     try:
         req = urllib.request.Request(
@@ -258,57 +347,197 @@ def _write_to_github(
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())
         github_url = data.get("content", {}).get("html_url") or url
-        return {"status": "written", "url": github_url, "sha": data.get("content", {}).get("sha")}
+        return {
+            "status": "written",
+            "url": github_url,
+            "sha": data.get("content", {}).get("sha"),
+            "auth_failed": False,
+            "error_code": None,
+        }
     except urllib.error.HTTPError as exc:
         try:
             body = exc.read().decode()
         except Exception:
             body = ""
-        logger.warning("obsidian_writer: GitHub write failed (%s): %s", exc.code, body[:200])
-        return {"status": "failed", "reason": f"HTTP {exc.code}"}
-    except Exception as exc:
-        logger.warning("obsidian_writer: GitHub write error: %s", exc)
-        return {"status": "failed", "reason": str(exc)}
-
-
-def _get_existing_github_sha(path: str) -> Optional[str]:
-    """Get SHA of existing file in GitHub repo (for update rather than create)."""
-    token: str = getattr(settings, "OBSIDIAN_GITHUB_TOKEN", "") or ""
-    repo:  str = getattr(settings, "OBSIDIAN_VAULT_REPO", "") or ""
-    branch: str = getattr(settings, "OBSIDIAN_VAULT_BRANCH", "") or "main"
-    if not token or not repo:
-        return None
-    try:
-        url = f"https://api.github.com/repos/{repo}/contents/{path}?ref={branch}"
-        req = urllib.request.Request(
-            url,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        error_code, auth_failed, reason = _classify_github_http_error(exc.code)
+        logger.warning(
+            "obsidian_writer: GitHub write failed (%s / HTTP %s): %s",
+            error_code, exc.code, body[:200],
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read()).get("sha")
-    except Exception:
-        pass
-    return None
+        return {
+            "status": "failed",
+            "http_status": exc.code,
+            "error_code": error_code,
+            "auth_failed": auth_failed,
+            "reason": reason,
+        }
+    except Exception as exc:
+        logger.warning("obsidian_writer: GitHub write error: %s", type(exc).__name__)
+        return {
+            "status": "failed",
+            "auth_failed": False,
+            "error_code": "GITHUB_TRANSPORT_ERROR",
+            "reason": str(exc),
+        }
 
 
 # ── Duplicate detection ────────────────────────────────────────────────────────
 
-def _find_existing_knowledge(sb, pattern: Optional[str], scope: str) -> Optional[dict]:
-    """Return existing knowledge document with the same pattern, or None."""
-    if not pattern:
-        return None
+def _find_existing_knowledge(
+    sb,
+    pattern: Optional[str],
+    scope: str,
+    learning_candidate_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Return existing knowledge document with the same pattern (or candidate), or None."""
+    cols = (
+        "id, title, pattern, document_version, document_path, document_slug, "
+        "scope, obsidian_status, obsidian_url, markdown_content"
+    )
+    if pattern:
+        try:
+            res = (
+                sb.table("core_agency_knowledge")
+                .select(cols)
+                .eq("pattern", pattern)
+                .limit(1)
+                .execute()
+            )
+            if res and res.data:
+                return res.data[0]
+        except Exception as exc:
+            logger.warning("obsidian_writer: duplicate check by pattern failed: %s", exc)
+    if learning_candidate_id:
+        try:
+            res = (
+                sb.table("core_agency_knowledge")
+                .select(cols)
+                .eq("learning_candidate_id", learning_candidate_id)
+                .limit(1)
+                .execute()
+            )
+            if res and res.data:
+                return res.data[0]
+        except Exception as exc:
+            logger.warning("obsidian_writer: duplicate check by candidate failed: %s", exc)
+    return None
+
+
+# ── Safe Obsidian-only retry (R08 — zero knowledge duplication) ───────────────
+
+
+def retry_obsidian_sync(
+    knowledge_id: str,
+    *,
+    actor: str = "system",
+) -> dict:
+    """
+    Safely retry writing an already-persisted `core_agency_knowledge` document
+    to the Obsidian GitHub vault WITHOUT creating a duplicate knowledge row.
+
+    Idempotent:
+      - If `obsidian_status == 'WRITTEN'` and `obsidian_url` is set → no-op.
+      - If GitHub fails with 401/403 → keeps `obsidian_status = 'FAILED'`,
+        returns explicit `auth_failed=True`, `error_code='GITHUB_AUTH_401|403'`.
+      - If GitHub succeeds → updates existing row in-place to `WRITTEN` + URL.
+    """
+    sb = get_supabase()
     try:
         res = (
             sb.table("core_agency_knowledge")
-            .select("id, title, pattern, document_version, document_path, scope")
-            .eq("pattern", pattern)
+            .select("id, document_path, document_slug, document_version, markdown_content, obsidian_status, obsidian_url, learning_candidate_id")
+            .eq("id", knowledge_id)
             .limit(1)
             .execute()
         )
-        return res.data[0] if (res and res.data) else None
+        row = res.data[0] if (res and res.data) else None
     except Exception as exc:
-        logger.warning("obsidian_writer: duplicate check failed: %s", exc)
-        return None
+        return {
+            "status": "FAILED",
+            "knowledge_id": knowledge_id,
+            "obsidian_status": _OBS_FAILED,
+            "obsidian_url": None,
+            "auth_failed": False,
+            "error_code": "DB_LOOKUP_FAILED",
+            "error": str(exc),
+            "retried": False,
+        }
+
+    if not row:
+        return {
+            "status": "NOT_FOUND",
+            "knowledge_id": knowledge_id,
+            "obsidian_status": _OBS_FAILED,
+            "obsidian_url": None,
+            "auth_failed": False,
+            "error_code": "KNOWLEDGE_NOT_FOUND",
+            "error": f"knowledge not found: {knowledge_id}",
+            "retried": False,
+        }
+
+    if row.get("obsidian_status") == _OBS_WRITTEN and row.get("obsidian_url"):
+        return {
+            "status": "ALREADY_WRITTEN",
+            "knowledge_id": str(row["id"]),
+            "document_path": row.get("document_path"),
+            "obsidian_status": _OBS_WRITTEN,
+            "obsidian_url": row.get("obsidian_url"),
+            "auth_failed": False,
+            "error_code": None,
+            "error": None,
+            "retried": False,
+        }
+
+    doc_path = row.get("document_path")
+    markdown = row.get("markdown_content")
+    if not doc_path or not markdown:
+        return {
+            "status": "FAILED",
+            "knowledge_id": str(row["id"]),
+            "document_path": doc_path,
+            "obsidian_status": _OBS_FAILED,
+            "obsidian_url": row.get("obsidian_url"),
+            "auth_failed": False,
+            "error_code": "MISSING_DOCUMENT_CONTENT",
+            "error": "knowledge row missing document_path or markdown_content",
+            "retried": False,
+        }
+
+    slug = row.get("document_slug") or knowledge_id[:8]
+    ver = int(row.get("document_version") or 1)
+    gh_result = _write_to_github(
+        path=doc_path,
+        content=markdown,
+        message=f"knowledge: retry obsidian sync {slug} (v{ver}) by {actor}",
+    )
+    new_obs_status = {
+        "written": _OBS_WRITTEN,
+        "skipped": _OBS_SKIPPED,
+        "failed":  _OBS_FAILED,
+    }.get(gh_result["status"], _OBS_PENDING)
+    new_obs_url = gh_result.get("url") or row.get("obsidian_url")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        sb.table("core_agency_knowledge").update({
+            "obsidian_status": new_obs_status,
+            "obsidian_url":    new_obs_url,
+            "updated_at":      now_iso,
+        }).eq("id", str(row["id"])).execute()
+    except Exception as exc:
+        logger.error("obsidian_writer: failed to update knowledge %s after retry: %s", knowledge_id, exc)
+
+    return {
+        "status": "WRITTEN" if new_obs_status == _OBS_WRITTEN else new_obs_status,
+        "knowledge_id": str(row["id"]),
+        "document_path": doc_path,
+        "obsidian_status": new_obs_status,
+        "obsidian_url": new_obs_url,
+        "auth_failed": bool(gh_result.get("auth_failed")),
+        "error_code": gh_result.get("error_code"),
+        "error": gh_result.get("reason") if new_obs_status == _OBS_FAILED else None,
+        "retried": True,
+    }
 
 
 # ── Main promotion function ────────────────────────────────────────────────────
@@ -391,13 +620,30 @@ def promote_to_knowledge(
             f"candidate status {cand_status!r} is not APPROVED"
         )
 
-    # ── 4. Duplicate detection ─────────────────────────────────────────────────
+    # ── 4. Duplicate detection & safe Obsidian retry (R08) ────────────────────
     pattern  = candidate.get("pattern")
     scope    = candidate.get("scope", "CLIENT_ONLY")
-    existing = _find_existing_knowledge(sb, pattern, scope)
+    existing = _find_existing_knowledge(sb, pattern, scope, learning_candidate_id=learning_candidate_id)
 
     if existing and not force_new_version:
-        # Return existing without creating duplicate
+        existing_obs_status = existing.get("obsidian_status") or _OBS_SKIPPED
+        existing_obs_url = existing.get("obsidian_url")
+        obs_error = None
+        obs_error_code = None
+        auth_failed = False
+
+        # Safe retry without duplicating core_agency_knowledge when Obsidian
+        # previously failed/skipped and GitHub credentials are now configured.
+        token_ready = bool(getattr(settings, "OBSIDIAN_GITHUB_TOKEN", "") or "")
+        repo_ready = bool(getattr(settings, "OBSIDIAN_VAULT_REPO", "") or "")
+        if existing_obs_status != _OBS_WRITTEN and token_ready and repo_ready and existing.get("markdown_content"):
+            retry_res = retry_obsidian_sync(str(existing["id"]), actor=actor)
+            existing_obs_status = retry_res.get("obsidian_status", existing_obs_status)
+            existing_obs_url = retry_res.get("obsidian_url") or existing_obs_url
+            obs_error = retry_res.get("error")
+            obs_error_code = retry_res.get("error_code")
+            auth_failed = bool(retry_res.get("auth_failed"))
+
         promo_row = _create_promotion_record(
             sb,
             candidate_id=learning_candidate_id,
@@ -409,6 +655,7 @@ def promote_to_knowledge(
             document_path=existing.get("document_path"),
             document_version=int(existing.get("document_version", 1)),
             existing_knowledge_id=str(existing["id"]),
+            error=obs_error,
         )
         return {
             "status": "EXISTING_KNOWLEDGE",
@@ -416,9 +663,11 @@ def promote_to_knowledge(
             "promotion_id": str(promo_row["id"]) if promo_row else None,
             "document_path": existing.get("document_path"),
             "document_version": int(existing.get("document_version", 1)),
-            "obsidian_status": _OBS_SKIPPED,
-            "obsidian_url": existing.get("obsidian_url"),
-            "error": None,
+            "obsidian_status": existing_obs_status,
+            "obsidian_url": existing_obs_url,
+            "auth_failed": auth_failed,
+            "error_code": obs_error_code,
+            "error": obs_error,
         }
 
     # ── 5. Determine document metadata ────────────────────────────────────────
@@ -503,13 +752,11 @@ def promote_to_knowledge(
         document_version=document_version,
     )
 
-    # ── 7. Write to GitHub (best-effort) ──────────────────────────────────────
-    existing_sha = _get_existing_github_sha(doc_path) if (existing and force_new_version) else None
+    # ── 7. Write to GitHub (best-effort, idempotent SHA lookup) ───────────────
     gh_result = _write_to_github(
         path=doc_path,
         content=markdown,
         message=f"knowledge: promote {slug} (v{document_version}) from learning candidate {learning_candidate_id[:8]}",
-        existing_sha=existing_sha,
     )
     obsidian_status = {
         "written": _OBS_WRITTEN,
@@ -517,6 +764,9 @@ def promote_to_knowledge(
         "failed":  _OBS_FAILED,
     }.get(gh_result["status"], _OBS_PENDING)
     obsidian_url = gh_result.get("url")
+    obs_auth_failed = bool(gh_result.get("auth_failed"))
+    obs_error_code = gh_result.get("error_code")
+    obs_error = gh_result.get("reason") if obsidian_status == _OBS_FAILED else None
 
     # ── 8. Write to core_agency_knowledge ─────────────────────────────────────
     knowledge_row: dict = {
@@ -586,7 +836,9 @@ def promote_to_knowledge(
         "document_version": document_version,
         "obsidian_status": obsidian_status,
         "obsidian_url": obsidian_url,
-        "error": None,
+        "auth_failed": obs_auth_failed,
+        "error_code": obs_error_code,
+        "error": obs_error,
     }
 
 
