@@ -159,8 +159,8 @@ def dispatch_delivery(delivery_id: str, recipient: str, reports: Reports) -> dic
         else:
             html, _ = render_monthly_email(artifact)
     except Exception:
-        logger.exception("v5 renderer failed for %s — falling back to plain email", receipt["report_id"])
-        html = build_report_email_html(report)
+        logger.exception("v5 renderer failed for %s — blocking delivery", receipt["report_id"])
+        raise ReportError("RENDER_FAILED")
 
     ok, msg_id, err = _email.send_email_tracked(recipient, subject, html, from_name="Noro Reports")
 

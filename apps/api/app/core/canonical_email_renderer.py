@@ -85,6 +85,10 @@ def _delta_color(v: Optional[float], invert: bool = False) -> str:
 _TEXT_REPLACEMENTS = [
     ("SMALL_SAMPLE", "amostra reduzida"),
     ("small_sample", "amostra reduzida"),
+    ("WoW ROAS", "comp. semanal de ROAS"),
+    ("WoW", "comp. semanal"),
+    ("Core KPIs", "dados consolidados"),
+    ("Core kpis", "dados consolidados"),
     ("canônica do canal", "do canal"),
     ("deterioração canônica", "queda"),
     ("canônico", ""),
@@ -96,9 +100,10 @@ _TEXT_REPLACEMENTS = [
     ("UNKNOWN", "não verificado"),
     (
         "O CPA blended de R$ 41,51 é dominado por conversões que não devem ser tratadas como vendas.",
-        "Conversões secundárias continuam distorcendo o CPA blended. "
+        "Conversões secundárias continuam distorcendo o custo por conversão geral. "
         "Para decisões de mídia, usar somente compras, receita, ROAS e CPA de ecommerce.",
     ),
+    ("CPA blended", "custo por conversão geral"),
     (
         "Usar somente KPIs canônicos de ecommerce para decisões e tratar a granularidade "
         "diagnóstica como SMALL_SAMPLE.",
@@ -235,7 +240,7 @@ def _provisional_badge() -> str:
         f'&nbsp;<span style="font-size:9px;font-weight:700;letter-spacing:0.07em;'
         f'color:{_C["warning"]};font-family:Arial,Helvetica,sans-serif;'
         f'border:1px solid {_C["warning"]};border-radius:3px;padding:1px 5px;'
-        f'text-transform:uppercase;vertical-align:middle;">PROVISIONAL</span>'
+        f'vertical-align:middle;">Dados provis&#243;rios</span>'
     )
 
 
@@ -445,13 +450,13 @@ def _kpis_row(orders: int, orders_wow: Optional[float],
     {_section_label(section_label)}
     <table width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td width="50%" valign="top" style="padding-right:8px;">{c1}</td>
-        <td width="50%" valign="top" style="padding-left:8px;">{c2}</td>
+        <td width="50%" class="col-50 col-50-first" valign="top" style="padding-right:8px;">{c1}</td>
+        <td width="50%" class="col-50" valign="top" style="padding-left:8px;">{c2}</td>
       </tr>
       <tr><td colspan="2" height="10" style="font-size:0;line-height:0;">&nbsp;</td></tr>
       <tr>
-        <td width="50%" valign="top" style="padding-right:8px;">{c3}</td>
-        <td width="50%" valign="top" style="padding-left:8px;">{c4}</td>
+        <td width="50%" class="col-50 col-50-first" valign="top" style="padding-right:8px;">{c3}</td>
+        <td width="50%" class="col-50" valign="top" style="padding-left:8px;">{c4}</td>
       </tr>
     </table>
   </td>
@@ -577,8 +582,9 @@ def _mini_charts(
         )
         pad_l = "0" if is_first else "5px"
         pad_r = "0" if is_last else "5px"
+        col_cls = ("col-50 col-50-first" if is_first else "col-50") if w >= 50 else ("col-33 col-33-gap" if not is_last else "col-33")
         return (
-            f'<td width="{w}%" valign="top" style="padding-left:{pad_l};padding-right:{pad_r};">'
+            f'<td width="{w}%" class="{col_cls}" valign="top" style="padding-left:{pad_l};padding-right:{pad_r};">'
             f'<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
             f'<td bgcolor="{_C["card_hi"]}" style="background-color:{_C["card_hi"]};border-radius:8px;border:1px solid {_C["border"]};padding:14px 12px 15px;">'
             f'<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;margin-bottom:8px;">{title}</div>'
@@ -694,8 +700,8 @@ def _channels(meta_spend: Optional[float], meta_conv: Optional[float],
     {_section_label(section_label)}
     <table width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td width="50%" valign="top" style="padding-right:8px;">{meta_card}</td>
-        <td width="50%" valign="top" style="padding-left:8px;">{goog_card}</td>
+        <td width="50%" class="col-50 col-50-first" valign="top" style="padding-right:8px;">{meta_card}</td>
+        <td width="50%" class="col-50" valign="top" style="padding-left:8px;">{goog_card}</td>
       </tr>
     </table>
   </td>
@@ -820,8 +826,8 @@ def _campaign_highlights_weekly(al: dict) -> str:
         td1 = (f'style="font-size:11px;font-weight:600;color:{_C["text_1"]};font-family:Arial,Helvetica,sans-serif;'
                f'padding:7px 4px 7px 0;border-bottom:1px solid {_C["sep"]};"')
         wow_td = (
-            f'<td {td}><span style="font-weight:700;color:{wow_color};">{wow_txt}</span></td>'
-            if wow_txt else f'<td {td}>&#8212;</td>'
+            f'<td class="camp-col-6th" {td}><span style="font-weight:700;color:{wow_color};">{wow_txt}</span></td>'
+            if wow_txt else f'<td class="camp-col-6th" {td}>&#8212;</td>'
         )
         return (
             f'<tr><td {td1}>'
@@ -839,7 +845,7 @@ def _campaign_highlights_weekly(al: dict) -> str:
           f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;padding:0 4px 8px 0;"')
     thr = (f'style="font-size:9px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;'
            f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;padding:0 4px 8px;text-align:right;"')
-    col_header = f'<tr><td {th}>CAMPANHA</td><td {thr}>INVEST.</td><td {thr}>ROAS</td><td {thr}>CPA</td><td {thr}>COMPRAS</td><td {thr}>WoW ROAS</td></tr>'
+    col_header = f'<tr><td {th}>CAMPANHA</td><td {thr}>INVEST.</td><td {thr}>ROAS</td><td {thr}>CPA</td><td {thr}>COMPRAS</td><td class="camp-col-6th" {thr}>COMP. SEMANAL</td></tr>'
 
     sections_html = ""
 
@@ -861,8 +867,15 @@ def _campaign_highlights_weekly(al: dict) -> str:
             f'{col_header}{rows_html}</table>'
         )
 
-    if not has_ranked and has_text:
-        # Only text evidence available — show narrative rows
+    if has_text:
+        if has_ranked:
+            # Show Hermes diagnostics below ranked tables as supplementary context
+            diag_header = (
+                f'<div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;'
+                f'color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;margin-top:14px;margin-bottom:8px;">'
+                f'DIAGN&#211;STICOS HERMES</div>'
+            )
+            sections_html += diag_header
         sections_html += _text_evidence(meta_evidence, "Meta", _C["meta_blue"])
         sections_html += _text_evidence(goog_evidence, "Google", _C["goog_green"])
 
@@ -872,7 +885,7 @@ def _campaign_highlights_weekly(al: dict) -> str:
     note = (
         f'<div style="font-size:10px;color:{_C["text_3"]};font-family:Arial,Helvetica,sans-serif;'
         f'line-height:1.5;padding-top:8px;">Dados de campanha atribu&#237;dos pela plataforma. '
-        f'Varia&#231;&#245;es WoW n&#227;o implicam causalidade.</div>'
+        f'Varia&#231;&#245;es semanais n&#227;o implicam causalidade.</div>'
     )
 
     return f"""<tr>
@@ -895,8 +908,10 @@ def _change_digest_weekly(cd: dict) -> str:
         return ""
     meta_cd    = cd.get("meta") or {}
     goog_cd    = cd.get("google") or {}
-    main_ch    = meta_cd.get("main_changes") or []
-    budget_ch  = meta_cd.get("budget_changes") or []
+    main_ch    = (meta_cd.get("main_changes")
+                  or meta_cd.get("observed_platform_changes")
+                  or meta_cd.get("changes") or [])
+    budget_ch  = meta_cd.get("budget_changes") or meta_cd.get("budget") or []
     interp     = _clean(meta_cd.get("interpretation") or "")
 
     if not main_ch and not budget_ch and not interp:
@@ -993,7 +1008,7 @@ def _month_pacing_row(facts_with_targets: list[dict],
     {_section_label("RITMO DO M&#202;S")}
     <table width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td width="50%" valign="top" style="padding-right:8px;">
+        <td width="50%" class="col-50 col-50-first" valign="top" style="padding-right:8px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:14px 16px;">
               <div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{_C['text_3']};font-family:Arial,Helvetica,sans-serif;margin-bottom:8px;">REALIZADO</div>
@@ -1009,7 +1024,7 @@ def _month_pacing_row(facts_with_targets: list[dict],
             </td>
           </tr></table>
         </td>
-        <td width="50%" valign="top" style="padding-left:8px;">
+        <td width="50%" class="col-50" valign="top" style="padding-left:8px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:14px 16px;">
               <div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{_C['text_3']};font-family:Arial,Helvetica,sans-serif;margin-bottom:8px;">PROJE&#199;&#195;O</div>
@@ -1046,7 +1061,7 @@ def _monthly_target_block(facts_list: list[dict]) -> str:
     {_section_label("META DO M&#202;S")}
     <table width="100%" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td width="50%" valign="top" style="padding-right:8px;">
+        <td width="50%" class="col-50 col-50-first" valign="top" style="padding-right:8px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:14px 16px;">
               <div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{_C['text_3']};font-family:Arial,Helvetica,sans-serif;margin-bottom:8px;">REALIZADO</div>
@@ -1062,7 +1077,7 @@ def _monthly_target_block(facts_list: list[dict]) -> str:
             </td>
           </tr></table>
         </td>
-        <td width="50%" valign="top" style="padding-left:8px;">
+        <td width="50%" class="col-50" valign="top" style="padding-left:8px;">
           <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
             <td bgcolor="{_C['card_hi']}" style="background-color:{_C['card_hi']};border-radius:8px;border:1px solid {_C['border']};padding:14px 16px;">
               <div style="font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:{_C['text_3']};font-family:Arial,Helvetica,sans-serif;margin-bottom:8px;">STATUS</div>
@@ -1687,6 +1702,11 @@ def _wrap(body_rows: str) -> str:
       .mobile-pad {{ padding-left: 16px !important; padding-right: 16px !important; }}
       .col-50 {{ width: 100% !important; display: block !important; padding-left: 0 !important; padding-right: 0 !important; }}
       .col-50-first {{ padding-bottom: 10px !important; }}
+      .col-33 {{ width: 100% !important; display: block !important; padding-left: 0 !important; padding-right: 0 !important; }}
+      .col-33-gap {{ padding-bottom: 8px !important; }}
+    }}
+    @media only screen and (max-width:390px) {{
+      .camp-col-6th {{ display: none !important; }}
     }}
   </style>
 </head>
