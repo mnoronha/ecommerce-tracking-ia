@@ -6,7 +6,7 @@ import { useClientConfig } from '@/lib/use-client-config'
 import { CriticalAlertsBar } from '@/components/alerts/critical-alerts-bar'
 import {
   LayoutDashboard, TrendingUp, FileText, Target, History, Calendar, Settings,
-  ArrowLeft, BarChart2, Share2, Search, Lightbulb, BookOpen,
+  ArrowLeft, BarChart2, Share2, Search, Lightbulb, BookOpen, Zap,
 } from 'lucide-react'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -24,8 +24,9 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
   const base = `/clients/${clientId}`
 
   const NAV_ITEMS: NavItem[] = [
-    { href: `${base}/dashboard`,        label: 'Visão Geral',  icon: LayoutDashboard },
-    { href: `${base}/performance`,       label: 'Performance',  icon: TrendingUp, match: ['performance'] },
+    { href: `${base}/dashboard`,         label: 'Visão Geral',   icon: LayoutDashboard },
+    { href: `${base}/action-center`,     label: 'Action Center', icon: Zap,        match: ['action-center'] },
+    { href: `${base}/performance`,       label: 'Performance',   icon: TrendingUp, match: ['performance'] },
     { href: `${base}/meta-ads`,          label: 'Meta Ads',     icon: Share2,     match: ['meta-ads'] },
     { href: `${base}/google-ads`,        label: 'Google Ads',   icon: Search,     match: ['google-ads', 'merchant-center', 'ga4', 'search-console'] },
     { href: `${base}/creatives`,         label: 'Criativos',    icon: BarChart2,  match: ['creatives'] },

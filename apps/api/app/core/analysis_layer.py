@@ -517,6 +517,11 @@ def build_hermes_handoff_from_artifact(
         period_type    = period_type,
     )
 
+    cid = artifact.get("client_id") or ""
+    ps_val = artifact.get("period_start") or ""
+    pe_val = artifact.get("period_end") or ""
+    cb_qs = f"?period_start={ps_val}&period_end={pe_val}" if (ps_val and pe_val) else ""
+
     return {
         "schema_version":              "hermes-analysis-request-v1",
         "analysis_request_id":         analysis_request_id,
@@ -526,6 +531,7 @@ def build_hermes_handoff_from_artifact(
         "report_type":                 artifact.get("report_type", period_type),
         "period_start":                artifact.get("period_start"),
         "period_end":                  artifact.get("period_end"),
+        "context_bundle_endpoint":     f"/agency/v1/clients/{cid}/context-bundle{cb_qs}" if cid else None,
         "requested_at":                datetime.now(timezone.utc).isoformat(),
         "status":                      "PENDING",
         "context_manifest": {

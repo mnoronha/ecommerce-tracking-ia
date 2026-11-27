@@ -75,6 +75,7 @@ from .auth import (
     SCOPE_ADMIN_ONLY,
     SCOPE_ANY_AUTH,
     SCOPE_CLIENT_VIEWER,
+    SCOPE_CONTEXT_READ,
     SCOPE_HERMES_WRITE,
     SCOPE_PLATFORM_WRITE,
     SCOPE_READ_ANY,
@@ -5602,6 +5603,51 @@ def get_knowledge_context(
     if not meta:
         raise HTTPException(404, detail=f"client not found: {client_id!r}")
     return load_knowledge_context(meta["client_id"], platform=platform, limit=limit)
+
+
+@router.get(
+    "/clients/{client_id}/context-bundle",
+    summary="Deterministic consolidated context bundle for Hermes & operators (PRD §8.1 / R05)",
+)
+def get_client_context_bundle(
+    client_id: str,
+    period_start: Optional[str] = Query(None, description="ISO YYYY-MM-DD start of analysis window"),
+    period_end: Optional[str] = Query(None, description="ISO YYYY-MM-DD end of analysis window"),
+    platform: Optional[str] = Query(None, description="Optional channel filter (google, meta)"),
+    meeting_limit: int = Query(3, ge=1, le=10, description="Last N meetings to include (default 3)"),
+    change_limit: int = Query(15, ge=1, le=50, description="Top N relevant changes (default 15)"),
+    outcome_limit: int = Query(10, ge=1, le=30, description="Recent non-superseded outcomes (default 10)"),
+    knowledge_limit: int = Query(5, ge=1, le=20, description="Top N approved knowledge items (default 5)"),
+    auth: Annotated[AuthContext, Depends(SCOPE_CONTEXT_READ)] = None,
+) -> dict:
+    from ...core.context_bundle import build_client_context_bundle
+
+    meta = _load_client_meta(client_id)
+    if not meta:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+
+    if auth is not None and auth.client_ids is not None:
+        allowed = set(auth.client_ids)
+        client_refs = {str(meta.get("id") or ""), str(meta.get("client_id") or ""), str(meta.get("pixel_id") or "")}
+        if not (client_refs & allowed):
+            raise HTTPException(403, detail="Access denied for this client")
+
+    try:
+        return build_client_context_bundle(
+            meta["client_id"],
+            period_start=period_start,
+            period_end=period_end,
+            platform=platform,
+            meeting_limit=meeting_limit,
+            change_limit=change_limit,
+            outcome_limit=outcome_limit,
+            knowledge_limit=knowledge_limit,
+            db=_get_db(),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, detail=f"invalid date parameter: {exc}")
+    except LookupError:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
 
 
 @router.post(

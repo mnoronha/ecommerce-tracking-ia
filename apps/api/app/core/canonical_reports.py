@@ -137,12 +137,23 @@ class Reports:
   return self.mutate('delivery:'+delivery_id,reset)
  def dispatch(self,*args,**kwargs):raise ReportError('NO_DELIVERY_TRANSPORT_INSTALLED')
  def write_analysis_request(self,analysis_request_id,document):
-  """Store a Hermes handoff contract in CAS. Idempotent — returns existing if same id."""
+  """Store a Hermes handoff contract in CAS. Idempotent — returns existing if same id.
+  When a new PENDING request is written, triggers an async non-blocking Core -> Hermes
+  webhook (PRD §3 & §16) while keeping the 10-min polling loop intact as fallback."""
   key=f'analysis-request:{analysis_request_id}'
+  created_new=[False]
   def create(old):
    if old:return old
+   created_new[0]=True
    return document
-  return self.mutate(key,create)
+  saved=self.mutate(key,create)
+  if created_new[0] and (saved or {}).get('status','PENDING')=='PENDING':
+   try:
+    from .hermes_webhook import trigger_hermes_analysis_webhook_async
+    trigger_hermes_analysis_webhook_async(analysis_request_id,saved)
+   except Exception:
+    pass
+  return saved
  def get_analysis_request(self,analysis_request_id):
   row=self.store.get(f'analysis-request:{analysis_request_id}')
   if row is None:raise ReportError('ANALYSIS_REQUEST_NOT_FOUND')

@@ -155,6 +155,15 @@ class Settings(BaseSettings):
     NOTION_API_KEY:           str = ""   # secret_... internal integration token
     NOTION_TASKS_DATABASE_ID: str = ""   # Notion database ID for core_tasks sync
 
+    # ── Event-Driven Core → Hermes Webhook (PRD §3 & §16) ────────────────────
+    # Optional push notification when a report enters WAITING_FOR_HERMES_ANALYSIS.
+    # If empty, Core relies safely on Hermes' 10-min polling fallback.
+    HERMES_WEBHOOK_URL:             str   = ""
+    HERMES_WEBHOOK_SECRET:          str   = ""   # HMAC-SHA256 signing secret (X-Noro-Signature)
+    HERMES_WEBHOOK_TOKEN:           str   = ""   # Optional Bearer token
+    HERMES_WEBHOOK_TIMEOUT_SECONDS: float = 5.0
+    HERMES_WEBHOOK_MAX_RETRIES:     int   = 3
+
 
 @lru_cache()
 def get_settings() -> Settings:
