@@ -19,11 +19,13 @@ Background task:
 
 Zero client sends. Zero media writes.
 """
+import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -118,7 +120,140 @@ def _resolve_client(
     return None, "unresolved"
 
 
-# ── Auto-analysis ─────────────────────────────────────────────────────────────
+# ── Auto-analysis & Idempotent Action-Item Extraction (PRD §17) ───────────────
+
+_DISABLED_FLAGS = frozenset({"0", "false", "off", "no"})
+
+
+def _is_enabled(env_name: str, default: bool = True) -> bool:
+    raw = os.getenv(env_name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in _DISABLED_FLAGS
+
+
+def _extract_fireflies_native_action_items(transcript: dict) -> tuple[Optional[str], list[dict]]:
+    """
+    Fallback deterministic extractor using Fireflies native `summary.overview` and
+    `summary.action_items` when Claude analysis is unavailable.
+    Never invents owners or due dates.
+    """
+    summary_obj = transcript.get("summary")
+    if not isinstance(summary_obj, dict):
+        return None, []
+    overview = (summary_obj.get("overview") or "").strip() or None
+    raw_items = summary_obj.get("action_items")
+    commitments: list[dict] = []
+
+    if isinstance(raw_items, str):
+        for line in raw_items.splitlines():
+            clean = re.sub(r"^\s*[-*•\d.)]+\s*", "", line).strip()
+            if clean and not clean.endswith(":"):
+                commitments.append({"who": None, "what": clean[:240], "due_date": None})
+    elif isinstance(raw_items, list):
+        for item in raw_items:
+            if isinstance(item, str) and item.strip():
+                commitments.append({"who": None, "what": item.strip()[:240], "due_date": None})
+            elif isinstance(item, dict):
+                what = str(item.get("task") or item.get("what") or item.get("text") or "").strip()
+                if what:
+                    commitments.append({
+                        "who": item.get("owner") or item.get("who") or None,
+                        "what": what[:240],
+                        "due_date": item.get("due_date") or None,
+                    })
+    return overview, commitments
+
+
+def _materialize_meeting_tasks_idempotent(
+    *,
+    db,
+    meeting_id: str,
+    client_id: str,
+    commitments: list[dict],
+    now: str,
+) -> list[dict]:
+    """
+    Idempotently create `core_tasks` from extracted meeting action items.
+    Checks existing tasks for `(source_type='meeting', source_id=meeting_id)` by
+    normalized title before inserting so retries never duplicate tasks.
+    """
+    if not commitments:
+        return []
+
+    existing_titles: dict[str, str] = {}
+    try:
+        ex_res = (
+            db.table("core_tasks")
+            .select("id, title")
+            .eq("source_type", "meeting")
+            .eq("source_id", meeting_id)
+            .execute()
+        )
+        for row in (ex_res.data or []):
+            t = (row.get("title") or "").strip().lower()
+            if t:
+                existing_titles[t] = str(row["id"])
+    except Exception as exc:
+        logger.warning("fireflies: existing task lookup failed for meeting %s: %s", meeting_id, exc)
+
+    entries: list[dict] = []
+    seen_in_batch: set[str] = set()
+
+    for commitment in commitments:
+        what = (commitment.get("what") or commitment.get("task") or "").strip()
+        if not what:
+            continue
+        title = what[:200]
+        norm = title.lower()
+        if norm in seen_in_batch:
+            continue
+        seen_in_batch.add(norm)
+
+        if norm in existing_titles:
+            entries.append({
+                "what": what,
+                "title": title,
+                "status": "existing",
+                "task_id": existing_titles[norm],
+            })
+            continue
+
+        task_row = {
+            "client_id":        client_id,
+            "title":            title,
+            "owner":            commitment.get("who") or commitment.get("owner"),
+            "due_date":         commitment.get("due_date"),
+            "source_type":      "meeting",
+            "source_id":        meeting_id,
+            "status":           "OPEN",
+            "priority":         str(commitment.get("priority") or "MEDIUM").upper(),
+            "visibility_scope": "AGENCY_ONLY",
+            "sync_state":       "none",
+            "created_at":       now,
+            "updated_at":       now,
+        }
+        entry: dict = {"what": what, "title": title}
+        try:
+            t_res = db.table("core_tasks").insert(task_row).execute()
+            tid = str(t_res.data[0]["id"]) if (t_res and t_res.data) else None
+            entry["status"] = "created"
+            entry["task_id"] = tid
+            if tid:
+                existing_titles[norm] = tid
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            logger.warning("fireflies: task creation failed for %r: %s", title, exc)
+            entry["status"] = "failed"
+            entry["reason"] = (
+                "UNIQUE_VIOLATION"
+                if any(k in err_msg for k in ("unique", "duplicate", "23505"))
+                else "DB_ERROR"
+            )
+        entries.append(entry)
+
+    return entries
+
 
 def _auto_analyze_meeting(
     meeting_id: str,
@@ -126,12 +261,15 @@ def _auto_analyze_meeting(
     raw_text: str,
     db,
     now: str,
+    client_id: Optional[str] = None,
 ) -> None:
     """
-    Analyze meeting transcript via Claude and persist to core_meeting_summaries.
-    Idempotent: no-op if summary already exists.
-    Gated by FIREFLIES_AUTO_ANALYZE=1 (caller's responsibility) and
-    ANTHROPIC_CREDITS_OK=1 (enforced inside meeting_analysis.analyze_transcript).
+    Analyze meeting transcript and persist summary + action items (`commitments`)
+    to `core_meeting_summaries` (and idempotently materialize tasks when enabled).
+
+    Idempotent: no-op if summary already exists for `meeting_id`.
+    Primary path: Claude (`meeting_analysis.analyze_transcript`).
+    Fallback path when Claude is unavailable: Fireflies native `summary.action_items`.
     """
     existing = (
         db.table("core_meeting_summaries")
@@ -145,6 +283,10 @@ def _auto_analyze_meeting(
         return
 
     from ..core import meeting_analysis
+
+    payload: Optional[dict] = None
+    action_items_count = 0
+
     try:
         meeting_date = None
         date_ms = transcript.get("date")
@@ -159,48 +301,81 @@ def _auto_analyze_meeting(
             meeting_title=transcript.get("title") or "",
             meeting_date=meeting_date,
         )
-        payload = meeting_analysis.to_process_payload(result)  # create_tasks=False
-
-        import json as _json
-        sum_row = {
-            "meeting_id":     meeting_id,
-            "summary":        payload.get("summary"),
-            "decisions":      _json.dumps(payload.get("decisions") or []),
-            "open_questions": _json.dumps(payload.get("open_questions") or []),
-            "commitments":    _json.dumps(payload.get("commitments") or []),
-            "follow_ups":     _json.dumps(payload.get("follow_ups") or []),
-            "risks":          _json.dumps(payload.get("risks") or []),
-            "tasks_created":  _json.dumps([]),
-            "processor":      payload.get("processor", "claude"),
-            "created_at":     now,
-        }
-        try:
-            db.table("core_meeting_summaries").insert(sum_row).execute()
-        except Exception as exc:
-            # Migration 080 not applied: risks column missing — retry without it
-            if "risks" in str(exc).lower() and ("column" in str(exc).lower() or "42703" in str(exc)):
-                sum_row.pop("risks", None)
-                db.table("core_meeting_summaries").insert(sum_row).execute()
-            else:
-                raise
-
-        db.table("core_meetings").update({
-            "processing_status": "done",
-            "updated_at": now,
-        }).eq("id", meeting_id).execute()
-
-        logger.info(
-            "fireflies: auto-analyzed %s — summary=%s decisions=%d action_items=%d",
-            meeting_id,
-            "PRESENT" if result.get("summary") else "NONE",
-            len(result.get("decisions") or []),
-            len(result.get("action_items") or []),
-        )
-
+        payload = meeting_analysis.to_process_payload(result)
+        action_items_count = len(result.get("action_items") or [])
     except meeting_analysis.MeetingAnalysisUnavailable as exc:
-        logger.info("fireflies: auto-analyze unavailable for %s: %s", meeting_id, exc.reason)
+        logger.info("fireflies: Claude unavailable for %s (%s) — checking native Fireflies summary", meeting_id, exc.reason)
+        overview, native_commitments = _extract_fireflies_native_action_items(transcript)
+        if overview or native_commitments:
+            payload = {
+                "summary":        overview,
+                "decisions":      [],
+                "commitments":    native_commitments,
+                "follow_ups":     [],
+                "open_questions": [],
+                "risks":          [],
+                "processor":      "fireflies_native",
+            }
+            action_items_count = len(native_commitments)
     except Exception as exc:
         logger.warning("fireflies: auto-analyze failed for %s: %s", meeting_id, exc)
+        return
+
+    if not payload:
+        return
+
+    commitments = payload.get("commitments") or []
+    tasks_created: list[dict] = []
+    if client_id and commitments and _is_enabled("FIREFLIES_AUTO_CREATE_TASKS", default=True):
+        tasks_created = _materialize_meeting_tasks_idempotent(
+            db=db,
+            meeting_id=meeting_id,
+            client_id=client_id,
+            commitments=commitments,
+            now=now,
+        )
+
+    import json as _json
+    sum_row = {
+        "meeting_id":     meeting_id,
+        "summary":        payload.get("summary"),
+        "decisions":      _json.dumps(payload.get("decisions") or []),
+        "open_questions": _json.dumps(payload.get("open_questions") or []),
+        "commitments":    _json.dumps(commitments),
+        "follow_ups":     _json.dumps(payload.get("follow_ups") or []),
+        "risks":          _json.dumps(payload.get("risks") or []),
+        "tasks_created":  _json.dumps(tasks_created),
+        "processor":      payload.get("processor", "claude"),
+        "created_at":     now,
+    }
+    try:
+        db.table("core_meeting_summaries").insert(sum_row).execute()
+    except Exception as exc:
+        err_str = str(exc).lower()
+        # Migration 080 not applied: risks column missing — retry without it
+        if "risks" in err_str and ("column" in err_str or "42703" in err_str):
+            sum_row.pop("risks", None)
+            db.table("core_meeting_summaries").insert(sum_row).execute()
+        elif any(k in err_str for k in ("unique", "duplicate", "23505")):
+            logger.info("fireflies: summary already inserted concurrently for %s", meeting_id)
+            return
+        else:
+            raise
+
+    db.table("core_meetings").update({
+        "processing_status": "done",
+        "updated_at": now,
+    }).eq("id", meeting_id).execute()
+
+    logger.info(
+        "fireflies: auto-analyzed %s — processor=%s summary=%s decisions=%d action_items=%d tasks=%d",
+        meeting_id,
+        payload.get("processor"),
+        "PRESENT" if payload.get("summary") else "NONE",
+        len(payload.get("decisions") or []),
+        action_items_count,
+        len(tasks_created),
+    )
 
 
 # ── Background processing ─────────────────────────────────────────────────────
@@ -268,9 +443,9 @@ def _process_event(event_id: str, fireflies_meeting_id: str) -> None:
             }).eq("id", meeting_id).execute()
             transcript_created = True
 
-        # Auto-analyze via Claude (gated by env var + ANTHROPIC_CREDITS_OK)
-        if os.getenv("FIREFLIES_AUTO_ANALYZE", "").lower() in ("1", "true"):
-            _auto_analyze_meeting(meeting_id, transcript, raw_text, db, now)
+        # Auto-analyze + action-item extraction (enabled by default; disable with FIREFLIES_AUTO_ANALYZE=0)
+        if _is_enabled("FIREFLIES_AUTO_ANALYZE", default=True):
+            _auto_analyze_meeting(meeting_id, transcript, raw_text, db, now, client_id=client_id)
 
         # Enrich event log with Fireflies metadata (organizer, meeting URL)
         event_update: dict = {
@@ -344,38 +519,38 @@ def _create_meeting(
         "created_at":        now,
         "updated_at":        now,
     }
-    res = db.table("core_meetings").insert(row).execute()
-    return str(res.data[0]["id"])
+    try:
+        res = db.table("core_meetings").insert(row).execute()
+        return str(res.data[0]["id"])
+    except Exception as exc:
+        if any(k in str(exc).lower() for k in ("unique", "duplicate", "23505")):
+            existing = (
+                db.table("core_meetings")
+                .select("id")
+                .eq("provider", "fireflies")
+                .eq("external_id", fireflies_meeting_id)
+                .limit(1)
+                .execute()
+            )
+            if existing and existing.data:
+                return str(existing.data[0]["id"])
+        raise
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
 
-@router.post("/webhooks/fireflies")
-async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks):
+def _record_or_replay_fireflies_event(
+    meeting_id: str,
+    event_type: str,
+    payload: dict,
+    now: str,
+) -> tuple[str, bool]:
     """
-    Receive Fireflies webhook events.
-    Returns 200 immediately; processing happens in background.
-    Idempotent on (fireflies_meeting_id, event_type).
+    Sync DB helper offloaded via asyncio.to_thread.
+    Returns (event_id, is_idempotent_noop).
+    Re-triggers processing if a previous attempt landed in `status='failed'`.
     """
-    try:
-        payload = await request.json()
-    except Exception:
-        return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
-
-    if not _verify_payload(payload):
-        logger.warning("fireflies: webhook secret mismatch — rejected")
-        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
-
-    meeting_id   = payload.get("meetingId") or payload.get("meeting_id") or ""
-    event_type   = payload.get("webhook_type") or payload.get("event_type") or payload.get("event") or "unknown"
-
-    if not meeting_id:
-        return JSONResponse({"ok": False, "error": "missing_meetingId"}, status_code=400)
-
     db = get_supabase()
-    now = datetime.now(timezone.utc).isoformat()
-
-    # Idempotency: log event; skip if already received
     existing_event = (
         db.table("core_fireflies_events")
         .select("id, status")
@@ -386,10 +561,17 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
     )
     if existing_event.data:
         existing = existing_event.data[0]
+        if existing.get("status") == "failed":
+            db.table("core_fireflies_events").update({
+                "status": "received",
+                "error": None,
+                "received_at": now,
+            }).eq("id", existing["id"]).execute()
+            logger.info("fireflies: retrying previously failed webhook %s/%s", meeting_id, event_type)
+            return str(existing["id"]), False
         logger.info("fireflies: duplicate webhook %s/%s status=%s — noop", meeting_id, event_type, existing["status"])
-        return JSONResponse({"ok": True, "idempotent": True, "event_id": existing["id"]})
+        return str(existing["id"]), True
 
-    # Log event
     event_res = db.table("core_fireflies_events").insert({
         "fireflies_meeting_id": meeting_id,
         "event_type":           event_type,
@@ -397,9 +579,43 @@ async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks)
         "status":               "received",
         "received_at":          now,
     }).execute()
-    event_id = str(event_res.data[0]["id"])
+    return str(event_res.data[0]["id"]), False
 
-    # Process in background (fetch transcript, create meeting, etc.)
+
+@router.post("/webhooks/fireflies")
+async def fireflies_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Receive Fireflies webhook events.
+    Returns 200 immediately; processing happens in background.
+    Idempotent on (fireflies_meeting_id, event_type), allowing safe retry on failed events.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid_json"}, status_code=400)
+
+    if not _verify_payload(payload):
+        logger.warning("fireflies: webhook secret mismatch — rejected")
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+
+    meeting_id = payload.get("meetingId") or payload.get("meeting_id") or ""
+    event_type = payload.get("webhook_type") or payload.get("event_type") or payload.get("event") or "unknown"
+
+    if not meeting_id:
+        return JSONResponse({"ok": False, "error": "missing_meetingId"}, status_code=400)
+
+    now = datetime.now(timezone.utc).isoformat()
+    event_id, is_noop = await asyncio.to_thread(
+        _record_or_replay_fireflies_event,
+        meeting_id,
+        event_type,
+        payload,
+        now,
+    )
+    if is_noop:
+        return JSONResponse({"ok": True, "idempotent": True, "event_id": event_id})
+
+    # Process in background (fetch transcript, create meeting, extract action items)
     background_tasks.add_task(_process_event, event_id, meeting_id)
 
     return JSONResponse({"ok": True, "event_id": event_id, "idempotent": False})

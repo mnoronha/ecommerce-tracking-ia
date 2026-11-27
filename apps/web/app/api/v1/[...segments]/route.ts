@@ -55,7 +55,7 @@ export async function GET(
   if (hasUnsafePathSegments(segments)) {
     return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
   }
-  if (segments[0] === 'admin') {
+  if (segments[0] === 'admin' || segments[segments.length - 1] === 'test-email') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -101,7 +101,7 @@ export async function POST(
   if (hasUnsafePathSegments(segments)) {
     return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
   }
-  if (segments[0] === 'admin') {
+  if (segments[0] === 'admin' || segments[segments.length - 1] === 'test-email') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -150,7 +150,7 @@ export async function PUT(
   if (hasUnsafePathSegments(segments)) {
     return NextResponse.json({ error: 'Invalid path' }, { status: 400 })
   }
-  if (segments[0] === 'admin') {
+  if (segments[0] === 'admin' || segments[segments.length - 1] === 'test-email') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

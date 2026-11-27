@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   FileText, CheckCircle, XCircle, Clock, Send, Download,
   RefreshCw, AlertTriangle, X, Eye, Loader2, History,
   TrendingUp, Target, Info, BarChart2, Lightbulb, ChevronDown,
-  ChevronRight, Calendar, Settings, Globe, FileCode,
+  ChevronRight, Calendar, Settings, Globe, FileCode, Mail,
 } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -808,15 +808,151 @@ function HistoryDrawer({
   )
 }
 
+// ── Internal Test Email Modal (PRD §16.3 / R02) ──────────────────────────────
+
+const INTERNAL_TEST_RECIPIENT = 'contato@norolabs.com.br'
+
+function TestEmailModal({
+  report,
+  step,
+  error,
+  providerMessageId,
+  sentAt,
+  idempotentReplay,
+  onConfirm,
+  onClose,
+}: {
+  report: Report
+  step: 'confirm' | 'sending' | 'done' | 'error'
+  error?: string
+  providerMessageId?: string
+  sentAt?: string
+  idempotentReplay?: boolean
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  const sm = STATUS_META[report.status] || STATUS_META.DRAFT
+  const typeLabel = report.report_type === 'weekly' ? 'Weekly' : 'Monthly'
+  const subjectPreview = `[TESTE INTERNO] Relatório Noro — ${typeLabel} | ${report.period_start} a ${report.period_end}`
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
+      <div className="bg-[#1a1f2e] border border-[#2a2f3e] rounded-2xl max-w-md w-full p-6 space-y-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Mail size={16} className="text-amber-400 shrink-0" />
+            <h3 className="text-sm font-semibold text-white">Enviar e-mail de teste interno</h3>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={step === 'sending'}
+            className="text-slate-500 hover:text-white transition-colors disabled:opacity-40"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="rounded-xl bg-[#0f1117] border border-[#2a2f3e] p-3.5 space-y-2 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-500">Versão exata</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-200 font-mono">v{report.version}</span>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${sm.cls}`}>
+                {sm.label}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-500">Período</span>
+            <span className="text-slate-200">{periodLabel(report)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-500">Destinatário fixo</span>
+            <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-mono text-[11px]">
+              {INTERNAL_TEST_RECIPIENT}
+            </span>
+          </div>
+          <div className="pt-1 border-t border-[#2a2f3e]">
+            <p className="text-[10px] text-slate-500 mb-0.5">Assunto</p>
+            <p className="text-[11px] text-slate-300 break-words">{subjectPreview}</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl bg-amber-500/5 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-200/90 leading-relaxed">
+          CTA desativado · Não altera o status nem o hash do relatório · Não grava receipt comercial nem aciona destinatários do cliente.
+        </div>
+
+        {step === 'error' && error && (
+          <div className="rounded-xl bg-red-500/10 border border-red-500/30 px-3 py-2 text-xs text-red-300">
+            {error}
+          </div>
+        )}
+
+        {step === 'done' && (
+          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-3 py-2.5 text-xs text-emerald-300 space-y-1">
+            <div className="flex items-center gap-1.5 font-medium">
+              <CheckCircle size={13} />
+              <span>
+                {idempotentReplay
+                  ? 'Envio de teste já registrado (replay idempotente)'
+                  : 'E-mail de teste aceito pelo provedor'}
+              </span>
+            </div>
+            {providerMessageId && (
+              <p className="text-[11px] text-emerald-200/80 font-mono break-all">
+                ID: {providerMessageId}
+              </p>
+            )}
+            {sentAt && (
+              <p className="text-[10px] text-emerald-200/70">
+                Enviado em: {fmtDateTime(sentAt)}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button
+            onClick={onClose}
+            disabled={step === 'sending'}
+            className="px-3.5 py-2 rounded-xl border border-[#2a2f3e] text-xs text-slate-300 hover:text-white transition-colors disabled:opacity-40"
+          >
+            {step === 'done' ? 'Fechar' : 'Cancelar'}
+          </button>
+          {step !== 'done' && (
+            <button
+              onClick={onConfirm}
+              disabled={step === 'sending'}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-medium hover:bg-amber-500/30 transition-colors disabled:opacity-50"
+            >
+              {step === 'sending' ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Mail size={12} />
+                  Enviar e-mail de teste
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Report Card ──────────────────────────────────────────────────────────────
 
 function ReportCard({
   report, deliveryStatus, downloading, downloadingHtml,
-  onView, onApprove, onPublish, onSend, onHistory, onDownload, onPreviewHtml, onDownloadHtml,
+  onView, onApprove, onPublish, onSend, onTestEmail, onHistory, onDownload, onPreviewHtml, onDownloadHtml,
 }: {
   report: Report; deliveryStatus: string; downloading: boolean; downloadingHtml: boolean
   onView: () => void; onApprove: () => void; onPublish: () => void
-  onSend: () => void; onHistory: () => void; onDownload: () => void
+  onSend: () => void; onTestEmail: () => void; onHistory: () => void; onDownload: () => void
   onPreviewHtml: () => void; onDownloadHtml: () => void
 }) {
   const sm = STATUS_META[report.status] || STATUS_META.DRAFT
@@ -902,6 +1038,17 @@ function ReportCard({
 
         {canPreviewHtml && (
           <button
+            onClick={onTestEmail}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-medium hover:bg-amber-500/25 transition-colors"
+            title="Enviar e-mail de teste interno para contato@norolabs.com.br (CTA=false)"
+          >
+            <Mail size={12} />
+            Enviar e-mail de teste
+          </button>
+        )}
+
+        {canPreviewHtml && (
+          <button
             onClick={onPreviewHtml}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2f3e] text-slate-400 text-xs font-medium hover:text-white hover:border-slate-400 transition-colors"
             title="Visualizar HTML no navegador (prévia do email)"
@@ -973,6 +1120,16 @@ export default function CanonicalReportsPage() {
   const [sendModal, setSendModal] = useState<{
     report: Report; selectedRecipientId: string | null; step: string; error?: string
   } | null>(null)
+  const [testEmailModal, setTestEmailModal] = useState<{
+    report: Report
+    idempotencyKey: string
+    step: 'confirm' | 'sending' | 'done' | 'error'
+    error?: string
+    providerMessageId?: string
+    sentAt?: string
+    idempotentReplay?: boolean
+  } | null>(null)
+  const testSendInFlightRef = useRef(false)
 
   const loadReports = useCallback(async () => {
     setLoading(true)
@@ -1093,6 +1250,53 @@ export default function CanonicalReportsPage() {
       setSendModal(s => s ? { ...s, step: 'error', error: e instanceof Error ? e.message : String(e) } : null)
     }
   }, [sendModal, deliverySettings])
+
+  const doTestEmail = useCallback(async () => {
+    if (!testEmailModal || testSendInFlightRef.current) return
+    testSendInFlightRef.current = true
+    setTestEmailModal(s => s ? { ...s, step: 'sending', error: undefined } : null)
+    try {
+      const res = await fetch(
+        `/api/v1/canonical-reports/${encodeURIComponent(testEmailModal.report.report_id)}/test-email`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': testEmailModal.idempotencyKey,
+          },
+          body: JSON.stringify({
+            version: testEmailModal.report.version,
+            client_id: clientId,
+          }),
+        },
+      )
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const msg =
+          data?.error?.message ||
+          (typeof data?.error === 'string' ? data.error : null) ||
+          data?.detail ||
+          `Erro ${res.status}`
+        setTestEmailModal(s => s ? { ...s, step: 'error', error: String(msg) } : null)
+        return
+      }
+      setTestEmailModal(s => s ? {
+        ...s,
+        step: 'done',
+        providerMessageId: data?.provider_message_id || undefined,
+        sentAt: data?.sent_at || undefined,
+        idempotentReplay: Boolean(data?.idempotent_replay),
+      } : null)
+    } catch (e) {
+      setTestEmailModal(s => s ? {
+        ...s,
+        step: 'error',
+        error: e instanceof Error ? e.message : String(e),
+      } : null)
+    } finally {
+      testSendInFlightRef.current = false
+    }
+  }, [testEmailModal, clientId])
 
   const doPreviewHtml = useCallback((report: Report) => {
     window.open(
@@ -1286,6 +1490,11 @@ export default function CanonicalReportsPage() {
                   onApprove={() => { setConfirm({ type: 'approve', report: r }); setTransitionError(null) }}
                   onPublish={() => { setConfirm({ type: 'publish', report: r }); setTransitionError(null) }}
                   onSend={() => setSendModal({ report: r, selectedRecipientId: null, step: 'preview' })}
+                  onTestEmail={() => setTestEmailModal({
+                    report: r,
+                    idempotencyKey: crypto.randomUUID(),
+                    step: 'confirm',
+                  })}
                   onHistory={() => openHistory(r)}
                   onDownload={() => doDownload(r)}
                   onPreviewHtml={() => doPreviewHtml(r)}
@@ -1361,6 +1570,20 @@ export default function CanonicalReportsPage() {
           onPreview={() => setSendModal(s => s ? { ...s, step: 'confirm' } : null)}
           onConfirm={doSend}
           onClose={() => setSendModal(null)}
+        />
+      )}
+
+      {/* Internal test email modal (R02) */}
+      {testEmailModal && (
+        <TestEmailModal
+          report={testEmailModal.report}
+          step={testEmailModal.step}
+          error={testEmailModal.error}
+          providerMessageId={testEmailModal.providerMessageId}
+          sentAt={testEmailModal.sentAt}
+          idempotentReplay={testEmailModal.idempotentReplay}
+          onConfirm={doTestEmail}
+          onClose={() => { if (!testSendInFlightRef.current) setTestEmailModal(null) }}
         />
       )}
 
