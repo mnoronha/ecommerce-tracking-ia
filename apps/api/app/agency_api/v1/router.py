@@ -2047,7 +2047,7 @@ def system_health(
             scheduled_jobs.append(SchedulerJobStatus(
                 job_id=j.id,
                 trigger=str(j.trigger),
-                next_run_time=j.next_run_time,
+                next_run_time=getattr(j, "next_run_time", None),
                 last_run_status=cache.get("last_status"),
                 last_run_at=cache.get("last_run"),
             ))

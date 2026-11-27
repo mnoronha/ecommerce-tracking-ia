@@ -487,9 +487,10 @@ def admin_health_details(
         try:
             for j in scheduler.get_jobs():
                 run = job_runs.get(j.id, {})
+                nrt = getattr(j, "next_run_time", None)
                 jobs.append({
                     "id":          j.id,
-                    "next_run":    j.next_run_time.isoformat() if j.next_run_time else None,
+                    "next_run":    nrt.isoformat() if nrt else None,
                     "last_run":    run.get("last_run"),
                     "last_status": run.get("last_status"),
                 })
@@ -515,3 +516,42 @@ def admin_health_details(
         "credentials_key_set": bool(_settings.CREDENTIALS_KEY),
         "ga4_dispatch": ga4_dispatch,
     }
+
+
+@admin_router.post(
+    "/outcomes/evaluate",
+    summary="Trigger pending outcome evaluation on demand (agency_admin only — R04)",
+)
+def admin_evaluate_pending_outcomes(
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+    supersede_hollow: bool = Query(
+        False,
+        description="When true, supersedes hollow manual_state_comparison outcomes lacking real snapshot metrics",
+    ),
+) -> dict[str, Any]:
+    from ...core.outcome_evaluator import evaluate_pending_outcomes
+
+    run_key = f"outcome_evaluation:manual:{datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')}"
+    return evaluate_pending_outcomes(run_key=run_key, supersede_hollow=supersede_hollow)
+
+
+@admin_router.post(
+    "/actions/{action_id}/reevaluate-outcome",
+    summary="Versioned re-evaluation of an action outcome — marks prior outcome SUPERSEDED (agency_admin only — R04)",
+)
+def admin_reevaluate_action_outcome(
+    action_id: str,
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+    reason: str = Query("versioned_reevaluation_real_snapshots", min_length=3, max_length=200),
+    supersede_outcome_id: Optional[str] = Query(None),
+) -> dict[str, Any]:
+    from ...core.outcome_evaluator import reevaluate_action_outcome
+
+    res = reevaluate_action_outcome(
+        action_id,
+        reason=reason,
+        supersede_outcome_id=supersede_outcome_id,
+    )
+    if res.get("error"):
+        raise HTTPException(409, detail=res["error"])
+    return res

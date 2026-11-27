@@ -4,8 +4,6 @@ from pathlib import Path
 
 from datetime import datetime, timezone
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -20,22 +18,10 @@ from .agency_api.v1.request_id import AgencyRequestIDMiddleware
 from .api.v1 import router as public_api_router
 from .api.v1.errors import NoroPlatformError, http_exception_handler, noro_error_handler
 from .config import settings
+from .core.scheduler_setup import build_scheduler, embedded_scheduler_enabled
+from .core.worker_lock import PostgresAdvisoryLock
 from .limiter import limiter
 from .routers import agency_os, ai_visibility as ai_visibility_router, alerts as alerts_router, annotations, attribution, audiences, cname, cogs, content as content_router, creatives, diagnostics, ecommerce_webhooks, finance as finance_router, fireflies_webhook, google_ads_dashboard, insights, integrations, journey, klaviyo_webhook, lgpd, live, merchant_center as merchant_center_router, meta_ads, pacing, pinterest_ads, pixel, portal_users, search_console as search_console_router, setup, shopify_app as shopify_app_router, shopify_revenue as shopify_revenue_router, sync as sync_router, technical_seo as technical_seo_router, tiktok_ads
-from .services import ai_analyst, ai_visibility_analyst, ai_visibility_collector, alert_engine, alerts, anomalies, capi_retry, cart_abandonment, content_approval, creative_intelligence, creative_sync, crypto, finance_alerts, health_monitor, integrations_health, ltv_predictor, merchant_center, meta_attribution_sync, meta_audiences, meta_token_health, metrics_cache, reports, retention, search_console_sync, sessionization, shopify_sync, spend_sync
-from .core.core_scheduler import run_core_pipeline_all_clients
-from .core.alert_evaluator import evaluate_system_alerts as _evaluate_system_alerts
-from .core.scheduler_registry import register as _register_scheduler
-from .core.weekly_review import run_weekly_review_all_clients
-from .core.canonical_weekly_scheduler import run_canonical_weekly_all_clients as _run_canonical_weekly
-from .core.canonical_monthly_scheduler import run_canonical_monthly_all_clients as _run_canonical_monthly
-from .core.monthly_review import run_monthly_review_all_clients
-from .core.balance_monitor import run_balance_check_all_prepaid
-from .core.change_history_scheduler import run_change_history_all_clients as _run_change_history
-from .core.weekly_deep_review import run_weekly_deep_review_all_clients as _run_weekly_deep_review
-from .core.outcome_evaluator import evaluate_pending_outcomes as _evaluate_pending_outcomes
-from .core.notion_adapter import NotionTaskAdapter as _NotionAdapter
-from .database import get_supabase as _get_supabase_for_notion
 
 logging.basicConfig(
     level=logging.DEBUG if settings.DEBUG else logging.INFO,
@@ -76,402 +62,36 @@ from fastapi import HTTPException as _HTTPException
 app.add_exception_handler(_HTTPException, http_exception_handler)
 
 _STARTED_AT = datetime.now(timezone.utc)
-_JOB_RUNS: dict = {}   # job_id → {last_run, last_status} para o /health
-
-
-def _record_job_run(event) -> None:
-    _JOB_RUNS[event.job_id] = {
-        "last_run":    datetime.now(timezone.utc).isoformat(),
-        "last_status": "error" if event.exception else "ok",
-    }
-
-
-_scheduler = BackgroundScheduler()
-_register_scheduler(_scheduler, _JOB_RUNS)
-_scheduler.add_listener(_record_job_run, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
-_scheduler.add_job(alerts.run_conversion_check, "interval", hours=6, id="conversion_alerts")
-_canonical_delivery_enabled = os.getenv("REPORT_DELIVERY_ENABLED", "").strip().lower() == "true"
-if _canonical_delivery_enabled:
-    # Canonical delivery bridge: polls PUBLISHED reports every 30 min.
-    # Legacy email jobs are NOT registered — canonical bridge handles all delivery.
-    # Rollback: set REPORT_DELIVERY_ENABLED=false + redeploy → legacy re-registers.
-    from .core.canonical_delivery_scheduler import run_pending_deliveries as _run_canonical_delivery
-    _scheduler.add_job(
-        _run_canonical_delivery,
-        "interval",
-        minutes=30,
-        id="canonical_delivery",
-        max_instances=1,
-        misfire_grace_time=1800,
-    )
-else:
-    _scheduler.add_job(
-        reports.send_weekly_reports,  # LEGACY_WEEKLY: active only when REPORT_DELIVERY_ENABLED=false.
-        "cron",
-        day_of_week="mon",
-        hour=11,  # 11 UTC = 08:00 BRT
-        minute=0,
-        id="weekly_reports",
-    )
-    _scheduler.add_job(
-        reports.send_monthly_reports,  # LEGACY_MONTHLY: active only when REPORT_DELIVERY_ENABLED=false.
-        "cron",
-        day=1,
-        hour=11,  # 11 UTC = 08:00 BRT — 1º dia do mês, sobre o mês anterior fechado
-        minute=0,
-        id="monthly_reports",
-    )
-_scheduler.add_job(
-    meta_audiences.run_audience_sync_all_clients,
-    "interval",
-    hours=6,
-    id="audience_sync",
-)
-_scheduler.add_job(
-    meta_token_health.run_token_health_check,
-    "interval",
-    hours=6,
-    id="meta_token_health",
-)
-# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
-# Noro Platform agora consome dados via APIs. Manter código para referência futura.
-# _scheduler.add_job(
-#     capi_retry.retry_failed_capi,
-#     "interval",
-#     minutes=30,
-#     id="capi_retry",
-# )
-_scheduler.add_job(
-    anomalies.run_daily_anomaly_check,
-    "cron",
-    hour=11,  # 11 UTC = 08:00 BRT
-    minute=0,
-    id="anomalies_daily",
-)
-# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
-# Noro Platform agora consome dados via APIs. Manter código para referência futura.
-# _scheduler.add_job(
-#     anomalies.run_capi_health_check_all_clients,
-#     "interval",
-#     hours=1,
-#     id="capi_health_hourly",
-# )
-_scheduler.add_job(
-    integrations_health.run_hourly_for_all_clients,
-    "interval",
-    hours=1,
-    id="integrations_health_hourly",
-)
-_scheduler.add_job(
-    meta_attribution_sync.run_daily_sync_all_clients,
-    "cron",
-    hour=9,   # 09 UTC = 06:00 BRT — após spend_sync (06 UTC); Meta finaliza dados ~3-6h depois da meia-noite BRT
-    minute=0,
-    id="meta_attribution_sync_night",
-)
-_scheduler.add_job(
-    meta_attribution_sync.run_daily_sync_all_clients,
-    "cron",
-    hour=14,  # 14 UTC = 11:00 BRT — 2ª passagem com atribuição finalizada (view-through etc.)
-    minute=0,
-    id="meta_attribution_sync",
-)
-# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
-# Noro Platform agora consome dados via APIs. Manter código para referência futura.
-# _scheduler.add_job(
-#     cart_abandonment.run_hourly,
-#     "interval",
-#     hours=1,
-#     id="cart_abandonment",
-# )
-# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
-# Noro Platform agora consome dados via APIs. Manter código para referência futura.
-# _scheduler.add_job(
-#     sessionization.run_daily,
-#     "cron",
-#     hour=4,   # 04 UTC = 01:00 BRT — well after the previous UTC day closed
-#     minute=0,
-#     id="sessionization",
-# )
-_scheduler.add_job(
-    ltv_predictor.run_daily_for_all_clients,
-    "cron",
-    hour=5,   # 05 UTC = 02:00 BRT — after sessionization, before attribution sync
-    minute=0,
-    id="ltv_stats_refresh",
-)
-_scheduler.add_job(
-    creative_sync.run_daily_for_all_clients,
-    "cron",
-    hour=10,  # 10 UTC = 07:00 BRT — after meta_attribution_sync (09 UTC)
-    minute=0,
-    id="creative_sync",
-)
-_scheduler.add_job(
-    creative_intelligence.run_weekly_for_all_clients,
-    "cron",
-    day_of_week="tue",
-    hour=11,  # 11 UTC Tue = 08:00 BRT — fresh report for Tuesday standups
-    minute=0,
-    id="creative_intelligence",
-)
-_scheduler.add_job(
-    alert_engine.run_alert_engine,
-    "interval",
-    minutes=30,
-    id="alert_engine",
-)
-# DESATIVADO 2026-06-19 — Tracking migrado para Shopify nativo (Meta CAPI) + Simprosys (GA4/Google Ads).
-# Noro Platform agora consome dados via APIs. Manter código para referência futura.
-# _scheduler.add_job(
-#     capi_retry.retry_failed_tiktok,
-#     "interval",
-#     minutes=30,
-#     id="tiktok_retry",
-# )
-_scheduler.add_job(
-    spend_sync.run_daily_spend_sync,
-    "cron",
-    hour=6,
-    minute=0,
-    id="spend_sync_daily",
-)
-_scheduler.add_job(
-    search_console_sync.run_daily_sync_all_clients,
-    "cron",
-    hour=5,   # 05 UTC = 02:00 BRT — SC tem delay de 2-3 dias, roda antes do expediente
-    minute=30,
-    id="search_console_daily_sync",
-)
-_scheduler.add_job(
-    metrics_cache.run_daily_metrics_cache,
-    "cron",
-    hour=6,
-    minute=30,  # 06:30 UTC — após spend_sync (06:00)
-    id="metrics_cache_daily",
-)
-_scheduler.add_job(
-    ai_analyst.run_daily_insights_all_clients,
-    "cron",
-    hour=7,
-    minute=30,  # 07:30 UTC = 04:30 BRT — antes do início do dia comercial
-    id="daily_ai_insights",
-)
-_scheduler.add_job(
-    health_monitor.run_daily_health_check_safe,
-    "cron",
-    hour=12,
-    minute=30,  # 12:30 UTC = 09:30 BRT — verifica o dia anterior completo
-    id="daily_health_monitor",
-)
-_scheduler.add_job(
-    finance_alerts.run_daily_finance_alerts,
-    "cron",
-    hour=12,
-    minute=0,  # 12:00 UTC = 09:00 BRT — alertas de vencimento do financeiro
-    id="finance_alerts_daily",
-)
-_scheduler.add_job(
-    retention.run_retention,
-    "cron",
-    hour=6,
-    minute=0,  # 06:00 UTC = 03:00 BRT — purga eventos brutos > 90d (LGPD)
-    id="event_retention",
-)
-_scheduler.add_job(
-    crypto.encrypt_existing_credentials,
-    "cron",
-    hour=7,
-    minute=0,  # 07:00 UTC — rede de segurança: cifra tokens novos gravados em texto puro
-    id="credentials_encrypt",
-)
-_scheduler.add_job(
-    run_core_pipeline_all_clients,
-    "cron",
-    hour=7,
-    minute=15,  # 07:15 UTC = 04:15 BRT — após spend_sync (06:00) e metrics_cache (06:30)
-    id="core_pipeline_daily",
-)
-import os as _os
-if _os.getenv("CANONICAL_WEEKLY_REVIEW_ENABLED", "false").strip().lower() == "true":
-    # Canonical path: H7 scheduler writes to core_canonical_report_records.
-    # Legacy weekly_review is NOT registered to prevent duplicate contract generation.
-    # Rollback: set CANONICAL_WEEKLY_REVIEW_ENABLED=false and redeploy — legacy re-registers.
-    _scheduler.add_job(
-        _run_canonical_weekly,
-        "interval",
-        hours=1,    # checks per-client weekly_day_of_week+weekly_hour in their timezone
-        id="canonical_weekly_review",
-        max_instances=1,
-        misfire_grace_time=7200,  # 2h grace — covers brief downtime within the schedule window
-    )
-else:
-    # Legacy path: builds Hermes handoff contracts in agency_report_contracts.
-    _scheduler.add_job(
-        run_weekly_review_all_clients,
-        "cron",
-        day_of_week="mon",
-        hour=8,
-        minute=0,   # 08:00 UTC = 05:00 BRT segunda — após core_pipeline (07:15) fechar domingo
-        id="weekly_review",
-    )
-_scheduler.add_job(
-    _run_weekly_deep_review,
-    "cron",
-    day_of_week="mon",
-    hour=8,
-    minute=15,  # 08:15 UTC — 15 min after weekly_review (08:00), before daily alert check
-    id="weekly_deep_review",
-)
-if _os.getenv("CANONICAL_MONTHLY_REVIEW_ENABLED", "false").strip().lower() == "true":
-    # Canonical path: H8 scheduler writes to core_canonical_report_records.
-    # Legacy monthly_review is NOT registered to prevent duplicate contract generation.
-    # Rollback: set CANONICAL_MONTHLY_REVIEW_ENABLED=false and redeploy — legacy re-registers.
-    _scheduler.add_job(
-        _run_canonical_monthly,
-        "interval",
-        hours=1,    # checks per-client monthly_day_of_month+monthly_hour in their timezone
-        id="canonical_monthly_review",
-        max_instances=1,
-        misfire_grace_time=7200,  # 2h grace — covers brief downtime within the schedule window
-    )
-else:
-    # Legacy path: builds Hermes handoff contracts in agency_report_contracts.
-    _scheduler.add_job(
-        run_monthly_review_all_clients,
-        "cron",
-        day=1,
-        hour=8,
-        minute=30,
-        id="monthly_review",
-    )
-_scheduler.add_job(
-    _evaluate_system_alerts,
-    "interval",
-    minutes=30,  # detects PIPELINE_NOT_RUN if daily job missed
-    id="core_alert_system_check",
-)
-_scheduler.add_job(
-    run_balance_check_all_prepaid,
-    "interval",
-    hours=1,  # hourly — prepaid accounts need fast detection before exhaustion
-    id="balance_check_prepaid",
-)
-_scheduler.add_job(
-    shopify_sync.run_hourly_for_all_clients,
-    "interval",
-    hours=1,
-    id="shopify_api_sync",
-)
-_scheduler.add_job(
-    merchant_center.run_daily_sync_all_clients,
-    "cron",
-    hour=5,   # 05 UTC = 02:00 BRT — após dados do dia anterior fecharem
-    minute=0,
-    id="merchant_center_daily_sync",
-)
-_scheduler.add_job(
-    content_approval.run_auto_approve_check,
-    "interval",
-    hours=2,  # checa a cada 2h — deadline pode ser intraday
-    id="content_auto_approve",
-)
-_scheduler.add_job(
-    content_approval.send_deadline_reminders,
-    "cron",
-    hour=10,  # 10 UTC = 07:00 BRT — manhã antes do dia de trabalho
-    minute=0,
-    id="content_deadline_reminders",
-)
-_scheduler.add_job(
-    ai_visibility_analyst.send_monthly_import_reminder,
-    "cron",
-    day=1,
-    hour=11,  # 11 UTC = 08:00 BRT — 1º do mês, lembrete de import Ubersuggest (clientes sem DataForSEO)
-    minute=0,
-    id="ai_visibility_monthly_reminder",
-)
-_scheduler.add_job(
-    ai_visibility_collector.run_weekly_for_all_clients,
-    "cron",
-    day_of_week="mon",
-    hour=3,   # 03 UTC = 00:00 BRT segunda — coleta DataForSEO semanal
-    minute=0,
-    id="ai_visibility_weekly_collect",
-)
-_scheduler.add_job(
-    ai_visibility_collector.reset_monthly_budgets,
-    "cron",
-    day=1,
-    hour=0,   # 00 UTC 1º do mês — zera budget_used_this_month
-    minute=0,
-    id="ai_visibility_budget_reset",
-)
-_scheduler.add_job(
-    _evaluate_pending_outcomes,
-    "cron",
-    hour=10,
-    minute=30,  # 10:30 UTC = 07:30 BRT — após core_pipeline (07:15) fechar dados do dia anterior
-    id="outcome_evaluation",
-    max_instances=1,
-    misfire_grace_time=3600,
-)
-def _notion_sync_pending():
-    _NotionAdapter(supabase=_get_supabase_for_notion()).sync_pending_tasks_to_notion()
-
-
-def _notion_poll_updates():
-    _NotionAdapter(supabase=_get_supabase_for_notion()).poll_notion_task_updates()
-
-
-def _ga4_dispatch_pending():
-    from .core.ga4_dispatch import run_pending
-    run_pending()
-
-
-_scheduler.add_job(
-    _ga4_dispatch_pending,
-    "interval",
-    minutes=10,
-    id="ga4_dispatch_pending",
-    max_instances=1,
-    misfire_grace_time=600,
-)
-_scheduler.add_job(
-    _run_change_history,
-    "interval",
-    minutes=15,
-    id="change_history_ingest",
-    max_instances=1,
-    misfire_grace_time=900,  # tolerate up to 15-min lag before skipping
-)
-_scheduler.add_job(
-    _notion_sync_pending,
-    "interval",
-    minutes=5,
-    id="notion_sync_pending",
-    max_instances=1,
-    misfire_grace_time=300,
-)
-_scheduler.add_job(
-    _notion_poll_updates,
-    "interval",
-    minutes=5,
-    id="notion_poll_updates",
-    max_instances=1,
-    misfire_grace_time=300,
-)
+_JOB_RUNS: dict = {}   # job_id → {last_run, last_status}
+_scheduler, _JOB_RUNS = build_scheduler(_JOB_RUNS)
+_embedded_lock: PostgresAdvisoryLock | None = None
 
 
 @app.on_event("startup")
 def _start_scheduler() -> None:
+    global _embedded_lock
+    if not embedded_scheduler_enabled():
+        logger.info("APScheduler disabled in HTTP API (ENABLE_EMBEDDED_SCHEDULER=false — running dedicated app.worker)")
+        return
+    dsn = os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL") or ""
+    if dsn:
+        lock = PostgresAdvisoryLock(dsn=dsn)
+        if not lock.acquire():
+            logger.warning("APScheduler skipped in HTTP API — advisory lock already held by another worker")
+            return
+        _embedded_lock = lock
     _scheduler.start()
-    logger.info("APScheduler started — conversion alerts every 6h")
+    logger.info("APScheduler started in embedded mode (%d jobs)", len(_scheduler.get_jobs()))
 
 
 @app.on_event("shutdown")
 def _stop_scheduler() -> None:
-    _scheduler.shutdown(wait=False)
+    global _embedded_lock
+    if getattr(_scheduler, "running", False):
+        _scheduler.shutdown(wait=False)
+    if _embedded_lock is not None:
+        _embedded_lock.release()
+        _embedded_lock = None
 
 # ── CORS (PRD §21.2 S5) ───────────────────────────────────────────────────────
 # Explicit allowlist ONLY — no wildcard origin regex with credentials.

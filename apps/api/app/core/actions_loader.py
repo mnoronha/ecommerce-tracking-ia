@@ -18,10 +18,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _OUTCOME_STATUS_MAP = {
-    "CONFIRMED":            ("Impacto confirmado", "ok"),
-    "PENDING":              ("Avaliando impacto",  "pending"),
-    "BLOCKED_DATA_QUALITY": ("Dados insuficientes", "blocked"),
+    "CONFIRMED":            ("Impacto confirmado",    "ok"),
+    "POSITIVE":             ("Resultado positivo",    "ok"),
+    "NEGATIVE":             ("Resultado negativo",    "error"),
+    "NEUTRAL":              ("Resultado neutro",      "neutral"),
+    "INCONCLUSIVE":         ("Inconclusivo",          "pending"),
+    "PENDING":              ("Avaliando impacto",     "pending"),
+    "BLOCKED_DATA_QUALITY": ("Dados insuficientes",   "blocked"),
     "NO_IMPACT":            ("Sem impacto observado", "blocked"),
+    "SUPERSEDED":           ("Substituído",           "neutral"),
 }
 
 

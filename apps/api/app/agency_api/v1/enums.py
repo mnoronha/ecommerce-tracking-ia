@@ -250,6 +250,7 @@ class OutcomeStatus(str, Enum):
     NEGATIVE              = "NEGATIVE"
     NEUTRAL               = "NEUTRAL"
     BLOCKED_DATA_QUALITY  = "BLOCKED_DATA_QUALITY"
+    SUPERSEDED            = "SUPERSEDED"
 
 
 class MetricDomain(str, Enum):
