@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
@@ -14,6 +14,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .agency_api.v1 import router as agency_v1_router
 from .agency_api.v1.admin_router import admin_router as agency_v1_admin_router
+from .agency_api.v1.auth import SCOPE_INTERNAL_OPERATOR
 from .agency_api.v1.openapi_patch import patch_agency_v1_openapi
 from .agency_api.v1.request_id import AgencyRequestIDMiddleware
 from .api.v1 import router as public_api_router
@@ -472,37 +473,42 @@ def _start_scheduler() -> None:
 def _stop_scheduler() -> None:
     _scheduler.shutdown(wait=False)
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
-# First-party cookie persistence needs credentialed cross-origin requests
-# (store page www.cliente.com → tracker track.cliente.com). With credentials,
-# the spec forbids "*" — the middleware must reflect the specific Origin. We
-# reflect any https origin via regex (the pixel endpoints are public and carry
-# no cookie-based auth, so reflecting origins is low-risk). Explicit origins
-# from CORS_ORIGINS are still honored.
-if settings.CORS_ORIGINS != "*":
-    explicit_origins = [o.strip() for o in settings.CORS_ORIGINS.split(",")]
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=explicit_origins,
-        allow_origin_regex=r"https://[^/]+",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-else:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origin_regex=r"https?://[^/]+",
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+# ── CORS (PRD §21.2 S5) ───────────────────────────────────────────────────────
+# Explicit allowlist ONLY — no wildcard origin regex with credentials.
+# Public tracking ingestion uses Bearer ingest tokens (no cookies) and gets a
+# dedicated, path-restricted CORS middleware below.
+_DEFAULT_CORS_ORIGINS = [
+    "https://track.noroia.com.br",
+    "https://ecommerce-tracking-ia.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
-# ── CORS for the Shopify Custom Web Pixel (sandboxed iframe) ──────────────────
-# Custom pixels run in a sandboxed iframe whose requests carry `Origin: null`,
-# which the regex above does not match, so the preflight failed and checkout
-# events (begin_checkout / purchase) never arrived. Allowed ONLY on the tracking
-# ingest endpoint, without credentials (auth there is the Bearer ingest token).
+
+def _parse_cors_origins(raw: str) -> list[str]:
+    origins = [
+        o.strip().rstrip("/")
+        for o in (raw or "").split(",")
+        if o.strip() and o.strip() != "*"
+    ]
+    return origins or list(_DEFAULT_CORS_ORIGINS)
+
+
+_ALLOWED_CORS_ORIGINS = _parse_cors_origins(settings.CORS_ORIGINS)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_ALLOWED_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
+)
+
+# ── CORS for Public Tracking Ingestion (Storefront + Shopify Custom Web Pixel) ─
+# Tracking ingestion authenticates via per-client Bearer ingest tokens (never
+# cookies). Both storefront pages (`https://store.example`) and Shopify Custom
+# Web Pixels (`Origin: null`) POST to `/agency/v1/clients/{id}/tracking/events`.
+# Scoped strictly to that path, POST/OPTIONS only, and NEVER with credentials.
 import re as _re
 
 _TRACKING_INGEST_PATH = _re.compile(r"^/agency/v1/clients/[^/]+/tracking/events/?$")
@@ -510,7 +516,8 @@ _TRACKING_INGEST_PATH = _re.compile(r"^/agency/v1/clients/[^/]+/tracking/events/
 
 @app.middleware("http")
 async def _pixel_sandbox_cors(request, call_next):
-    if request.headers.get("origin") != "null" or not _TRACKING_INGEST_PATH.match(request.url.path):
+    origin = request.headers.get("origin")
+    if not origin or not _TRACKING_INGEST_PATH.match(request.url.path):
         return await call_next(request)
 
     from starlette.responses import Response as _R
@@ -525,6 +532,8 @@ async def _pixel_sandbox_cors(request, call_next):
         return _R(status_code=204, headers=cors)
     response = await call_next(request)
     response.headers["Access-Control-Allow-Origin"] = "*"
+    if "access-control-allow-credentials" in response.headers:
+        del response.headers["access-control-allow-credentials"]
     return response
 
 
@@ -602,40 +611,45 @@ def tracker_js_adblock_alias():
 #   ligação pedido→visita em modo sombra). Envios de conversão continuam controlados por
 #   CONVERSION_SENDS_DISABLED (core/send_guard.py) — usar "*" para modo só-tracking global.
 # O pixel legado (/p/e) segue desativado: o tracker v4.3 usa /agency/v1/.../tracking/events.
+# 2026-11-27 (PRD §21.2 S1-S3): todos os routers legados exigem autenticação
+# (SCOPE_ADMIN_ONLY em rotas destrutivas/admin, SCOPE_INTERNAL_OPERATOR nos demais).
+_INTERNAL_DEPS = [Depends(SCOPE_INTERNAL_OPERATOR)]
+
 app.include_router(ecommerce_webhooks.router)
 # app.include_router(pixel.router)
-app.include_router(insights.router)
-app.include_router(meta_ads.router)
-app.include_router(audiences.router)
-app.include_router(setup.router)
-app.include_router(portal_users.router)
-app.include_router(cname.router)
-app.include_router(attribution.router)
-app.include_router(live.router)
-app.include_router(cogs.router)
-app.include_router(pacing.router)
-app.include_router(journey.router)
-app.include_router(creatives.router)
-app.include_router(integrations.router)
-app.include_router(alerts_router.router)
-app.include_router(diagnostics.router)
-app.include_router(google_ads_dashboard.router)
+app.include_router(insights.router, dependencies=_INTERNAL_DEPS)
+app.include_router(meta_ads.router, dependencies=_INTERNAL_DEPS)
+app.include_router(audiences.router)       # SCOPE_ADMIN_ONLY no router
+app.include_router(setup.router)           # SCOPE_ADMIN_ONLY / SCOPE_PLATFORM_WRITE por rota
+app.include_router(portal_users.router)    # SCOPE_ADMIN_ONLY no router
+app.include_router(cname.router, dependencies=_INTERNAL_DEPS)
+app.include_router(attribution.router, dependencies=_INTERNAL_DEPS)
+app.include_router(live.router, dependencies=_INTERNAL_DEPS)
+app.include_router(cogs.router, dependencies=_INTERNAL_DEPS)
+app.include_router(pacing.router, dependencies=_INTERNAL_DEPS)
+app.include_router(journey.router, dependencies=_INTERNAL_DEPS)
+app.include_router(creatives.router, dependencies=_INTERNAL_DEPS)
+app.include_router(integrations.router, dependencies=_INTERNAL_DEPS)
+app.include_router(alerts_router.router, dependencies=_INTERNAL_DEPS)
+app.include_router(diagnostics.router, dependencies=_INTERNAL_DEPS)
+app.include_router(google_ads_dashboard.router, dependencies=_INTERNAL_DEPS)
 app.include_router(klaviyo_webhook.router)
 app.include_router(fireflies_webhook.router)
-app.include_router(lgpd.router)
-app.include_router(annotations.router)
-app.include_router(sync_router.router)
-app.include_router(finance_router.router)
-app.include_router(ai_visibility_router.router)
-app.include_router(merchant_center_router.router)
-app.include_router(content_router.router)
-app.include_router(tiktok_ads.router)
-app.include_router(pinterest_ads.router)
-app.include_router(search_console_router.router)
-app.include_router(shopify_revenue_router.router)
-app.include_router(shopify_app_router.router)
-app.include_router(technical_seo_router.router)
-app.include_router(agency_os.router)
+app.include_router(lgpd.router)            # SCOPE_ADMIN_ONLY no router
+app.include_router(annotations.router, dependencies=_INTERNAL_DEPS)
+app.include_router(sync_router.router, dependencies=_INTERNAL_DEPS)
+app.include_router(finance_router.router)  # SCOPE_ADMIN_ONLY por rota
+app.include_router(ai_visibility_router.router, dependencies=_INTERNAL_DEPS)
+app.include_router(merchant_center_router.router, dependencies=_INTERNAL_DEPS)
+app.include_router(content_router.router)         # SCOPE_INTERNAL_OPERATOR no router
+app.include_router(content_router.public_router)  # aprovação pública por token único
+app.include_router(tiktok_ads.router, dependencies=_INTERNAL_DEPS)
+app.include_router(pinterest_ads.router, dependencies=_INTERNAL_DEPS)
+app.include_router(search_console_router.router, dependencies=_INTERNAL_DEPS)
+app.include_router(shopify_revenue_router.router, dependencies=_INTERNAL_DEPS)
+app.include_router(shopify_app_router.router)     # OAuth HMAC + SCOPE_INTERNAL_OPERATOR em /urls
+app.include_router(technical_seo_router.router)   # SCOPE_INTERNAL_OPERATOR + SCOPE_ADMIN_ONLY em /apply
+app.include_router(agency_os.router)              # AGENCY_OS_INGEST_KEY por rota
 
 # ── Agency API v1 ────────────────────────────────────────────────────────────
 app.include_router(agency_v1_router)
@@ -661,50 +675,21 @@ def cname_verify_echo(secret: str):
     return PlainTextResponse(secret)
 
 
-# ── Health check ──────────────────────────────────────────────────────────────
+# ── Health check (PRD §21.2 S7 — minimal public response) ─────────────────────
+# Detailed diagnostics (jobs, scheduler, key flags, GA4 stats) live on the
+# authenticated admin endpoint GET /agency/v1/admin/health-details.
 @app.get("/health", tags=["meta"])
 def health_check():
     from .database import get_supabase
     db_status = "ok"
-    db_error = None
     try:
         sb = get_supabase()
         sb.table("clients").select("id").limit(1).execute()
-    except Exception as e:
-        db_status = "error"
-        db_error = str(e)[:200]
-    now = datetime.now(timezone.utc)
-    jobs = []
-    try:
-        for j in _scheduler.get_jobs():
-            run = _JOB_RUNS.get(j.id, {})
-            jobs.append({
-                "id":          j.id,
-                "next_run":    j.next_run_time.isoformat() if j.next_run_time else None,
-                "last_run":    run.get("last_run"),
-                "last_status": run.get("last_status"),
-            })
     except Exception:
-        pass
+        logger.exception("public /health db check failed")
+        db_status = "error"
     return {
         "status": "ok" if db_status == "ok" else "degraded",
         "version": settings.APP_VERSION,
-        "uptime_seconds": int((now - _STARTED_AT).total_seconds()),
-        "started_at": _STARTED_AT.isoformat(),
         "db": db_status,
-        "db_error": db_error,
-        "scheduler_running": getattr(_scheduler, "running", False),
-        "jobs": jobs,
-        "supabase_url": settings.SUPABASE_URL[:40] + "..." if settings.SUPABASE_URL else "NOT SET",
-        "service_key_set": bool(settings.SUPABASE_SERVICE_KEY),
-        "credentials_key_set": bool(settings.CREDENTIALS_KEY),
-        "ga4_dispatch": _ga4_last_stats(),
     }
-
-
-def _ga4_last_stats() -> dict:
-    try:
-        from .core.ga4_dispatch import LAST_STATS
-        return dict(LAST_STATS)
-    except Exception:
-        return {}

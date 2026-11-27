@@ -33,9 +33,10 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from ..agency_api.v1.auth import SCOPE_INTERNAL_OPERATOR
 from ..config import settings
 from ..database import get_supabase
 from ..services import crypto
@@ -218,7 +219,11 @@ def callback(pixel_id: str, request: Request):
     return _platform_redirect(pixel_id, "connected")
 
 
-@router.get("/{pixel_id}/urls", summary="URLs para configurar no Dev Dashboard (sem segredos)")
+@router.get(
+    "/{pixel_id}/urls",
+    summary="URLs para configurar no Dev Dashboard (sem segredos)",
+    dependencies=[Depends(SCOPE_INTERNAL_OPERATOR)],
+)
 def app_urls(pixel_id: str):
     return {
         "app_url":      f"{_api_base()}/shopify/app/{pixel_id}/install",

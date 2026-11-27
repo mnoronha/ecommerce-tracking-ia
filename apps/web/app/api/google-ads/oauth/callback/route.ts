@@ -1,5 +1,5 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAgencyBffAuth, verifyOAuthState } from '@/lib/bff-auth'
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 
@@ -17,23 +17,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${origin}/clients?error=google_oauth_invalid`)
   }
 
-  // Decode state and verify CSRF nonce
-  let clientId: string
-  let nonce: string
-  let returnTo = 'settings'
-  try {
-    const parsed = JSON.parse(Buffer.from(state, 'base64url').toString())
-    clientId = parsed.c
-    nonce    = parsed.n
-    returnTo = parsed.r || 'settings'
-    if (!clientId || !nonce) throw new Error('incomplete state')
-  } catch {
+  // Verify HMAC-signed state and CSRF nonce
+  const parsed = verifyOAuthState(state)
+  if (!parsed) {
     return NextResponse.redirect(`${origin}/clients?error=google_oauth_invalid`)
   }
+  const { c: clientId, n: nonce, r: returnTo } = parsed
 
   const storedNonce = req.cookies.get('_ga_oauth_nonce')?.value
   if (!storedNonce || storedNonce !== nonce) {
     return NextResponse.redirect(`${origin}/clients?error=google_oauth_csrf`)
+  }
+
+  // Verify authenticated agency member with access to clientId
+  const check = await requireAgencyBffAuth({ clientRef: clientId })
+  if (!check.ok) {
+    return NextResponse.redirect(`${origin}/clients?error=google_oauth_unauthorized`)
   }
 
   // Exchange authorization code for tokens
@@ -66,12 +65,16 @@ export async function GET(req: NextRequest) {
   }
 
   // Grava via backend (cifra o refresh_token em repouso).
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+  const API_URL = process.env.AGENCY_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+  const platformKey = process.env.AGENCY_API_PLATFORM_KEY || ''
   let dbError: { message: string } | null = null
   try {
     const resp = await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${platformKey}`,
+      },
       body: JSON.stringify({
         google_ads_refresh_token: refreshToken,
         merchant_center_refresh_token: refreshToken,

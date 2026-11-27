@@ -457,3 +457,61 @@ def admin_notion_sync_status(
         missing_config = missing,
         queried_at     = datetime.now(timezone.utc).isoformat(),
     )
+
+
+@admin_router.get(
+    "/health-details",
+    summary="Detailed runtime & scheduler diagnostics (agency_admin only — S7)",
+)
+def admin_health_details(
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)],
+) -> dict[str, Any]:
+    """Authenticated diagnostic view moved out of public GET /health (PRD §21.2 S7)."""
+    from ...config import settings as _settings
+    from ...core.scheduler_registry import get_job_runs, get_scheduler
+    from ...database import get_supabase
+
+    db_status = "ok"
+    db_error: str | None = None
+    try:
+        sb = get_supabase()
+        sb.table("clients").select("id").limit(1).execute()
+    except Exception as exc:
+        db_status = "error"
+        db_error = str(exc)[:200]
+
+    scheduler = get_scheduler()
+    job_runs = get_job_runs()
+    jobs: list[dict[str, Any]] = []
+    if scheduler is not None:
+        try:
+            for j in scheduler.get_jobs():
+                run = job_runs.get(j.id, {})
+                jobs.append({
+                    "id":          j.id,
+                    "next_run":    j.next_run_time.isoformat() if j.next_run_time else None,
+                    "last_run":    run.get("last_run"),
+                    "last_status": run.get("last_status"),
+                })
+        except Exception:
+            pass
+
+    ga4_dispatch: dict[str, Any] = {}
+    try:
+        from ...core.ga4_dispatch import LAST_STATS
+        ga4_dispatch = dict(LAST_STATS)
+    except Exception:
+        pass
+
+    return {
+        "status": "ok" if db_status == "ok" else "degraded",
+        "version": _settings.APP_VERSION,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "db": db_status,
+        "db_error": db_error,
+        "scheduler_running": getattr(scheduler, "running", False) if scheduler else False,
+        "jobs": jobs,
+        "service_key_set": bool(_settings.SUPABASE_SERVICE_KEY),
+        "credentials_key_set": bool(_settings.CREDENTIALS_KEY),
+        "ga4_dispatch": ga4_dispatch,
+    }

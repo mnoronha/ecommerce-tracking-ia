@@ -1,17 +1,25 @@
 import { createClient } from '@supabase/supabase-js'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAgencyBffAuth } from '@/lib/bff-auth'
+
+const ALLOWED_CLIENT_ROLES = new Set(['viewer', 'editor', 'admin'])
 
 export async function POST(req: NextRequest) {
-  // Auth check — only authenticated users can invite
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { email, role, clientId } = await req.json()
-  if (!email || !role || !clientId) {
+  const { email, role, clientId } = await req.json().catch(() => ({}))
+  if (!email || !role || !clientId || typeof email !== 'string' || typeof role !== 'string' || typeof clientId !== 'string') {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
   }
+  if (!ALLOWED_CLIENT_ROLES.has(role)) {
+    return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+  }
+
+  // Auth + role + client ownership guard (owner/admin in agency_members ONLY)
+  const check = await requireAgencyBffAuth({
+    allowedRoles: ['owner', 'admin'],
+    clientRef: clientId,
+  })
+  if (!check.ok) return check.response
+  const { user } = check.auth
 
   // Use service role to manage auth users and link client_members
   const admin = createClient(

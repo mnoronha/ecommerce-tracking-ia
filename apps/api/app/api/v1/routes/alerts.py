@@ -162,6 +162,7 @@ class CreateAlertRequest(BaseModel):
 @router.post("", status_code=201)
 def create_alert(request: Request, key: ApiKey, body: CreateAlertRequest):
     key.assert_write()
+    key.assert_client_scope(body.client_id)
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
 

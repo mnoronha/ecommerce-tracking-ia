@@ -1,20 +1,17 @@
 import type { NextRequest }               from 'next/server'
 import { NextResponse }                    from 'next/server'
-import { createSupabaseServerClient }      from '@/lib/supabase-server'
 import { getLatestMonthlyReport, ReportError } from '@/lib/agency-os'
+import { requireAgencyBffAuth }            from '@/lib/bff-auth'
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ client: string }> },
 ) {
-  // ── Auth ────────────────────────────────────────────────────────────────────
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { client } = await params
+
+  // ── Auth + agency_members + client_id guard ─────────────────────────────────
+  const check = await requireAgencyBffAuth({ clientRef: client })
+  if (!check.ok) return check.response
 
   // ── Proxy ───────────────────────────────────────────────────────────────────
   try {

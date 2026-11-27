@@ -4,7 +4,7 @@ from fastapi import APIRouter,Depends,HTTPException,Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel,Field,ConfigDict
 from typing import Literal,Optional
-from .auth import SCOPE_READ_ANY,SCOPE_HERMES_WRITE,SCOPE_PLATFORM_WRITE,AuthContext
+from .auth import SCOPE_ADMIN_ONLY,SCOPE_READ_ANY,SCOPE_HERMES_WRITE,SCOPE_PLATFORM_WRITE,AuthContext
 from ...core.canonical_reports import Reports,CoreStore,Flags,ReportError
 router=APIRouter(prefix='/agency/v1/canonical-reports',tags=['canonical-reports'])
 
@@ -267,7 +267,7 @@ def pilot_run(
  period_start:Optional[str]=Query(None,description='YYYY-MM-DD override'),
  period_end:Optional[str]=Query(None,description='YYYY-MM-DD override'),
  version:Optional[int]=Query(None,ge=1,description='Artifact version; auto-increments past existing immutable records if omitted'),
- auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE),
+ auth:AuthContext=Depends(SCOPE_ADMIN_ONLY),
 )->dict:
  from ...database import get_supabase
  from ...core.canonical_reports import CoreStore,Flags,Reports,ReportError

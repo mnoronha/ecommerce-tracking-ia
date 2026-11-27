@@ -12,7 +12,7 @@
  */
 import type { NextRequest } from 'next/server'
 import { NextResponse }      from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { requireAgencyBffAuth, verifyAgencyResourceAccess } from '@/lib/bff-auth'
 
 const _BASE =
   process.env.AGENCY_API_BASE_URL ||
@@ -26,17 +26,24 @@ const VALID_ACTION_TYPES = new Set([
 ])
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ recommendationId: string }> },
 ) {
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const check = await requireAgencyBffAuth()
+  if (!check.ok) return check.response
+
   const { recommendationId } = await params
+  const allowed = await verifyAgencyResourceAccess(
+    check.auth.agencyId,
+    'recommendation',
+    recommendationId,
+  )
+  if (!allowed) {
+    return NextResponse.json({ error: 'Forbidden: client scope denied' }, { status: 403 })
+  }
+
   const platformKey = process.env.AGENCY_API_PLATFORM_KEY || ''
-  const upstream    = `${_BASE}/agency/v1/recommendations/${recommendationId}/actions`
+  const upstream    = `${_BASE}/agency/v1/recommendations/${encodeURIComponent(recommendationId)}/actions`
   try {
     const res  = await fetch(upstream, {
       headers: { Authorization: `Bearer ${platformKey}` },
@@ -53,14 +60,19 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ recommendationId: string }> },
 ) {
-  // ── 1. Session guard ──────────────────────────────────────────────────────────
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // ── 1. Session + agency_members + resource tenant guard ──────────────────────
+  const check = await requireAgencyBffAuth()
+  if (!check.ok) return check.response
 
   const { recommendationId } = await params
+  const allowed = await verifyAgencyResourceAccess(
+    check.auth.agencyId,
+    'recommendation',
+    recommendationId,
+  )
+  if (!allowed) {
+    return NextResponse.json({ error: 'Forbidden: client scope denied' }, { status: 403 })
+  }
 
   // ── 2. Parse and validate request body ───────────────────────────────────────
   let body: Record<string, unknown>

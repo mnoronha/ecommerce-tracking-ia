@@ -5,7 +5,7 @@
  * CTA is always blocked (cta_authorized=False enforced server-side).
  */
 import type { NextRequest } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { requireAgencyBffAuth, verifyAgencyResourceAccess } from '@/lib/bff-auth'
 
 const _BASE =
   process.env.AGENCY_API_BASE_URL ||
@@ -16,19 +16,27 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ reportId: string }> },
 ) {
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
+  const check = await requireAgencyBffAuth({
+    clientRef: req.nextUrl.searchParams.get('client_id'),
+  })
+  if (!check.ok) return check.response
+
+  const { reportId } = await params
+  const resourceOk = await verifyAgencyResourceAccess(
+    check.auth.agencyId,
+    'canonical_report',
+    reportId,
+  )
+  if (!resourceOk) {
+    return new Response(JSON.stringify({ error: 'Forbidden: client scope denied' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  const { reportId } = await params
   const key = process.env.AGENCY_API_PLATFORM_KEY || ''
 
-  const upstream = new URL(`/agency/v1/canonical-reports/${reportId}/preview-html`, _BASE)
+  const upstream = new URL(`/agency/v1/canonical-reports/${encodeURIComponent(reportId)}/preview-html`, _BASE)
   req.nextUrl.searchParams.forEach((v, k) => upstream.searchParams.set(k, v))
 
   try {

@@ -1,7 +1,7 @@
 import type { NextRequest }                from 'next/server'
 import { NextResponse }                     from 'next/server'
-import { createSupabaseServerClient }       from '@/lib/supabase-server'
-import { getWeeklyReport, ReportError }   from '@/lib/agency-os'
+import { getWeeklyReport, ReportError }     from '@/lib/agency-os'
+import { requireAgencyBffAuth }             from '@/lib/bff-auth'
 
 // Period format: YYYY-MM-DD_to_YYYY-MM-DD  (e.g. 2026-09-21_to_2026-09-27)
 const PERIOD_RE = /^\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}$/
@@ -10,14 +10,11 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ client: string; period: string }> },
 ) {
-  // ── Auth ────────────────────────────────────────────────────────────────────
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { client, period } = await params
+
+  // ── Auth + agency_members + client_id guard ─────────────────────────────────
+  const check = await requireAgencyBffAuth({ clientRef: client })
+  if (!check.ok) return check.response
 
   if (!PERIOD_RE.test(period)) {
     return NextResponse.json(

@@ -7,14 +7,20 @@ All endpoints are protected by pixel_id (resolves to client_uuid).
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
+from ..agency_api.v1.auth import AuthContext, SCOPE_ADMIN_ONLY
+from ..core.security_audit import record_admin_audit
 from ..database import get_supabase
 from ..services import crypto, meta_audiences
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/audiences", tags=["audiences"])
+router = APIRouter(
+    prefix="/audiences",
+    tags=["audiences"],
+    dependencies=[Depends(SCOPE_ADMIN_ONLY)],
+)
 
 
 def _resolve_client_uuid(pixel_id: str) -> str:

@@ -62,7 +62,12 @@ class Settings(BaseSettings):
     FIREFLIES_WEBHOOK_SECRET: str = ""
 
     # ── CORS ─────────────────────────────────────────────────────────────
-    CORS_ORIGINS: str = "*"
+    CORS_ORIGINS: str = (
+        "https://track.noroia.com.br,"
+        "https://ecommerce-tracking-ia.vercel.app,"
+        "http://localhost:3000,"
+        "http://127.0.0.1:3000"
+    )
 
     # ── Resend (email preferido — fallback: SMTP) ─────────────────────────
     RESEND_API_KEY: str = ""
