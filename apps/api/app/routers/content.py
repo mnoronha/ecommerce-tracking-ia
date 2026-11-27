@@ -34,14 +34,20 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
+from ..agency_api.v1.auth import SCOPE_INTERNAL_OPERATOR
 from ..database import get_supabase
 from ..services import content_generator, content_factchecker, rag_indexer, content_approval
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/content", tags=["content"])
+router = APIRouter(
+    prefix="/content",
+    tags=["content"],
+    dependencies=[Depends(SCOPE_INTERNAL_OPERATOR)],
+)
+public_router = APIRouter(prefix="/content", tags=["content-public"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -625,7 +631,7 @@ def get_ai_costs(days: int = Query(30, ge=7, le=90)):
 
 # ── Public Approval ───────────────────────────────────────────────────────────
 
-@router.get("/approve/{token}")
+@public_router.get("/approve/{token}")
 def get_approval_page(token: str):
     sb   = get_supabase()
     rows = sb.table("content_approvals").select("*").eq("approval_link_token", token).limit(1).execute().data
@@ -679,7 +685,7 @@ class ApprovalResponse(BaseModel):
     feedback: Optional[str] = None
 
 
-@router.post("/approve/{token}")
+@public_router.post("/approve/{token}")
 def respond_approval(token: str, body: ApprovalResponse, bg: BackgroundTasks):
     sb   = get_supabase()
     rows = (

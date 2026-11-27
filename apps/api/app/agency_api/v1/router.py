@@ -1522,6 +1522,15 @@ def get_reports(
     _auth: Annotated[AuthContext, Depends(SCOPE_ANY_AUTH)] = None,
 ) -> list[ReportNarrativeOut]:
     slug = _resolve_slug(client_id) or client_id
+    if _auth and _auth.scope == "client_viewer":
+        allowed = _auth.client_ids or []
+        meta = _load_client_meta(client_id)
+        if (
+            client_id not in allowed
+            and slug not in allowed
+            and (not meta or meta.get("pixel_id") not in allowed)
+        ):
+            raise HTTPException(403, detail="not authorised for this client")
     db   = _get_db()
     try:
         # Step 1: contracts for this client (include contract JSONB for actions/recommendations)
@@ -1610,6 +1619,19 @@ def get_report_narrative(
         contract = cr.data[0] if (cr and cr.data) else None
     except Exception:
         pass
+
+    if _auth and _auth.scope == "client_viewer":
+        allowed = _auth.client_ids or []
+        contract_slug = contract.get("client_slug") if contract else None
+        meta = _load_client_meta(contract_slug) if contract_slug else None
+        if (
+            not contract_slug
+            or (
+                contract_slug not in allowed
+                and (not meta or meta.get("pixel_id") not in allowed)
+            )
+        ):
+            raise HTTPException(403, detail="not authorised for this narrative")
 
     truth_versions = _load_truth_versions(contract["client_slug"]) if contract else None
     return _narrative_row_to_out(row, contract, truth_versions)

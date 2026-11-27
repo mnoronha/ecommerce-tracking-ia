@@ -1,19 +1,26 @@
 import { NextResponse }               from 'next/server'
-import { createSupabaseServerClient }  from '@/lib/supabase-server'
-import { listClients, ReportError }  from '@/lib/agency-os'
+import { listClients, ReportError }   from '@/lib/agency-os'
+import { getAgencyClientIdentifierSet, requireAgencyBffAuth } from '@/lib/bff-auth'
 
 export async function GET() {
-  // ── Auth ────────────────────────────────────────────────────────────────────
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // ── Auth + agency_members guard ─────────────────────────────────────────────
+  const check = await requireAgencyBffAuth()
+  if (!check.ok) return check.response
 
-  // ── Proxy ───────────────────────────────────────────────────────────────────
+  // ── Proxy (filtered to this agency's clients) ───────────────────────────────
   try {
     const clients = await listClients()
-    return NextResponse.json(clients)
+    const allowed = await getAgencyClientIdentifierSet(check.auth.agencyId)
+    const filtered = Array.isArray(clients)
+      ? clients.filter((c) => {
+          const rec = c as unknown as Record<string, unknown>
+          return ['id', 'pixel_id', 'client_id', 'slug'].some((k) => {
+            const v = rec[k]
+            return typeof v === 'string' && allowed.has(v)
+          })
+        })
+      : clients
+    return NextResponse.json(filtered)
   } catch (err) {
     if (err instanceof ReportError) {
       const statusMap: Record<string, number> = {

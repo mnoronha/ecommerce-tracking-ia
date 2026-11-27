@@ -24,14 +24,20 @@ Technical SEO router — Phase 5 AI Presence optimization tools.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from ..agency_api.v1.auth import AuthContext, SCOPE_ADMIN_ONLY, SCOPE_INTERNAL_OPERATOR
+from ..core.security_audit import record_admin_audit
 from ..database import get_supabase
 from ..services import schema_auditor, llms_txt_generator, robots_validator, core_web_vitals, prompt_templates as pt_svc
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/technical", tags=["technical-seo"])
+router = APIRouter(
+    prefix="/technical",
+    tags=["technical-seo"],
+    dependencies=[Depends(SCOPE_INTERNAL_OPERATOR)],
+)
 
 
 def _get_client(pixel_id: str) -> dict:
@@ -91,9 +97,18 @@ def generate_markup(pixel_id: str, issue_id: str):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/{pixel_id}/schema/issues/{issue_id}/apply", summary="Aplica schema via Shopify API")
-def apply_markup(pixel_id: str, issue_id: str):
+@router.post(
+    "/{pixel_id}/schema/issues/{issue_id}/apply",
+    summary="Aplica schema via Shopify API",
+    dependencies=[Depends(SCOPE_ADMIN_ONLY)],
+)
+def apply_markup(
+    pixel_id: str,
+    issue_id: str,
+    auth: AuthContext = Depends(SCOPE_ADMIN_ONLY),
+):
     client = _get_client(pixel_id)
+    record_admin_audit("SHOPIFY_SCHEMA_APPLY", pixel_id, auth=auth, details={"issue_id": issue_id})
     try:
         return schema_auditor.apply_schema_via_shopify(issue_id, client["id"])
     except ValueError as e:
@@ -115,9 +130,18 @@ class LlmsTxtApplyBody(BaseModel):
     content: str
 
 
-@router.post("/{pixel_id}/llms-txt/apply", summary="Aplica llms.txt no site")
-def apply_llms_txt(pixel_id: str, body: LlmsTxtApplyBody):
+@router.post(
+    "/{pixel_id}/llms-txt/apply",
+    summary="Aplica llms.txt no site",
+    dependencies=[Depends(SCOPE_ADMIN_ONLY)],
+)
+def apply_llms_txt(
+    pixel_id: str,
+    body: LlmsTxtApplyBody,
+    auth: AuthContext = Depends(SCOPE_ADMIN_ONLY),
+):
     client = _get_client(pixel_id)
+    record_admin_audit("SHOPIFY_LLMS_TXT_APPLY", pixel_id, auth=auth, details={"content_len": len(body.content)})
     try:
         return llms_txt_generator.apply_llms_txt(client["id"], body.content)
     except (ValueError, Exception) as e:

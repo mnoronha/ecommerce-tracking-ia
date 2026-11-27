@@ -26,7 +26,7 @@ from app.agency_api.v1.router import router as agency_router
 
 _AUTH_ADMIN  = AuthContext(scope="agency_admin")
 _AUTH_HERMES = AuthContext(scope="hermes_service")
-_AUTH_CLIENT = AuthContext(scope="client_viewer")
+_AUTH_CLIENT = AuthContext(scope="client_viewer", client_ids=["lk-sneakers"])
 
 _CONTRACT_UUID = "aaaaaaaa-bbbb-cccc-dddd-000000000001"
 _NAR_UUID      = "aaaaaaaa-bbbb-cccc-dddd-000000000002"

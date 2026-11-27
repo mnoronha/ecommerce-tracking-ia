@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
+import { requireAgencyBffAuth, verifyOAuthState } from '@/lib/bff-auth'
 
 const GRAPH = 'https://graph.facebook.com/v19.0'
 
@@ -17,23 +18,22 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${origin}/clients?error=meta_oauth_invalid`)
   }
 
-  // Decode state and verify CSRF nonce
-  let clientId: string
-  let nonce: string
-  let returnTo = 'settings'
-  try {
-    const parsed = JSON.parse(Buffer.from(state, 'base64url').toString())
-    clientId = parsed.c
-    nonce    = parsed.n
-    returnTo = parsed.r || 'settings'
-    if (!clientId || !nonce) throw new Error('incomplete state')
-  } catch {
+  // Verify HMAC-signed state and CSRF nonce
+  const parsed = verifyOAuthState(state)
+  if (!parsed) {
     return NextResponse.redirect(`${origin}/clients?error=meta_oauth_invalid`)
   }
+  const { c: clientId, n: nonce, r: returnTo } = parsed
 
   const storedNonce = req.cookies.get('_meta_oauth_nonce')?.value
   if (!storedNonce || storedNonce !== nonce) {
     return NextResponse.redirect(`${origin}/clients?error=meta_oauth_csrf`)
+  }
+
+  // Verify authenticated agency member with access to clientId
+  const check = await requireAgencyBffAuth({ clientRef: clientId })
+  if (!check.ok) {
+    return NextResponse.redirect(`${origin}/clients?error=meta_oauth_unauthorized`)
   }
 
   const appId     = process.env.META_APP_ID!
@@ -139,12 +139,16 @@ export async function GET(req: NextRequest) {
 
   // Grava via backend (cifra o meta_access_token em repouso) em vez de gravar
   // o token em texto puro direto no Supabase.
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+  const API_URL = process.env.AGENCY_API_BASE_URL || process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-tracking-ia-production.up.railway.app'
+  const platformKey = process.env.AGENCY_API_PLATFORM_KEY || ''
   let dbError: { message: string } | null = null
   try {
     const resp = await fetch(`${API_URL}/setup/${encodeURIComponent(clientId)}/credentials`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${platformKey}`,
+      },
       body: JSON.stringify(update),
     })
     if (!resp.ok) dbError = { message: `HTTP ${resp.status}: ${(await resp.text()).slice(0, 200)}` }

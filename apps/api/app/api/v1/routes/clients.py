@@ -215,6 +215,8 @@ class CreateClientRequest(BaseModel):
 @router.post("", status_code=201)
 def create_client(request: Request, key: ApiKey, body: CreateClientRequest):
     key.assert_write()
+    if key.scope_type != "all":
+        raise HTTPException(403, "Client-scoped API keys cannot create clients")
     req_id = get_request_id(request)
     t0 = datetime.now(timezone.utc)
 

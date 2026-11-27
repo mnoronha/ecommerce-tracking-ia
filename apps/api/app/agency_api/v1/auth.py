@@ -19,6 +19,7 @@ AGENCY_API_CLIENT_KEY in config.py is deprecated; auth module does not read it.
 
 from __future__ import annotations
 
+import hmac
 import logging
 from dataclasses import dataclass, field
 from typing import Callable
@@ -69,7 +70,7 @@ def _resolve_service_token(token: str) -> AuthContext | None:
     """Return AuthContext for a matching service token, or None."""
     for scope, attr in _SERVICE_SCOPE_SETTINGS.items():
         expected: str = getattr(settings, attr, "") or ""
-        if expected and token == expected:
+        if expected and hmac.compare_digest(token, expected):
             return AuthContext(scope=scope)
     return None
 
@@ -149,6 +150,69 @@ async def _fetch_pixel_ids_for_email(email: str) -> list[str]:
         return []
 
 
+async def _fetch_agency_member_role(user_id: str) -> str | None:
+    """
+    Verify that a Supabase Auth user UUID exists in `agency_members` with an
+    active agency role ('owner', 'admin', or 'member'). Async httpx only.
+    """
+    if not user_id or not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(
+                f"{settings.SUPABASE_URL}/rest/v1/agency_members",
+                headers={
+                    "apikey": settings.SUPABASE_SERVICE_KEY,
+                    "Authorization": f"Bearer {settings.SUPABASE_SERVICE_KEY}",
+                },
+                params={
+                    "select": "role",
+                    "user_id": f"eq.{user_id}",
+                    "role": "in.(owner,admin,member)",
+                    "limit": "1",
+                },
+            )
+            resp.raise_for_status()
+            rows = resp.json() or []
+            return str(rows[0]["role"]) if rows and rows[0].get("role") else None
+    except Exception:
+        logger.exception("agency_members lookup failed during operator JWT auth")
+        return None
+
+
+async def _resolve_operator_jwt(token: str) -> AuthContext | None:
+    """
+    Validate a Supabase Auth JWT belonging to an internal agency operator
+    (`agency_members.role IN ('owner', 'admin', 'member')`).
+    """
+    if not _JWT_AVAILABLE:
+        return None
+
+    jwt_secret: str = getattr(settings, "SUPABASE_JWT_SECRET", "") or ""
+    if not jwt_secret:
+        return None
+
+    try:
+        payload: dict = pyjwt.decode(
+            token,
+            jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+    except _JWTError:
+        return None
+
+    subject: str = payload.get("sub") or ""
+    if not subject:
+        return None
+
+    role = await _fetch_agency_member_role(subject)
+    if not role:
+        return None
+
+    return AuthContext(scope="agency_operator", client_ids=None, subject=subject)
+
+
 # ── require_scopes factory ─────────────────────────────────────────────────────
 
 
@@ -158,16 +222,18 @@ def require_scopes(*allowed_scopes: str) -> Callable:
 
     Resolution order per request:
     1. Service token (env-var match) → agency_admin | hermes_service | platform_web
-    2. Supabase JWT → client_viewer  (only attempted when 'client_viewer' in allowed_scopes)
+    2. Supabase JWT → agency_operator (when 'agency_operator' in allowed_scopes)
+    3. Supabase JWT → client_viewer   (when 'client_viewer' in allowed_scopes)
 
     HTTP responses:
       503 — server has no keys configured at all (misconfigured deployment)
-      401 — token not recognised / JWT invalid / JWT valid but email not in client_users
+      401 — token not recognised / JWT invalid / JWT valid but lacks membership
       403 — token recognised but scope not in allowed_scopes
     """
     if not allowed_scopes:
         raise ValueError("require_scopes: specify at least one scope")
 
+    _try_operator_jwt = "agency_operator" in allowed_scopes
     _try_jwt = "client_viewer" in allowed_scopes
 
     async def _dep(authorization: str = Header(default="")) -> AuthContext:
@@ -191,7 +257,13 @@ def require_scopes(*allowed_scopes: str) -> Callable:
                 ),
             )
 
-        # 2. Try Supabase JWT (async, only when client_viewer is accepted here)
+        # 2. Try Supabase operator JWT (async, only when agency_operator is accepted)
+        if _try_operator_jwt:
+            ctx = await _resolve_operator_jwt(token)
+            if ctx is not None:
+                return ctx
+
+        # 3. Try Supabase client_viewer JWT (async, only when client_viewer is accepted)
         if _try_jwt:
             ctx = await _resolve_jwt(token)
             if ctx is not None:
@@ -236,8 +308,11 @@ SCOPE_WRITE_ANY      = require_scopes("agency_admin", "hermes_service", "platfor
 SCOPE_HERMES_WRITE   = require_scopes("agency_admin", "hermes_service")
 SCOPE_PLATFORM_WRITE = require_scopes("agency_admin", "platform_web")
 SCOPE_ADMIN_ONLY     = require_scopes("agency_admin")
-SCOPE_ANY_AUTH       = require_scopes("agency_admin", "hermes_service", "platform_web", "client_viewer")
-SCOPE_CLIENT_VIEWER  = require_scopes("agency_admin", "platform_web", "client_viewer")
+SCOPE_ANY_AUTH          = require_scopes("agency_admin", "hermes_service", "platform_web", "client_viewer")
+SCOPE_CLIENT_VIEWER     = require_scopes("agency_admin", "platform_web", "client_viewer")
+# Internal legacy/operational routers (PRD §21.2 S2): service tokens (admin/platform)
+# OR verified agency_members operator Supabase JWT. Excludes hermes_service & client_viewer.
+SCOPE_INTERNAL_OPERATOR = require_scopes("agency_admin", "platform_web", "agency_operator")
 
 # Narrow scope for the H10 recommendation→task bridge.
 # Grants: agency_admin (always), hermes_service (H10 automated approval).

@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { requireAgencyBffAuth, signOAuthState } from '@/lib/bff-auth'
 
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 const SCOPE = [
@@ -10,12 +10,11 @@ const SCOPE = [
 ].join(' ')
 
 export async function GET(req: NextRequest) {
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
   const clientId = req.nextUrl.searchParams.get('clientId')
   if (!clientId) return NextResponse.json({ error: 'Missing clientId' }, { status: 400 })
+
+  const check = await requireAgencyBffAuth({ clientRef: clientId })
+  if (!check.ok) return check.response
 
   const oauthClientId = process.env.GOOGLE_ADS_OAUTH_CLIENT_ID
   if (!oauthClientId) return NextResponse.json({ error: 'OAuth not configured on server' }, { status: 500 })
@@ -23,7 +22,7 @@ export async function GET(req: NextRequest) {
   const next = req.nextUrl.searchParams.get('next') === 'onboarding' ? 'onboarding' : 'settings'
 
   const nonce = randomBytes(16).toString('hex')
-  const state = Buffer.from(JSON.stringify({ c: clientId, n: nonce, r: next })).toString('base64url')
+  const state = signOAuthState({ c: clientId, n: nonce, r: next })
   const redirectUri = `${req.nextUrl.origin}/api/google-ads/oauth/callback`
 
   const url = new URL(GOOGLE_AUTH_URL)

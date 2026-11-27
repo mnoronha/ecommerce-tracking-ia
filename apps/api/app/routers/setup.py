@@ -14,13 +14,16 @@ Docs:
   ScriptTags:  https://shopify.dev/docs/api/admin-rest/2024-10/resources/scripttag
 """
 
+import asyncio
 import logging
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from ..agency_api.v1.auth import AuthContext, SCOPE_ADMIN_ONLY, SCOPE_PLATFORM_WRITE
 from ..config import settings
+from ..core.security_audit import record_admin_audit
 from ..database import get_supabase
 from ..services import crypto
 
@@ -28,11 +31,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/setup", tags=["setup"])
 
 
-@router.post("/admin/encrypt-credentials", summary="Migração única: cifra credenciais em texto puro (idempotente)")
-def admin_encrypt_credentials(confirm: str = ""):
+@router.post(
+    "/admin/encrypt-credentials",
+    summary="Migração única: cifra credenciais em texto puro (idempotente)",
+    dependencies=[Depends(SCOPE_ADMIN_ONLY)],
+)
+def admin_encrypt_credentials(
+    confirm: str = "",
+    auth: AuthContext = Depends(SCOPE_ADMIN_ONLY),
+):
     if confirm != "encrypt-now":
         raise HTTPException(400, "passe ?confirm=encrypt-now para confirmar")
-    return crypto.encrypt_existing_credentials()
+    result = crypto.encrypt_existing_credentials()
+    record_admin_audit(
+        "ENCRYPT_CREDENTIALS",
+        "clients",
+        auth=auth,
+        details={"result_keys": sorted(result.keys()) if isinstance(result, dict) else []},
+    )
+    return result
 
 
 # Prefixos de campos de integração/credencial que esse endpoint pode gravar.
@@ -43,8 +60,16 @@ _CRED_PREFIXES = (
 )
 
 
-@router.put("/{pixel_id}/credentials", summary="Grava credenciais cifrando os segredos no servidor")
-async def save_credentials(pixel_id: str, request: Request):
+@router.put(
+    "/{pixel_id}/credentials",
+    summary="Grava credenciais cifrando os segredos no servidor",
+    dependencies=[Depends(SCOPE_PLATFORM_WRITE)],
+)
+async def save_credentials(
+    pixel_id: str,
+    request: Request,
+    auth: AuthContext = Depends(SCOPE_PLATFORM_WRITE),
+):
     """Recebe campos de integração/credencial do cliente, **cifra os segredos**
     (SECRET_FIELDS) e grava. As escritas de token (OAuth/Configurações) passam
     por aqui em vez de gravarem direto no Supabase — assim novos tokens já
@@ -60,10 +85,22 @@ async def save_credentials(pixel_id: str, request: Request):
     if not patch:
         raise HTTPException(400, "nenhum campo de credencial reconhecido")
     crypto.encrypt_client_secrets(patch)
-    res = get_supabase().table("clients").update(patch).eq("pixel_id", pixel_id).execute()
+
+    def _persist() -> object:
+        return get_supabase().table("clients").update(patch).eq("pixel_id", pixel_id).execute()
+
+    res = await asyncio.to_thread(_persist)
     if not (res and res.data):
         raise HTTPException(404, "cliente não encontrado")
-    return {"updated": True, "fields": list(patch.keys())}
+    fields = list(patch.keys())
+    await asyncio.to_thread(
+        record_admin_audit,
+        "SAVE_CLIENT_CREDENTIALS",
+        pixel_id,
+        auth=auth,
+        details={"fields": fields},
+    )
+    return {"updated": True, "fields": fields}
 
 
 _SHOPIFY_API_VERSION = "2024-10"
@@ -208,14 +245,18 @@ def _install_script_tag(shop_domain: str, access_token: str, pixel_id: str,
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.post("/shopify/{pixel_id}/webhooks")
-def register_shopify_webhooks(pixel_id: str):
+@router.post("/shopify/{pixel_id}/webhooks", dependencies=[Depends(SCOPE_ADMIN_ONLY)])
+def register_shopify_webhooks(
+    pixel_id: str,
+    auth: AuthContext = Depends(SCOPE_ADMIN_ONLY),
+):
     """
     Register all required Shopify webhooks for a client. Idempotent — re-running
     is safe (existing webhooks are not duplicated).
 
     Returns a per-topic success report.
     """
+    record_admin_audit("SHOPIFY_REGISTER_WEBHOOKS", pixel_id, auth=auth)
     sb = get_supabase()
     result = (
         sb.table("clients")
@@ -270,8 +311,12 @@ def register_shopify_webhooks(pixel_id: str):
     "/shopify/{pixel_id}/install",
     summary="Full one-shot Shopify onboarding: webhooks + pixel ScriptTag",
     tags=["setup"],
+    dependencies=[Depends(SCOPE_ADMIN_ONLY)],
 )
-def install_shopify(pixel_id: str):
+def install_shopify(
+    pixel_id: str,
+    auth: AuthContext = Depends(SCOPE_ADMIN_ONLY),
+):
     """
     Single endpoint that handles the entire Shopify technical setup:
       1. Registers all required webhooks (orders, carts, customers, refunds)
@@ -283,6 +328,7 @@ def install_shopify(pixel_id: str):
     ScriptTag falls back gracefully — if write_script_tags scope is missing
     the response indicates the manual install snippet should be shown to the user.
     """
+    record_admin_audit("SHOPIFY_INSTALL", pixel_id, auth=auth)
     sb = get_supabase()
     result = (
         sb.table("clients")

@@ -14,7 +14,7 @@
  */
 import type { NextRequest } from 'next/server'
 import { NextResponse }      from 'next/server'
-import { createSupabaseServerClient } from '@/lib/supabase-server'
+import { requireAgencyBffAuth, verifyAgencyResourceAccess } from '@/lib/bff-auth'
 
 const _BASE =
   process.env.AGENCY_API_BASE_URL ||
@@ -25,14 +25,19 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ learningCandidateId: string }> },
 ) {
-  // ── 1. Session guard ──────────────────────────────────────────────────────────
-  const supabase = await createSupabaseServerClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  // ── 1. Session + agency_members + resource tenant guard ──────────────────────
+  const check = await requireAgencyBffAuth()
+  if (!check.ok) return check.response
 
   const { learningCandidateId } = await params
+  const allowed = await verifyAgencyResourceAccess(
+    check.auth.agencyId,
+    'learning_candidate',
+    learningCandidateId,
+  )
+  if (!allowed) {
+    return NextResponse.json({ error: 'Forbidden: client scope denied' }, { status: 403 })
+  }
 
   // ── 2. Parse request body ─────────────────────────────────────────────────────
   let body: { reason?: unknown; force_new_version?: unknown } = {}

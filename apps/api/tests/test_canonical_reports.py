@@ -180,6 +180,7 @@ def http_api(monkeypatch):
  tree.body=[n for n in tree.body if not isinstance(n,ast.ImportFrom) or n.level==0]
  mod=types.ModuleType('canonical_http_fixture');sys.modules[mod.__name__]=mod
  mod.__dict__.update(Reports=m.Reports,CoreStore=m.CoreStore,Flags=m.Flags,ReportError=m.ReportError,AuthContext=types.SimpleNamespace,
+ SCOPE_ADMIN_ONLY=dependency(('agency_admin',)),
  SCOPE_READ_ANY=dependency(('agency_admin','hermes_service','platform_web')),
  SCOPE_HERMES_WRITE=dependency(('agency_admin','hermes_service')),
  SCOPE_PLATFORM_WRITE=dependency(('agency_admin','platform_web')))

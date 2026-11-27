@@ -15,14 +15,20 @@ captura). Idempotente.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ..agency_api.v1.auth import AuthContext, SCOPE_ADMIN_ONLY
 from ..core.pii import email_hash
+from ..core.security_audit import record_admin_audit
 from ..database import get_supabase
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/lgpd", tags=["lgpd"])
+router = APIRouter(
+    prefix="/lgpd",
+    tags=["lgpd"],
+    dependencies=[Depends(SCOPE_ADMIN_ONLY)],
+)
 
 # Customers are identified by email_hash (core/pii.py). Raw columns are also
 # nulled for rows written before the switch.
@@ -79,7 +85,11 @@ def preview_subject(pixel_id: str, email: str):
 
 
 @router.post("/{pixel_id}/forget", summary="Apaga/anonimiza os dados pessoais de um titular (LGPD)")
-def forget_subject(pixel_id: str, body: ForgetBody):
+def forget_subject(
+    pixel_id: str,
+    body: ForgetBody,
+    auth: AuthContext = Depends(SCOPE_ADMIN_ONLY),
+):
     cid = _resolve(pixel_id)
     if not cid:
         raise HTTPException(404, "client not found")
@@ -132,6 +142,20 @@ def forget_subject(pixel_id: str, body: ForgetBody):
 
     logger.info("lgpd forget %s: orders=%s visitors=%s matches=%s events=%s identities=%s cookies=%s",
                 pixel_id, orders_anon, visitors_anon, matches_anon, events_anon, identities_anon, cookies_deleted)
+    record_admin_audit(
+        "LGPD_FORGET",
+        pixel_id,
+        auth=auth,
+        details={
+            "email_hash": h,
+            "orders_anonymized": orders_anon,
+            "visitors_anonymized": visitors_anon,
+            "tracking_order_matches_anonymized": matches_anon,
+            "events_anonymized": events_anon,
+            "tracking_identities_anonymized": identities_anon,
+            "attribution_cookies_deleted": cookies_deleted,
+        },
+    )
     return {
         "email": (body.email or "").strip().lower(),
         "orders_anonymized": orders_anon,

@@ -33,8 +33,9 @@ def api_health():
     try:
         sb = get_supabase()
         sb.table("clients").select("id").limit(1).execute()
-    except Exception as exc:
-        db_status = f"error: {exc}"
+    except Exception:
+        logger.exception("api_v1 health db check failed")
+        db_status = "error"
 
     return {
         "status": "healthy" if db_status == "healthy" else "degraded",
