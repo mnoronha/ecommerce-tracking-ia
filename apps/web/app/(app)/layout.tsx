@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { BarChart2, Users, LogOut, Bell, Settings, Wallet } from 'lucide-react'
+import { BarChart2, Users, LogOut, Bell, Settings, Wallet, Zap } from 'lucide-react'
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser'
 import { useRouter } from 'next/navigation'
 
@@ -32,12 +32,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   // /dashboard and /system-health remain valid URLs; top bar still renders there,
   // but they are no longer listed as nav links.
   const isAgencyPage =
-    pathname === '/dashboard'    ||
-    pathname === '/clients'      ||
-    pathname === '/clients/new'  ||
-    pathname === '/alertas'      ||
-    pathname === '/configuracoes'||
-    pathname === '/financeiro'   ||
+    pathname === '/dashboard'     ||
+    pathname === '/action-center' ||
+    pathname === '/clients'       ||
+    pathname === '/clients/new'   ||
+    pathname === '/alertas'       ||
+    pathname === '/configuracoes' ||
+    pathname === '/financeiro'    ||
     pathname === '/system-health'
 
   async function handleSignOut() {
@@ -57,6 +58,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <span className="text-slate-600 text-xs ml-1">· Noro Labs</span>
           </div>
           <div className="flex items-center gap-4">
+            <Link
+              href="/action-center"
+              className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/action-center' ? 'text-white font-medium' : 'text-slate-500 hover:text-white'}`}
+            >
+              <Zap size={13} />Action Center
+            </Link>
             <Link
               href="/clients"
               className={`text-xs transition-colors flex items-center gap-1 ${pathname === '/clients' ? 'text-white' : 'text-slate-500 hover:text-white'}`}

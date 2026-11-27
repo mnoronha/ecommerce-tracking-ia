@@ -314,6 +314,10 @@ SCOPE_CLIENT_VIEWER     = require_scopes("agency_admin", "platform_web", "client
 # OR verified agency_members operator Supabase JWT. Excludes hermes_service & client_viewer.
 SCOPE_INTERNAL_OPERATOR = require_scopes("agency_admin", "platform_web", "agency_operator")
 
+# Context Bundle read scope (PRD §8.1 / R05): Hermes service + authorized agency operators/platform/admin.
+# Explicitly excludes client_viewer.
+SCOPE_CONTEXT_READ = require_scopes("agency_admin", "hermes_service", "platform_web", "agency_operator")
+
 # Narrow scope for the H10 recommendation→task bridge.
 # Grants: agency_admin (always), hermes_service (H10 automated approval).
 # Explicitly excludes platform_web — human decisions use /recommendations/{id}/decision.

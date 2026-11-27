@@ -125,7 +125,7 @@ def test_scheduler_default_off_and_existing_jobs_untouched(monkeypatch):
  class Scheduler:
   def add_job(self,*a,**kw):raise AssertionError('Job added while OFF')
  bridge.register_jobs(Scheduler(),None,None,None)
- main=(ROOT/'app/main.py').read_text(encoding='utf-8')
+ main=(ROOT/'app/main.py').read_text(encoding='utf-8')+'\n'+(ROOT/'app/core/scheduler_setup.py').read_text(encoding='utf-8')
  for name in ('weekly_review','monthly_review','weekly_reports','monthly_reports'):assert 'id="'+name+'"' in main
  assert 'reports.send_weekly_reports' in main and 'reports.send_monthly_reports' in main
 
