@@ -7,7 +7,7 @@ import {
   FileText, CheckCircle, XCircle, Clock, Send, Download,
   RefreshCw, AlertTriangle, X, Eye, Loader2, History,
   TrendingUp, Target, Info, BarChart2, Lightbulb, ChevronDown,
-  ChevronRight, Calendar, Settings,
+  ChevronRight, Calendar, Settings, Globe, FileCode,
 } from 'lucide-react'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -811,20 +811,22 @@ function HistoryDrawer({
 // ── Report Card ──────────────────────────────────────────────────────────────
 
 function ReportCard({
-  report, deliveryStatus, downloading,
-  onView, onApprove, onPublish, onSend, onHistory, onDownload,
+  report, deliveryStatus, downloading, downloadingHtml,
+  onView, onApprove, onPublish, onSend, onHistory, onDownload, onPreviewHtml, onDownloadHtml,
 }: {
-  report: Report; deliveryStatus: string; downloading: boolean
+  report: Report; deliveryStatus: string; downloading: boolean; downloadingHtml: boolean
   onView: () => void; onApprove: () => void; onPublish: () => void
   onSend: () => void; onHistory: () => void; onDownload: () => void
+  onPreviewHtml: () => void; onDownloadHtml: () => void
 }) {
   const sm = STATUS_META[report.status] || STATUS_META.DRAFT
   const dm = DELIVERY_META[deliveryStatus] || DELIVERY_META.NOT_SENT
   const DeliveryIcon = dm.Icon
 
-  const canApprove = report.status === 'READY_FOR_REVIEW'
-  const canPublish = report.status === 'APPROVED'
-  const canSend    = report.status === 'PUBLISHED'
+  const canApprove    = report.status === 'READY_FOR_REVIEW'
+  const canPublish    = report.status === 'APPROVED'
+  const canSend       = report.status === 'PUBLISHED'
+  const canPreviewHtml = report.status !== 'SUPERSEDED'
 
   return (
     <div className="bg-[#1a1f2e] rounded-xl border border-[#2a2f3e] p-4 hover:border-[#3a4050] transition-colors">
@@ -898,13 +900,37 @@ function ReportCard({
           </button>
         )}
 
+        {canPreviewHtml && (
+          <button
+            onClick={onPreviewHtml}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2f3e] text-slate-400 text-xs font-medium hover:text-white hover:border-slate-400 transition-colors"
+            title="Visualizar HTML no navegador (prévia do email)"
+          >
+            <Globe size={12} />
+            Preview HTML
+          </button>
+        )}
+
+        {canPreviewHtml && (
+          <button
+            onClick={onDownloadHtml}
+            disabled={downloadingHtml}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2f3e] text-slate-400 text-xs font-medium hover:text-white hover:border-slate-400 transition-colors disabled:opacity-50"
+            title="Baixar HTML do relatório"
+          >
+            {downloadingHtml ? <Loader2 size={12} className="animate-spin" /> : <FileCode size={12} />}
+            HTML
+          </button>
+        )}
+
         <button
           onClick={onDownload}
           disabled={downloading}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2f3e] text-slate-400 text-xs font-medium hover:text-white hover:border-slate-400 transition-colors disabled:opacity-50"
+          title="Baixar artifact JSON"
         >
           {downloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-          Download
+          JSON
         </button>
 
         <button onClick={onHistory} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2a2f3e] text-slate-500 text-xs font-medium hover:text-white hover:border-slate-500 transition-colors ml-auto">
@@ -943,6 +969,7 @@ export default function CanonicalReportsPage() {
 
   const [deliverySettings, setDeliverySettings] = useState<DeliverySettings | null>(null)
   const [downloadingId,    setDownloadingId]    = useState<string | null>(null)
+  const [downloadingHtmlId, setDownloadingHtmlId] = useState<string | null>(null)
   const [sendModal, setSendModal] = useState<{
     report: Report; selectedRecipientId: string | null; step: string; error?: string
   } | null>(null)
@@ -1066,6 +1093,42 @@ export default function CanonicalReportsPage() {
       setSendModal(s => s ? { ...s, step: 'error', error: e instanceof Error ? e.message : String(e) } : null)
     }
   }, [sendModal, deliverySettings])
+
+  const doPreviewHtml = useCallback((report: Report) => {
+    window.open(
+      `/api/v1/canonical-reports/${report.report_id}/preview-html?version=${report.version}`,
+      '_blank',
+      'noopener,noreferrer',
+    )
+  }, [])
+
+  const doDownloadHtml = useCallback(async (report: Report) => {
+    setDownloadingHtmlId(report.report_id)
+    try {
+      const res = await fetch(
+        `/api/v1/canonical-reports/${report.report_id}/preview-html?version=${report.version}`
+      )
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        alert(d?.detail || d?.error || `Erro no download HTML: ${res.status}`)
+        return
+      }
+      const html = await res.text()
+      const blob = new Blob([html], { type: 'text/html' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `${report.client_id}_${report.report_type}_${report.period_start}_${report.period_end}_v${report.version}.html`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('HTML download failed:', e)
+    } finally {
+      setDownloadingHtmlId(null)
+    }
+  }, [])
 
   const doDownload = useCallback(async (report: Report) => {
     setDownloadingId(report.report_id)
@@ -1218,12 +1281,15 @@ export default function CanonicalReportsPage() {
                   report={r}
                   deliveryStatus={deliveryCache[r.report_id] || 'NOT_SENT'}
                   downloading={downloadingId === r.report_id}
+                  downloadingHtml={downloadingHtmlId === r.report_id}
                   onView={() => openViewer(r)}
                   onApprove={() => { setConfirm({ type: 'approve', report: r }); setTransitionError(null) }}
                   onPublish={() => { setConfirm({ type: 'publish', report: r }); setTransitionError(null) }}
                   onSend={() => setSendModal({ report: r, selectedRecipientId: null, step: 'preview' })}
                   onHistory={() => openHistory(r)}
                   onDownload={() => doDownload(r)}
+                  onPreviewHtml={() => doPreviewHtml(r)}
+                  onDownloadHtml={() => doDownloadHtml(r)}
                 />
               ))}
             </div>

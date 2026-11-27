@@ -1,6 +1,7 @@
 """Canonical report API; no calls into legacy publication or transport code."""
 from datetime import datetime,timezone
 from fastapi import APIRouter,Depends,HTTPException,Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel,Field,ConfigDict
 from typing import Literal,Optional
 from .auth import SCOPE_READ_ANY,SCOPE_HERMES_WRITE,SCOPE_PLATFORM_WRITE,AuthContext
@@ -221,6 +222,34 @@ def get_artifact(report_id:str,version:int=Query(1,ge=1),auth:AuthContext=Depend
  check={k:v for k,v in doc.items() if k not in _ARTIFACT_HASH_EXCLUDE}
  if _digest(check)!=doc.get('artifact_hash'):raise HTTPException(409,'ARTIFACT_INTEGRITY_ERROR')
  return{'report':doc,'integrity':'VERIFIED','download_note':'SUPERSEDED' if doc.get('status')=='SUPERSEDED' else None}
+
+@router.get('/{report_id}/preview-html',response_class=HTMLResponse,tags=['canonical-reports'],summary='Render report as HTML for internal preview — cta_authorized=False, never delivers')
+def preview_html(report_id:str,version:int=Query(1,ge=1),auth:AuthContext=Depends(SCOPE_READ_ANY))->HTMLResponse:
+ flags=Flags.environment()
+ if not any(getattr(flags,k) for k in('CANONICAL_WEEKLY_REVIEW_ENABLED','CANONICAL_MONTHLY_REVIEW_ENABLED','REPORT_PUBLISH_ENABLED','REPORT_DELIVERY_ENABLED')):raise HTTPException(404,'CANONICAL_REPORTS_DISABLED')
+ try:doc=service().get(report_id,version)
+ except ReportError as e:fail(e)
+ scope(auth,doc['client_id'])
+ from ...core.canonical_reports import digest as _digest
+ check={k:v for k,v in doc.items() if k not in _ARTIFACT_HASH_EXCLUDE}
+ if _digest(check)!=doc.get('artifact_hash'):raise HTTPException(409,'ARTIFACT_INTEGRITY_ERROR')
+ artifact={
+  'report_id':doc.get('report_id'),
+  'client_id':doc.get('client_id'),
+  'period_start':(doc.get('period_start') or '')[:10],
+  'period_end':(doc.get('period_end') or '')[:10],
+  'report_type':doc.get('report_type'),
+  'version':doc.get('version'),
+  'status':doc.get('status'),
+  'content':doc.get('content') or {},
+  'cta_authorized':False,
+ }
+ from ...core.canonical_email_renderer import render_weekly_email,render_monthly_email
+ try:
+  if doc.get('report_type')=='weekly':html,_=render_weekly_email(artifact)
+  else:html,_=render_monthly_email(artifact)
+ except Exception as exc:raise HTTPException(500,f'RENDER_ERROR:{str(exc)[:120]}')
+ return HTMLResponse(content=html)
 
 @router.post('/delivery-receipts')
 def prepare_delivery(body:Delivery,auth:AuthContext=Depends(SCOPE_PLATFORM_WRITE)):

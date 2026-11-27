@@ -139,7 +139,28 @@ def dispatch_delivery(delivery_id: str, recipient: str, reports: Reports) -> dic
     period_e = report.get("period_end", "")
     rtype    = (report.get("report_type") or "report").title()
     subject  = f"Relatório Noro — {rtype} | {period_s} a {period_e}"
-    html     = build_report_email_html(report)
+
+    # Render via v5 canonical renderer; fall back to plain notification on error.
+    try:
+        from .canonical_email_renderer import render_weekly_email, render_monthly_email
+        artifact = {
+            "report_id":    report.get("report_id"),
+            "client_id":    report.get("client_id"),
+            "period_start": (report.get("period_start") or "")[:10],
+            "period_end":   (report.get("period_end") or "")[:10],
+            "report_type":  report.get("report_type"),
+            "version":      report.get("version"),
+            "status":       report.get("status"),
+            "content":      report.get("content") or {},
+            "cta_authorized": True,
+        }
+        if report.get("report_type") == "weekly":
+            html, _ = render_weekly_email(artifact)
+        else:
+            html, _ = render_monthly_email(artifact)
+    except Exception:
+        logger.exception("v5 renderer failed for %s — falling back to plain email", receipt["report_id"])
+        html = build_report_email_html(report)
 
     ok, msg_id, err = _email.send_email_tracked(recipient, subject, html, from_name="Noro Reports")
 
