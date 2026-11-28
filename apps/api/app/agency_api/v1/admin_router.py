@@ -555,3 +555,34 @@ def admin_reevaluate_action_outcome(
     if res.get("error"):
         raise HTTPException(409, detail=res["error"])
     return res
+
+
+@admin_router.get(
+    "/clients/{client_id}/reconciliation-ledger",
+    summary="Read-only Shopify ↔ Core Reconciliation Ledger for a client period (agency_admin only — R06)",
+)
+def admin_shopify_reconciliation_ledger(
+    client_id: str,
+    period_start: str = Query(..., description="Period start YYYY-MM-DD in client timezone"),
+    period_end: str = Query(..., description="Period end YYYY-MM-DD in client timezone"),
+    _auth: Annotated[AuthContext, Depends(SCOPE_ADMIN_ONLY)] = None,
+) -> dict[str, Any]:
+    from datetime import date as _date
+    from ...core.shopify_reconciliation import build_shopify_reconciliation_ledger
+
+    try:
+        ps = _date.fromisoformat(period_start)
+        pe = _date.fromisoformat(period_end)
+    except ValueError as exc:
+        raise HTTPException(422, detail=f"invalid date format: {exc}")
+    if pe < ps:
+        raise HTTPException(422, detail="period_end must be >= period_start")
+
+    try:
+        return build_shopify_reconciliation_ledger(client_id, ps, pe)
+    except LookupError:
+        raise HTTPException(404, detail=f"client not found: {client_id!r}")
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(502, detail=str(exc))

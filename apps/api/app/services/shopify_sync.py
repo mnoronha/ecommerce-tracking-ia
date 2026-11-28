@@ -29,9 +29,9 @@ _SHOPIFY_API_VERSION = "2024-10"
 _OFFLINE_SOURCE_NAMES = frozenset({"pos", "iphone", "android", "shopify_draft_order"})
 _PAGE_SIZE           = 250
 _ORDER_FIELDS        = (
-    "id,name,email,phone,total_price,currency,financial_status,fulfillment_status,"
-    "created_at,updated_at,processed_at,source_name,landing_site,referring_site,"
-    "line_items,customer,shipping_address,billing_address,note_attributes,"
+    "id,name,order_number,email,phone,total_price,currency,financial_status,fulfillment_status,"
+    "created_at,updated_at,processed_at,cancelled_at,source_name,landing_site,referring_site,"
+    "line_items,refunds,customer,shipping_address,billing_address,note_attributes,"
     "browser_ip,client_details,checkout_token,cart_token,test,order_status_url"
 )
 

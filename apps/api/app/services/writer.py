@@ -452,6 +452,113 @@ def write_cart_event(
 
 # ── orders ────────────────────────────────────────────────────────────────────
 
+_ORDER_LIFECYCLE_EVENTS = frozenset({
+    EventType.ORDER_CREATED,
+    EventType.ORDER_UPDATED,
+    EventType.ORDER_PAID,
+    EventType.ORDER_CANCELLED,
+    EventType.ORDER_FULFILLED,
+})
+
+# Statuses that represent terminal cancellations/full reversals — a stale
+# orders/updated or shopify_sync payload must NEVER downgrade these back to paid.
+_CANCELLED_OR_REVERSED_STATUSES = frozenset({"voided", "refunded", "cancelled"})
+_PAID_OR_PARTIAL_STATUSES = frozenset({"paid", "partially_refunded"})
+_MIGRATION_089_COLS = ("order_source_name", "paid_at", "cancelled_at")
+
+
+def _normalize_source_name(raw: Any) -> Optional[str]:
+    if raw is None:
+        return None
+    s = str(raw).strip().lower()
+    return s or None
+
+
+def sync_order_refunds(
+    client_uuid: str,
+    order_uuid: str,
+    original_total: float,
+    currency: str,
+    raw_refunds: list[dict],
+) -> int:
+    """
+    Idempotently persist Shopify order `refunds[]` entries into `public.refunds`.
+    Deduplicates by `(client_id, order_id, platform_refund_id)`. Returns inserted count.
+    """
+    if not client_uuid or not order_uuid or not raw_refunds:
+        return 0
+
+    sb = get_supabase()
+    existing_ids: set[str] = set()
+    try:
+        ex = (
+            sb.table("refunds")
+            .select("platform_refund_id")
+            .eq("client_id", client_uuid)
+            .eq("order_id", order_uuid)
+            .execute()
+        )
+        for r in (ex.data or []):
+            if r.get("platform_refund_id"):
+                existing_ids.add(str(r["platform_refund_id"]))
+    except Exception as exc:
+        logger.debug("sync_order_refunds: existing lookup failed for %s: %s", order_uuid, exc)
+
+    inserted = 0
+    cumulative_refund = 0.0
+    for ref in raw_refunds:
+        if not isinstance(ref, dict):
+            continue
+        rid = str(ref.get("id") or "").strip() or None
+        txs = ref.get("transactions") or []
+        amount = 0.0
+        ref_currency = currency or "BRL"
+        for tx in txs:
+            if not isinstance(tx, dict):
+                continue
+            if tx.get("kind") == "refund" and tx.get("status") == "success":
+                try:
+                    amount += float(tx.get("amount") or 0)
+                except (ValueError, TypeError):
+                    pass
+                ref_currency = tx.get("currency") or ref_currency
+        if amount <= 0:
+            continue
+        cumulative_refund += amount
+        if rid and rid in existing_ids:
+            continue
+
+        row = {
+            "client_id":          client_uuid,
+            "order_id":           order_uuid,
+            "platform_refund_id": rid,
+            "amount":             round(amount, 2),
+            "currency":           ref_currency,
+            "reason":             (ref.get("note") or None),
+            "is_partial":         original_total > 0 and amount < original_total,
+        }
+        try:
+            sb.table("refunds").insert(row).execute()
+            inserted += 1
+            if rid:
+                existing_ids.add(rid)
+        except Exception as exc:
+            logger.warning("sync_order_refunds: insert failed order=%s refund=%s: %s", order_uuid, rid, exc)
+
+    if cumulative_refund > 0:
+        new_fin = (
+            "refunded"
+            if (original_total > 0 and cumulative_refund >= original_total - 0.01)
+            else "partially_refunded"
+        )
+        try:
+            sb.table("orders").update({"financial_status": new_fin}).eq("id", order_uuid).execute()
+        except Exception as exc:
+            logger.debug("sync_order_refunds: status update failed for %s: %s", order_uuid, exc)
+
+    return inserted
+
+
 def write_order(
     client_uuid: Optional[str],
     visitor_uuid: Optional[str],
@@ -459,10 +566,13 @@ def write_order(
 ) -> Optional[str]:
     """
     Upsert an order into the orders table.
-    Correctly sets is_first_purchase by checking prior orders for this visitor/email.
-    Updates visitor totals (total_orders, total_revenue, ltv) after writing.
+    Skips non-order events (e.g. CUSTOM, ORDER_REFUNDED) so they never pollute
+    or overwrite order rows. Persists real Shopify `order_source_name`, `paid_at`,
+    `cancelled_at`, and syncs inline `refunds[]` idempotently.
     Returns the order UUID or None.
     """
+    if event.event_type not in _ORDER_LIFECYCLE_EVENTS:
+        return None
     order = event.order
     if not order or not order.id:
         return None
@@ -581,44 +691,100 @@ def write_order(
 
     cust_addr = customer.address if customer and customer.address else None
 
-    # ── Status downgrade protection ──────────────────────────────────────────
-    # Shopify sends multiple orders/create webhooks for the same order over
-    # time. If a later create overwrites a prior paid status, we'd lose the
-    # paid signal and the order would never reach Meta CAPI. Look up the
-    # existing row and skip overwriting terminal states (paid/refunded) and
-    # the capi_sent flag with stale data from a non-paid webhook.
+    # ── Status & lifecycle field preservation ────────────────────────────────
+    # 1. Cancelled / voided / refunded orders MUST NEVER be downgraded back to
+    #    paid by a stale orders/updated webhook or hourly sync.
+    # 2. Paid orders must not be downgraded to pending/authorized by stale create.
+    # 3. Existing paid_at, cancelled_at, order_source_name, and capi_sent are preserved.
     existing_status: Optional[str] = None
     existing_capi_sent: bool = False
+    existing_paid_at: Optional[str] = None
+    existing_cancelled_at: Optional[str] = None
+    existing_source_name: Optional[str] = None
     if client_uuid and order.id:
         try:
             exists = (
                 sb.table("orders")
-                .select("financial_status, capi_sent")
+                .select("financial_status, capi_sent, paid_at, cancelled_at, order_source_name")
                 .eq("client_id", client_uuid)
                 .eq("platform_order_id", order.id)
                 .limit(1)
                 .execute()
             )
             if exists and exists.data:
-                existing_status = exists.data[0].get("financial_status")
-                existing_capi_sent = bool(exists.data[0].get("capi_sent"))
+                ex0 = exists.data[0]
+                existing_status = ex0.get("financial_status")
+                existing_capi_sent = bool(ex0.get("capi_sent"))
+                existing_paid_at = ex0.get("paid_at")
+                existing_cancelled_at = ex0.get("cancelled_at")
+                existing_source_name = ex0.get("order_source_name")
         except Exception as exc:
-            logger.debug("order existence check failed: %s", exc)
+            if any(c in str(exc).lower() for c in _MIGRATION_089_COLS) or "42703" in str(exc):
+                try:
+                    exists = (
+                        sb.table("orders")
+                        .select("financial_status, capi_sent")
+                        .eq("client_id", client_uuid)
+                        .eq("platform_order_id", order.id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if exists and exists.data:
+                        existing_status = exists.data[0].get("financial_status")
+                        existing_capi_sent = bool(exists.data[0].get("capi_sent"))
+                except Exception as exc2:
+                    logger.debug("order existence check fallback failed: %s", exc2)
+            else:
+                logger.debug("order existence check failed: %s", exc)
 
-    _TERMINAL_STATUSES = {"paid", "refunded", "partially_refunded", "voided"}
-    incoming_status = order.status
-    # Keep the more authoritative status: paid/refunded should never be
-    # downgraded by a later orders/create webhook that arrives stale.
-    if existing_status in _TERMINAL_STATUSES and incoming_status not in _TERMINAL_STATUSES:
-        effective_status = existing_status
+    incoming_status = (order.status or "").strip().lower() or None
+    existing_status_norm = (existing_status or "").strip().lower() or None
+    incoming_cancelled_at = (
+        meta.get("cancelled_at")
+        or (event.raw_payload or {}).get("cancelled_at")
+        or (datetime.now(timezone.utc).isoformat() if event.event_type == EventType.ORDER_CANCELLED else None)
+    )
+    effective_cancelled_at = existing_cancelled_at or incoming_cancelled_at
+
+    if event.event_type == EventType.ORDER_CANCELLED or effective_cancelled_at:
+        effective_status = "refunded" if incoming_status == "refunded" else (
+            existing_status_norm if existing_status_norm in _CANCELLED_OR_REVERSED_STATUSES else "voided"
+        )
+    elif existing_status_norm in _CANCELLED_OR_REVERSED_STATUSES:
+        effective_status = existing_status_norm
+    elif existing_status_norm in _PAID_OR_PARTIAL_STATUSES and incoming_status not in (
+        _PAID_OR_PARTIAL_STATUSES | _CANCELLED_OR_REVERSED_STATUSES
+    ):
+        effective_status = existing_status_norm
     else:
         effective_status = incoming_status
+
+    incoming_source_name = _normalize_source_name(
+        meta.get("source_name") or (event.raw_payload or {}).get("source_name")
+    )
+    effective_source_name = incoming_source_name or _normalize_source_name(existing_source_name)
+
+    incoming_paid_at = None
+    if (
+        event.event_type == EventType.ORDER_PAID
+        or effective_status in ("paid", "partially_refunded", "refunded")
+    ):
+        incoming_paid_at = (
+            meta.get("paid_at")
+            or meta.get("processed_at")
+            or (event.raw_payload or {}).get("processed_at")
+            or event.timestamp.isoformat()
+        )
+    effective_paid_at = existing_paid_at or incoming_paid_at
 
     row = {
         "platform_order_id":     order.id,
         "platform_order_number": order.number,
         "platform_source":       event.platform,
         "platform":              event.platform,
+        "order_source_name":     effective_source_name,
+        "paid_at":               effective_paid_at,
+        "cancelled_at":          effective_cancelled_at,
         "email":                 _raw_email(customer.email) if customer else None,
         "phone":                 _raw_phone(customer.phone) if customer else None,
         **(pii_fields(customer.email, customer.phone) if customer else {}),
@@ -657,14 +823,40 @@ def write_order(
         row["visitor_id"] = visitor_uuid
 
     try:
-        result = (
-            sb.table("orders")
-            .upsert(row, on_conflict="client_id,platform_order_id" if client_uuid else None)
-            .execute()
-        )
+        try:
+            result = (
+                sb.table("orders")
+                .upsert(row, on_conflict="client_id,platform_order_id" if client_uuid else None)
+                .execute()
+            )
+        except Exception as exc_ins:
+            err_l = str(exc_ins).lower()
+            if any(c in err_l for c in _MIGRATION_089_COLS) or "42703" in err_l:
+                fallback_row = {k: v for k, v in row.items() if k not in _MIGRATION_089_COLS}
+                result = (
+                    sb.table("orders")
+                    .upsert(fallback_row, on_conflict="client_id,platform_order_id" if client_uuid else None)
+                    .execute()
+                )
+            else:
+                raise
         if result.data:
             order_uuid = result.data[0]["id"]
             logger.debug("orders upsert OK — %s (first=%s)", order_uuid, is_first)
+
+            # Sync inline Shopify refunds[] when present (orders/updated, shopify_sync)
+            raw_refunds = meta.get("refunds") or (event.raw_payload or {}).get("refunds") or []
+            if client_uuid and isinstance(raw_refunds, list) and raw_refunds:
+                try:
+                    sync_order_refunds(
+                        client_uuid,
+                        order_uuid,
+                        float(order.total or 0),
+                        order.currency or "BRL",
+                        raw_refunds,
+                    )
+                except Exception as exc_ref:
+                    logger.warning("sync_order_refunds failed for order %s: %s", order_uuid, exc_ref)
 
             # Flag the attribution cookie as consumed so it's not reused on a
             # subsequent order from the same visitor.
@@ -890,11 +1082,13 @@ def write_refund(
         return None
 
     refund_id = (event.metadata or {}).get("refund_id")
+    refund_reason = (event.metadata or {}).get("refund_reason") or (event.raw_payload or {}).get("note")
+    sb = get_supabase()
 
     try:
         ord_row = (
-            get_supabase().table("orders")
-            .select("id, total_price")
+            sb.table("orders")
+            .select("id, total_price, financial_status")
             .eq("client_id", client_uuid)
             .eq("platform_order_id", platform_order_id)
             .limit(1)
@@ -908,24 +1102,62 @@ def write_refund(
         logger.info("write_refund: original order %s not found — refund dropped", platform_order_id)
         return None
     order = ord_row.data[0]
-    order_uuid    = order["id"]
+    order_uuid = order["id"]
     original_total = float(order.get("total_price") or 0)
-    is_partial    = original_total > 0 and refund_amount < original_total
+    is_partial = original_total > 0 and refund_amount < original_total
+
+    # Idempotency guard: skip duplicate webhook deliveries for the same platform_refund_id
+    if refund_id:
+        try:
+            dup = (
+                sb.table("refunds")
+                .select("id")
+                .eq("client_id", client_uuid)
+                .eq("order_id", order_uuid)
+                .eq("platform_refund_id", str(refund_id))
+                .limit(1)
+                .execute()
+            )
+            if dup and isinstance(dup.data, list) and dup.data:
+                logger.info("write_refund: duplicate refund %s for order %s — skipping", refund_id, platform_order_id)
+                return order_uuid
+        except Exception as exc:
+            logger.debug("write_refund: dedup check failed for %s: %s", refund_id, exc)
 
     row = {
         "client_id":          client_uuid,
         "order_id":           order_uuid,
-        "platform_refund_id": refund_id,
-        "amount":             refund_amount,
+        "platform_refund_id": str(refund_id) if refund_id else None,
+        "amount":             round(refund_amount, 2),
         "currency":           event.order.currency or "BRL",
+        "reason":             refund_reason,
         "is_partial":         is_partial,
     }
     try:
-        get_supabase().table("refunds").insert(row).execute()
+        sb.table("refunds").insert(row).execute()
         logger.info("refund persisted — order=%s amount=%.2f partial=%s",
                     platform_order_id, refund_amount, is_partial)
     except Exception as exc:
         logger.warning("write_refund insert failed for %s: %s", platform_order_id, exc)
+
+    # Update order financial_status without mutating original total_price
+    try:
+        all_refs = (
+            sb.table("refunds")
+            .select("amount")
+            .eq("client_id", client_uuid)
+            .eq("order_id", order_uuid)
+            .execute()
+        )
+        total_refunded = sum(float(r.get("amount") or 0) for r in (all_refs.data or [])) or refund_amount
+        new_status = (
+            "refunded"
+            if (original_total > 0 and total_refunded >= original_total - 0.01)
+            else "partially_refunded"
+        )
+        sb.table("orders").update({"financial_status": new_status}).eq("id", order_uuid).execute()
+    except Exception as exc:
+        logger.debug("write_refund: status update failed for %s: %s", order_uuid, exc)
 
     return order_uuid
 
@@ -973,20 +1205,38 @@ def update_order_financial_status(
     client_uuid: str,
     platform_order_id: str,
     financial_status: str,
+    *,
+    cancelled_at: Optional[str] = None,
 ) -> None:
     """
-    Update financial_status on an existing order. Used by orders/cancelled to
-    flip the status to 'voided' so CAPI retry / dashboards stop treating the
-    order as a paid conversion.
+    Update financial_status (and optionally cancelled_at) on an existing order.
+    Used by orders/cancelled so Business Truth and CAPI retry exclude cancelled orders.
     """
     if not client_uuid or not platform_order_id:
         return
+    patch: dict[str, Any] = {"financial_status": financial_status}
+    if cancelled_at is not None:
+        patch["cancelled_at"] = cancelled_at
     try:
-        get_supabase().table("orders").update(
-            {"financial_status": financial_status}
-        ).eq("client_id", client_uuid).eq("platform_order_id", platform_order_id).execute()
-        logger.debug("financial_status=%s for order %s", financial_status, platform_order_id)
+        get_supabase().table("orders").update(patch).eq("client_id", client_uuid).eq(
+            "platform_order_id", platform_order_id
+        ).execute()
+        logger.debug(
+            "financial_status=%s cancelled_at=%s for order %s",
+            financial_status,
+            cancelled_at,
+            platform_order_id,
+        )
     except Exception as exc:
+        if cancelled_at is not None and ("cancelled_at" in str(exc).lower() or "42703" in str(exc)):
+            try:
+                get_supabase().table("orders").update(
+                    {"financial_status": financial_status}
+                ).eq("client_id", client_uuid).eq("platform_order_id", platform_order_id).execute()
+                return
+            except Exception as exc2:
+                logger.warning("update_order_financial_status fallback failed: %s", exc2)
+                return
         logger.warning("update_order_financial_status failed: %s", exc)
 
 
