@@ -892,7 +892,18 @@ def _handle_event(platform: str, client_id: str, event, headers: dict, backgroun
         ttp=meta.get("ttp"),
         epik=meta.get("epik"),
     )
-    order_uuid = writer.write_order(client_uuid, visitor_uuid, event)
+    _ORDER_WRITE_TYPES = {
+        "order.created",
+        "order.updated",
+        "order.paid",
+        "order.cancelled",
+        "order.fulfilled",
+    }
+    order_uuid = (
+        writer.write_order(client_uuid, visitor_uuid, event)
+        if event.event_type.value in _ORDER_WRITE_TYPES
+        else None
+    )
     writer.write_webhook_delivery(client_uuid, event, headers, order_uuid, visitor_uuid)
 
     # Noro Tracking v4.3 — link the order to browsing evidence (shadow mode:
@@ -921,11 +932,24 @@ def _handle_event(platform: str, client_id: str, event, headers: dict, backgroun
         fulfillment_status = (event.raw_payload or {}).get("fulfillment_status") or "fulfilled"
         writer.update_order_fulfillment(client_uuid, event.order.id, fulfillment_status)
 
-    # Order cancelled — update financial_status so dashboards exclude these
-    # and CAPI retry job stops trying to send them as conversions.
+    # Order cancelled — update financial_status AND cancelled_at so Business Truth
+    # and CAPI retry job exclude cancelled orders permanently.
     if event.event_type.value == "order.cancelled" and client_uuid and event.order:
+        from datetime import datetime as _dt, timezone as _tz
+        cancelled_at = (
+            (event.metadata or {}).get("cancelled_at")
+            or (event.raw_payload or {}).get("cancelled_at")
+            or _dt.now(_tz.utc).isoformat()
+        )
+        incoming_fin = (event.order.status or "").lower()
+        target_status = "refunded" if incoming_fin == "refunded" else "voided"
         try:
-            writer.update_order_financial_status(client_uuid, event.order.id, "voided")
+            writer.update_order_financial_status(
+                client_uuid,
+                event.order.id,
+                target_status,
+                cancelled_at=cancelled_at,
+            )
         except Exception as exc:
             logger.warning("update cancelled status failed: %s", exc)
         # If the order had already been sent to Meta as a purchase, send a

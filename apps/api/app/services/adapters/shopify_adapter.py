@@ -465,7 +465,19 @@ class ShopifyAdapter(BaseAdapter):
                 "click_source":      nattr.get("_noro_click_src"),
                 "tracker_version":   nattr.get("_noro_ver"),
                 "processed_at":      payload.get("processed_at"),
+                "paid_at":           (
+                    payload.get("processed_at") or payload.get("updated_at") or payload.get("created_at")
+                    if (
+                        event_type == EventType.ORDER_PAID
+                        or (payload.get("financial_status") or "").lower() in ("paid", "partially_refunded", "refunded")
+                    )
+                    else None
+                ),
+                "cancelled_at":      payload.get("cancelled_at"),
+                "is_test_order":     bool(payload.get("test")),
+                "refunds":           payload.get("refunds") if isinstance(payload.get("refunds"), list) else [],
                 "refund_id":         str(payload.get("id")) if event_type == EventType.ORDER_REFUNDED else None,
+                "refund_reason":     payload.get("note") if event_type == EventType.ORDER_REFUNDED else None,
                 # Browse-session attribution from note_attributes
                 "visitor_cookie_id": nattr.get("_etv"),
                 "fbp":               nattr.get("_fbp"),
