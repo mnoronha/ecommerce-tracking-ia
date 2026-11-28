@@ -11,7 +11,7 @@ so a DB write failure never breaks the HTTP response.
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 import json
 
 import os
