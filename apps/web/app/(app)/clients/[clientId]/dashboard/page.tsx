@@ -8,6 +8,12 @@ import { ShoppingBag, Users, TrendingUp, Activity, RefreshCw, Percent, CheckCirc
 import IntegrationsHealth from '@/components/IntegrationsHealth'
 import { useDatePeriod, periodLabelLong, periodToQuery } from '@/lib/use-date-range'
 import { useClientConfig } from '@/lib/use-client-config'
+import {
+  formatPartialDayHint,
+  resolveOverviewKpis,
+  shouldShowPartialDayHint,
+  toLocalIsoDate,
+} from '@/lib/overview-kpis'
 import { PeriodPicker } from '@/components/PeriodPicker'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ColHeader, SourceBadge } from '@/components/ui/metric-tooltip'
@@ -389,14 +395,21 @@ function SparkleLine({ data, positive }: { data: number[]; positive: boolean }) 
   )
 }
 
-function KPICard({ title, value, icon: Icon, change, color, hint, spark, onClick }: {
+function KPICard({ title, value, icon: Icon, change, color, hint, sourceBadge, spark, onClick }: {
   title: string; value: string; icon: React.ElementType
   change?: number; color: string; hint?: string
+  sourceBadge?: string | null
   spark?: number[]
   onClick?: () => void
 }) {
   const Tag: any = onClick ? 'button' : 'div'
   const positive  = (change ?? 0) >= 0
+  const badgeCls =
+    sourceBadge === 'Business Truth'
+      ? 'bg-emerald-500/10 text-emerald-300/90 border-emerald-500/20'
+      : sourceBadge === 'Fonte: GA4'
+      ? 'bg-sky-500/10 text-sky-300/90 border-sky-500/20'
+      : 'bg-slate-500/10 text-slate-300/80 border-slate-500/20'
   return (
     <Tag
       onClick={onClick}
@@ -405,8 +418,15 @@ function KPICard({ title, value, icon: Icon, change, color, hint, spark, onClick
       }`}
     >
       <div className="flex items-start justify-between mb-3">
-        <span className="text-sm text-slate-400">{title}</span>
-        <div className={`p-2 rounded-lg ${color}`}><Icon size={16} /></div>
+        <div className="flex flex-col gap-1 min-w-0">
+          <span className="text-sm text-slate-400">{title}</span>
+          {sourceBadge && (
+            <span className={`inline-flex items-center self-start text-[10px] font-medium px-1.5 py-0.5 rounded border ${badgeCls}`}>
+              {sourceBadge}
+            </span>
+          )}
+        </div>
+        <div className={`p-2 rounded-lg shrink-0 ${color}`}><Icon size={16} /></div>
       </div>
       <div className="text-2xl font-bold text-white mb-1">{value}</div>
       {change !== undefined && (
@@ -911,6 +931,7 @@ export default function DashboardPage() {
   const [ltvStats, setLtvStats]         = useState<LtvStats | null>(null)
   const [refundsSummary, setRefundsSummary] = useState<{ count: number; total: number; rate_pct: number } | null>(null)
   const [canonicalMetrics, setCanonicalMetrics] = useState<MetricValue[]>([])
+  const [canonicalHealth,  setCanonicalHealth]  = useState<Record<string, string> | null>(null)
   const [businessModel,    setBusinessModel]    = useState<string>('ecommerce')
 
   // Derived from allOrdersRaw + country filter — recomputes only when raw data
@@ -958,9 +979,15 @@ export default function DashboardPage() {
   const periodForApi = useMemo(() => {
     const now = new Date()
     if (period === 'custom' && from && to) return `${from}:${to}`
-    const d = period === '1d' ? 1 : period === '7d' ? 7 : period === '30d' ? 30 : 90
-    const start = new Date(); start.setDate(start.getDate() - d)
-    return `${start.toISOString().split('T')[0]}:${now.toISOString().split('T')[0]}`
+    if (period === '1d') {
+      const yesterday = new Date(now)
+      yesterday.setDate(yesterday.getDate() - 1)
+      const yStr = toLocalIsoDate(yesterday)
+      return `${yStr}:${yStr}`
+    }
+    const d = period === '7d' ? 7 : period === '30d' ? 30 : 90
+    const start = new Date(now); start.setDate(start.getDate() - d)
+    return `${toLocalIsoDate(start)}:${toLocalIsoDate(now)}`
   }, [period, from, to])
 
   // Cache clientId so we don't hit Supabase on every filter change
@@ -974,21 +1001,40 @@ export default function DashboardPage() {
     setTiktokSummary(null)
     setPinterestSummary(null)
     setGa4Summary(null)
+    setCanonicalHealth(null)
     setKpis(null)
   }, [CLIENT_PIXEL_ID])
 
   // Fetch canonical KPIs from Agency API (pre-computed snapshots — not live orders)
   useEffect(() => {
     setCanonicalMetrics([])
+    setCanonicalHealth(null)
     fetch(`/api/v1/clients/${CLIENT_PIXEL_ID}/metrics?period=${periodForApi}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
         if (!data) return
         if (data.metrics?.length) setCanonicalMetrics(data.metrics)
+        if (data.health && typeof data.health === 'object') setCanonicalHealth(data.health)
         if (data.business_model) setBusinessModel(data.business_model)
       })
       .catch(() => {})
   }, [CLIENT_PIXEL_ID, periodForApi])
+
+  const resolvedOverviewKpis = useMemo(
+    () => resolveOverviewKpis({
+      canonicalMetrics,
+      canonicalHealth,
+      cockpitHealth,
+      liveKpis: kpis,
+      ga4Summary,
+    }),
+    [canonicalMetrics, canonicalHealth, cockpitHealth, kpis, ga4Summary],
+  )
+
+  const partialDayHint = useMemo(
+    () => (shouldShowPartialDayHint(period, from, to) ? formatPartialDayHint() : undefined),
+    [period, from, to],
+  )
 
   const loadData = useCallback(async () => {
     if (period === 'custom' && (!from || !to)) return
@@ -1811,31 +1857,28 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* KPIs ao vivo — clicáveis abrem drilldown */}
+        {/* KPIs — Hierarquia Business Truth -> GA4 Journey Truth -> '—' (PRD §§5.1, 5.3) */}
+        {(() => {
+          const hasLiveBusiness =
+            resolvedOverviewKpis.isBusinessTruth &&
+            Boolean(kpis && (kpis.totalOrders > 0 || kpis.totalRevenue > 0))
+          return (
         <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
           <KPICard
-            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0 ? `${kpiLabels.revenue} (GA4)` : kpiLabels.revenue}
-            value={
-              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0
-                ? fmt(ga4Summary.revenue)
-                : (kpis ? fmt(kpis.totalRevenue) : '—')
-            }
+            title={kpiLabels.revenue}
+            value={resolvedOverviewKpis.revenue.formatted}
+            sourceBadge={resolvedOverviewKpis.revenue.sourceBadge}
             icon={TrendingUp}
-            change={kpis?.totalOrders === 0 && ga4Summary ? undefined : kpis?.revenueChange}
-            spark={kpis?.totalOrders === 0 && ga4Summary ? undefined : revenueData.map(p => p.revenue)}
+            change={hasLiveBusiness ? kpis?.revenueChange : undefined}
+            spark={hasLiveBusiness ? revenueData.map(p => p.revenue) : undefined}
             color="bg-emerald-500/10 text-emerald-400"
-            hint={
-              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.revenue > 0
-                ? 'via Google Analytics 4'
-                : period === '1d'
-                ? `⚠ parcial — ${Math.round((new Date().getHours() * 60 + new Date().getMinutes()) / 1440 * 100)}% do dia decorrido`
-                : undefined
-            }
-            onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('revenue')} />
-          {kpis?.totalProfit != null && (
+            hint={partialDayHint}
+            onClick={hasLiveBusiness ? () => setDrilldown('revenue') : undefined} />
+          {hasLiveBusiness && kpis?.totalProfit != null && (
             <KPICard
               title="Margem"
               value={fmt(kpis.totalProfit)}
+              sourceBadge="Business Truth"
               icon={TrendingUp}
               color="bg-teal-500/10 text-teal-400"
               hint={kpis.marginPct != null ? `${kpis.marginPct.toFixed(1)}% bruta` : undefined}
@@ -1843,76 +1886,59 @@ export default function DashboardPage() {
             />
           )}
           <KPICard
-            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? `${kpiLabels.orders} (GA4)` : kpiLabels.orders}
-            value={
-              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0
-                ? ga4Summary.purchases.toLocaleString('pt-BR')
-                : (kpis ? kpis.totalOrders.toString() : '—')
-            }
+            title={kpiLabels.orders}
+            value={resolvedOverviewKpis.orders.formatted}
+            sourceBadge={resolvedOverviewKpis.orders.sourceBadge}
             icon={ShoppingBag}
-            change={kpis?.totalOrders === 0 && ga4Summary ? undefined : kpis?.ordersChange}
-            spark={kpis?.totalOrders === 0 && ga4Summary ? undefined : revenueData.map(p => p.orders)}
+            change={hasLiveBusiness ? kpis?.ordersChange : undefined}
+            spark={hasLiveBusiness ? revenueData.map(p => p.orders) : undefined}
             color="bg-blue-500/10 text-blue-400"
-            hint={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'via Google Analytics 4' : undefined}
-            onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('orders')} />
+            onClick={hasLiveBusiness ? () => setDrilldown('orders') : undefined} />
           <KPICard
-            title={kpis?.totalVisitors === 0 && ga4Summary ? `${kpiLabels.visitors} (GA4)` : kpiLabels.visitors}
-            value={
-              kpis?.totalVisitors === 0 && ga4Summary
-                ? ga4Summary.sessions.toLocaleString('pt-BR')
-                : (kpis ? kpis.totalVisitors.toLocaleString('pt-BR') : '—')
-            }
+            title={kpiLabels.visitors}
+            value={resolvedOverviewKpis.visitors.formatted}
+            sourceBadge={resolvedOverviewKpis.visitors.sourceBadge}
             icon={Users}
-            change={kpis?.visitorsChange}
+            change={resolvedOverviewKpis.visitors.source === 'tracking' ? kpis?.visitorsChange : undefined}
             hint={
-              kpis?.totalVisitors === 0 && ga4Summary
-                ? 'via Google Analytics 4'
-                : kpis?.totalVisitors === 0 && ch.tracking
-                ? '⚠ Pixel sem dados · verificar tracking'
+              resolvedOverviewKpis.visitors.value === null && ch.tracking
+                ? '⚠ Sem dados de sessões · verificar tracking'
                 : undefined
             }
             color="bg-purple-500/10 text-purple-400" />
           <KPICard
-            title={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? `${kpiLabels.aov} (GA4)` : kpiLabels.aov}
-            value={
-              kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 && ga4Summary.revenue > 0
-                ? fmt(ga4Summary.revenue / ga4Summary.purchases)
-                : (kpis ? fmt(kpis.avgOrderValue) : '—')
-            }
+            title={kpiLabels.aov}
+            value={resolvedOverviewKpis.avgOrderValue.formatted}
+            sourceBadge={resolvedOverviewKpis.avgOrderValue.sourceBadge}
             icon={Activity}
-            change={kpis?.totalOrders === 0 && ga4Summary ? undefined : kpis?.avgOrderValueChange}
-            spark={kpis?.totalOrders === 0 && ga4Summary ? undefined : revenueData.map(p => p.orders > 0 ? p.revenue / p.orders : 0)}
+            change={hasLiveBusiness ? kpis?.avgOrderValueChange : undefined}
+            spark={hasLiveBusiness ? revenueData.map(p => p.orders > 0 ? p.revenue / p.orders : 0) : undefined}
             color="bg-orange-500/10 text-orange-400"
-            hint={kpis?.totalOrders === 0 && ga4Summary && ga4Summary.purchases > 0 ? 'via Google Analytics 4' : undefined}
-            onClick={kpis?.totalOrders === 0 && ga4Summary ? undefined : () => setDrilldown('avgOrderValue')} />
+            onClick={hasLiveBusiness ? () => setDrilldown('avgOrderValue') : undefined} />
           <KPICard
             title="Conversão"
-            value={
-              ga4Summary && ga4Summary.sessions > 0 && (kpis?.totalOrders === 0 ? ga4Summary.purchases : kpis?.totalOrders ?? 0) > 0
-                ? (((kpis?.totalOrders === 0 ? ga4Summary.purchases : kpis?.totalOrders ?? 0) / ga4Summary.sessions) * 100).toFixed(1) + '%'
-                : kpis && kpis.totalVisitors > 0
-                ? kpis.conversionRate.toFixed(1) + '%'
-                : '—'
-            }
+            value={resolvedOverviewKpis.conversionRate.formatted}
+            sourceBadge={resolvedOverviewKpis.conversionRate.sourceBadge}
             icon={Percent}
             hint={
-              ga4Summary && ga4Summary.sessions > 0
-                ? 'pedidos ÷ sessões GA4'
-                : kpis?.totalVisitors === 0 && ch.tracking
+              resolvedOverviewKpis.conversionRate.value !== null
+                ? (resolvedOverviewKpis.visitors.source === 'ga4' ? 'pedidos ÷ sessões GA4' : 'pedidos ÷ visitantes')
+                : resolvedOverviewKpis.visitors.value === null && ch.tracking
                 ? 'Sem dados de sessões — verificar pixel'
                 : undefined
             }
             color="bg-pink-500/10 text-pink-400" />
           {(() => {
             const totalSpend = (metaSummary?.spend ?? 0) + (googleSummary?.spend ?? 0) + (tiktokSummary?.spend ?? 0) + (pinterestSummary?.spend ?? 0)
-            if (totalSpend <= 0) return null
-            const revenue = kpis && kpis.totalOrders > 0 ? kpis.totalRevenue : (ga4Summary?.revenue ?? 0)
+            const revenue = resolvedOverviewKpis.revenue.value
+            if (totalSpend <= 0 || revenue === null) return null
             const roas = revenue / totalSpend
             const platforms = [metaSummary && 'Meta', googleSummary && 'Google', tiktokSummary && 'TikTok', pinterestSummary && 'Pinterest'].filter(Boolean).join(' + ')
             return (
               <KPICard
                 title="ROAS Total"
                 value={`${roas.toFixed(2)}x`}
+                sourceBadge={resolvedOverviewKpis.revenue.sourceBadge}
                 icon={DollarSign}
                 color={roas >= 3 ? 'bg-emerald-500/10 text-emerald-400' : roas >= 1.5 ? 'bg-yellow-500/10 text-yellow-400' : 'bg-red-500/10 text-red-400'}
                 hint={`receita ÷ gasto (${platforms})`}
@@ -1920,6 +1946,8 @@ export default function DashboardPage() {
             )
           })()}
         </div>
+          )
+        })()}
 
         {/* Ads Summary — Meta + Google + TikTok + Pinterest */}
         {(metaSummary || googleSummary || tiktokSummary || pinterestSummary) && (
